@@ -51,6 +51,8 @@ const FINAL_LINE =
 /** The flags `/delegate` takes before the task. */
 const FLAGS = ["--model", "--thinking"] as const;
 
+const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
+
 const USAGE = "usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
@@ -225,9 +227,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 	/** The launch order of the spec: task, argv, env, listeners, window, record. */
 	async function launch(start: Start, ctx: ExtensionContext): Promise<Launched> {
-		if (!tmux.insideTmux()) {
-			throw new Error("this session is not inside tmux; start it in a tmux pane to open a delegate window");
-		}
+		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 
 		// The task goes on disk before the window exists: the delegate finds it
 		// at session start without a handshake, and a window that fails leaves
@@ -327,6 +327,8 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 					"the delegate tool needs a UI: the user approves every delegation in a menu, and this session has none",
 				);
 			}
+			// Refuse before the menu, so the user is never asked to approve what cannot start.
+			if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 			const roster = rosterFor(ctx);
 			const start = validate({ ...params, task: params.task ?? "" }, roster, ctx.modelRegistry);
 			const request: Request = {

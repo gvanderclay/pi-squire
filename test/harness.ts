@@ -57,6 +57,30 @@ type Command = {
 	handler: (args: string, ctx: unknown) => Promise<void>;
 };
 
+/** One tool result, the shape `execute` returns. */
+export type ToolResult = { content: { type: string; text: string }[]; details: unknown };
+
+/** One registered tool, as much of it as the tests drive. */
+export type Tool = {
+	name: string;
+	description: string;
+	parameters: unknown;
+	execute: (
+		toolCallId: string,
+		params: never,
+		signal: unknown,
+		onUpdate: unknown,
+		ctx: unknown,
+	) => Promise<ToolResult>;
+};
+
+/** The answers a scripted `ctx.ui` gives, one queue per dialog. */
+export type UiAnswers = {
+	select?: (string | undefined)[];
+	editor?: (string | undefined)[];
+	custom?: unknown[];
+};
+
 let counter = 0;
 
 /** One custom entry, the shape `pi.appendEntry` writes and `getEntries` returns. */
@@ -73,6 +97,8 @@ export type SessionOptions = {
 	parentEnv?: string;
 	/** Custom entries the session already holds, as on a resume. */
 	entries?: readonly Entry[];
+	/** Answers `ctx.ui` gives, in order, one queue per dialog. An empty queue cancels. */
+	ui?: UiAnswers;
 };
 
 /** One fake Pi session running the extension under `parent`. */
@@ -87,6 +113,16 @@ export function session(options: SessionOptions = {}) {
 	const warnings: string[] = [];
 	const errors: string[] = [];
 	const sendCalls: SendPayload[] = [];
+	const tools: Record<string, Tool> = {};
+	/** Every `ctx.ui.select` call, with what it showed. */
+	const selects: { title: string; options: string[] }[] = [];
+	/** Every `ctx.ui.editor` call, with what it pre-filled. */
+	const editors: { title: string; prefill: string | undefined }[] = [];
+	/** Every `ctx.ui.custom` factory, as passed. */
+	const customs: unknown[] = [];
+	const selectAnswers = [...(options.ui?.select ?? [])];
+	const editorAnswers = [...(options.ui?.editor ?? [])];
+	const customAnswers = [...(options.ui?.custom ?? [])];
 	const events: EventBus = createEventBus();
 	const registry = {
 		getAll: () => FAKE_MODELS,
@@ -100,6 +136,9 @@ export function session(options: SessionOptions = {}) {
 		on: (name: string, handler: Handler) => (handlers[name] ??= []).push(handler),
 		registerCommand: (name: string, command: Command) => {
 			commands[name] = command;
+		},
+		registerTool: (tool: Tool) => {
+			tools[tool.name] = tool;
 		},
 		appendEntry: (customType: string, data: unknown) => entries.push({ customType, data }),
 		sendMessage: (message: { customType: string; content: unknown; display?: boolean }, opts: unknown) =>
@@ -125,6 +164,18 @@ export function session(options: SessionOptions = {}) {
 			notify: (text: string, type?: string) =>
 				(type === "warning" ? warnings : type === "error" ? errors : notes).push(text),
 			setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }),
+			select: async (title: string, options: string[]) => {
+				selects.push({ title, options });
+				return selectAnswers.shift();
+			},
+			editor: async (title: string, prefill?: string) => {
+				editors.push({ title, prefill });
+				return editorAnswers.shift();
+			},
+			custom: async (factory: unknown) => {
+				customs.push(factory);
+				return customAnswers.shift();
+			},
 		},
 	};
 	// The provider stub runs synchronously on the same bus, as `mailbox` does.
@@ -140,6 +191,12 @@ export function session(options: SessionOptions = {}) {
 	const fire = async (name: string, event: object = {}) => {
 		for (const handler of handlers[name] ?? []) await handler({ type: name, ...event }, ctx);
 	};
+	let calls = 0;
+	const callTool = (name: string, params: unknown): Promise<ToolResult> => {
+		const tool = tools[name];
+		if (tool === undefined) return Promise.reject(new Error(`no tool named ${name} is registered`));
+		return tool.execute(`call-${++calls}`, params as never, undefined, undefined, ctx);
+	};
 	return {
 		parent,
 		tmux,
@@ -152,8 +209,17 @@ export function session(options: SessionOptions = {}) {
 		warnings,
 		errors,
 		sendCalls,
+		selects,
+		editors,
+		customs,
 		/** The commands the extension registered, if any. */
 		commands: () => Object.keys(commands),
+		/** The tools the extension registered, if any. */
+		tools: () => Object.keys(tools),
+		/** One registered tool's definition. */
+		tool: (name: string) => tools[name],
+		/** Call a tool the way Pi does, with this session's context. */
+		toolCall: callTool,
 		start: () => fire("session_start", { reason: "startup" }),
 		/** Type `/delegate <args>`. */
 		delegate: (args: string) => commands.delegate.handler(args, ctx),

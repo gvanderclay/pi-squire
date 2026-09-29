@@ -8,9 +8,16 @@
 // the parent's working directory running the parent's own Pi. Starting a
 // delegation adds nothing to the model's context. Each delegation is recorded
 // in the parent session; its answer is taken over on `message:inbound` and
-// shown as one result message, so the parent hears back on its own. Inside a
-// delegate (`PI_DELEGATE_PARENT` set) the extension registers nothing, so a
-// delegate cannot delegate.
+// shown as one result message, so the parent hears back on its own.
+//
+// The model gets three tools. `delegate` takes agent, task and optional model
+// and thinking, and opens a confirmation menu before anything starts, so the
+// model can never delegate without the user's approval. `delegation_status`
+// reports each delegation as running (window open, no result yet), done (with
+// its result status) or closed, with the window, session and envelope paths.
+// `delegation_close` kills the window and records the close. Inside a delegate
+// (`PI_DELEGATE_PARENT` set) the extension registers nothing, so a delegate
+// cannot delegate.
 //
 // The `session:launch` contract this package provides, and the `message:*`
 // hooks it consumes, live in this package's README.
@@ -23,9 +30,11 @@ import {
 	getAgentDir,
 	type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
-import { isThinking, readRoster, THINKING_LEVELS } from "./agents.ts";
-import { createResults } from "./results.ts";
+import { type Agent, isThinking, readRoster, type Roster, THINKING_LEVELS } from "./agents.ts";
+import { confirmDelegation, type Request } from "./menu.ts";
+import { createResults, findSession, type Recorded } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 
 /** The hook a provider of `message:*` answers with the written request. */
@@ -47,6 +56,10 @@ const USAGE = "usage: /delegate <agent> [--model <provider/id>] [--thinking <lev
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 type LaunchPayload = { args: string[]; env: Record<string, string> };
 type Parsed = { agent: string; model?: string; thinking?: string; task: string };
+/** A request that passed the roster, model and thinking checks. */
+type Start = { agent: Agent; model: string; thinking: string; task: string };
+/** A delegation that is open in a tmux window. */
+type Launched = { id: string; windowId: string; windowName: string; requestId: string };
 
 /** The runtimes whose executable needs the script from `process.argv[1]`. */
 const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
@@ -131,9 +144,37 @@ function thinkingProblem(value: string): string | undefined {
 	}`;
 }
 
+/** The `delegate` tool's description: what delegation does, and the roster as it stands. */
+function toolDescription(agents: readonly Agent[]): string {
+	const intro =
+		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Every call opens a confirmation menu and nothing starts unless the user approves; the delegate runs in this session's working directory and agent root and reports back later as one message. Use it when the work is self-contained and you would rather keep your own context for it.";
+	if (agents.length === 0) {
+		return `${intro}\n\nNo agents are defined yet. Add ${join(
+			getAgentDir(),
+			"agents",
+			"<name>",
+			"AGENT.md",
+		)} with frontmatter description, model and thinking and the prompt as its body; /delegate explains the format too.`;
+	}
+	return [
+		intro,
+		"",
+		"Agents:",
+		...agents.map((agent) => `- ${agent.name} — ${agent.description} (default ${agent.model}, thinking ${agent.thinking})`),
+		"",
+		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `delegation_status` reports a delegation, and `delegation_close` ends one.",
+	].join("\n");
+}
+
+/** The one result every tool returns. */
+function toolResult(payload: string, details: unknown = {}): { content: { type: "text"; text: string }[]; details: unknown } {
+	return { content: [{ type: "text", text: payload }], details };
+}
+
 /**
- * Register `/delegate`. The second parameter is a test-only seam for tmux:
- * Pi passes only `pi`, so it is not part of the package's documented contract.
+ * Register `/delegate` and the three tools. The second parameter is a
+ * test-only seam for tmux: Pi passes only `pi`, so it is not part of the
+ * package's documented contract.
  */
 export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmuxClient()): void {
 	// A delegate registers nothing: `delegate` is one level deep (Q27).
@@ -144,12 +185,311 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
 
+	const modelIds = (source: ModelRegistry | undefined): string[] =>
+		(source?.getAll() ?? []).map((model) => `${model.provider}/${model.id}`);
+
+	/** Read the roster now, warning about every file left out. */
+	function rosterFor(ctx: ExtensionContext): Roster {
+		const roster = readRoster(getAgentDir());
+		for (const warning of roster.warnings) ctx.ui.notify(`delegate: ${warning}`, "warning");
+		return roster;
+	}
+
+	/** The request as a start, or an error naming what to fix. */
+	function validate(request: Parsed, roster: Roster, models: ModelRegistry): Start {
+		if (roster.agents.length === 0) {
+			throw new Error(
+				`no agents are defined; add ${join(
+					getAgentDir(),
+					"agents",
+					"<name>",
+					"AGENT.md",
+				)} with frontmatter description, model and thinking, and the prompt as its body`,
+			);
+		}
+		const agent = roster.agents.find((candidate) => candidate.name === request.agent);
+		if (agent === undefined) {
+			throw new Error(
+				`no agent named ${JSON.stringify(request.agent)}; available: ${roster.agents.map((item) => item.name).join(", ")}`,
+			);
+		}
+		if (request.task.trim() === "") throw new Error("a task is required");
+		const model = request.model ?? agent.model;
+		const thinking = request.thinking ?? agent.thinking;
+		const badModel = modelProblem(model, models);
+		if (badModel !== undefined) throw new Error(badModel);
+		const badThinking = thinkingProblem(thinking);
+		if (badThinking !== undefined) throw new Error(badThinking);
+		return { agent, model, thinking, task: request.task };
+	}
+
+	/** The launch order of the spec: task, argv, env, listeners, window, record. */
+	async function launch(start: Start, ctx: ExtensionContext): Promise<Launched> {
+		if (!tmux.insideTmux()) {
+			throw new Error("this session is not inside tmux; start it in a tmux pane to open a delegate window");
+		}
+
+		// The task goes on disk before the window exists: the delegate finds it
+		// at session start without a handshake, and a window that fails leaves
+		// mail that is reported rather than cleaned up.
+		const id = randomUUID();
+		const sent: SendPayload = { to: id, body: start.task };
+		pi.events.emit(SEND, sent);
+		if (typeof sent.error === "string") throw new Error(`could not send the task to ${id}: ${sent.error}`);
+		if (sent.envelope === undefined) {
+			throw new Error(
+				`needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)`,
+			);
+		}
+		const requestId = sent.envelope.id;
+		if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${id}`);
+
+		const argv = [
+			...parentCommand(),
+			"--session-id",
+			id,
+			"--model",
+			start.model,
+			"--thinking",
+			start.thinking,
+			"--append-system-prompt",
+			`${start.agent.prompt}\n\n${FINAL_LINE}`,
+		];
+		const env: Record<string, string> = {
+			PI_CODING_AGENT_DIR: getAgentDir(),
+			[PARENT_ENV]: ctx.sessionManager.getSessionId(),
+		};
+		const sessionDir = process.env[SESSION_DIR_ENV];
+		if (sessionDir !== undefined && sessionDir !== "") env[SESSION_DIR_ENV] = sessionDir;
+		// Listeners may only append to `args` and add to `env`; there is no veto.
+		const payload: LaunchPayload = { args: argv, env };
+		pi.events.emit(LAUNCH, payload);
+
+		const windowName = `${start.agent.name}-${id}`;
+		let windowId: string;
+		try {
+			windowId = await tmux.openWindow({ name: windowName, cwd: ctx.cwd, argv: payload.args, env: payload.env });
+		} catch (err) {
+			throw new Error(`could not open window ${windowName} for ${id}: ${(err as Error).message}`);
+		}
+
+		// No task text in the record: the request copy in `sent/` has it.
+		results.recordStart(
+			{ id, agent: start.agent.name, model: start.model, thinking: start.thinking, windowId, windowName, requestId },
+			ctx,
+		);
+		return { id, windowId, windowName, requestId };
+	}
+
+	const started = (launched: Launched, start: Start): string =>
+		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}`;
+
+	async function command(input: string, ctx: ExtensionContext): Promise<void> {
+		const fail = (message: string) => ctx.ui.notify(`delegate: ${message}`, "error");
+		const outcome = parse(input);
+		if ("error" in outcome) {
+			fail(outcome.error);
+			return;
+		}
+		try {
+			const start = validate(outcome.parsed, rosterFor(ctx), ctx.modelRegistry);
+			const launched = await launch(start, ctx);
+			ctx.ui.notify(started(launched, start), "info");
+		} catch (err) {
+			fail((err as Error).message);
+		}
+	}
+
+	/** The tool's description is fixed at registration, so it is rebuilt at every session start. */
+	const delegateTool = () => ({
+		name: "delegate",
+		label: "Delegate",
+		description: toolDescription(readRoster(getAgentDir()).agents),
+		parameters: Type.Object({
+			agent: Type.String({ description: "Roster agent name to run." }),
+			task: Type.String({
+				description: "The task for the delegate. It sees this and its agent prompt, nothing else of this session.",
+			}),
+			model: Type.Optional(Type.String({ description: "provider/id model for this call; defaults to the agent's." })),
+			thinking: Type.Optional(
+				Type.String({ description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the agent's.` }),
+			),
+		}),
+		async execute(
+			_toolCallId: string,
+			params: { agent: string; task: string; model?: string; thinking?: string },
+			_signal: unknown,
+			_onUpdate: unknown,
+			ctx: ExtensionContext,
+		) {
+			if (ctx.hasUI !== true) {
+				throw new Error(
+					"the delegate tool needs a UI: the user approves every delegation in a menu, and this session has none",
+				);
+			}
+			const roster = rosterFor(ctx);
+			const start = validate({ ...params, task: params.task ?? "" }, roster, ctx.modelRegistry);
+			const request: Request = {
+				agent: start.agent.name,
+				model: start.model,
+				thinking: start.thinking,
+				task: start.task,
+			};
+			const decision = await confirmDelegation(request, ctx, roster.agents, modelIds(ctx.modelRegistry));
+			if (decision.kind === "reject") {
+				return toolResult("The user rejected this delegation. Nothing was started.", { outcome: "rejected" });
+			}
+			if (decision.kind === "changes") {
+				return toolResult(
+					`The user asked for changes instead of approving: ${decision.changes}\nNothing was started. Adjust the request as asked, or answer in chat.`,
+					{ outcome: "changes", changes: decision.changes },
+				);
+			}
+			const approved = validate(decision.request, roster, ctx.modelRegistry);
+			const launched = await launch(approved, ctx);
+			ctx.ui.notify(started(launched, approved), "info");
+			return toolResult(
+				`Started delegation ${launched.id}: ${approved.agent.name} (${approved.model}, thinking ${approved.thinking}) in window ${launched.windowName}. It runs in the background and its result arrives as a message; delegation_status reports it and delegation_close ends it.`,
+				{
+					outcome: "started",
+					id: launched.id,
+					agent: approved.agent.name,
+					model: approved.model,
+					thinking: approved.thinking,
+					windowId: launched.windowId,
+					windowName: launched.windowName,
+				},
+			);
+		},
+	});
+
+	/** One delegation's state, from its records and the window tmux reports. */
+	async function describe(record: Recorded, ctx: ExtensionContext): Promise<string> {
+		let alive: boolean | undefined;
+		try {
+			alive = await tmux.isAlive(record.windowId);
+		} catch {
+			alive = undefined; // tmux could not be asked; never read that as gone
+		}
+		const state =
+			record.closed === true
+				? "closed"
+				: record.result !== undefined
+					? "done"
+					: alive === true
+						? "running"
+						: alive === false
+							? "closed"
+							: "unknown";
+		const session = record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id);
+		const lines = [
+			`${record.id} ${record.agent} (${record.model}, thinking ${record.thinking})`,
+			`  state: ${stateLine(state, record)}`,
+			`  window: ${record.windowName} (${record.windowId})`,
+			`  session: ${session ?? `${record.id} (no session file yet)`}`,
+		];
+		if (record.result !== undefined) lines.push(`  envelope: ${record.result.envelopePath}`);
+		return lines.join("\n");
+	}
+
+	function stateLine(state: string, record: Recorded): string {
+		if (state === "running") return "running — the window is open and no result has arrived";
+		if (state === "done") return `done — result status: ${record.result?.status ?? "unknown"}`;
+		if (state === "closed") {
+			return record.closed === true ? "closed — delegation_close recorded it" : "closed — the window is gone";
+		}
+		return "unknown — tmux could not be asked whether the window is open";
+	}
+
+	const statusTool = {
+		name: "delegation_status",
+		label: "Delegation status",
+		description:
+			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). Names the delegation id, agent, model, thinking, window, delegate session path and result envelope path. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
+		parameters: Type.Object({
+			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
+		}),
+		async execute(
+			_toolCallId: string,
+			params: { id?: string },
+			_signal: unknown,
+			_onUpdate: unknown,
+			ctx: ExtensionContext,
+		) {
+			const all = results.list();
+			const records = params.id === undefined ? all : all.filter((record) => record.id === params.id);
+			if (params.id !== undefined && records.length === 0) {
+				throw new Error(
+					`no delegation ${JSON.stringify(params.id)}; known: ${all.map((record) => record.id).join(", ") || "none"}`,
+				);
+			}
+			const details = records.map((record) => ({
+				id: record.id,
+				agent: record.agent,
+				model: record.model,
+				thinking: record.thinking,
+				windowId: record.windowId,
+				windowName: record.windowName,
+				closed: record.closed === true,
+				status: record.result?.status,
+				envelopePath: record.result?.envelopePath,
+				sessionPath: record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id),
+			}));
+			if (records.length === 0) return toolResult("No delegations are recorded in this session.", { delegations: details });
+			const blocks: string[] = [];
+			for (const record of records) blocks.push(await describe(record, ctx));
+			const heading = `${records.length} delegation${records.length === 1 ? "" : "s"}:`;
+			return toolResult(`${heading}\n\n${blocks.join("\n\n")}`, { delegations: details });
+		},
+	};
+
+	const closeTool = {
+		name: "delegation_close",
+		label: "Close delegation",
+		description:
+			"Close one delegation: kill its tmux window through tmux and record the close, so delegation_status reports it closed. The delegate's session file and result envelope stay on disk. An unknown or already closed id returns a message with nothing killed.",
+		parameters: Type.Object({
+			id: Type.String({ description: "The delegation id to close." }),
+		}),
+		async execute(
+			_toolCallId: string,
+			params: { id: string },
+			_signal: unknown,
+			_onUpdate: unknown,
+			_ctx: ExtensionContext,
+		) {
+			const record = results.find(params.id);
+			if (record === undefined) {
+				const known = results.list().map((item) => item.id).join(", ") || "none";
+				throw new Error(`no delegation ${JSON.stringify(params.id)}; known: ${known}`);
+			}
+			if (record.closed === true)
+				return toolResult(`Delegation ${record.id} is already closed.`, { id: record.id, closed: true });
+			let alive: boolean;
+			try {
+				alive = await tmux.isAlive(record.windowId);
+			} catch (err) {
+				throw new Error(`could not ask tmux about window ${record.windowName}: ${(err as Error).message}`);
+			}
+			if (alive) {
+				try {
+					await tmux.kill(record.windowId);
+				} catch (err) {
+					throw new Error(`could not kill window ${record.windowName} (${record.windowId}): ${(err as Error).message}`);
+				}
+			}
+			results.recordClose(record.id);
+			const how = alive ? `killed window ${record.windowName} (${record.windowId})` : `its window ${record.windowName} was already gone`;
+			return toolResult(`Closed delegation ${record.id}: ${how}.`, { id: record.id, windowId: record.windowId, killed: alive });
+		},
+	};
+
 	pi.on("session_start", (_event, ctx) => {
 		registry = ctx.modelRegistry;
 		results.restore(ctx);
+		// The roster is read at call time; the description can only be fixed here.
+		pi.registerTool(delegateTool() as never);
 	});
-
-	const modelIds = (): string[] => (registry?.getAll() ?? []).map((model) => `${model.provider}/${model.id}`);
 
 	/** Agent names, flags, model ids and thinking levels, at the cursor's token. */
 	function completions(prefix: string): { value: string; label: string }[] | null {
@@ -162,121 +502,18 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		const tokens = head.trim() === "" ? [] : head.trim().split(/\s+/);
 		if (tokens.length === 0) return pick(readRoster(getAgentDir()).agents.map((agent) => agent.name));
 		const previous = tokens[tokens.length - 1];
-		if (previous === "--model") return pick(modelIds());
+		if (previous === "--model") return pick(modelIds(registry));
 		if (previous === "--thinking") return pick(THINKING_LEVELS);
 		return pick(FLAGS);
-	}
-
-	async function start(text: string, ctx: ExtensionContext): Promise<void> {
-		const fail = (message: string) => ctx.ui.notify(`delegate: ${message}`, "error");
-		const outcome = parse(text);
-		if ("error" in outcome) {
-			fail(outcome.error);
-			return;
-		}
-		const { agent: wanted, model: wantedModel, thinking: wantedThinking, task } = outcome.parsed;
-
-		const { agents, warnings } = readRoster(getAgentDir());
-		for (const warning of warnings) ctx.ui.notify(`delegate: ${warning}`, "warning");
-		if (agents.length === 0) {
-			fail(
-				`no agents are defined; add ${join(getAgentDir(), "agents", "<name>", "AGENT.md")} with frontmatter description, model and thinking, and the prompt as its body`,
-			);
-			return;
-		}
-		const agent = agents.find((candidate) => candidate.name === wanted);
-		if (agent === undefined) {
-			fail(`no agent named ${JSON.stringify(wanted)}; available: ${agents.map((item) => item.name).join(", ")}`);
-			return;
-		}
-
-		const model = wantedModel ?? agent.model;
-		const thinking = wantedThinking ?? agent.thinking;
-		const badModel = modelProblem(model, ctx.modelRegistry);
-		if (badModel !== undefined) {
-			fail(badModel);
-			return;
-		}
-		const badThinking = thinkingProblem(thinking);
-		if (badThinking !== undefined) {
-			fail(badThinking);
-			return;
-		}
-
-		if (!tmux.insideTmux()) {
-			fail("this session is not inside tmux; start it in a tmux pane to open a delegate window");
-			return;
-		}
-
-		// The task goes on disk before the window exists: the delegate finds it
-		// at session start without a handshake, and a window that fails leaves
-		// mail that is reported rather than cleaned up.
-		const id = randomUUID();
-		const sent: SendPayload = { to: id, body: task };
-		pi.events.emit(SEND, sent);
-		if (typeof sent.error === "string") {
-			fail(`could not send the task to ${id}: ${sent.error}`);
-			return;
-		}
-		if (sent.envelope === undefined) {
-			fail(`needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)`);
-			return;
-		}
-		const requestId = sent.envelope.id;
-		if (typeof requestId !== "string") {
-			fail(`the message:send provider wrote no request id for ${id}`);
-			return;
-		}
-
-		const argv = [
-			...parentCommand(),
-			"--session-id",
-			id,
-			"--model",
-			model,
-			"--thinking",
-			thinking,
-			"--append-system-prompt",
-			`${agent.prompt}\n\n${FINAL_LINE}`,
-		];
-		const env: Record<string, string> = {
-			PI_CODING_AGENT_DIR: getAgentDir(),
-			[PARENT_ENV]: ctx.sessionManager.getSessionId(),
-		};
-		const sessionDir = process.env[SESSION_DIR_ENV];
-		if (sessionDir !== undefined && sessionDir !== "") env[SESSION_DIR_ENV] = sessionDir;
-		// Listeners may only append to `args` and add to `env`; there is no veto.
-		const launch: LaunchPayload = { args: argv, env };
-		pi.events.emit(LAUNCH, launch);
-
-		const windowName = `${agent.name}-${id}`;
-		let windowId: string;
-		try {
-			windowId = await tmux.openWindow({ name: windowName, cwd: ctx.cwd, argv: launch.args, env: launch.env });
-		} catch (err) {
-			fail(`could not open window ${windowName} for ${id}: ${(err as Error).message}`);
-			return;
-		}
-
-		// No task text in the record: the request copy in `sent/` has it.
-		results.recordStart(
-			{
-				id,
-				agent: agent.name,
-				model,
-				thinking,
-				windowId,
-				windowName,
-				requestId,
-			},
-			ctx,
-		);
-		ctx.ui.notify(`delegate: ${agent.name} ${id} started in window ${windowName}`, "info");
 	}
 
 	pi.registerCommand("delegate", {
 		description: `Start a delegate Pi session in a background tmux window: ${USAGE}`,
 		getArgumentCompletions: completions,
-		handler: start,
+		handler: command,
 	});
+
+	pi.registerTool(delegateTool() as never);
+	pi.registerTool(statusTool as never);
+	pi.registerTool(closeTool as never);
 }

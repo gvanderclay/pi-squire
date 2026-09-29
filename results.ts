@@ -1,7 +1,9 @@
 // The delegation records and the result message. A delegation is recorded in
-// the parent session when it starts; when the provider claims a reply that
-// answers a recorded task, this listener takes the message over, shows the
-// parent one delegate result and records the result.
+// the parent session when it starts, and again when it is closed; when the
+// provider claims a reply that answers a recorded task, this listener takes
+// the message over, shows the parent one delegate result and records the
+// result. The records are the one source of truth for a delegation's state,
+// for the footer, `delegation_status` and `delegation_close`.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -58,6 +60,14 @@ export type Result = {
 	sessionPath?: string;
 };
 
+/** One delegation as it stands: what was recorded at its start, plus what came after. */
+export type Recorded = Delegation & {
+	/** Set when a result arrived. */
+	result?: Result;
+	/** Set when `delegation_close` recorded a close. */
+	closed?: boolean;
+};
+
 /** The provider's payload on `message:inbound`. */
 export type Inbound = {
 	envelope: Envelope;
@@ -71,6 +81,12 @@ export type Results = {
 	restore(ctx: ExtensionContext): void;
 	/** Record a delegation and show it as running. */
 	recordStart(delegation: Delegation, ctx: ExtensionContext): void;
+	/** Record a close. `unknown` when no such delegation, `already-closed` when one was recorded. */
+	recordClose(id: string): "closed" | "already-closed" | "unknown";
+	/** Every delegation, in the order it was recorded. */
+	list(): Recorded[];
+	/** One delegation by id. */
+	find(id: string): Recorded | undefined;
 	/** Take over a reply that answers a recorded delegation, if any. */
 	takeReply(payload: Inbound): void;
 };
@@ -85,7 +101,7 @@ function cap(text: string, max: number): string | undefined {
 }
 
 /** The delegate's session file in `dir`, found by its `_<id>.jsonl` suffix. */
-function findSession(dir: string | undefined, id: string): string | undefined {
+export function findSession(dir: string | undefined, id: string): string | undefined {
 	if (dir === undefined) return undefined;
 	let names: string[];
 	try {
@@ -130,10 +146,10 @@ function resultText(delegation: Delegation, payload: Inbound, session: string | 
 }
 
 export function createResults(pi: ExtensionAPI): Results {
-	/** Recorded delegations by their request's envelope id. */
-	const byRequest = new Map<string, Delegation>();
-	/** Delegation ids whose result has not arrived. */
-	const running = new Set<string>();
+	/** Every recorded delegation by its id, in the order recorded. */
+	const byId = new Map<string, Recorded>();
+	/** The same records by their request's envelope id, for matching replies. */
+	const byRequest = new Map<string, Recorded>();
 	/** Reply envelope ids a result message has already been sent for. */
 	const shown = new Set<string>();
 	/** The latest session context, for the footer and the session directory. */
@@ -141,31 +157,40 @@ export function createResults(pi: ExtensionAPI): Results {
 	/** Whether the footer currently shows the entry, so a clear is sent only when needed. */
 	let footerShown = false;
 
+	/** A delegation still going: no result and no recorded close. */
+	const running = (): Recorded[] => [...byId.values()].filter((record) => record.result === undefined && record.closed !== true);
+
 	/** The footer counts the running delegations, and hides itself at zero. */
 	function updateFooter(): void {
 		if (ctx?.hasUI !== true) return;
-		const visible = running.size > 0;
+		const count = running().length;
+		const visible = count > 0;
 		if (!visible && !footerShown) return;
 		footerShown = visible;
-		ctx.ui.setStatus(STATUS_KEY, visible ? `⇄ ${running.size} running` : undefined);
+		ctx.ui.setStatus(STATUS_KEY, visible ? `⇄ ${count} running` : undefined);
 	}
 
 	/** Rebuild the records from the session's entries, so a resume still recognises replies. */
 	function restore(context: ExtensionContext): void {
 		ctx = context;
+		byId.clear();
 		byRequest.clear();
-		running.clear();
 		shown.clear();
 		for (const entry of context.sessionManager.getEntries()) {
 			if (entry.type !== "custom" || entry.customType !== CUSTOM_TYPE) continue;
-			const data = entry.data as Partial<Delegation & { result: Result }> | undefined;
+			const data = entry.data as Partial<Delegation & { result: Result; closed: boolean }> | undefined;
 			if (data === undefined || typeof data.id !== "string") continue;
 			if (typeof data.requestId === "string") {
-				byRequest.set(data.requestId, data as Delegation);
-				running.add(data.id);
+				const record: Recorded = { ...(data as Delegation) };
+				byId.set(record.id, record);
+				byRequest.set(record.requestId, record);
 			} else if (typeof data.result?.replyId === "string") {
 				shown.add(data.result.replyId);
-				running.delete(data.id);
+				const record = byId.get(data.id);
+				if (record !== undefined) record.result = data.result;
+			} else if (data.closed === true) {
+				const record = byId.get(data.id);
+				if (record !== undefined) record.closed = true;
 			}
 		}
 		updateFooter();
@@ -174,9 +199,20 @@ export function createResults(pi: ExtensionAPI): Results {
 	function recordStart(delegation: Delegation, context: ExtensionContext): void {
 		ctx = context;
 		pi.appendEntry(CUSTOM_TYPE, delegation);
-		byRequest.set(delegation.requestId, delegation);
-		running.add(delegation.id);
+		const record: Recorded = { ...delegation };
+		byId.set(record.id, record);
+		byRequest.set(record.requestId, record);
 		updateFooter();
+	}
+
+	function recordClose(id: string): "closed" | "already-closed" | "unknown" {
+		const record = byId.get(id);
+		if (record === undefined) return "unknown";
+		if (record.closed === true) return "already-closed";
+		pi.appendEntry(CUSTOM_TYPE, { id, closed: true });
+		record.closed = true;
+		updateFooter();
+		return "closed";
 	}
 
 	function takeReply(payload: Inbound): void {
@@ -187,7 +223,7 @@ export function createResults(pi: ExtensionAPI): Results {
 		if (requestId === undefined) return;
 		payload.handled = true;
 		if (shown.has(reply.id)) return;
-		const delegation = byRequest.get(requestId) as Delegation;
+		const delegation = byRequest.get(requestId) as Recorded;
 		shown.add(reply.id);
 		const session = findSession(ctx?.sessionManager.getSessionDir(), delegation.id);
 		pi.sendMessage(
@@ -201,11 +237,11 @@ export function createResults(pi: ExtensionAPI): Results {
 			...(session === undefined ? {} : { sessionPath: session }),
 		};
 		pi.appendEntry(CUSTOM_TYPE, { id: delegation.id, result });
-		running.delete(delegation.id);
+		delegation.result = result;
 		updateFooter();
 	}
 
 	pi.events.on(INBOUND, (data) => takeReply(data as Inbound));
 
-	return { restore, recordStart, takeReply };
+	return { restore, recordStart, recordClose, list: () => [...byId.values()], find: (id) => byId.get(id), takeReply };
 }

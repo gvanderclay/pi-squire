@@ -13,11 +13,13 @@ session, and it is also the delegate's mailbox address: the task waits in its
 inbox and is delivered at session start, with no handshake.
 
 Starting a delegation adds nothing to the parent's context — the model sees
-neither the command nor the task. When the delegate settles, its answer is
-taken over on `message:inbound` and shown to the parent as one result message
-that quotes the task; the window stays open after it so you can read it or
-keep working in it. Delegations are recorded in the parent session without
-the task text.
+neither the command nor the task. The model can also start one itself with the
+`delegate` tool, but only after the user approves it in the confirmation menu
+below; `delegation_status` and `delegation_close` let it check on a delegation
+and end one. When the delegate settles, its answer is taken over on
+`message:inbound` and shown to the parent as one result message that quotes
+the task; the window stays open after it so you can read it or keep working in
+it. Delegations are recorded in the parent session without the task text.
 
 Inside a delegate (`PI_DELEGATE_PARENT` set) the extension registers nothing,
 so a delegate cannot start delegates of its own. Without a UI the command
@@ -42,9 +44,12 @@ in the npm tarball.
 
 ## Requirements
 
-- Pi, with the `pi.events` bus and `pi.registerCommand`.
+- Pi, with the `pi.events` bus, `pi.registerCommand` and `pi.registerTool`.
 - `@earendil-works/pi-coding-agent` for `getAgentDir()` and the frontmatter
   parser, declared as a peer dependency and supplied by Pi.
+- `@earendil-works/pi-tui` for the menu's search picker, and `typebox` for the
+  tools' parameter schema. Both are host-provided packages, declared as peer
+dependencies and supplied by Pi.
 - tmux, with the session running in a tmux pane. A window is opened in the
   pane's session, so a client attached elsewhere does not matter.
 - A provider of `message:*`, such as the `mailbox` package (npm
@@ -82,6 +87,75 @@ variable of its own; `PI_DELEGATE_PARENT` is set for the child, never read as
 configuration. `--model` and `--thinking` override the agent's defaults for
 one call, and an unknown value is refused with close matches.
 
+## Confirmation menu
+
+Every `delegate` tool call opens a menu before anything starts, and the
+user's choice is enforced in code: the tool refuses in a session without a UI,
+because no approval is possible there. `/delegate`, typed by the user, needs
+no menu. The title shows the agent, model, thinking and task, so every change
+is visible before approval.
+
+| Choice | What happens |
+| --- | --- |
+| Approve and start | The delegation starts. It is the first item, so Enter accepts the call. |
+| Reject | Returns "the user rejected this delegation" to the model; nothing starts. Escaping the menu counts as Reject. |
+| Change model | A search picker over the models the session knows (type to filter). Cancelling changes nothing. |
+| Change thinking | A search picker over `off`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. |
+| Change agent | A search picker over the roster. Changing the agent resets the model and thinking to that agent's defaults, as `/delegate <agent>` without flags does. |
+| Edit task | The editor opens on the task. An empty or cancelled edit changes nothing. |
+| Ask for changes | The editor opens; what the user types is returned to the model in the tool result, and nothing starts. |
+
+## Tools
+
+The model gets three tools. They share the command's launch path and the
+session's delegation records; none of them is registered inside a delegate.
+
+| Tool | Parameters | What it does |
+| --- | --- | --- |
+| `delegate` | `agent`, `task`, optional `model` and `thinking` | Validates the call the way the command does, opens the confirmation menu, starts the delegation on approval, and returns the delegation id at once without waiting for a result. |
+| `delegation_status` | optional `id` | Reports each delegation as running, done or closed, with the window, the delegate's session and the result envelope's path. |
+| `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
+
+The `delegate` tool's description lists the current roster — each agent's name,
+description, and default model and thinking — so the model picks an agent
+without reading files. A tool's description is fixed when it is registered, so
+the description is rebuilt at every session start; a roster change shows up in
+the next session. The roster itself is read at call time, and an unknown agent,
+model or thinking level is refused with close matches, before the menu opens.
+
+`delegation_status` reports one state per delegation:
+
+```text
+2 delegations:
+
+<id> scout (provider/model, thinking low)
+  state: running — the window is open and no result has arrived
+  window: scout-<id> (@1)
+  session: <the delegate's session file, or its id when there is none yet>
+
+<id> researcher (provider/other, thinking high)
+  state: done — result status: done
+  window: researcher-<id> (@2)
+  session: <session file>
+  envelope: <the reply's path in the parent's cur/>
+```
+
+- **Running** means the window is open and no result has arrived. An open
+  window is connection, not task state: the delegate may still be working, or
+  waiting for the user, and only a result means done.
+- **Done** comes from the recorded result, and shows the envelope's status
+  (`done`, `failed`, `stopped` or `needs-input`).
+- **Closed** covers a close `delegation_close` recorded and a window that is no
+  longer there. A recorded close wins over a result, and a result wins over a
+  window that is gone.
+- When tmux cannot be asked about a window, the state is `unknown`, never
+  `closed`, because a failed check is not evidence the window is gone.
+
+`delegation_close` kills the window and records the close even when the
+result has already arrived; when the window is already gone it only records
+the close. An unknown or already closed id returns a message and kills
+nothing. The delegate's session file and result envelope stay on disk.
+
 ## Results
 
 A delegate answers its task with one mailbox reply. `delegate` takes that
@@ -113,11 +187,12 @@ Delegate session: <session file or id>
   turn when the parent is idle and arrives as a follow-up when it is
   mid-turn.
 - The footer counts the running delegations (`⇄ N running`), clears one entry
-  per result and hides itself at zero.
-- Each result is recorded in the parent session, so the same reply is never
-  shown twice; the records are rebuilt synchronously at session start, so a
-  resume still recognises replies — including one that arrived while the
-  parent was closed.
+  per result or close and hides itself at zero.
+- Each result and each close is recorded in the parent session, and the
+  records are rebuilt synchronously at session start; a resume still
+  recognises replies — including one that arrived while the parent was
+  closed — and still reports a recorded close as closed. A result is shown
+  once and never again.
 - Plain replies, and every request, are left to the provider.
 
 ## Hooks

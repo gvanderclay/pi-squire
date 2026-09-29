@@ -6,9 +6,11 @@
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens `<agent>-<id>` in
 // the parent's working directory running the parent's own Pi. Starting a
-// delegation adds nothing to the model's context. Inside a delegate
-// (`PI_DELEGATE_PARENT` set) the extension registers nothing, so a delegate
-// cannot delegate.
+// delegation adds nothing to the model's context. Each delegation is recorded
+// in the parent session; its answer is taken over on `message:inbound` and
+// shown as one result message, so the parent hears back on its own. Inside a
+// delegate (`PI_DELEGATE_PARENT` set) the extension registers nothing, so a
+// delegate cannot delegate.
 //
 // The `session:launch` contract this package provides, and the `message:*`
 // hooks it consumes, live in this package's README.
@@ -23,14 +25,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { isThinking, readRoster, THINKING_LEVELS } from "./agents.ts";
+import { createResults } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 
 /** The hook a provider of `message:*` answers with the written request. */
 const SEND = "message:send";
 /** The hook emitted just before a delegate's window opens. */
 const LAUNCH = "session:launch";
-/** The session entry type each delegation is recorded under. */
-const CUSTOM_TYPE = "delegate";
 /** Set in a delegate's environment, so this extension stays off there. */
 const PARENT_ENV = "PI_DELEGATE_PARENT";
 /** Forwarded to the child when the parent has it set. */
@@ -138,11 +139,14 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	// A delegate registers nothing: `delegate` is one level deep (Q27).
 	if ((process.env[PARENT_ENV] ?? "") !== "") return;
 
+	const results = createResults(pi);
+
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
 
 	pi.on("session_start", (_event, ctx) => {
 		registry = ctx.modelRegistry;
+		results.restore(ctx);
 	});
 
 	const modelIds = (): string[] => (registry?.getAll() ?? []).map((model) => `${model.provider}/${model.id}`);
@@ -255,15 +259,18 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		}
 
 		// No task text in the record: the request copy in `sent/` has it.
-		pi.appendEntry(CUSTOM_TYPE, {
-			id,
-			agent: agent.name,
-			model,
-			thinking,
-			windowId,
-			windowName,
-			requestId,
-		});
+		results.recordStart(
+			{
+				id,
+				agent: agent.name,
+				model,
+				thinking,
+				windowId,
+				windowName,
+				requestId,
+			},
+			ctx,
+		);
 		ctx.ui.notify(`delegate: ${agent.name} ${id} started in window ${windowName}`, "info");
 	}
 

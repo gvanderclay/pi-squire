@@ -1,7 +1,7 @@
 {
 	"name": "pi-squire",
 	"version": "0.1.0",
-	"description": "Starts a delegate Pi session in a background tmux window and sends it the task over message:*",
+	"description": "Starts a delegate Pi session in a background tmux window, sends it the task over message:*, and shows the parent its result",
 	"keywords": [
 		"pi-package"
 	],
@@ -15,6 +15,7 @@
 		"index.ts",
 		"agents.ts",
 		"tmux.ts",
+		"results.ts",
 		"README.md"
 	],
 	"scripts": {

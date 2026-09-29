@@ -15,6 +15,8 @@ import { FakeTmux } from "./fake-tmux.ts";
 /** A throwaway root for this test file; `PI_CODING_AGENT_DIR` points inside it. */
 export const root = mkdtempSync(join(tmpdir(), "delegate-test-"));
 export const agentDir = join(root, "agent");
+/** The session directory the fake `sessionManager` reports. */
+export const sessionDir = join(agentDir, "sessions");
 process.env.PI_CODING_AGENT_DIR = agentDir;
 export const cleanup = () => rmSync(root, { recursive: true, force: true });
 
@@ -26,9 +28,10 @@ export function agentFile(fields: Record<string, string>, body = "Do the task an
 	return `---\n${front}\n---\n\n${body}\n`;
 }
 
-/** Empty the roster: the next `AGENT.md` write is the whole of it. */
+/** Empty the roster and the session directory; the next write into either is the whole of it. */
 export function resetAgents(): void {
 	rmSync(join(agentDir, "agents"), { recursive: true, force: true });
+	rmSync(sessionDir, { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
@@ -56,6 +59,9 @@ type Command = {
 
 let counter = 0;
 
+/** One custom entry, the shape `pi.appendEntry` writes and `getEntries` returns. */
+export type Entry = { customType: string; data: unknown };
+
 export type SessionOptions = {
 	/** Whether `ctx.hasUI` is true. */
 	hasUI?: boolean;
@@ -65,6 +71,8 @@ export type SessionOptions = {
 	send?: "envelope" | "error" | "none";
 	/** Set `PI_DELEGATE_PARENT` before the extension registers, as inside a delegate. */
 	parentEnv?: string;
+	/** Custom entries the session already holds, as on a resume. */
+	entries?: readonly Entry[];
 };
 
 /** One fake Pi session running the extension under `parent`. */
@@ -73,7 +81,8 @@ export function session(options: SessionOptions = {}) {
 	const commands: Record<string, Command> = {};
 	const handlers: Record<string, Handler[]> = {};
 	const sent: { message: { customType: string; content: unknown; display?: boolean }; options: unknown }[] = [];
-	const entries: { customType: string; data: unknown }[] = [];
+	const entries: Entry[] = [...(options.entries ?? [])];
+	const statuses: { key: string; text: string | undefined }[] = [];
 	const notes: string[] = [];
 	const warnings: string[] = [];
 	const errors: string[] = [];
@@ -100,10 +109,22 @@ export function session(options: SessionOptions = {}) {
 		cwd: root,
 		hasUI: options.hasUI ?? true,
 		modelRegistry: registry,
-		sessionManager: { getSessionId: () => parent, getSessionDir: () => join(agentDir, "sessions") },
+		sessionManager: {
+			getSessionId: () => parent,
+			getSessionDir: () => sessionDir,
+			getEntries: () =>
+				entries.map((entry, index) => ({
+					type: "custom",
+					id: `entry-${index}`,
+					parentId: null,
+					timestamp: "",
+					...entry,
+				})),
+		},
 		ui: {
 			notify: (text: string, type?: string) =>
 				(type === "warning" ? warnings : type === "error" ? errors : notes).push(text),
+			setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }),
 		},
 	};
 	// The provider stub runs synchronously on the same bus, as `mailbox` does.
@@ -126,6 +147,7 @@ export function session(options: SessionOptions = {}) {
 		pi,
 		sent,
 		entries,
+		statuses,
 		notes,
 		warnings,
 		errors,

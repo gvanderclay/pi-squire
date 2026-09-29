@@ -13,10 +13,11 @@ session, and it is also the delegate's mailbox address: the task waits in its
 inbox and is delivered at session start, with no handshake.
 
 Starting a delegation adds nothing to the parent's context — the model sees
-neither the command nor the task. The delegate's answer comes back to the
-parent through the provider as an ordinary mailbox reply, quoting the task,
-and the window stays open after it so you can read it or keep working in it.
-Delegations are recorded in the parent session without the task text.
+neither the command nor the task. When the delegate settles, its answer is
+taken over on `message:inbound` and shown to the parent as one result message
+that quotes the task; the window stays open after it so you can read it or
+keep working in it. Delegations are recorded in the parent session without
+the task text.
 
 Inside a delegate (`PI_DELEGATE_PARENT` set) the extension registers nothing,
 so a delegate cannot start delegates of its own. Without a UI the command
@@ -81,6 +82,44 @@ variable of its own; `PI_DELEGATE_PARENT` is set for the child, never read as
 configuration. `--model` and `--thinking` override the agent's defaults for
 one call, and an unknown value is refused with close matches.
 
+## Results
+
+A delegate answers its task with one mailbox reply. `delegate` takes that
+reply over before the provider can inject it, and sends the parent one
+message labelled delegate output:
+
+```
+[delegate] Result from scout (provider/model), delegation <id>, request <request id>.
+Status: done
+Task, quoted from <sent/ copy>:
+> the task
+Envelope: <cur/ path>
+Delegate session: <session file or id>
+
+<the result>
+```
+
+- The header carries the agent, the model, the delegation id and the request
+  id; the status is the envelope's (`done`, `failed`, `stopped` or
+  `needs-input`).
+- The task is quoted from the request copy the provider puts on the payload,
+  capped at 2 KiB with the copy's `sent/` path. A request with no copy is
+  named by id alone.
+- The envelope path is the claimed reply in the parent's `cur/`; the
+  delegate's session path is found in the session directory by the delegation
+  id, and the id alone is shown when no file exists yet.
+- The body is cut at 32 KiB with the envelope path.
+- The message is sent as a `followUp` with `triggerTurn`: a result starts a
+  turn when the parent is idle and arrives as a follow-up when it is
+  mid-turn.
+- The footer counts the running delegations (`⇄ N running`), clears one entry
+  per result and hides itself at zero.
+- Each result is recorded in the parent session, so the same reply is never
+  shown twice; the records are rebuilt at session start, so a resume still
+  recognises replies — including one that arrived while the parent was
+  closed.
+- Plain replies, and every request, are left to the provider.
+
 ## Hooks
 
 The `js` block below is the contract's worked example, and
@@ -122,7 +161,10 @@ provider's own README carries the contract.
 
 ### `message:inbound`
 
-`delegate` consumes this hook for answers: a reply that names a recorded
-delegation is taken over, so the provider does not inject it, and the parent
-shows the delegate's result instead. The provider's README carries the
+`delegate` consumes this hook for answers: a reply whose `in_reply_to` names a
+recorded delegation's request is taken over — `delegate` sets `handled`, so
+the provider injects nothing, and shows the parent the result message above.
+The reply's request copies fill the quoted task and its `cur/` path is the
+envelope it names. A reply to a request this session did not delegate, and
+every request, is left to the provider. The provider's README carries the
 contract.

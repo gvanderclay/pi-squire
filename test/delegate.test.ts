@@ -5,8 +5,10 @@
 // function: a temporary agent directory, a fake Pi session, the fake tmux.
 import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-import { agentDir, agentFile, cleanup, resetAgents, root, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetAgents, root, session, sessionDir, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetAgents());
 after(() => cleanup());
@@ -289,4 +291,262 @@ test("a window that fails to open is reported with the delegation id and recorde
 	assert.match(s.errors[0], /scout-/);
 	assert.match(s.errors[0], /no server running/);
 	assert.ok(s.errors[0].includes(id), s.errors[0]);
+});
+
+// ---------------------------------------------------------------------------
+// Results
+
+/** One recorded delegation, the shape 04 writes with `pi.appendEntry`. */
+type Delegation = {
+	id: string;
+	agent: string;
+	model: string;
+	requestId: string;
+};
+
+/** One envelope, as `mailbox`'s README example carries it. */
+type Envelope = {
+	id: string;
+	from: string;
+	to: string;
+	in_reply_to: string[];
+	status: string;
+	ts: string;
+	body: string;
+};
+
+/** One request copy beside a reply on the provider's payload. */
+type RequestCopy = { envelope: Envelope; path: string };
+
+/** The provider's `message:inbound` payload. */
+type Inbound = { envelope: Envelope; path: string; requests: RequestCopy[]; handled: boolean };
+
+const SCOUT = agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" });
+
+/** Write `scout` and start one delegation of it, returning the session. */
+async function scoutSession() {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	await s.delegate("scout find the answer");
+	return s;
+}
+
+/** A reply to `delegation`'s task, shaped like `mailbox`'s README example. */
+function inbound(
+	parent: string,
+	delegation: Delegation,
+	overrides: { status?: string; body?: string; task?: string; replyId?: string; omitTask?: boolean } = {},
+): Inbound {
+	const replyId = overrides.replyId ?? "reply";
+	const taskId = delegation.requestId;
+	return {
+		envelope: {
+			id: replyId,
+			from: delegation.id,
+			to: parent,
+			in_reply_to: [taskId],
+			status: overrides.status ?? "done",
+			ts: "2026-09-29T00:00:00.000Z",
+			body: overrides.body ?? "The answer.",
+		},
+		path: join(agentDir, "mailbox", parent, "cur", `000000000000002-${replyId}.json`),
+		requests:
+			overrides.omitTask === true
+				? []
+				: [
+						{
+							envelope: {
+								id: taskId,
+								from: parent,
+								to: delegation.id,
+								in_reply_to: [],
+								status: "",
+								ts: "2026-09-29T00:00:00.000Z",
+								body: overrides.task ?? "find the answer",
+							},
+							path: join(agentDir, "mailbox", parent, "sent", `000000000000001-${taskId}.json`),
+						},
+					],
+		handled: false,
+	};
+}
+
+test("a done reply to a recorded delegation becomes one handled result message", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const payload = inbound(s.parent, delegation);
+	s.events.emit("message:inbound", payload);
+	assert.equal(payload.handled, true);
+	assert.equal(s.sent.length, 1);
+	const { message, options } = s.sent[0];
+	assert.equal(message.customType, "delegate");
+	assert.equal(message.display, true);
+	const content = String(message.content);
+	assert.match(content, /scout/);
+	assert.match(content, /alpha\/fast-model/);
+	assert.ok(content.includes(delegation.id), content);
+	assert.match(content, /done/);
+	assert.match(content, /> find the answer/);
+	assert.ok(content.includes(payload.requests[0].path), content);
+	assert.ok(content.includes(payload.path), content);
+	assert.deepEqual(options, { triggerTurn: true, deliverAs: "followUp" });
+});
+
+test("the footer counts running delegations up and clears back to hidden", async () => {
+	writeAgent("scout", SCOUT);
+	writeAgent("researcher", agentFile({ description: "Digs deeper", model: "alpha/deep-model", thinking: "high" }));
+	const s = session();
+	await s.start();
+	await s.delegate("scout find the answer");
+	await s.delegate("researcher read the file");
+	assert.deepEqual(s.statuses, [
+		{ key: "delegate", text: "⇄ 1 running" },
+		{ key: "delegate", text: "⇄ 2 running" },
+	]);
+	const [scout, researcher] = s.entries.map((entry) => entry.data as Delegation);
+	s.events.emit("message:inbound", inbound(s.parent, scout));
+	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: "⇄ 1 running" });
+	s.events.emit("message:inbound", inbound(s.parent, researcher, { replyId: "reply-researcher" }));
+	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: undefined });
+});
+
+test("without a UI no footer entry is set", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session({ hasUI: false });
+	await s.start();
+	await s.delegate("scout find the answer");
+	assert.deepEqual(s.statuses, []);
+});
+
+test("a resumed parent rebuilds its records and still takes a later reply", async () => {
+	writeAgent("scout", SCOUT);
+	const first = session();
+	await first.start();
+	await first.delegate("scout find the answer");
+	const saved = structuredClone(first.entries);
+
+	const resumed = session({ parent: first.parent, entries: saved });
+	await resumed.start();
+	assert.deepEqual(resumed.statuses.at(-1), { key: "delegate", text: "⇄ 1 running" });
+
+	const delegation = saved[0].data as Delegation;
+	const payload = inbound(resumed.parent, delegation);
+	resumed.events.emit("message:inbound", payload);
+	assert.equal(payload.handled, true);
+	assert.equal(resumed.sent.length, 1);
+	assert.ok(String(resumed.sent[0].message.content).includes(delegation.id));
+});
+
+test("a task over 2 KiB and a body over 32 KiB are cut with their paths", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const task = "t".repeat(3 * 1024);
+	const body = "b".repeat(33 * 1024);
+	const payload = inbound(s.parent, delegation, { task, body });
+	s.events.emit("message:inbound", payload);
+	const content = String(s.sent[0].message.content);
+	assert.ok(content.includes(`> ${task.slice(0, 2 * 1024)}`), "the task is quoted up to 2 KiB");
+	assert.ok(!content.includes(task.slice(0, 2 * 1024 + 1)), "the quote stops at 2 KiB");
+	assert.match(content, /Task cut at 2 KiB/);
+	assert.ok(content.includes(payload.requests[0].path));
+	assert.ok(content.includes(body.slice(0, 32 * 1024)), "the result keeps 32 KiB");
+	assert.ok(!content.includes(body.slice(0, 32 * 1024 + 1)), "the body stops at 32 KiB");
+	assert.match(content, /Body cut at 32 KiB/);
+	assert.ok(content.includes(payload.path));
+});
+
+test("the caps count UTF-8 bytes, so a cut never splits a character", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const task = "é".repeat(2 * 1024); // 4 KiB in UTF-8
+	const payload = inbound(s.parent, delegation, { task });
+	s.events.emit("message:inbound", payload);
+	const content = String(s.sent[0].message.content);
+	assert.ok(content.includes(`> ${task.slice(0, 1024)}`), "2 KiB of two-byte characters");
+	assert.ok(!content.includes(task.slice(0, 1025)), "the cut is on a character boundary");
+});
+
+test("the delegate's session file is found by id, or the id is shown alone", async () => {
+	const s = await scoutSession();
+	await s.delegate("scout find another answer");
+	const [first, second] = s.entries.map((entry) => entry.data as Delegation);
+	mkdirSync(sessionDir, { recursive: true });
+	const file = join(sessionDir, `20260929T000000_${first.id}.jsonl`);
+	writeFileSync(file, "");
+	s.events.emit("message:inbound", inbound(s.parent, first, { replyId: "reply-1" }));
+	s.events.emit("message:inbound", inbound(s.parent, second, { replyId: "reply-2" }));
+	const [one, two] = s.sent.map((item) => String(item.message.content));
+	assert.ok(one.includes(file), one);
+	assert.match(two, new RegExp(`Delegate session: ${second.id}\\b`), "the id alone when the file is not found");
+	assert.ok(!two.includes(join(sessionDir, `20260929T000000_${second.id}.jsonl`)));
+});
+
+test("a stopped or failed status is shown in the header", async () => {
+	const s = await scoutSession();
+	await s.delegate("scout find another answer");
+	const [first, second] = s.entries.map((entry) => entry.data as Delegation);
+	s.events.emit("message:inbound", inbound(s.parent, first, { status: "stopped", replyId: "reply-1" }));
+	s.events.emit("message:inbound", inbound(s.parent, second, { status: "failed", replyId: "reply-2" }));
+	assert.match(String(s.sent[0].message.content), /Status: stopped/);
+	assert.match(String(s.sent[1].message.content), /Status: failed/);
+});
+
+test("a reply to an unrecorded request, and a request, are left to the provider", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const stray = inbound(s.parent, { ...delegation, requestId: "some-other-request" });
+	s.events.emit("message:inbound", stray);
+	const reply = inbound(s.parent, delegation);
+	const request: Inbound = { ...reply, envelope: { ...reply.envelope, in_reply_to: [] } };
+	s.events.emit("message:inbound", request);
+	assert.equal(stray.handled, false);
+	assert.equal(request.handled, false);
+	assert.deepEqual(s.sent, []);
+});
+
+test("a result is recorded once and the same reply is never shown twice", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const payload = inbound(s.parent, delegation, { replyId: "reply-1" });
+	s.events.emit("message:inbound", payload);
+	assert.equal(s.sent.length, 1);
+	assert.deepEqual(s.entries[1], {
+		customType: "delegate",
+		data: {
+			id: delegation.id,
+			result: { status: "done", replyId: "reply-1", envelopePath: payload.path },
+		},
+	});
+
+	const again = inbound(s.parent, delegation, { replyId: "reply-1" });
+	s.events.emit("message:inbound", again);
+	assert.equal(again.handled, true, "the provider still injects nothing");
+	assert.equal(s.sent.length, 1);
+});
+
+test("a result recorded before a resume is not shown a second time", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	s.events.emit("message:inbound", inbound(s.parent, delegation, { replyId: "reply-1" }));
+	const saved = structuredClone(s.entries);
+
+	const resumed = session({ parent: s.parent, entries: saved });
+	await resumed.start();
+	const again = inbound(resumed.parent, delegation, { replyId: "reply-1" });
+	resumed.events.emit("message:inbound", again);
+	assert.equal(again.handled, true);
+	assert.deepEqual(resumed.sent, []);
+	assert.deepEqual(resumed.statuses, [], "the delegation is no longer running");
+});
+
+test("a reply whose task copy is missing names the request id alone", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const payload = inbound(s.parent, delegation, { omitTask: true });
+	s.events.emit("message:inbound", payload);
+	assert.equal(payload.handled, true);
+	const content = String(s.sent[0].message.content);
+	assert.ok(content.includes(delegation.requestId), content);
+	assert.match(content, /no copy in sent\//);
 });

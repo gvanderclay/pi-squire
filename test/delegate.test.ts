@@ -8,9 +8,9 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { agentDir, agentFile, cleanup, resetAgents, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
-beforeEach(() => resetAgents());
+beforeEach(() => resetRoot());
 after(() => cleanup());
 
 // ---------------------------------------------------------------------------
@@ -436,6 +436,7 @@ test("a resumed parent rebuilds its records and still takes a later reply", asyn
 	assert.equal(payload.handled, true);
 	assert.equal(resumed.sent.length, 1);
 	assert.ok(String(resumed.sent[0].message.content).includes(delegation.id));
+	assert.deepEqual(resumed.statuses.at(-1), { key: "delegate", text: undefined }, "the result clears the footer");
 });
 
 test("a task over 2 KiB and a body over 32 KiB are cut with their paths", async () => {

@@ -115,9 +115,9 @@ Delegate session: <session file or id>
 - The footer counts the running delegations (`⇄ N running`), clears one entry
   per result and hides itself at zero.
 - Each result is recorded in the parent session, so the same reply is never
-  shown twice; the records are rebuilt at session start, so a resume still
-  recognises replies — including one that arrived while the parent was
-  closed.
+  shown twice; the records are rebuilt synchronously at session start, so a
+  resume still recognises replies — including one that arrived while the
+  parent was closed.
 - Plain replies, and every request, are left to the provider.
 
 ## Hooks
@@ -168,3 +168,10 @@ The reply's request copies fill the quoted task and its `cur/` path is the
 envelope it names. A reply to a request this session did not delegate, and
 every request, is left to the provider. The provider's README carries the
 contract.
+
+`delegate` rebuilds its records synchronously in its own `session_start`, so it
+relies on the provider not emitting `message:inbound` from inside a
+`session_start` handler: mail waiting at session start must be claimed on a
+later event-loop turn, as `mailbox`'s `message:inbound` contract guarantees.
+That is what makes a result that arrived while the parent was closed reach the
+rebuilt records whatever the load order.

@@ -9,9 +9,9 @@ import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { agentFile, cleanup, resetAgents, session, writeAgent } from "./harness.ts";
+import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
 
-beforeEach(() => resetAgents());
+beforeEach(() => resetRoot());
 after(() => cleanup());
 
 /** Every `` ```js <name> `` block in the README, by name. */

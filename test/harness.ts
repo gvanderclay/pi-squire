@@ -29,7 +29,7 @@ export function agentFile(fields: Record<string, string>, body = "Do the task an
 }
 
 /** Empty the roster and the session directory; the next write into either is the whole of it. */
-export function resetAgents(): void {
+export function resetRoot(): void {
 	rmSync(join(agentDir, "agents"), { recursive: true, force: true });
 	rmSync(sessionDir, { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;

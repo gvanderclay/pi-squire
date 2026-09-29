@@ -174,4 +174,5 @@ relies on the provider not emitting `message:inbound` from inside a
 `session_start` handler: mail waiting at session start must be claimed on a
 later event-loop turn, as `mailbox`'s `message:inbound` contract guarantees.
 That is what makes a result that arrived while the parent was closed reach the
-rebuilt records whatever the load order.
+rebuilt records. Keep extensions whose `session_start` waits on I/O from
+loading between the provider and `delegate`.

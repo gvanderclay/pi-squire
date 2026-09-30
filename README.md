@@ -104,7 +104,12 @@ add one. The package ships no agents.
 
 None beyond the roster. `delegate` reads no settings file and no environment
 variable of its own; `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
-for the child, never read as configuration by the parent. `--model` and
+for the child, never read as configuration by the parent. The window starts
+with the tmux server's environment plus only these from the parent:
+`PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` (when the parent has it
+set), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`. Anything else the
+parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
+reaches the child only through a `session:launch` contributor. `--model` and
 `--thinking` override the agent's defaults for one call, and an unknown value
 is refused with close matches; `--auto-exit` and `--no-auto-exit` override the
 agent's `auto-exit`.

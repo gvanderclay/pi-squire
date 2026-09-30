@@ -50,7 +50,7 @@ export type RequestCopy = { envelope: Envelope; path: string };
 
 /** A result, appended to the session so it is shown once and survives a resume. */
 export type Result = {
-	/** The envelope's status: `done`, `failed`, `stopped` or `needs-input`. */
+	/** The envelope's status: `done`, `failed` or `stopped`. */
 	status: string;
 	/** The reply envelope's id, so the same reply is never shown twice. */
 	replyId: string;

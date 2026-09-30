@@ -141,7 +141,7 @@ model or thinking level is refused with close matches and nothing starts.
   window is connection, not task state: the delegate may still be working, or
   waiting for the user, and only a result means done.
 - **Done** comes from the recorded result, and shows the envelope's status
-  (`done`, `failed`, `stopped` or `needs-input`).
+  (`done`, `failed` or `stopped`).
 - **Closed** covers a close `delegation_close` recorded and a window that is no
   longer there. A recorded close wins over a result, and a result wins over a
   window that is gone.
@@ -171,8 +171,8 @@ Delegate session: <session file or id>
 ```
 
 - The header carries the agent, the model, the delegation id and the request
-  id; the status is the envelope's (`done`, `failed`, `stopped` or
-  `needs-input`).
+  id; the status is the envelope's (`done`, `failed` or
+  `stopped`).
 - The task is quoted from the request copy the provider puts on the payload,
   capped at 2 KiB with the copy's `sent/` path. A request with no copy is
   named by id alone.

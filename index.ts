@@ -12,8 +12,9 @@
 // shown as one result message, so the parent hears back on its own.
 //
 // The model gets three tools. `delegate` takes agent, task and optional model
-// and thinking, and opens a confirmation menu before anything starts, so the
-// model can never delegate without the user's approval. `delegation_status`
+// and thinking, validates them the way the command does, and starts the
+// delegation at once, opening no dialog, so parallel calls cannot block one
+// another. `delegation_status`
 // reports each delegation as running (window open, no result yet), done (with
 // its result status) or closed, with the session name, window, session and
 // envelope paths.
@@ -35,7 +36,6 @@ import {
 import { Type } from "typebox";
 
 import { type Agent, isThinking, readRoster, type Roster, THINKING_LEVELS } from "./agents.ts";
-import { confirmDelegation, type Request } from "./menu.ts";
 import { createResults, findSession, type Recorded } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 
@@ -174,7 +174,7 @@ function thinkingProblem(value: string): string | undefined {
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 function toolDescription(agents: readonly Agent[]): string {
 	const intro =
-		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Every call opens a confirmation menu and nothing starts unless the user approves; the delegate runs in this session's working directory and agent root and reports back later as one message. Use it when the work is self-contained and you would rather keep your own context for it.";
+		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory and agent root and reports back later as one message. Use it when the work is self-contained and you would rather keep your own context for it.";
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${join(
 			getAgentDir(),
@@ -350,42 +350,18 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		) {
-			if (ctx.hasUI !== true) {
-				throw new Error(
-					"the delegate tool needs a UI: the user approves every delegation in a menu, and this session has none",
-				);
-			}
-			// Refuse before the menu, so the user is never asked to approve what cannot start.
 			if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
-			const roster = rosterFor(ctx);
-			const start = validate({ ...params, task: params.task ?? "" }, roster, ctx.modelRegistry);
-			const request: Request = {
-				agent: start.agent.name,
-				model: start.model,
-				thinking: start.thinking,
-				task: start.task,
-			};
-			const decision = await confirmDelegation(request, ctx, roster.agents, modelIds(ctx.modelRegistry));
-			if (decision.kind === "reject") {
-				return toolResult("The user rejected this delegation. Nothing was started.", { outcome: "rejected" });
-			}
-			if (decision.kind === "changes") {
-				return toolResult(
-					`The user asked for changes instead of approving: ${decision.changes}\nNothing was started. Adjust the request as asked, or answer in chat.`,
-					{ outcome: "changes", changes: decision.changes },
-				);
-			}
-			const approved = validate(decision.request, roster, ctx.modelRegistry);
-			const launched = await launch(approved, ctx);
-			ctx.ui.notify(started(launched, approved), "info");
+			const start = validate({ ...params, task: params.task ?? "" }, rosterFor(ctx), ctx.modelRegistry);
+			const launched = await launch(start, ctx);
+			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
-				`Started delegation ${launched.id}: ${approved.agent.name} (${approved.model}, thinking ${approved.thinking}) in window ${launched.windowName}. It runs in the background and its result arrives as a message; delegation_status reports it and delegation_close ends it.`,
+				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}. It runs in the background and its result arrives as a message; delegation_status reports it and delegation_close ends it.`,
 				{
 					outcome: "started",
 					id: launched.id,
-					agent: approved.agent.name,
-					model: approved.model,
-					thinking: approved.thinking,
+					agent: start.agent.name,
+					model: start.model,
+					thinking: start.thinking,
 					windowId: launched.windowId,
 					windowName: launched.windowName,
 				},

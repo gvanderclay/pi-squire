@@ -1,4 +1,4 @@
-// The model-facing tools: `delegate` with its confirmation menu,
+// The model-facing tools: `delegate`, which starts without a dialog,
 // `delegation_status` and `delegation_close`. These tests drive the extension
 // only through its registration function: a temporary agent directory, a fake
 // Pi session with a scripted `ctx.ui`, the fake tmux, `message:send` stubbed.
@@ -56,17 +56,7 @@ test("inside a delegate no tools are registered", async () => {
 // ---------------------------------------------------------------------------
 // The delegate tool: refusals
 
-test("without a UI the delegate tool refuses and starts nothing", async () => {
-	writeAgent("scout", SCOUT);
-	const s = session({ hasUI: false });
-	await s.start();
-	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "do it" }), /UI/);
-	assert.deepEqual(s.sendCalls, []);
-	assert.deepEqual(s.tmux.opened, []);
-	assert.deepEqual(s.selects, []);
-});
-
-test("an invalid agent, model or thinking level is refused with close matches before the menu", async () => {
+test("an invalid agent, model or thinking level is refused with close matches and starts nothing", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session();
 	await s.start();
@@ -84,9 +74,9 @@ test("an invalid agent, model or thinking level is refused with close matches be
 	assert.deepEqual(s.tmux.opened, []);
 });
 
-test("outside tmux the delegate tool refuses before the menu and starts nothing", async () => {
+test("outside tmux the delegate tool refuses and starts nothing", async () => {
 	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Approve and start"] } });
+	const s = session();
 	await s.start();
 	s.tmux.inside = false;
 	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "do it" }), /tmux/);
@@ -96,28 +86,17 @@ test("outside tmux the delegate tool refuses before the menu and starts nothing"
 });
 
 // ---------------------------------------------------------------------------
-// The confirmation menu
+// The delegate tool: starting
 
-test("an approved call starts the delegation with the agent's defaults and returns its id", async () => {
+test("a call starts the delegation with the agent's defaults and returns its id, with no dialog", async () => {
 	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Approve and start"] } });
+	const s = session();
 	await s.start();
 	const result = await s.toolCall("delegate", { agent: "scout", task: "find the answer" });
 
-	assert.deepEqual(s.selects, [
-		{
-			title: "Delegate to scout — alpha/fast-model, thinking low?\nTask: find the answer",
-			options: [
-				"Approve and start",
-				"Reject",
-				"Change model",
-				"Change thinking",
-				"Change agent",
-				"Edit task",
-				"Ask for changes",
-			],
-		},
-	]);
+	assert.deepEqual(s.selects, []);
+	assert.deepEqual(s.editors, []);
+	assert.deepEqual(s.customs, []);
 	const id = s.entries[0].data.id as string;
 	assert.equal(result.content[0].type, "text");
 	assert.ok(result.content[0].text.includes(id), result.content[0].text);
@@ -141,82 +120,57 @@ test("an approved call starts the delegation with the agent's defaults and retur
 	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-${id}`);
 });
 
-test("walking each menu branch leaves every change visible and shapes the launched argv", async () => {
-	writeAgent("scout", SCOUT);
+test("model and thinking overrides shape the launched argv", async () => {
 	writeAgent("researcher", RESEARCHER);
-	const s = session({
-		ui: {
-			select: ["Change agent", "Change model", "Change thinking", "Edit task", "Approve and start"],
-			custom: ["researcher", "alpha/fast-model", "xhigh"],
-			editor: ["rewritten task"],
-		},
-	});
+	const s = session();
 	await s.start();
-	await s.toolCall("delegate", { agent: "scout", task: "the original task" });
-
-	// Changing the agent resets the model and thinking to that agent's defaults,
-	// the way `/delegate <agent>` without flags does, and the next menu shows it.
-	assert.match(s.selects[1].title, /^Delegate to researcher — alpha\/deep-model, thinking high\?/);
-	assert.match(s.selects[1].title, /Task: the original task$/);
-	assert.match(s.selects[2].title, /^Delegate to researcher — alpha\/fast-model, thinking high\?/);
-	assert.match(s.selects[3].title, /^Delegate to researcher — alpha\/fast-model, thinking xhigh\?/);
-	assert.match(s.selects[4].title, /Task: rewritten task$/);
-	assert.deepEqual(s.editors, [{ title: "Edit the task", prefill: "the original task" }]);
-
-	const { argv, name } = s.tmux.opened[0];
-	assert.equal(s.sendCalls[0].body, "rewritten task");
+	await s.toolCall("delegate", {
+		agent: "researcher",
+		task: "dig",
+		model: "alpha/fast-model",
+		thinking: "xhigh",
+	});
+	const { argv } = s.tmux.opened[0];
 	assert.equal(argv[argv.indexOf("--model") + 1], "alpha/fast-model");
 	assert.equal(argv[argv.indexOf("--thinking") + 1], "xhigh");
-	assert.ok(String(argv[argv.indexOf("--append-system-prompt") + 1]).startsWith("You dig deeper."), argv.join(" "));
-	assert.ok(name.startsWith("researcher-"), name);
-	assert.equal(s.entries[0].data.agent, "researcher");
 	assert.equal(s.entries[0].data.model, "alpha/fast-model");
 	assert.equal(s.entries[0].data.thinking, "xhigh");
 });
 
-test("a cancelled picker leaves the request as it was", async () => {
+test("without a UI the delegate tool still starts the delegation", async () => {
 	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Change model", "Approve and start"], custom: [] } });
-	await s.start();
-	await s.toolCall("delegate", { agent: "scout", task: "find the answer" });
-	assert.equal(s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--model") + 1], "alpha/fast-model");
-});
-
-test("Reject, and escaping the menu, return a result that says so and start nothing", async () => {
-	writeAgent("scout", SCOUT);
-	for (const answers of [["Reject"], []]) {
-		const s = session({ ui: { select: answers } });
-		await s.start();
-		const result = await s.toolCall("delegate", { agent: "scout", task: "do it" });
-		assert.match(result.content[0].text, /rejected/i);
-		assert.deepEqual(result.details, { outcome: "rejected" });
-		assert.deepEqual(s.sendCalls, []);
-		assert.deepEqual(s.tmux.opened, []);
-		assert.deepEqual(s.entries, []);
-	}
-});
-
-test("Ask for changes returns the user's words and starts nothing", async () => {
-	writeAgent("scout", SCOUT);
-	const s = session({
-		ui: { select: ["Ask for changes"], editor: ["use the researcher agent instead"] },
-	});
-	await s.start();
-	const result = await s.toolCall("delegate", { agent: "scout", task: "do it" });
-	assert.match(result.content[0].text, /use the researcher agent instead/);
-	assert.deepEqual(result.details, { outcome: "changes", changes: "use the researcher agent instead" });
-	assert.deepEqual(s.sendCalls, []);
-	assert.deepEqual(s.tmux.opened, []);
-	assert.deepEqual(s.entries, []);
-});
-
-test("cancelling Ask for changes returns to the menu", async () => {
-	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Ask for changes", "Approve and start"], editor: [] } });
+	const s = session({ hasUI: false });
 	await s.start();
 	const result = await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	assert.match(result.content[0].text, /Started delegation/);
 	assert.equal(s.tmux.opened.length, 1);
+	assert.deepEqual(s.selects, []);
+});
+
+test("two concurrent delegate calls each start a delegation and return their own result", async () => {
+	writeAgent("scout", SCOUT);
+	writeAgent("researcher", RESEARCHER);
+	const s = session();
+	await s.start();
+	const [one, two] = await Promise.all([
+		s.toolCall("delegate", { agent: "scout", task: "answer one" }),
+		s.toolCall("delegate", { agent: "researcher", task: "answer two" }),
+	]);
+
+	assert.deepEqual(s.selects, []);
+	assert.equal(s.tmux.opened.length, 2);
+	assert.equal(s.entries.length, 2);
+	const byAgent = new Map(s.entries.map((entry) => [entry.data.agent as string, entry.data.id as string]));
+	const first = one.details as { outcome: string; id: string };
+	const second = two.details as { outcome: string; id: string };
+	assert.equal(first.outcome, "started");
+	assert.equal(second.outcome, "started");
+	assert.equal(first.id, byAgent.get("scout"));
+	assert.equal(second.id, byAgent.get("researcher"));
+	assert.notEqual(first.id, second.id);
+	assert.ok(one.content[0].text.includes(byAgent.get("scout")!), one.content[0].text);
+	assert.ok(two.content[0].text.includes(byAgent.get("researcher")!), two.content[0].text);
+	assert.deepEqual(s.sendCalls.map((call) => call.body).sort(), ["answer one", "answer two"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -254,7 +208,7 @@ test("delegation_status with no delegations says so", async () => {
 test("delegation_status reports running, done and closed through the window and the records", async () => {
 	writeAgent("scout", SCOUT);
 	writeAgent("researcher", RESEARCHER);
-	const s = session({ ui: { select: ["Approve and start", "Approve and start"] } });
+	const s = session();
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "answer one" });
 	await s.toolCall("delegate", { agent: "researcher", task: "answer two" });
@@ -286,7 +240,7 @@ test("delegation_status reports running, done and closed through the window and 
 
 test("delegation_status refuses an unknown id with the ones that exist", async () => {
 	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Approve and start"] } });
+	const s = session();
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = s.entries[0].data.id as string;
@@ -295,7 +249,7 @@ test("delegation_status refuses an unknown id with the ones that exist", async (
 
 test("delegation_close kills the window, records the close, and reports it once", async () => {
 	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Approve and start"] } });
+	const s = session();
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = s.entries[0].data.id as string;
@@ -317,7 +271,7 @@ test("delegation_close kills the window, records the close, and reports it once"
 
 test("delegation_close kills the window of a delegation whose result already arrived", async () => {
 	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Approve and start"] } });
+	const s = session();
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	const delegation = s.entries[0].data as Delegation;
@@ -332,7 +286,7 @@ test("delegation_close kills the window of a delegation whose result already arr
 
 test("delegation_close records a close when the window is already gone", async () => {
 	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Approve and start"] } });
+	const s = session();
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = s.entries[0].data.id as string;
@@ -346,7 +300,7 @@ test("delegation_close records a close when the window is already gone", async (
 
 test("delegation_close refuses an unknown id and kills nothing", async () => {
 	writeAgent("scout", SCOUT);
-	const s = session({ ui: { select: ["Approve and start"] } });
+	const s = session();
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = s.entries[0].data.id as string;
@@ -357,7 +311,7 @@ test("delegation_close refuses an unknown id and kills nothing", async () => {
 
 test("a resumed parent still reports a recorded close as closed", async () => {
 	writeAgent("scout", SCOUT);
-	const first = session({ ui: { select: ["Approve and start"] } });
+	const first = session();
 	await first.start();
 	await first.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = first.entries[0].data.id as string;

@@ -16,8 +16,9 @@ no handshake.
 
 Starting a delegation adds nothing to the parent's context — the model sees
 neither the command nor the task. The model can also start one itself with the
-`delegate` tool, but only after the user approves it in the confirmation menu
-below; `delegation_status` and `delegation_close` let it check on a delegation
+`delegate` tool, which starts the delegation at once without opening a
+dialog, so several calls in one message each start their own;
+`delegation_status` and `delegation_close` let it check on a delegation
 and end one. When the delegate settles, its answer is taken over on
 `message:inbound` and shown to the parent as one result message that quotes
 the task; the window stays open after it so you can read it or keep working in
@@ -25,7 +26,7 @@ it. Delegations are recorded in the parent session without the task text.
 
 Inside a delegate (`PI_DELEGATE_PARENT` set) the extension registers nothing,
 so a delegate cannot start delegates of its own. Without a UI the command
-still works; it needs tmux and a provider of `message:*`, and refuses with a
+and the `delegate` tool still work; it needs tmux and a provider of `message:*`, and refuses with a
 message when either is missing.
 
 ## Install
@@ -49,9 +50,8 @@ in the npm tarball.
 - Pi, with the `pi.events` bus, `pi.registerCommand` and `pi.registerTool`.
 - `@earendil-works/pi-coding-agent` for `getAgentDir()` and the frontmatter
   parser, declared as a peer dependency and supplied by Pi.
-- `@earendil-works/pi-tui` for the menu's search picker, and `typebox` for the
-  tools' parameter schema. Both are host-provided packages, declared as peer
-dependencies and supplied by Pi.
+- `typebox` for the tools' parameter schema, a host-provided package declared
+  as a peer dependency and supplied by Pi.
 - tmux, with the session running in a tmux pane. A window is opened in the
   pane's session, so a client attached elsewhere does not matter.
 - A provider of `message:*`, such as the `mailbox` package (npm
@@ -96,24 +96,6 @@ variable of its own; `PI_DELEGATE_PARENT` is set for the child, never read as
 configuration. `--model` and `--thinking` override the agent's defaults for
 one call, and an unknown value is refused with close matches.
 
-## Confirmation menu
-
-Every `delegate` tool call opens a menu before anything starts, and the
-user's choice is enforced in code: the tool refuses in a session without a UI,
-because no approval is possible there. `/delegate`, typed by the user, needs
-no menu. The title shows the agent, model, thinking and task, so every change
-is visible before approval.
-
-| Choice | What happens |
-| --- | --- |
-| Approve and start | The delegation starts. It is the first item, so Enter accepts the call. |
-| Reject | Returns "the user rejected this delegation" to the model; nothing starts. Escaping the menu counts as Reject. |
-| Change model | A search picker over the models the session knows (type to filter). Cancelling changes nothing. |
-| Change thinking | A search picker over `off`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. |
-| Change agent | A search picker over the roster. Changing the agent resets the model and thinking to that agent's defaults, as `/delegate <agent>` without flags does. |
-| Edit task | The editor opens on the task. An empty or cancelled edit changes nothing. |
-| Ask for changes | The editor opens; what the user types is returned to the model in the tool result, and nothing starts. |
-
 ## Tools
 
 The model gets three tools. They share the command's launch path and the
@@ -121,7 +103,7 @@ session's delegation records; none of them is registered inside a delegate.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `delegate` | `agent`, `task`, optional `model` and `thinking` | Validates the call the way the command does, opens the confirmation menu, starts the delegation on approval, and returns the delegation id at once without waiting for a result. |
+| `delegate` | `agent`, `task`, optional `model` and `thinking` | Validates the call the way the command does, starts the delegation without opening a dialog, and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id` | Reports each delegation as running, done or closed, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
 
@@ -130,7 +112,7 @@ description, and default model and thinking — so the model picks an agent
 without reading files. A tool's description is fixed when it is registered, so
 the description is rebuilt at every session start; a roster change shows up in
 the next session. The roster itself is read at call time, and an unknown agent,
-model or thinking level is refused with close matches, before the menu opens.
+model or thinking level is refused with close matches and nothing starts.
 
 `delegation_status` reports one state per delegation:
 

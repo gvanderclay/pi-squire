@@ -1,7 +1,8 @@
 // `delegate`: hand a task to a delegate Pi session in a background tmux
 // window, over the `message:*` hooks.
 //
-// `/delegate <agent> [--model <provider/id>] [--thinking <level>] <task…>`
+// `/delegate <agent> [--model <provider/id>] [--thinking <level>]
+// [--auto-exit | --no-auto-exit] <task…>`
 // reads the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens `<agent>-<id>` in
@@ -11,6 +12,10 @@
 // in the parent session; its answer is taken over on `message:inbound` and
 // shown as one result message, so the parent hears back on its own.
 //
+// With auto-exit on (the agent's `auto-exit`, default true, overridden per
+// call) the delegate closes its own window after a normal completion; the
+// delegate's side lives in `child.ts`. With it off the window stays open.
+//
 // The model gets three tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
 // delegation at once, opening no dialog, so parallel calls cannot block one
@@ -19,8 +24,8 @@
 // its result status) or closed, with the session name, window, session and
 // envelope paths.
 // `delegation_close` kills the window and records the close. Inside a delegate
-// (`PI_DELEGATE_PARENT` set) the extension registers nothing, so a delegate
-// cannot delegate.
+// (`PI_DELEGATE_PARENT` set) the extension registers only `child.ts`'s
+// `/auto-exit` and handlers, so a delegate cannot delegate.
 //
 // The `session:launch` contract this package provides, and the `message:*`
 // hooks it consumes, live in this package's README.
@@ -36,6 +41,7 @@ import {
 import { Type } from "typebox";
 
 import { type Agent, isThinking, readRoster, type Roster, THINKING_LEVELS } from "./agents.ts";
+import { AUTO_EXIT_ENV, registerChild } from "./child.ts";
 import { createResults, findSession, type Recorded } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 
@@ -77,17 +83,18 @@ function parentTrust(parent: string): string {
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */
-const FLAGS = ["--model", "--thinking"] as const;
+const FLAGS = ["--model", "--thinking", "--auto-exit", "--no-auto-exit"] as const;
 
 const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
 
-const USAGE = "usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] <task>";
+const USAGE =
+	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--auto-exit | --no-auto-exit] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 type LaunchPayload = { args: string[]; env: Record<string, string> };
-type Parsed = { agent: string; model?: string; thinking?: string; task: string };
+type Parsed = { agent: string; model?: string; thinking?: string; autoExit?: boolean; task: string };
 /** A request that passed the roster, model and thinking checks. */
-type Start = { agent: Agent; model: string; thinking: string; task: string };
+type Start = { agent: Agent; model: string; thinking: string; autoExit: boolean; task: string };
 /** A delegation that is open in a tmux window. */
 type Launched = { id: string; windowId: string; windowName: string; requestId: string };
 
@@ -143,6 +150,11 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 	let i = 1;
 	while (i < tokens.length && tokens[i].text.startsWith("-")) {
 		const flag = tokens[i].text;
+		if (flag === "--auto-exit" || flag === "--no-auto-exit") {
+			parsed.autoExit = flag === "--auto-exit";
+			i += 1;
+			continue;
+		}
 		if (flag !== "--model" && flag !== "--thinking") return { error: `unknown flag ${flag}; ${USAGE}` };
 		const value = tokens[i + 1]?.text;
 		if (value === undefined || value.startsWith("--")) return { error: `${flag} needs a value; ${USAGE}` };
@@ -190,9 +202,13 @@ function toolDescription(agents: readonly Agent[]): string {
 		intro,
 		"",
 		"Agents:",
-		...agents.map((agent) => `- ${agent.name} — ${agent.description} (default ${agent.model}, thinking ${agent.thinking})`),
+		...agents.map(
+			(agent) =>
+				`- ${agent.name} — ${agent.description} (default ${agent.model}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"})`,
+		),
 		"",
 		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `delegation_status` reports a delegation, and `delegation_close` ends one.",
+		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
 	].join("\n");
 }
 
@@ -207,8 +223,11 @@ function toolResult(payload: string, details: unknown = {}): { content: { type: 
  * package's documented contract.
  */
 export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmuxClient()): void {
-	// A delegate registers nothing: `delegate` is one level deep (Q27).
-	if ((process.env[PARENT_ENV] ?? "") !== "") return;
+	// A delegate registers only its auto-exit side: `delegate` is one level deep (Q27).
+	if ((process.env[PARENT_ENV] ?? "") !== "") {
+		registerChild(pi);
+		return;
+	}
 
 	const results = createResults(pi);
 
@@ -250,7 +269,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		if (badModel !== undefined) throw new Error(badModel);
 		const badThinking = thinkingProblem(thinking);
 		if (badThinking !== undefined) throw new Error(badThinking);
-		return { agent, model, thinking, task: request.task };
+		return { agent, model, thinking, autoExit: request.autoExit ?? agent.autoExit, task: request.task };
 	}
 
 	/** The launch order of the spec: task, argv, env, listeners, window, record. */
@@ -289,6 +308,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		const env: Record<string, string> = {
 			PI_CODING_AGENT_DIR: getAgentDir(),
 			[PARENT_ENV]: parent,
+			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
 		};
 		const sessionDir = process.env[SESSION_DIR_ENV];
 		if (sessionDir !== undefined && sessionDir !== "") env[SESSION_DIR_ENV] = sessionDir;
@@ -306,7 +326,16 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 		// No task text in the record: the request copy in `sent/` has it.
 		results.recordStart(
-			{ id, agent: start.agent.name, model: start.model, thinking: start.thinking, windowId, windowName, requestId },
+			{
+				id,
+				agent: start.agent.name,
+				model: start.model,
+				thinking: start.thinking,
+				windowId,
+				windowName,
+				requestId,
+				autoExit: start.autoExit,
+			},
 			ctx,
 		);
 		return { id, windowId, windowName, requestId };
@@ -345,16 +374,32 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			thinking: Type.Optional(
 				Type.String({ description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the agent's.` }),
 			),
+			auto_exit: Type.Optional(
+				Type.Boolean({
+					description:
+						"Close the delegate's window once it finishes; defaults to the agent's setting. False keeps it open to talk to it by mail after its result.",
+				}),
+			),
 		}),
 		async execute(
 			_toolCallId: string,
-			params: { agent: string; task: string; model?: string; thinking?: string },
+			params: { agent: string; task: string; model?: string; thinking?: string; auto_exit?: boolean },
 			_signal: unknown,
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		) {
 			if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
-			const start = validate({ ...params, task: params.task ?? "" }, rosterFor(ctx), ctx.modelRegistry);
+			const start = validate(
+				{
+					agent: params.agent,
+					model: params.model,
+					thinking: params.thinking,
+					autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
+					task: params.task ?? "",
+				},
+				rosterFor(ctx),
+				ctx.modelRegistry,
+			);
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
@@ -365,6 +410,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 					agent: start.agent.name,
 					model: start.model,
 					thinking: start.thinking,
+					autoExit: start.autoExit,
 					windowId: launched.windowId,
 					windowName: launched.windowName,
 				},
@@ -396,10 +442,18 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			`  name: ${delegateName(record.agent, record.id)}`,
 			`  state: ${stateLine(state, record)}`,
 			`  window: ${record.windowName} (${record.windowId})`,
+			`  auto-exit: ${autoExitLine(record)}`,
 			`  session: ${session ?? `${record.id} (no session file yet)`}`,
 		];
 		if (record.result !== undefined) lines.push(`  envelope: ${record.result.envelopePath}`);
 		return lines.join("\n");
+	}
+
+	/** Records from before auto-exit existed kept their windows open, so they read off. */
+	function autoExitLine(record: Recorded): string {
+		return record.autoExit === true
+			? "on — the delegate closes its window after a normal completion unless the user took over there"
+			: "off — the window stays open after the result";
 	}
 
 	function stateLine(state: string, record: Recorded): string {
@@ -439,6 +493,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 				agent: record.agent,
 				model: record.model,
 				thinking: record.thinking,
+				autoExit: record.autoExit === true,
 				windowId: record.windowId,
 				windowName: record.windowName,
 				closed: record.closed === true,

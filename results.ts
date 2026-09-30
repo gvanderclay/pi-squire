@@ -29,6 +29,8 @@ export type Delegation = {
 	windowId: string;
 	windowName: string;
 	requestId: string;
+	/** Whether the delegate closes its own window after a normal completion; absent in records from before auto-exit. */
+	autoExit?: boolean;
 };
 
 /**

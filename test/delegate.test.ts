@@ -54,10 +54,10 @@ test("an unknown agent is refused with the roster's names", async () => {
 	assert.match(s.errors[0], /scout/);
 });
 
-test("inside a delegate nothing is registered", async () => {
+test("inside a delegate /delegate is not registered", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session({ parentEnv: "some-parent" });
-	assert.deepEqual(s.commands(), []);
+	assert.ok(!s.commands().includes("delegate"), s.commands().join(", "));
 });
 
 // ---------------------------------------------------------------------------
@@ -280,7 +280,11 @@ test("the child's env names the parent's root and address, and the session dir w
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();
 	await s.delegate("scout do the thing");
-	assert.deepEqual(s.tmux.opened[0].env, { PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_PARENT: s.parent });
+	assert.deepEqual(s.tmux.opened[0].env, {
+		PI_CODING_AGENT_DIR: agentDir,
+		PI_DELEGATE_PARENT: s.parent,
+		PI_DELEGATE_AUTO_EXIT: "1",
+	});
 	process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/other-sessions";
 	const second = session();
 	await second.delegate("scout do the thing");
@@ -303,6 +307,7 @@ test("the delegation is recorded with no task text, and the parent gets a notice
 				windowId: s.tmux.opened[0].windowId,
 				windowName: `scout-${id}`,
 				requestId: (s.sendCalls[0].envelope as { id: string }).id,
+				autoExit: true,
 			},
 		},
 	]);

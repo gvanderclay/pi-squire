@@ -1,7 +1,7 @@
 // The parent's agent roster: `<agent dir>/agents/<name>/AGENT.md`, read at
 // call time so a new agent is usable without a reload. Frontmatter carries
-// `description`, `model` and `thinking`; the body is the delegate's system
-// prompt. A file that is missing or malformed is left out, with a warning.
+// `description`, `model` and `thinking`, and optionally `auto-exit` (default
+// true); the body is the delegate's system prompt. A file that is missing or malformed is left out, with a warning.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -27,6 +27,8 @@ export type Agent = {
 	description: string;
 	model: string;
 	thinking: Thinking;
+	/** Whether the delegate closes itself after a normal completion; `auto-exit`, default true. */
+	autoExit: boolean;
 	/** The body of `AGENT.md`: the delegate's system prompt. */
 	prompt: string;
 };
@@ -65,7 +67,28 @@ function parseAgent(name: string, path: string, text: string): { agent?: Agent; 
 	if (!isThinking(thinking as string))
 		return { warning: `${path} has thinking ${JSON.stringify(thinking)}, not one of ${THINKING_LEVELS.join(", ")}; skipped` };
 	if (body === "") return { warning: `${path} has no prompt body; skipped` };
-	return { agent: { name, description: description as string, model: model as string, thinking: thinking as Thinking, prompt: body } };
+	const autoExit = flag(frontmatter["auto-exit"]);
+	if (autoExit === null)
+		return { warning: `${path} has auto-exit ${JSON.stringify(frontmatter["auto-exit"])}, not true or false; skipped` };
+	return {
+		agent: {
+			name,
+			description: description as string,
+			model: model as string,
+			thinking: thinking as Thinking,
+			autoExit: autoExit ?? true,
+			prompt: body,
+		},
+	};
+}
+
+/** A true/false frontmatter value; undefined when absent, null when it is neither. */
+function flag(value: unknown): boolean | undefined | null {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value === "boolean") return value;
+	if (value === "true") return true;
+	if (value === "false") return false;
+	return null;
 }
 
 /**

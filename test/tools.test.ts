@@ -115,6 +115,7 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 			windowId: s.tmux.opened[0].windowId,
 			windowName: `scout-${id}`,
 			requestId: (s.sendCalls[0].envelope as { id: string }).id,
+			autoExit: true,
 		},
 	});
 	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-${id}`);

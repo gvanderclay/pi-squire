@@ -33,6 +33,7 @@ export function resetRoot(): void {
 	rmSync(join(agentDir, "agents"), { recursive: true, force: true });
 	rmSync(sessionDir, { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
+	delete process.env.PI_DELEGATE_AUTO_EXIT;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
@@ -95,6 +96,8 @@ export type SessionOptions = {
 	send?: "envelope" | "error" | "none";
 	/** Set `PI_DELEGATE_PARENT` before the extension registers, as inside a delegate. */
 	parentEnv?: string;
+	/** Set `PI_DELEGATE_AUTO_EXIT` before the extension registers, as the launch does. */
+	autoExitEnv?: string;
 	/** Custom entries the session already holds, as on a resume. */
 	entries?: readonly Entry[];
 	/** Answers `ctx.ui` gives, in order, one queue per dialog. An empty queue cancels. */
@@ -131,6 +134,10 @@ export function session(options: SessionOptions = {}) {
 			FAKE_MODELS.find((model) => model.provider === provider && model.id === id),
 	};
 	const tmux = new FakeTmux();
+	/** The current run's abort signal, as `ctx.signal` reports it; cleared when the run settles. */
+	let signal: AbortSignal | undefined;
+	/** How many times `ctx.shutdown()` was called. */
+	let shutdowns = 0;
 	const pi = {
 		events,
 		on: (name: string, handler: Handler) => (handlers[name] ??= []).push(handler),
@@ -148,6 +155,12 @@ export function session(options: SessionOptions = {}) {
 		cwd: root,
 		hasUI: options.hasUI ?? true,
 		modelRegistry: registry,
+		get signal() {
+			return signal;
+		},
+		shutdown: () => {
+			shutdowns++;
+		},
 		sessionManager: {
 			getSessionId: () => parent,
 			getSessionDir: () => sessionDir,
@@ -187,6 +200,7 @@ export function session(options: SessionOptions = {}) {
 		else if (mode === "error") payload.error = "mailbox: no active session has a mailbox address";
 	});
 	if (options.parentEnv !== undefined) process.env.PI_DELEGATE_PARENT = options.parentEnv;
+	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
 	register(pi as never, tmux);
 	const fire = async (name: string, event: object = {}) => {
 		for (const handler of handlers[name] ?? []) await handler({ type: name, ...event }, ctx);
@@ -221,6 +235,34 @@ export function session(options: SessionOptions = {}) {
 		/** Call a tool the way Pi does, with this session's context. */
 		toolCall: callTool,
 		start: () => fire("session_start", { reason: "startup" }),
+		/** How many times the extension asked Pi to shut down. */
+		shutdowns: () => shutdowns,
+		/** Type `/<name> <args>` for any command the extension registered. */
+		command: (name: string, args = "") => commands[name].handler(args, ctx),
+		/** The user types `text` into this session. */
+		type: (text: string) => fire("input", { text, source: "interactive" }),
+		/**
+		 * One run, from start to settle, ending as `end` says: `completed` with
+		 * text, `aborted` mid-text, `stopped` during a tool call (an `error`
+		 * message with the signal aborted, as Pi 0.99.1 does), or `error` (an API
+		 * error, signal not aborted). Then the next event-loop turns run.
+		 */
+		run: async (end: "completed" | "aborted" | "stopped" | "error" = "completed") => {
+			const controller = new AbortController();
+			signal = controller.signal;
+			await fire("agent_start");
+			if (end === "aborted" || end === "stopped") controller.abort();
+			const last =
+				end === "completed"
+					? { role: "assistant", content: [{ type: "text", text: "answer" }], stopReason: "stop" }
+					: end === "aborted"
+						? { role: "assistant", content: [{ type: "text", text: "part" }], stopReason: "aborted" }
+						: { role: "assistant", content: [], stopReason: "error", errorMessage: "boom" };
+			await fire("agent_end", { messages: [{ role: "user", content: "q" }, last] });
+			signal = undefined;
+			await fire("agent_settled");
+			await new Promise((resolve) => setImmediate(resolve));
+		},
 		/** Type `/delegate <args>`. */
 		delegate: (args: string) => commands.delegate.handler(args, ctx),
 		/** Ask for completions after `/delegate `; the real call has no context. */

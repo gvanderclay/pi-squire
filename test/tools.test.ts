@@ -264,6 +264,8 @@ test("delegation_status reports running, done and closed through the window and 
 	const running = (await s.toolCall("delegation_status", {})).content[0].text;
 	assert.match(running, /^2 delegations:/);
 	assert.ok(running.includes(`${first.id} scout (alpha/fast-model, thinking low)`), running);
+	assert.ok(running.includes(`name: scout-${first.id.slice(0, 8)}`), running);
+	assert.ok(running.includes(`name: researcher-${second.id.slice(0, 8)}`), running);
 	assert.ok(running.includes(`window: scout-${first.id} (${w1.windowId})`), running);
 	assert.equal(running.match(/state: running — the window is open and no result has arrived/g)?.length, 2);
 

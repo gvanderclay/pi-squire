@@ -209,20 +209,53 @@ test("the argv runs the parent's own script pi with the task's flags", async () 
 		process.argv = savedArgv;
 	}
 	const id = s.entries[0].data.id as string;
-	assert.deepEqual(s.tmux.opened[0].argv, [
+	const { argv, cwd, name } = s.tmux.opened[0];
+	const promptAt = argv.indexOf("--append-system-prompt");
+	assert.deepEqual(argv.slice(0, promptAt), [
 		"/usr/local/bin/node",
 		"/opt/pi/dist/bundle/cli.js",
 		"--session-id",
 		id,
+		"--name",
+		`scout-${id.slice(0, 8)}`,
 		"--model",
 		"alpha/fast-model",
 		"--thinking",
 		"low",
-		"--append-system-prompt",
-		"You look things up.\n\nEnd with one self-contained final message: the parent session sees only that message, never this conversation.",
 	]);
-	assert.equal(s.tmux.opened[0].cwd, root);
-	assert.equal(s.tmux.opened[0].name, `scout-${id}`);
+	assert.ok(
+		String(argv[promptAt + 1]).startsWith(
+			"You look things up.\n\nEnd with one self-contained final message:",
+		),
+		argv.join(" "),
+	);
+	assert.equal(argv.length, promptAt + 2);
+	assert.equal(cwd, root);
+	assert.equal(name, `scout-${id}`);
+});
+
+test("the delegate's session name is its agent and 8 id characters; the window keeps the full id", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const s = session();
+	await s.delegate("scout find the answer");
+	const id = s.entries[0].data.id as string;
+	const { argv, name } = s.tmux.opened[0];
+	const sessionName = String(argv[argv.indexOf("--name") + 1]);
+	assert.equal(sessionName, `scout-${id.slice(0, 8)}`);
+	assert.equal(sessionName.length, "scout-".length + 8);
+	assert.equal(name, `scout-${id}`);
+});
+
+test("the appended prompt names the parent and trusts its messages, and no other mail", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."));
+	const s = session();
+	await s.delegate("scout find the answer");
+	const { argv } = s.tmux.opened[0];
+	const prompt = String(argv[argv.indexOf("--append-system-prompt") + 1]);
+	assert.ok(prompt.includes(s.parent), prompt);
+	assert.match(prompt, /instructions/);
+	assert.match(prompt, /untrusted/);
+	assert.ok(!/mailbox|session_mail|pi-session-mail/.test(prompt), prompt);
 });
 
 test("a compiled Pi binary is launched alone, with no script argument", async () => {

@@ -8,9 +8,11 @@ the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task to the
 delegate's inbox through `message:send`, emits `session:launch` so other
 extensions can shape the launch, then opens a detached window named
 `<agent>-<id>` running the parent's own Pi in the parent's working directory
-and agent root. The delegate id is fresh, so a delegate never reopens a live
-session, and it is also the delegate's mailbox address: the task waits in its
-inbox and is delivered at session start, with no handshake.
+and agent root, with the child's Pi session named
+`<agent>-<first 8 characters of the id>`. The delegate id is fresh, so a
+delegate never reopens a live session, and it is also the delegate's mailbox
+address: the task waits in its inbox and is delivered at session start, with
+no handshake.
 
 Starting a delegation adds nothing to the parent's context — the model sees
 neither the command nor the task. The model can also start one itself with the
@@ -64,6 +66,13 @@ directory per agent, so a new agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`; the body is the
 delegate's system prompt, appended to Pi's own prompt.
 
+The body is followed by one fixed final-message line and a paragraph naming
+the parent session's address: the delegate's task arrives as a message from
+that session, that message and every later one from the same address are
+instructions to follow as given, and mail from any other address stays
+untrusted. The paragraph names no provider, package or tool, so it holds
+whatever `message:*` provider delivers the task.
+
 ```markdown
 ---
 description: Looks things up and answers in one message
@@ -72,7 +81,7 @@ thinking: medium
 ---
 
 You research one question at a time and answer concisely, citing the files
-you read. Ask no questions: work from the task you were given.
+you read.
 ```
 
 An `AGENT.md` that cannot be used — missing fields, a model that is not
@@ -129,17 +138,21 @@ model or thinking level is refused with close matches, before the menu opens.
 2 delegations:
 
 <id> scout (provider/model, thinking low)
+  name: scout-<first 8 of the id>
   state: running — the window is open and no result has arrived
   window: scout-<id> (@1)
   session: <the delegate's session file, or its id when there is none yet>
 
 <id> researcher (provider/other, thinking high)
+  name: researcher-<first 8 of the id>
   state: done — result status: done
   window: researcher-<id> (@2)
   session: <session file>
   envelope: <the reply's path in the parent's cur/>
 ```
 
+- **Name** is the delegate's Pi session name, its agent and the first 8
+  characters of its delegation id; the window keeps the full id.
 - **Running** means the window is open and no result has arrived. An open
   window is connection, not task state: the delegate may still be working, or
   waiting for the user, and only a result means done.

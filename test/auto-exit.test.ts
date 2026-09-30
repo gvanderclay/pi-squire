@@ -58,7 +58,7 @@ test("the tool describes auto_exit, and completions offer both flags", async () 
 	assert.match(s.tool("delegate").description, /auto_exit/);
 	assert.deepEqual(
 		(await s.completions("scout --"))?.map((item) => item.label),
-		["--model", "--thinking", "--auto-exit", "--no-auto-exit"],
+		["--model", "--thinking", "--label", "--auto-exit", "--no-auto-exit"],
 	);
 });
 

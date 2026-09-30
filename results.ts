@@ -26,6 +26,8 @@ export type Delegation = {
 	agent: string;
 	model: string;
 	thinking: string;
+	/** The delegate's session and window name; absent in records from before labels, where it was `<agent>-<8 id characters>`. */
+	name?: string;
 	windowId: string;
 	windowName: string;
 	requestId: string;

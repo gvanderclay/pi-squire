@@ -231,10 +231,10 @@ test("the argv runs the parent's own script pi with the task's flags", async () 
 	);
 	assert.equal(argv.length, promptAt + 2);
 	assert.equal(cwd, root);
-	assert.equal(name, `scout-${id}`);
+	assert.equal(name, `scout-${id.slice(0, 8)}`);
 });
 
-test("the delegate's session name is its agent and 8 id characters; the window keeps the full id", async () => {
+test("without a label the session and the window are named for the agent and 8 id characters", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();
 	await s.delegate("scout find the answer");
@@ -243,7 +243,33 @@ test("the delegate's session name is its agent and 8 id characters; the window k
 	const sessionName = String(argv[argv.indexOf("--name") + 1]);
 	assert.equal(sessionName, `scout-${id.slice(0, 8)}`);
 	assert.equal(sessionName.length, "scout-".length + 8);
-	assert.equal(name, `scout-${id}`);
+	assert.equal(name, `scout-${id.slice(0, 8)}`);
+});
+
+test("--label names the session and the window for the agent and the label", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const s = session();
+	await s.delegate("scout --label roster-research --thinking high find the answer");
+	const { argv, name } = s.tmux.opened[0];
+	assert.equal(argv[argv.indexOf("--name") + 1], "scout-roster-research");
+	assert.equal(name, "scout-roster-research");
+	assert.equal(argv[argv.indexOf("--thinking") + 1], "high");
+	assert.equal(s.sendCalls[0].body, "find the answer");
+	assert.equal((s.entries[0].data as { name: string }).name, "scout-roster-research");
+});
+
+test("a label that is not one short name segment is refused before anything is sent", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const s = session();
+	await s.delegate("scout --label a:b find it");
+	await s.delegate(`scout --label ${"x".repeat(33)} find it`);
+	await s.delegate("scout --label");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
+	assert.equal(s.errors.length, 3);
+	assert.match(s.errors[0], /label/);
+	assert.match(s.errors[1], /label/);
+	assert.match(s.errors[2], /--label needs a value/);
 });
 
 test("the appended prompt names the parent, follows its messages, and checks other sessions' requests with it", async () => {
@@ -304,8 +330,9 @@ test("the delegation is recorded with no task text, and the parent gets a notice
 				agent: "scout",
 				model: "alpha/fast-model",
 				thinking: "low",
+				name: `scout-${id.slice(0, 8)}`,
 				windowId: s.tmux.opened[0].windowId,
-				windowName: `scout-${id}`,
+				windowName: `scout-${id.slice(0, 8)}`,
 				requestId: (s.sendCalls[0].envelope as { id: string }).id,
 				autoExit: true,
 			},

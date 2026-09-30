@@ -100,9 +100,9 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 	const id = s.entries[0].data.id as string;
 	assert.equal(result.content[0].type, "text");
 	assert.ok(result.content[0].text.includes(id), result.content[0].text);
-	assert.ok(result.content[0].text.includes(`scout-${id}`), result.content[0].text);
+	assert.ok(result.content[0].text.includes(`scout-${id.slice(0, 8)}`), result.content[0].text);
 	assert.equal(s.sendCalls[0].body, "find the answer");
-	assert.equal(s.tmux.opened[0].name, `scout-${id}`);
+	assert.equal(s.tmux.opened[0].name, `scout-${id.slice(0, 8)}`);
 	assert.equal(s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--model") + 1], "alpha/fast-model");
 	assert.equal(s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--thinking") + 1], "low");
 	assert.deepEqual(s.entries[0], {
@@ -112,13 +112,37 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 			agent: "scout",
 			model: "alpha/fast-model",
 			thinking: "low",
+			name: `scout-${id.slice(0, 8)}`,
 			windowId: s.tmux.opened[0].windowId,
-			windowName: `scout-${id}`,
+			windowName: `scout-${id.slice(0, 8)}`,
 			requestId: (s.sendCalls[0].envelope as { id: string }).id,
 			autoExit: true,
 		},
 	});
-	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-${id}`);
+	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-${id.slice(0, 8)}`);
+});
+
+test("a label names the session and the window, shows in the reply and in delegation_status", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	const result = await s.toolCall("delegate", { agent: "scout", task: "find it", label: "roster" });
+	const { argv, name, windowId } = s.tmux.opened[0];
+	assert.equal(name, "scout-roster");
+	assert.equal(argv[argv.indexOf("--name") + 1], "scout-roster");
+	assert.ok(result.content[0].text.includes("in window scout-roster."), result.content[0].text);
+	const status = (await s.toolCall("delegation_status", {})).content[0].text;
+	assert.ok(status.includes("name: scout-roster\n"), status);
+	assert.ok(status.includes(`window: scout-roster (${windowId})`), status);
+});
+
+test("a bad label is refused and opens no window", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "find it", label: "has space" }), /label/);
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
 });
 
 test("model and thinking overrides shape the launched argv", async () => {
@@ -221,7 +245,7 @@ test("delegation_status reports running, done and closed through the window and 
 	assert.ok(running.includes(`${first.id} scout (alpha/fast-model, thinking low)`), running);
 	assert.ok(running.includes(`name: scout-${first.id.slice(0, 8)}`), running);
 	assert.ok(running.includes(`name: researcher-${second.id.slice(0, 8)}`), running);
-	assert.ok(running.includes(`window: scout-${first.id} (${w1.windowId})`), running);
+	assert.ok(running.includes(`window: scout-${first.id.slice(0, 8)} (${w1.windowId})`), running);
 	assert.equal(running.match(/state: running — the window is open and no result has arrived/g)?.length, 2);
 
 	s.events.emit("message:inbound", reply(s.parent, first));
@@ -230,7 +254,7 @@ test("delegation_status reports running, done and closed through the window and 
 	assert.ok(mixed.includes(`${first.id} scout`), mixed);
 	assert.match(mixed, /state: done — result status: done/);
 	assert.ok(mixed.includes(`envelope: /mailbox/${s.parent}/cur/000000000000002-reply-scout.json`), mixed);
-	assert.ok(mixed.includes(`window: researcher-${second.id} (${w2.windowId})`), mixed);
+	assert.ok(mixed.includes(`window: researcher-${second.id.slice(0, 8)} (${w2.windowId})`), mixed);
 	assert.match(mixed, /state: closed — the window is gone/);
 
 	const filtered = (await s.toolCall("delegation_status", { id: second.id })).content[0].text;
@@ -259,7 +283,7 @@ test("delegation_close kills the window, records the close, and reports it once"
 	const closed = await s.toolCall("delegation_close", { id });
 	assert.deepEqual(s.tmux.killed, [windowId]);
 	assert.deepEqual(s.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
-	assert.match(closed.content[0].text, new RegExp(`Closed delegation ${id}: killed window scout-${id} \\(${windowId}\\)\\.`));
+	assert.match(closed.content[0].text, new RegExp(`Closed delegation ${id}: killed window scout-${id.slice(0, 8)} \\(${windowId}\\)\\.`));
 	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: undefined });
 
 	const again = await s.toolCall("delegation_close", { id });

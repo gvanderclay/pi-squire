@@ -3,13 +3,17 @@
 Hands a task to a delegate Pi session in a background tmux window. The npm
 package is `pi-squire`.
 
-`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--auto-exit | --no-auto-exit] <task…>` reads
+`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task…>` reads
 the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task to the
 delegate's inbox through `message:send`, emits `session:launch` so other
-extensions can shape the launch, then opens a detached window named
-`<agent>-<id>` running the parent's own Pi in the parent's working directory
-and agent root, with the child's Pi session named
-`<agent>-<first 8 characters of the id>`. The delegate id is fresh, so a
+extensions can shape the launch, then opens a detached window running the
+parent's own Pi in the parent's working directory and agent root. The window
+and the child's Pi session share one name: `<agent>-<label>`, or
+`<agent>-<first 8 characters of the id>` without a label. A label is at most
+32 letters, digits, `_` or `-`, starting with a letter or digit; `-` rather
+than `:` joins it, since tmux reads `:` in a target as session and window.
+Labels need not be unique: the delegation id stays the handle for
+`delegation_status`, `delegation_close` and mail. The delegate id is fresh, so a
 delegate never reopens a live session, and it is also the delegate's mailbox
 address: the task waits in its inbox and is delivered at session start, with
 no handshake.
@@ -112,7 +116,7 @@ session's delegation records; none of them is registered inside a delegate.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `delegate` | `agent`, `task`, optional `model`, `thinking` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog, and returns the delegation id at once without waiting for a result. |
+| `delegate` | `agent`, `task`, optional `model`, `thinking`, `label` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog, and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id` | Reports each delegation as running, done or closed, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
 

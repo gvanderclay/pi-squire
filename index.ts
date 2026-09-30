@@ -2,12 +2,13 @@
 // window, over the `message:*` hooks.
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
-// [--auto-exit | --no-auto-exit] <task…>`
+// [--label <name>] [--auto-exit | --no-auto-exit] <task…>`
 // reads the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
-// listeners can add arguments and environment, then opens `<agent>-<id>` in
-// the parent's working directory running the parent's own Pi, its session
-// named `<agent>-<first 8 of the id>`. Starting a delegation adds nothing to
+// listeners can add arguments and environment, then opens a window in the
+// parent's working directory running the parent's own Pi. The window and the
+// session share one name: `<agent>-<label>`, or `<agent>-<first 8 of the id>`
+// without a label. Starting a delegation adds nothing to
 // the model's context. Each delegation is recorded
 // in the parent session; its answer is taken over on `message:inbound` and
 // shown as one result message, so the parent hears back on its own.
@@ -59,9 +60,23 @@ const FINAL_LINE =
 /** How much of a delegation id a delegate's session name carries. */
 const SHORT_ID = 8;
 
-/** A delegate's session name: its agent and the first 8 characters of its id. */
-function delegateName(agent: string, id: string): string {
-	return `${agent}-${id.slice(0, SHORT_ID)}`;
+/** The longest label a delegation can carry. */
+const LABEL_MAX = 32;
+/** A label is one safe tmux window name and session name segment. */
+const LABEL = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/**
+ * A delegate's name, used for both its session and its window: its agent and
+ * the label, or the first 8 characters of its id when there is no label.
+ */
+function delegateName(agent: string, id: string, label?: string): string {
+	return `${agent}-${label ?? id.slice(0, SHORT_ID)}`;
+}
+
+/** Why `value` is not a usable label, or undefined when it is. */
+function labelProblem(value: string): string | undefined {
+	if (LABEL.test(value) && value.length <= LABEL_MAX) return undefined;
+	return `label ${JSON.stringify(value)} must be at most ${LABEL_MAX} letters, digits, _ or -, starting with a letter or digit`;
 }
 
 /**
@@ -83,20 +98,20 @@ function parentTrust(parent: string): string {
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */
-const FLAGS = ["--model", "--thinking", "--auto-exit", "--no-auto-exit"] as const;
+const FLAGS = ["--model", "--thinking", "--label", "--auto-exit", "--no-auto-exit"] as const;
 
 const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
 
 const USAGE =
-	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--auto-exit | --no-auto-exit] <task>";
+	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 type LaunchPayload = { args: string[]; env: Record<string, string> };
-type Parsed = { agent: string; model?: string; thinking?: string; autoExit?: boolean; task: string };
-/** A request that passed the roster, model and thinking checks. */
-type Start = { agent: Agent; model: string; thinking: string; autoExit: boolean; task: string };
+type Parsed = { agent: string; model?: string; thinking?: string; label?: string; autoExit?: boolean; task: string };
+/** A request that passed the roster, model, thinking and label checks. */
+type Start = { agent: Agent; model: string; thinking: string; label?: string; autoExit: boolean; task: string };
 /** A delegation that is open in a tmux window. */
-type Launched = { id: string; windowId: string; windowName: string; requestId: string };
+type Launched = { id: string; name: string; windowId: string; windowName: string; requestId: string };
 
 /** The runtimes whose executable needs the script from `process.argv[1]`. */
 const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
@@ -155,11 +170,14 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 			i += 1;
 			continue;
 		}
-		if (flag !== "--model" && flag !== "--thinking") return { error: `unknown flag ${flag}; ${USAGE}` };
+		if (flag !== "--model" && flag !== "--thinking" && flag !== "--label") {
+			return { error: `unknown flag ${flag}; ${USAGE}` };
+		}
 		const value = tokens[i + 1]?.text;
 		if (value === undefined || value.startsWith("--")) return { error: `${flag} needs a value; ${USAGE}` };
 		if (flag === "--model") parsed.model = value;
-		else parsed.thinking = value;
+		else if (flag === "--thinking") parsed.thinking = value;
+		else parsed.label = value;
 		i += 2;
 	}
 	parsed.task = text.slice(tokens[i]?.start ?? text.length).trim();
@@ -207,7 +225,7 @@ function toolDescription(agents: readonly Agent[]): string {
 				`- ${agent.name} — ${agent.description} (default ${agent.model}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"})`,
 		),
 		"",
-		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `delegation_status` reports a delegation, and `delegation_close` ends one.",
+		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",
 		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
 	].join("\n");
 }
@@ -269,7 +287,16 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		if (badModel !== undefined) throw new Error(badModel);
 		const badThinking = thinkingProblem(thinking);
 		if (badThinking !== undefined) throw new Error(badThinking);
-		return { agent, model, thinking, autoExit: request.autoExit ?? agent.autoExit, task: request.task };
+		const badLabel = request.label === undefined ? undefined : labelProblem(request.label);
+		if (badLabel !== undefined) throw new Error(badLabel);
+		return {
+			agent,
+			model,
+			thinking,
+			label: request.label,
+			autoExit: request.autoExit ?? agent.autoExit,
+			task: request.task,
+		};
 	}
 
 	/** The launch order of the spec: task, argv, env, listeners, window, record. */
@@ -292,12 +319,13 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${id}`);
 
 		const parent = ctx.sessionManager.getSessionId();
+		const name = delegateName(start.agent.name, id, start.label);
 		const argv = [
 			...parentCommand(),
 			"--session-id",
 			id,
 			"--name",
-			delegateName(start.agent.name, id),
+			name,
 			"--model",
 			start.model,
 			"--thinking",
@@ -316,7 +344,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		const payload: LaunchPayload = { args: argv, env };
 		pi.events.emit(LAUNCH, payload);
 
-		const windowName = `${start.agent.name}-${id}`;
+		const windowName = name;
 		let windowId: string;
 		try {
 			windowId = await tmux.openWindow({ name: windowName, cwd: ctx.cwd, argv: payload.args, env: payload.env });
@@ -331,6 +359,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 				agent: start.agent.name,
 				model: start.model,
 				thinking: start.thinking,
+				name,
 				windowId,
 				windowName,
 				requestId,
@@ -338,7 +367,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			},
 			ctx,
 		);
-		return { id, windowId, windowName, requestId };
+		return { id, name, windowId, windowName, requestId };
 	}
 
 	const started = (launched: Launched, start: Start): string =>
@@ -374,6 +403,11 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			thinking: Type.Optional(
 				Type.String({ description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the agent's.` }),
 			),
+			label: Type.Optional(
+				Type.String({
+					description: `A short name for this delegation (letters, digits, _ or -, at most ${LABEL_MAX}), such as roster-research. Its session and tmux window are named <agent>-<label>; without it, <agent>-<first 8 id characters>.`,
+				}),
+			),
 			auto_exit: Type.Optional(
 				Type.Boolean({
 					description:
@@ -383,7 +417,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		}),
 		async execute(
 			_toolCallId: string,
-			params: { agent: string; task: string; model?: string; thinking?: string; auto_exit?: boolean },
+			params: { agent: string; task: string; model?: string; thinking?: string; label?: string; auto_exit?: boolean },
 			_signal: unknown,
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
@@ -394,6 +428,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 					agent: params.agent,
 					model: params.model,
 					thinking: params.thinking,
+					label: params.label,
 					autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
 					task: params.task ?? "",
 				},
@@ -439,7 +474,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		const session = record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id);
 		const lines = [
 			`${record.id} ${record.agent} (${record.model}, thinking ${record.thinking})`,
-			`  name: ${delegateName(record.agent, record.id)}`,
+			`  name: ${record.name ?? delegateName(record.agent, record.id)}`,
 			`  state: ${stateLine(state, record)}`,
 			`  window: ${record.windowName} (${record.windowId})`,
 			`  auto-exit: ${autoExitLine(record)}`,

@@ -69,8 +69,10 @@ delegate's system prompt, appended to Pi's own prompt.
 The body is followed by one fixed final-message line and a paragraph naming
 the parent session's address: the delegate's task arrives as a message from
 that session, that message and every later one from the same address are
-instructions to follow as given, and mail from any other address stays
-untrusted. The paragraph names no provider, package or tool, so it holds
+instructions to follow as given, and other sessions are colleagues: the
+delegate may answer them, but checks with the parent before doing work the
+parent did not ask for. It carries no distrust wording, which made models
+refuse every request from a peer. The paragraph names no provider, package or tool, so it holds
 whatever `message:*` provider delivers the task.
 
 ```markdown

@@ -246,7 +246,7 @@ test("the delegate's session name is its agent and 8 id characters; the window k
 	assert.equal(name, `scout-${id}`);
 });
 
-test("the appended prompt names the parent and trusts its messages, and no other mail", async () => {
+test("the appended prompt names the parent, follows its messages, and checks other sessions' requests with it", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."));
 	const s = session();
 	await s.delegate("scout find the answer");
@@ -254,7 +254,9 @@ test("the appended prompt names the parent and trusts its messages, and no other
 	const prompt = String(argv[argv.indexOf("--append-system-prompt") + 1]);
 	assert.ok(prompt.includes(s.parent), prompt);
 	assert.match(prompt, /instructions/);
-	assert.match(prompt, /untrusted/);
+	assert.match(prompt, /colleagues/);
+	assert.match(prompt, /check with the session that started you before doing work it did not ask for/);
+	assert.ok(!/untrusted/.test(prompt), prompt);
 	assert.ok(!/mailbox|session_mail|pi-session-mail/.test(prompt), prompt);
 });
 

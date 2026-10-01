@@ -199,6 +199,16 @@ export function session(options: SessionOptions = {}) {
 		if (mode === "envelope") payload.envelope = { id: randomUUID() };
 		else if (mode === "error") payload.error = "mailbox: no active session has a mailbox address";
 	});
+	// The `message:scan` stub, also synchronous: when answering it marks the
+	// payload scanned and emits the queued `message:inbound` replies, as a
+	// claim of waiting mail would. Set `scan.answering` false for no provider.
+	const scan = { answering: true, calls: 0, queue: [] as unknown[] };
+	events.on("message:scan", (data) => {
+		scan.calls++;
+		if (!scan.answering) return;
+		for (const inbound of scan.queue.splice(0)) events.emit("message:inbound", inbound);
+		(data as { scanned?: boolean }).scanned = true;
+	});
 	if (options.parentEnv !== undefined) process.env.PI_DELEGATE_PARENT = options.parentEnv;
 	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
 	register(pi as never, tmux);
@@ -223,6 +233,7 @@ export function session(options: SessionOptions = {}) {
 		warnings,
 		errors,
 		sendCalls,
+		scan,
 		selects,
 		editors,
 		customs,
@@ -235,6 +246,7 @@ export function session(options: SessionOptions = {}) {
 		/** Call a tool the way Pi does, with this session's context. */
 		toolCall: callTool,
 		start: () => fire("session_start", { reason: "startup" }),
+		shutdown: () => fire("session_shutdown"),
 		/** How many times the extension asked Pi to shut down. */
 		shutdowns: () => shutdowns,
 		/** Type `/<name> <args>` for any command the extension registered. */

@@ -70,6 +70,8 @@ export type Recorded = Delegation & {
 	result?: Result;
 	/** Set when `delegation_close` recorded a close. */
 	closed?: boolean;
+	/** Set when the poll found the window gone with no result; a result outranks it. */
+	gone?: boolean;
 };
 
 /** The provider's payload on `message:inbound`. */
@@ -87,6 +89,10 @@ export type Results = {
 	recordStart(delegation: Delegation, ctx: ExtensionContext): void;
 	/** Record a close. `unknown` when no such delegation, `already-closed` when one was recorded. */
 	recordClose(id: string): "closed" | "already-closed" | "unknown";
+	/** Delegations with no result, no recorded close and no gone-window record. */
+	running(): Recorded[];
+	/** Record that the window is gone with no result, and tell the parent once. False when it no longer applies. */
+	recordGone(id: string): boolean;
 	/** Every delegation, in the order it was recorded. */
 	list(): Recorded[];
 	/** One delegation by id. */
@@ -162,7 +168,7 @@ export function createResults(pi: ExtensionAPI): Results {
 	let footerShown = false;
 
 	/** A delegation still going: no result and no recorded close. */
-	const running = (): Recorded[] => [...byId.values()].filter((record) => record.result === undefined && record.closed !== true);
+	const running = (): Recorded[] => [...byId.values()].filter((record) => record.result === undefined && record.closed !== true && record.gone !== true);
 
 	/** The footer counts the running delegations, and hides itself at zero. */
 	function updateFooter(): void {
@@ -182,7 +188,7 @@ export function createResults(pi: ExtensionAPI): Results {
 		shown.clear();
 		for (const entry of context.sessionManager.getEntries()) {
 			if (entry.type !== "custom" || entry.customType !== CUSTOM_TYPE) continue;
-			const data = entry.data as Partial<Delegation & { result: Result; closed: boolean }> | undefined;
+			const data = entry.data as Partial<Delegation & { result: Result; closed: boolean; gone: boolean }> | undefined;
 			if (data === undefined || typeof data.id !== "string") continue;
 			if (typeof data.requestId === "string") {
 				const record: Recorded = { ...(data as Delegation) };
@@ -195,6 +201,9 @@ export function createResults(pi: ExtensionAPI): Results {
 			} else if (data.closed === true) {
 				const record = byId.get(data.id);
 				if (record !== undefined) record.closed = true;
+			} else if (data.gone === true) {
+				const record = byId.get(data.id);
+				if (record !== undefined) record.gone = true;
 			}
 		}
 		updateFooter();
@@ -217,6 +226,28 @@ export function createResults(pi: ExtensionAPI): Results {
 		record.closed = true;
 		updateFooter();
 		return "closed";
+	}
+
+	function recordGone(id: string): boolean {
+		const record = byId.get(id);
+		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true) return false;
+		const session = findSession(ctx?.sessionManager.getSessionDir(), record.id);
+		pi.appendEntry(CUSTOM_TYPE, { id, gone: true });
+		record.gone = true;
+		pi.sendMessage(
+			{
+				customType: CUSTOM_TYPE,
+				content: [
+					`[delegate] Delegation ${record.id} (${record.agent}, ${record.model}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+					`Delegate session: ${session ?? record.id}`,
+					"A reply that arrives later is still delivered.",
+				].join("\n"),
+				display: true,
+			},
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		updateFooter();
+		return true;
 	}
 
 	function takeReply(payload: Inbound): void {
@@ -247,5 +278,5 @@ export function createResults(pi: ExtensionAPI): Results {
 
 	pi.events.on(INBOUND, (data) => takeReply(data as Inbound));
 
-	return { restore, recordStart, recordClose, list: () => [...byId.values()], find: (id) => byId.get(id), takeReply };
+	return { restore, recordStart, recordClose, running, recordGone, list: () => [...byId.values()], find: (id) => byId.get(id), takeReply };
 }

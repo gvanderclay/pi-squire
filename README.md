@@ -122,7 +122,7 @@ session's delegation records; none of them is registered inside a delegate.
 | Tool | Parameters | What it does |
 | --- | --- | --- |
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `label` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog, and returns the delegation id at once without waiting for a result. |
-| `delegation_status` | optional `id` | Reports each delegation as running, done or closed, with the window, the delegate's session and the result envelope's path. |
+| `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
 
 The `delegate` tool's description lists the current roster — each agent's name,
@@ -169,6 +169,9 @@ model or thinking level is refused with close matches and nothing starts.
 - **Closed** covers a close `delegation_close` recorded and a window that is no
   longer there. A recorded close wins over a result, and a result wins over a
   window that is gone.
+- **Closed without a result** is what the poll records when a window is gone
+  and no reply arrived (see Results). A result outranks it, so a late reply
+  turns it into **done**; a close from `delegation_close` outranks both.
 - When tmux cannot be asked about a window, the state is `unknown`, never
   `closed`, because a failed check is not evidence the window is gone.
 
@@ -218,6 +221,10 @@ Delegate session: <session file or id>
 - The header carries the agent, the model, the delegation id and the request
   id; the status is the envelope's (`done`, `failed` or
   `stopped`).
+- Stopping a delegate's run (Esc) sends no result: the provider holds the
+  task, so the delegation stays running while the user steers it. The next
+  run that completes sends the result, `done`, and its body opens with a note
+  that the user took over partway.
 - The task is quoted from the request copy the provider puts on the payload,
   capped at 2 KiB with the copy's `sent/` path. A request with no copy is
   named by id alone.
@@ -236,6 +243,19 @@ Delegate session: <session file or id>
   closed — and still reports a recorded close as closed. A result is shown
   once and never again.
 - Plain replies, and every request, are left to the provider.
+
+While any delegation is running (no result, no close), the parent polls every
+5 seconds; the timer does not keep the process alive and stops when nothing is
+running and on `session_shutdown`. Each tick first emits `message:scan`, so the
+provider claims waiting replies, and then asks tmux about each still-running
+window. A delegation whose window is gone and still has no result after that
+scan is recorded as closed without a result, a record separate from
+`delegation_close`'s, and the parent gets one `[delegate]` message naming the
+delegation, with the delegate session path when one is found, sent as a
+`followUp` with `triggerTurn`. A tick declares nothing when nobody answers
+`message:scan` or when tmux reports an error. A reply that arrives later is
+still delivered and makes the delegation done. A resumed session polls again
+for every delegation it restores as running.
 
 ## Hooks
 
@@ -293,3 +313,14 @@ later event-loop turn, as `mailbox`'s `message:inbound` contract guarantees.
 That is what makes a result that arrived while the parent was closed reach the
 rebuilt records. Keep extensions whose `session_start` waits on I/O from
 loading between the provider and `delegate`.
+
+### `message:scan`
+
+`delegate` consumes this hook on every poll tick (see Results): it emits `{}`,
+and the provider claims the mail waiting in its inbox, emitting each reply as
+`message:inbound`, before setting `scanned` to `true` on the payload and
+returning from `emit`. Only then does `delegate` check windows, so a reply
+written just before a window closed is never mistaken for no reply. **If
+`scanned` is not set, nobody answered**, and the tick declares nothing closed,
+because a waiting reply cannot be ruled out. The provider's README carries the
+contract.

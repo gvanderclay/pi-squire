@@ -50,6 +50,10 @@ import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 const SEND = "message:send";
 /** The hook emitted just before a delegate's window opens. */
 const LAUNCH = "session:launch";
+/** The hook a tick emits so the provider claims waiting replies before windows are checked. */
+const SCAN = "message:scan";
+/** How often the parent checks its running delegations. */
+const POLL_MS = 5000;
 /** Set in a delegate's environment, so this extension stays off there. */
 const PARENT_ENV = "PI_DELEGATE_PARENT";
 /** Forwarded to the child when the parent has it set. */
@@ -249,6 +253,51 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 	const results = createResults(pi);
 
+	/** The poll timer; set only while some delegation is running. */
+	let poll: ReturnType<typeof setInterval> | undefined;
+	let ticking = false;
+	/** False once the session shuts down, so a tick still awaiting tmux declares nothing. */
+	let live = true;
+
+	function stopPolling(): void {
+		if (poll !== undefined) clearInterval(poll);
+		poll = undefined;
+	}
+
+	/** Claim waiting replies first, then declare gone every window that is missing with still no result. */
+	async function tick(): Promise<void> {
+		if (ticking) return;
+		ticking = true;
+		try {
+			if (results.running().length === 0) return stopPolling();
+			const scan: { scanned?: boolean } = {};
+			pi.events.emit(SCAN, scan);
+			if (scan.scanned !== true) return; // no mailbox: a waiting reply cannot be ruled out
+			for (const record of results.running()) {
+				let alive: boolean;
+				try {
+					alive = await tmux.isAlive(record.windowId);
+				} catch {
+					continue; // tmux could not be asked; never read that as gone
+				}
+				if (alive || !live) continue;
+				// A reply may have landed while the windows before this one were checked.
+				pi.events.emit(SCAN, {});
+				results.recordGone(record.id);
+			}
+			if (results.running().length === 0) stopPolling();
+		} finally {
+			ticking = false;
+		}
+	}
+
+	/** Start the timer when something is running; it never keeps the process alive. */
+	function startPolling(): void {
+		if (poll !== undefined || results.running().length === 0) return;
+		poll = setInterval(() => void tick(), POLL_MS);
+		poll.unref?.();
+	}
+
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
 
@@ -367,6 +416,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			},
 			ctx,
 		);
+		startPolling();
 		return { id, name, windowId, windowName, requestId };
 	}
 
@@ -466,11 +516,13 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 				? "closed"
 				: record.result !== undefined
 					? "done"
-					: alive === true
-						? "running"
-						: alive === false
-							? "closed"
-							: "unknown";
+					: record.gone === true
+						? "gone"
+						: alive === true
+							? "running"
+							: alive === false
+								? "closed"
+								: "unknown";
 		const session = record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id);
 		const lines = [
 			`${record.id} ${record.agent} (${record.model}, thinking ${record.thinking})`,
@@ -493,6 +545,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 	function stateLine(state: string, record: Recorded): string {
 		if (state === "running") return "running — the window is open and no result has arrived";
+		if (state === "gone") return "closed without a result — the window is gone and no reply arrived; a late reply would make it done";
 		if (state === "done") return `done — result status: ${record.result?.status ?? "unknown"}`;
 		if (state === "closed") {
 			return record.closed === true ? "closed — delegation_close recorded it" : "closed — the window is gone";
@@ -504,7 +557,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). Names the delegation id, agent, session name, model, thinking, window, delegate session path and result envelope path. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
+			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Names the delegation id, agent, session name, model, thinking, window, delegate session path and result envelope path. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
 		parameters: Type.Object({
 			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
 		}),
@@ -532,6 +585,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 				windowId: record.windowId,
 				windowName: record.windowName,
 				closed: record.closed === true,
+				closedWithoutResult: record.gone === true && record.result === undefined && record.closed !== true,
 				status: record.result?.status,
 				envelopePath: record.result?.envelopePath,
 				sessionPath: record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id),
@@ -587,9 +641,17 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 	pi.on("session_start", (_event, ctx) => {
 		registry = ctx.modelRegistry;
+		stopPolling();
+		live = true;
 		results.restore(ctx);
+		startPolling();
 		// The roster is read at call time; the description can only be fixed here.
 		pi.registerTool(delegateTool() as never);
+	});
+
+	pi.on("session_shutdown", () => {
+		live = false;
+		stopPolling();
 	});
 
 	/** Agent names, flags, model ids and thinking levels, at the cursor's token. */

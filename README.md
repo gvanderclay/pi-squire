@@ -71,8 +71,20 @@ in the npm tarball.
 The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
 directory per agent, so a new agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`, and optionally
-`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit));
-the body is the delegate's system prompt, appended to Pi's own prompt.
+`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit))
+and `exclude-tools`; the body is the delegate's system prompt, appended to
+Pi's own prompt.
+
+`exclude-tools` names the tools the delegate goes without, as a
+comma-separated list (`exclude-tools: edit, write`) or a YAML list
+(`exclude-tools: [edit, write]`). It reaches the child as
+`--exclude-tools edit,write`, which Pi subtracts from the tools it would
+otherwise turn on. It is a denylist only: without it the delegate gets every
+tool, and no flag is passed. There is no per-call override. Each name is
+checked against the tools the parent session has registered
+(`pi.getAllTools()`), since Pi ignores an unknown name without a word; the
+delegate's result reaches the parent through the mailbox's reply when its run
+settles, not through a tool, so excluding tools cannot stop it answering.
 
 The body is followed by one fixed final-message line and a paragraph naming
 the parent session's address: the delegate's task arrives as a message from
@@ -88,6 +100,7 @@ whatever `message:*` provider delivers the task.
 description: Looks things up and answers in one message
 model: provider/model-id
 thinking: medium
+exclude-tools: edit, write
 ---
 
 You research one question at a time and answer concisely, citing the files
@@ -96,7 +109,8 @@ you read.
 
 An `AGENT.md` that cannot be used — missing fields, a model that is not
 `provider/id`, an unknown thinking level, an `auto-exit` that is not `true` or
-`false`, or an empty body — is left out of the
+`false`, an `exclude-tools` that is not a list of names or names a tool the
+session does not have, or an empty body — is left out of the
 roster and named in a warning. With no agents at all, `/delegate` says how to
 add one. The package ships no agents.
 
@@ -126,12 +140,20 @@ session's delegation records; none of them is registered inside a delegate.
 | `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
 
 The `delegate` tool's description lists the current roster — each agent's name,
-description, default model and thinking, and auto-exit when it is off — and
-tells the model to turn `auto_exit` off when it means to keep talking to the
-delegate by mail after its result, so the model picks an agent
-without reading files. A tool's description is fixed when it is registered, so
-the description is rebuilt at every session start; a roster change shows up in
-the next session. The roster itself is read at call time, and an unknown agent,
+description, default model and thinking, auto-exit when it is off, and its
+excluded tools — one line per agent:
+
+```text
+- scout — Read-only recon (default provider/model-id, thinking low, auto-exit off, no edit/write)
+```
+
+The model picks an agent from these lines without reading files. The
+description also tells the model to turn `auto_exit` off when it means to keep
+talking to the delegate by mail after its result. A tool's description is
+fixed when it is registered, so the description is rebuilt at every session
+start; a roster change shows up in the next session. Pi cannot list the
+session's tools while extensions load, so the description built then skips
+the `exclude-tools` check, and the one built at session start applies it. The roster itself is read at call time, and an unknown agent,
 model or thinking level is refused with close matches and nothing starts.
 
 `delegation_status` reports one state per delegation:

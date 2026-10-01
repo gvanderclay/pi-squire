@@ -1,7 +1,9 @@
 // The parent's agent roster: `<agent dir>/agents/<name>/AGENT.md`, read at
 // call time so a new agent is usable without a reload. Frontmatter carries
 // `description`, `model` and `thinking`, and optionally `auto-exit` (default
-// true); the body is the delegate's system prompt. A file that is missing or malformed is left out, with a warning.
+// true) and `exclude-tools` (tools the delegate goes without, passed to its Pi
+// as `--exclude-tools`; each must be a tool the parent session has); the body
+// is the delegate's system prompt. A file that is missing or malformed is left out, with a warning.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -29,6 +31,8 @@ export type Agent = {
 	thinking: Thinking;
 	/** Whether the delegate closes itself after a normal completion; `auto-exit`, default true. */
 	autoExit: boolean;
+	/** Tools the delegate goes without, from `exclude-tools`; empty means all of them. */
+	excludeTools: string[];
 	/** The body of `AGENT.md`: the delegate's system prompt. */
 	prompt: string;
 };
@@ -45,7 +49,12 @@ const field = (frontmatter: Record<string, unknown>, key: string): string | unde
 };
 
 /** Parse one `AGENT.md`; undefined with a reason when it cannot be an agent. */
-function parseAgent(name: string, path: string, text: string): { agent?: Agent; warning?: string } {
+function parseAgent(
+	name: string,
+	path: string,
+	text: string,
+	tools: readonly string[] | undefined,
+): { agent?: Agent; warning?: string } {
 	let frontmatter: Record<string, unknown>;
 	let body: string;
 	try {
@@ -70,6 +79,15 @@ function parseAgent(name: string, path: string, text: string): { agent?: Agent; 
 	const autoExit = flag(frontmatter["auto-exit"]);
 	if (autoExit === null)
 		return { warning: `${path} has auto-exit ${JSON.stringify(frontmatter["auto-exit"])}, not true or false; skipped` };
+	const listed = toolList(frontmatter["exclude-tools"]);
+	if (listed === null)
+		return {
+			warning: `${path} has exclude-tools ${JSON.stringify(frontmatter["exclude-tools"])}, not a comma-separated list of tool names; skipped`,
+		};
+	const excludeTools = listed ?? [];
+	const unknownTool = tools === undefined ? undefined : excludeTools.find((tool) => !tools.includes(tool));
+	if (unknownTool !== undefined)
+		return { warning: `${path} has exclude-tools ${JSON.stringify(unknownTool)}, not a tool this session has; skipped` };
 	return {
 		agent: {
 			name,
@@ -77,9 +95,20 @@ function parseAgent(name: string, path: string, text: string): { agent?: Agent; 
 			model: model as string,
 			thinking: thinking as Thinking,
 			autoExit: autoExit ?? true,
+			excludeTools,
 			prompt: body,
 		},
 	};
+}
+
+/** A tool list, comma-separated or a YAML list of names; undefined when absent, null when it is neither. */
+function toolList(value: unknown): string[] | undefined | null {
+	if (value === undefined || value === null) return undefined;
+	const names = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : null;
+	if (names === null || !names.every((name) => typeof name === "string")) return null;
+	return names
+		.map((name) => name.trim())
+		.filter((name) => name !== "");
 }
 
 /** A true/false frontmatter value; undefined when absent, null when it is neither. */
@@ -94,9 +123,11 @@ function flag(value: unknown): boolean | undefined | null {
 /**
  * Read every agent under `<agentDir>/agents/`, in name order. A directory
  * with no `AGENT.md` is not an agent and is passed over quietly; an
- * `AGENT.md` that cannot be used is warned about and left out.
+ * `AGENT.md` that cannot be used is warned about and left out. `tools` are
+ * the session's tool names, which `exclude-tools` is checked against;
+ * undefined skips that check, as before the session's tools are known.
  */
-export function readRoster(agentDir: string): Roster {
+export function readRoster(agentDir: string, tools?: readonly string[]): Roster {
 	const dir = join(agentDir, "agents");
 	let names: string[];
 	try {
@@ -118,7 +149,7 @@ export function readRoster(agentDir: string): Roster {
 			warnings.push(`${path} is not under a usable agent name; skipped`);
 			continue;
 		}
-		const { agent, warning } = parseAgent(name, path, text);
+		const { agent, warning } = parseAgent(name, path, text, tools);
 		if (agent !== undefined) agents.push(agent);
 		else if (warning !== undefined) warnings.push(warning);
 	}

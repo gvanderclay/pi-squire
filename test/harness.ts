@@ -102,7 +102,12 @@ export type SessionOptions = {
 	entries?: readonly Entry[];
 	/** Answers `ctx.ui` gives, in order, one queue per dialog. An empty queue cancels. */
 	ui?: UiAnswers;
+	/** The tool names `pi.getAllTools()` reports once the session has started. */
+	registeredTools?: readonly string[];
 };
+
+/** The tools a fake session has unless a test says otherwise. */
+export const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
 
 /** One fake Pi session running the extension under `parent`. */
 export function session(options: SessionOptions = {}) {
@@ -138,7 +143,15 @@ export function session(options: SessionOptions = {}) {
 	let signal: AbortSignal | undefined;
 	/** How many times `ctx.shutdown()` was called. */
 	let shutdowns = 0;
+	/** Pi's action methods throw until the runtime binds, which is before `session_start`. */
+	let bound = false;
+	const registeredTools = options.registeredTools ?? DEFAULT_TOOLS;
 	const pi = {
+		getAllTools: () => {
+			if (!bound)
+				throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
+			return registeredTools.map((name) => ({ name }));
+		},
 		events,
 		on: (name: string, handler: Handler) => (handlers[name] ??= []).push(handler),
 		registerCommand: (name: string, command: Command) => {
@@ -245,7 +258,10 @@ export function session(options: SessionOptions = {}) {
 		tool: (name: string) => tools[name],
 		/** Call a tool the way Pi does, with this session's context. */
 		toolCall: callTool,
-		start: () => fire("session_start", { reason: "startup" }),
+		start: () => {
+			bound = true;
+			return fire("session_start", { reason: "startup" });
+		},
 		shutdown: () => fire("session_shutdown"),
 		/** How many times the extension asked Pi to shut down. */
 		shutdowns: () => shutdowns,

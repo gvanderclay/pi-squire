@@ -16,6 +16,8 @@
 // With auto-exit on (the agent's `auto-exit`, default true, overridden per
 // call) the delegate closes its own window after a normal completion; the
 // delegate's side lives in `child.ts`. With it off the window stays open.
+// An agent's `exclude-tools` goes to the child as `--exclude-tools`; a name the
+// session has no tool for leaves the agent out of the roster.
 //
 // The model gets three tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
@@ -226,7 +228,9 @@ function toolDescription(agents: readonly Agent[]): string {
 		"Agents:",
 		...agents.map(
 			(agent) =>
-				`- ${agent.name} — ${agent.description} (default ${agent.model}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"})`,
+				`- ${agent.name} — ${agent.description} (default ${agent.model}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"}${
+					agent.excludeTools.length > 0 ? `, no ${agent.excludeTools.join("/")}` : ""
+				})`,
 		),
 		"",
 		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",
@@ -306,9 +310,24 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	const modelIds = (source: ModelRegistry | undefined): string[] =>
 		(source?.getAll() ?? []).map((model) => `${model.provider}/${model.id}`);
 
+	/**
+	 * The session's tool names, which `exclude-tools` must name; undefined
+	 * while Pi is still loading extensions and cannot list them yet.
+	 */
+	function sessionTools(): string[] | undefined {
+		try {
+			return pi.getAllTools().map((tool) => tool.name);
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** The roster as it stands, checked against the session's tools. */
+	const currentRoster = (): Roster => readRoster(getAgentDir(), sessionTools());
+
 	/** Read the roster now, warning about every file left out. */
 	function rosterFor(ctx: ExtensionContext): Roster {
-		const roster = readRoster(getAgentDir());
+		const roster = currentRoster();
 		for (const warning of roster.warnings) ctx.ui.notify(`delegate: ${warning}`, "warning");
 		return roster;
 	}
@@ -381,6 +400,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			start.model,
 			"--thinking",
 			start.thinking,
+			...(start.agent.excludeTools.length > 0 ? ["--exclude-tools", start.agent.excludeTools.join(",")] : []),
 			"--append-system-prompt",
 			`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}`,
 		];
@@ -445,7 +465,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	const delegateTool = () => ({
 		name: "delegate",
 		label: "Delegate",
-		description: toolDescription(readRoster(getAgentDir()).agents),
+		description: toolDescription(currentRoster().agents),
 		parameters: Type.Object({
 			agent: Type.String({ description: "Roster agent name to run." }),
 			task: Type.String({
@@ -665,7 +685,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			return hits.length > 0 ? hits.map((value) => ({ value: head + value, label: value })) : null;
 		};
 		const tokens = head.trim() === "" ? [] : head.trim().split(/\s+/);
-		if (tokens.length === 0) return pick(readRoster(getAgentDir()).agents.map((agent) => agent.name));
+		if (tokens.length === 0) return pick(currentRoster().agents.map((agent) => agent.name));
 		const previous = tokens[tokens.length - 1];
 		if (previous === "--model") return pick(modelIds(registry));
 		if (previous === "--thinking") return pick(THINKING_LEVELS);

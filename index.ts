@@ -231,6 +231,8 @@ function toolDescription(agents: readonly Agent[]): string {
 		"",
 		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",
 		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
+		"",
+		"Writing the task: the delegate sees nothing of this session, so the task must stand alone. State the question, the decision its answer feeds, what is already known or ruled out, and the files or paths to start from. When the work produces a report, name the path to write it to and ask for the conclusion back, not the contents.",
 	].join("\n");
 }
 

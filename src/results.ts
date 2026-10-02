@@ -87,8 +87,8 @@ export type Results = {
 	restore(ctx: ExtensionContext): void;
 	/** Record a delegation and show it as running. */
 	recordStart(delegation: Delegation, ctx: ExtensionContext): void;
-	/** Record a close. `unknown` when no such delegation, `already-closed` when one was recorded. */
-	recordClose(id: string): "closed" | "already-closed" | "unknown";
+	/** Record a close; does nothing when there is no such delegation or it is already closed. */
+	recordClose(id: string): void;
 	/** Delegations with no result, no recorded close and no gone-window record. */
 	running(): Recorded[];
 	/** Record that the window is gone with no result, and tell the parent once. False when it no longer applies. */
@@ -97,9 +97,43 @@ export type Results = {
 	list(): Recorded[];
 	/** One delegation by id. */
 	find(id: string): Recorded | undefined;
-	/** Take over a reply that answers a recorded delegation, if any. */
-	takeReply(payload: Inbound): void;
 };
+
+/** What tmux reported for a delegation's window: listed, not listed, or not askable. */
+export type WindowState = "open" | "gone" | "unknown";
+
+/**
+ * A delegation's state. `closed` is a recorded `delegation_close`; `gone` is
+ * closed without a result (the poll found the window missing); `window-closed`
+ * is a window tmux no longer lists, seen when asked directly.
+ */
+export type DelegationState = "closed" | "done" | "gone" | "running" | "window-closed" | "unknown";
+
+/** How much of a delegation id a delegate's session name carries. */
+const SHORT_ID = 8;
+
+/**
+ * A delegate's name, used for both its session and its window: its agent and
+ * the label, or the first 8 characters of its id when there is no label.
+ */
+export function delegateName(agent: string, id: string, label?: string): string {
+	return `${agent}-${label ?? id.slice(0, SHORT_ID)}`;
+}
+
+/** The recorded name, or the pre-label name for records from before labels. */
+export function recordedName(record: Recorded): string {
+	return record.name ?? delegateName(record.agent, record.id);
+}
+
+/** A delegation's state: a recorded close, then a result, then a gone record, then the window. */
+export function deriveState(record: Recorded, window: WindowState): DelegationState {
+	if (record.closed === true) return "closed";
+	if (record.result !== undefined) return "done";
+	if (record.gone === true) return "gone";
+	if (window === "open") return "running";
+	if (window === "gone") return "window-closed";
+	return "unknown";
+}
 
 /** Cut `text` to at most `max` UTF-8 bytes on a character boundary; undefined when it already fits. */
 function cap(text: string, max: number): string | undefined {
@@ -219,14 +253,12 @@ export function createResults(pi: ExtensionAPI): Results {
 		updateFooter();
 	}
 
-	function recordClose(id: string): "closed" | "already-closed" | "unknown" {
+	function recordClose(id: string): void {
 		const record = byId.get(id);
-		if (record === undefined) return "unknown";
-		if (record.closed === true) return "already-closed";
+		if (record === undefined || record.closed === true) return;
 		pi.appendEntry(CUSTOM_TYPE, { id, closed: true });
 		record.closed = true;
 		updateFooter();
-		return "closed";
 	}
 
 	function recordGone(id: string): boolean {
@@ -288,6 +320,5 @@ export function createResults(pi: ExtensionAPI): Results {
 		recordGone,
 		list: () => [...byId.values()],
 		find: (id) => byId.get(id),
-		takeReply,
 	};
 }

@@ -45,17 +45,14 @@ import { Type } from "typebox";
 
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AUTO_EXIT_ENV, registerChild } from "./child.ts";
-import { createResults, findSession, type Recorded } from "./results.ts";
+import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
+import { createTracking, toolResult } from "./tracking.ts";
 
 /** The hook a provider of `message:*` answers with the written request. */
 const SEND = "message:send";
 /** The hook emitted just before a delegate's window opens. */
 const LAUNCH = "session:launch";
-/** The hook a tick emits so the provider claims waiting replies before windows are checked. */
-const SCAN = "message:scan";
-/** How often the parent checks its running delegations. */
-const POLL_MS = 5000;
 /** Set in a delegate's environment, so this extension stays off there. */
 const PARENT_ENV = "PI_DELEGATE_PARENT";
 /** Forwarded to the child when the parent has it set. */
@@ -63,21 +60,11 @@ const SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 /** Asked of every delegate, so the parent gets an answer it can use alone. */
 const FINAL_LINE =
 	"End with one self-contained final message: the parent session sees only that message, never this conversation.";
-/** How much of a delegation id a delegate's session name carries. */
-const SHORT_ID = 8;
 
 /** The longest label a delegation can carry. */
 const LABEL_MAX = 32;
 /** A label is one safe tmux window name and session name segment. */
 const LABEL = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-
-/**
- * A delegate's name, used for both its session and its window: its agent and
- * the label, or the first 8 characters of its id when there is no label.
- */
-function delegateName(agent: string, id: string, label?: string): string {
-	return `${agent}-${label ?? id.slice(0, SHORT_ID)}`;
-}
 
 /** Why `value` is not a usable label, or undefined when it is. */
 function labelProblem(value: string): string | undefined {
@@ -238,14 +225,6 @@ function toolDescription(agents: readonly Agent[]): string {
 	].join("\n");
 }
 
-/** The one result every tool returns. */
-function toolResult(
-	payload: string,
-	details: unknown = {},
-): { content: { type: "text"; text: string }[]; details: unknown } {
-	return { content: [{ type: "text", text: payload }], details };
-}
-
 /**
  * Register `/delegate` and the three tools. The second parameter is a
  * test-only seam for tmux: Pi passes only `pi`, so it is not part of the
@@ -260,50 +239,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 	const results = createResults(pi);
 
-	/** The poll timer; set only while some delegation is running. */
-	let poll: ReturnType<typeof setInterval> | undefined;
-	let ticking = false;
-	/** False once the session shuts down, so a tick still awaiting tmux declares nothing. */
-	let live = true;
-
-	function stopPolling(): void {
-		if (poll !== undefined) clearInterval(poll);
-		poll = undefined;
-	}
-
-	/** Claim waiting replies first, then declare gone every window that is missing with still no result. */
-	async function tick(): Promise<void> {
-		if (ticking) return;
-		ticking = true;
-		try {
-			if (results.running().length === 0) return stopPolling();
-			const scan: { scanned?: boolean } = {};
-			pi.events.emit(SCAN, scan);
-			if (scan.scanned !== true) return; // no message:* provider: a waiting reply cannot be ruled out
-			for (const record of results.running()) {
-				let alive: boolean;
-				try {
-					alive = await tmux.isAlive(record.windowId);
-				} catch {
-					continue; // tmux could not be asked; never read that as gone
-				}
-				if (alive || !live) continue;
-				// A reply may have landed while the windows before this one were checked.
-				pi.events.emit(SCAN, {});
-				results.recordGone(record.id);
-			}
-			if (results.running().length === 0) stopPolling();
-		} finally {
-			ticking = false;
-		}
-	}
-
-	/** Start the timer when something is running; it never keeps the process alive. */
-	function startPolling(): void {
-		if (poll !== undefined || results.running().length === 0) return;
-		poll = setInterval(() => void tick(), POLL_MS);
-		poll.unref?.();
-	}
+	const tracking = createTracking(pi, results, tmux);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
@@ -439,7 +375,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			},
 			ctx,
 		);
-		startPolling();
+		tracking.startPolling();
 		return { id, name, windowId, windowName, requestId };
 	}
 
@@ -526,167 +462,15 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		},
 	});
 
-	/** One delegation's state, from its records and the window tmux reports. */
-	async function describe(record: Recorded, ctx: ExtensionContext): Promise<string> {
-		let alive: boolean | undefined;
-		try {
-			alive = await tmux.isAlive(record.windowId);
-		} catch {
-			alive = undefined; // tmux could not be asked; never read that as gone
-		}
-		const state =
-			record.closed === true
-				? "closed"
-				: record.result !== undefined
-					? "done"
-					: record.gone === true
-						? "gone"
-						: alive === true
-							? "running"
-							: alive === false
-								? "closed"
-								: "unknown";
-		const session = record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id);
-		const lines = [
-			`${record.id} ${record.agent} (${record.model}, thinking ${record.thinking})`,
-			`  name: ${record.name ?? delegateName(record.agent, record.id)}`,
-			`  state: ${stateLine(state, record)}`,
-			`  window: ${record.windowName} (${record.windowId})`,
-			`  auto-exit: ${autoExitLine(record)}`,
-			`  session: ${session ?? `${record.id} (no session file yet)`}`,
-		];
-		if (record.result !== undefined) lines.push(`  envelope: ${record.result.envelopePath}`);
-		return lines.join("\n");
-	}
-
-	/** Records from before auto-exit existed kept their windows open, so they read off. */
-	function autoExitLine(record: Recorded): string {
-		return record.autoExit === true
-			? "on — the delegate closes its window after a normal completion unless the user took over there"
-			: "off — the window stays open after the result";
-	}
-
-	function stateLine(state: string, record: Recorded): string {
-		if (state === "running") return "running — the window is open and no result has arrived";
-		if (state === "gone")
-			return "closed without a result — the window is gone and no reply arrived; a late reply would make it done";
-		if (state === "done") return `done — result status: ${record.result?.status ?? "unknown"}`;
-		if (state === "closed") {
-			return record.closed === true ? "closed — delegation_close recorded it" : "closed — the window is gone";
-		}
-		return "unknown — tmux could not be asked whether the window is open";
-	}
-
-	const statusTool = {
-		name: "delegation_status",
-		label: "Delegation status",
-		description:
-			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Names the delegation id, agent, session name, model, thinking, window, delegate session path and result envelope path. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
-		parameters: Type.Object({
-			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
-		}),
-		async execute(
-			_toolCallId: string,
-			params: { id?: string },
-			_signal: unknown,
-			_onUpdate: unknown,
-			ctx: ExtensionContext,
-		) {
-			const all = results.list();
-			const records = params.id === undefined ? all : all.filter((record) => record.id === params.id);
-			if (params.id !== undefined && records.length === 0) {
-				throw new Error(
-					`no delegation ${JSON.stringify(params.id)}; known: ${all.map((record) => record.id).join(", ") || "none"}`,
-				);
-			}
-			const details = records.map((record) => ({
-				id: record.id,
-				name: delegateName(record.agent, record.id),
-				agent: record.agent,
-				model: record.model,
-				thinking: record.thinking,
-				autoExit: record.autoExit === true,
-				windowId: record.windowId,
-				windowName: record.windowName,
-				closed: record.closed === true,
-				closedWithoutResult: record.gone === true && record.result === undefined && record.closed !== true,
-				status: record.result?.status,
-				envelopePath: record.result?.envelopePath,
-				sessionPath: record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id),
-			}));
-			if (records.length === 0)
-				return toolResult("No delegations are recorded in this session.", { delegations: details });
-			const blocks: string[] = [];
-			for (const record of records) blocks.push(await describe(record, ctx));
-			const heading = `${records.length} delegation${records.length === 1 ? "" : "s"}:`;
-			return toolResult(`${heading}\n\n${blocks.join("\n\n")}`, { delegations: details });
-		},
-	};
-
-	const closeTool = {
-		name: "delegation_close",
-		label: "Close delegation",
-		description:
-			"Close one delegation: kill its tmux window through tmux and record the close, so delegation_status reports it closed. The delegate's session file and result envelope stay on disk. An unknown or already closed id returns a message with nothing killed.",
-		parameters: Type.Object({
-			id: Type.String({ description: "The delegation id to close." }),
-		}),
-		async execute(
-			_toolCallId: string,
-			params: { id: string },
-			_signal: unknown,
-			_onUpdate: unknown,
-			_ctx: ExtensionContext,
-		) {
-			const record = results.find(params.id);
-			if (record === undefined) {
-				const known =
-					results
-						.list()
-						.map((item) => item.id)
-						.join(", ") || "none";
-				throw new Error(`no delegation ${JSON.stringify(params.id)}; known: ${known}`);
-			}
-			if (record.closed === true)
-				return toolResult(`Delegation ${record.id} is already closed.`, { id: record.id, closed: true });
-			let alive: boolean;
-			try {
-				alive = await tmux.isAlive(record.windowId);
-			} catch (err) {
-				throw new Error(`could not ask tmux about window ${record.windowName}: ${(err as Error).message}`);
-			}
-			if (alive) {
-				try {
-					await tmux.kill(record.windowId);
-				} catch (err) {
-					throw new Error(`could not kill window ${record.windowName} (${record.windowId}): ${(err as Error).message}`);
-				}
-			}
-			results.recordClose(record.id);
-			const how = alive
-				? `killed window ${record.windowName} (${record.windowId})`
-				: `its window ${record.windowName} was already gone`;
-			return toolResult(`Closed delegation ${record.id}: ${how}.`, {
-				id: record.id,
-				windowId: record.windowId,
-				killed: alive,
-			});
-		},
-	};
-
 	pi.on("session_start", (_event, ctx) => {
 		registry = ctx.modelRegistry;
-		stopPolling();
-		live = true;
-		results.restore(ctx);
-		startPolling();
+		tracking.restore(ctx);
 		// The roster is read at call time; the description can only be fixed here.
 		pi.registerTool(delegateTool() as never);
 	});
 
 	pi.on("session_shutdown", () => {
-		live = false;
-		stopPolling();
+		tracking.stop();
 	});
 
 	/** Agent names, flags, model ids and thinking levels, at the cursor's token. */
@@ -712,6 +496,5 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	});
 
 	pi.registerTool(delegateTool() as never);
-	pi.registerTool(statusTool as never);
-	pi.registerTool(closeTool as never);
+	tracking.registerTools();
 }

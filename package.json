@@ -1,6 +1,6 @@
 {
 	"name": "pi-squire",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Starts a delegate Pi session in a background tmux window, sends it the task over message:*, and shows the parent its result",
 	"keywords": [
 		"pi-package",

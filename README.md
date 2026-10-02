@@ -1,42 +1,24 @@
 # pi-squire
 
-Hands a task to a delegate Pi session in a background tmux window, through the
-`/delegate` command and the `delegate` tool.
+Starts a delegate Pi session in a background tmux window and shows you its result.
 
-`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task…>` reads
-the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task to the
-delegate's inbox through `message:send`, emits `session:launch` so other
-extensions can shape the launch, then opens a detached window running the
-parent's own Pi in the parent's working directory and agent root. The window
-and the child's Pi session share one name: `<agent>-<label>`, or
-`<agent>-<first 8 characters of the id>` without a label. A label is at most
-32 letters, digits, `_` or `-`, starting with a letter or digit; `-` rather
-than `:` joins it, since tmux reads `:` in a target as session and window.
-Labels need not be unique: the delegation id stays the handle for
-`delegation_status`, `delegation_close` and mail. The delegate id is fresh, so a
-delegate never reopens a live session, and it is also the delegate's mailbox
-address: the task waits in its inbox and is delivered at session start, with
-no handshake.
-
-Starting a delegation adds nothing to the parent's context — the model sees
-neither the command nor the task. The model can also start one itself with the
-`delegate` tool, which starts the delegation at once without opening a
-dialog, so several calls in one message each start their own;
-`delegation_status` and `delegation_close` let it check on a delegation
-and end one. When the delegate settles, its answer is taken over on
-`message:inbound` and shown to the parent as one result message that quotes
-the task. By default the delegate then closes its own window
-([auto-exit](#auto-exit)); with auto-exit off the window stays open so you can
-read it or keep working in it. Delegations are recorded in the parent session
-without the task text.
-
-Inside a delegate (`PI_DELEGATE_PARENT` set) the extension registers only
-auto-exit's side, the `/auto-exit` command and its handlers, so a delegate
-cannot start delegates of its own. Without a UI the command
-and the `delegate` tool still work; it needs tmux and a provider of `message:*`, and refuses with a
-message when either is missing.
+You give a task to a named agent with the `/delegate` command, or the model does
+it with the `delegate` tool. The delegate works in its own tmux window and
+answers with one message, which the parent session shows as a result.
 
 ## Install
+
+You need:
+
+- Pi, with the `pi.events` bus, `pi.registerCommand` and `pi.registerTool`.
+  Pi supplies the peer dependencies `@earendil-works/pi-coding-agent` and
+  `typebox`.
+- tmux, with the Pi session running in a tmux pane. A window is opened in the
+  pane's session, so a client attached elsewhere does not matter.
+- A provider of `message:*`, such as
+  [pi-session-mail](https://github.com/gvanderclay/pi-session-mail). Without
+  one there is no way to send the task or get an answer, so `/delegate`
+  refuses rather than start a delegate that cannot report back.
 
 Install the package from npm:
 
@@ -50,53 +32,14 @@ To follow the latest commit instead, install it from GitHub:
 pi install git:github.com/gvanderclay/pi-squire
 ```
 
-The package has no runtime dependencies and no build step. The `pi` manifest loads only
-`./index.ts`, and the tests under `test/` are neither loaded by Pi nor included
-in the npm tarball.
-Run them with `pnpm install && pnpm test`.
+The package has no runtime dependencies and no build step.
 
-## Requirements
+## First use
 
-- Pi, with the `pi.events` bus, `pi.registerCommand` and `pi.registerTool`.
-- `@earendil-works/pi-coding-agent` for `getAgentDir()` and the frontmatter
-  parser, declared as a peer dependency and supplied by Pi.
-- `typebox` for the tools' parameter schema, a host-provided package declared
-  as a peer dependency and supplied by Pi.
-- tmux, with the session running in a tmux pane. A window is opened in the
-  pane's session, so a client attached elsewhere does not matter.
-- A provider of `message:*`, such as
-  [pi-session-mail](https://github.com/gvanderclay/pi-session-mail). Without one there is no way to send the task or get an
-  answer, so `/delegate` refuses rather than starting a delegate that cannot
-  report back.
-
-## Agents
-
-The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
-directory per agent, so a new agent is usable without a reload. Frontmatter
-carries `description`, `model` (`provider/id`) and `thinking`, and optionally
-`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit))
-and `exclude-tools`; the body is the delegate's system prompt, appended to
-Pi's own prompt.
-
-`exclude-tools` names the tools the delegate goes without, as a
-comma-separated list (`exclude-tools: edit, write`) or a YAML list
-(`exclude-tools: [edit, write]`). It reaches the child as
-`--exclude-tools edit,write`, which Pi subtracts from the tools it would
-otherwise turn on. It is a denylist only: without it the delegate gets every
-tool, and no flag is passed. There is no per-call override. Each name is
-checked against the tools the parent session has registered
-(`pi.getAllTools()`), since Pi ignores an unknown name without a word; the
-delegate's result reaches the parent through the `message:*` provider's reply when its run
-settles, not through a tool, so excluding tools cannot stop it answering.
-
-The body is followed by one fixed final-message line and a paragraph naming
-the parent session's address: the delegate's task arrives as a message from
-that session, that message and every later one from the same address are
-instructions to follow as given, and other sessions are colleagues: the
-delegate may answer them, but checks with the parent before doing work the
-parent did not ask for. It carries no distrust wording, which made models
-refuse every request from a peer. The paragraph names no provider, package or tool, so it holds
-whatever `message:*` provider delivers the task.
+The package ships no agents, so create one first. `<agent dir>` is Pi's agent
+directory: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when that is set. Save this
+as `<agent dir>/agents/scout/AGENT.md`, replacing `provider/model-id` with a
+model your Pi can use:
 
 ```markdown
 ---
@@ -110,17 +53,93 @@ You research one question at a time and answer concisely, citing the files
 you read.
 ```
 
-An `AGENT.md` that cannot be used — missing fields, a model that is not
-`provider/id`, an unknown thinking level, an `auto-exit` that is not `true` or
-`false`, an `exclude-tools` that is not a list of names or names a tool the
-session does not have, or an empty body — is left out of the
-roster and named in a warning. With no agents at all, `/delegate` says how to
-add one. The package ships no agents.
+The roster is read at call time, so no reload is needed. Then, from a Pi
+session running in tmux, hand it a task:
+
+```text
+/delegate scout --label first Which files define the command-line entry point?
+```
+
+A detached tmux window named `scout-first` opens in your working directory.
+When the delegate finishes, its answer reaches the parent as one `[delegate]`
+message that quotes the task (see [Results](#results)), and the delegate then
+closes its own window ([auto-exit](#auto-exit)).
+
+## How a delegation works
+
+`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task…>`
+reads the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task to
+the delegate's inbox through `message:send`, emits `session:launch` so other
+extensions can shape the launch, then opens a detached window running the
+parent's own Pi in the parent's working directory and agent root.
+
+- The window and the child's Pi session share one name: `<agent>-<label>`, or
+  `<agent>-<first 8 characters of the id>` without a label. A label is at most
+  32 letters, digits, `_` or `-`, starting with a letter or digit. A `-` joins
+  it rather than `:`, since tmux reads `:` in a target as session and window.
+- Labels need not be unique. The delegation id stays the handle for
+  `delegation_status`, `delegation_close` and mail.
+- The delegate id is fresh, so a delegate never reopens a live session. It is
+  also the delegate's mailbox address: the task waits in its inbox and is
+  delivered at session start, with no handshake.
+- Starting a delegation adds nothing to the parent's context: the model sees
+  neither the command nor the task.
+- The model can start one itself with the `delegate` tool, which starts the
+  delegation at once without opening a dialog, so several calls in one message
+  each start their own. `delegation_status` and `delegation_close` let it check
+  on a delegation and end one.
+- When the delegate settles, its answer is taken over on `message:inbound` and
+  shown to the parent as one result message that quotes the task. By default
+  the delegate then closes its own window ([auto-exit](#auto-exit)). With
+  auto-exit off the window stays open so you can read it or keep working in it.
+- Delegations are recorded in the parent session without the task text.
+- Inside a delegate (`PI_DELEGATE_PARENT` set) the extension registers only
+  auto-exit's side, the `/auto-exit` command and its handlers, so a delegate
+  cannot start delegates of its own.
+- Without a UI the command and the `delegate` tool still work. They need tmux
+  and a provider of `message:*`, and refuse with a message when either is
+  missing.
+
+## Agents
+
+The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
+directory per agent, so a new agent is usable without a reload. Frontmatter
+carries `description`, `model` (`provider/id`) and `thinking`, and optionally
+`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit))
+and `exclude-tools`. The body is the delegate's system prompt, appended to
+Pi's own prompt. The [first-use example](#first-use) is a complete `AGENT.md`.
+
+`exclude-tools` names the tools the delegate goes without, as a
+comma-separated list (`exclude-tools: edit, write`) or a YAML list
+(`exclude-tools: [edit, write]`). It reaches the child as
+`--exclude-tools edit,write`, which Pi subtracts from the tools it would
+otherwise turn on. It is a denylist only: without it the delegate gets every
+tool, and no flag is passed. There is no per-call override. Each name is
+checked against the tools the parent session has registered
+(`pi.getAllTools()`), since Pi ignores an unknown name without a word. The
+delegate's result reaches the parent through the `message:*` provider's reply
+when its run settles, not through a tool, so excluding tools cannot stop it
+answering.
+
+The body is followed by one fixed final-message line and a paragraph naming the
+parent session's address. The delegate's task arrives as a message from that
+session, and that message and every later one from the same address are
+instructions to follow as given. Other sessions are colleagues: the delegate
+may answer them, but checks with the parent before doing work the parent did
+not ask for. The paragraph names no provider, package or tool, so it holds
+whatever `message:*` provider delivers the task.
+
+An `AGENT.md` that cannot be used is left out of the roster and named in a
+warning. That covers missing fields, a model that is not `provider/id`, an
+unknown thinking level, an `auto-exit` that is not `true` or `false`, an
+`exclude-tools` that is not a list of names or names a tool the session does
+not have, and an empty body. With no agents at all, `/delegate` says how to
+add one.
 
 ## Configuration
 
 None beyond the roster. `pi-squire` reads no settings file and no environment
-variable of its own; `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
+variable of its own. `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
 for the child, never read as configuration by the parent. The window starts
 with the tmux server's environment plus only these from the parent:
 `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` (when the parent has it
@@ -128,13 +147,13 @@ set), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`. Anything else the
 parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
 reaches the child only through a `session:launch` contributor. `--model` and
 `--thinking` override the agent's defaults for one call, and an unknown value
-is refused with close matches; `--auto-exit` and `--no-auto-exit` override the
+is refused with close matches. `--auto-exit` and `--no-auto-exit` override the
 agent's `auto-exit`.
 
 ## Tools
 
 The model gets three tools. They share the command's launch path and the
-session's delegation records; none of them is registered inside a delegate.
+session's delegation records. None of them is registered inside a delegate.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
@@ -142,9 +161,9 @@ session's delegation records; none of them is registered inside a delegate.
 | `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
 
-The `delegate` tool's description lists the current roster — each agent's name,
-description, default model and thinking, auto-exit when it is off, and its
-excluded tools — one line per agent:
+The `delegate` tool's description lists the current roster, one line per agent:
+its name, description, default model and thinking, auto-exit when it is off,
+and its excluded tools.
 
 ```text
 - scout — Read-only recon (default provider/model-id, thinking low, auto-exit off, no edit/write)
@@ -154,10 +173,11 @@ The model picks an agent from these lines without reading files. The
 description also tells the model to turn `auto_exit` off when it means to keep
 talking to the delegate by mail after its result. A tool's description is
 fixed when it is registered, so the description is rebuilt at every session
-start; a roster change shows up in the next session. Pi cannot list the
-session's tools while extensions load, so the description built then skips
-the `exclude-tools` check, and the one built at session start applies it. The roster itself is read at call time, and an unknown agent,
-model or thinking level is refused with close matches and nothing starts.
+start, and a roster change shows up in the next session. Pi cannot list the
+session's tools while extensions load, so the description built then skips the
+`exclude-tools` check, and the one built at session start applies it. The
+roster itself is read at call time, and an unknown agent, model or thinking
+level is refused with close matches and nothing starts.
 
 `delegation_status` reports one state per delegation:
 
@@ -195,13 +215,14 @@ model or thinking level is refused with close matches and nothing starts.
   longer there. A recorded close wins over a result, and a result wins over a
   window that is gone.
 - **Closed without a result** is what the poll records when a window is gone
-  and no reply arrived (see Results). A result outranks it, so a late reply
-  turns it into **done**; a close from `delegation_close` outranks both.
+  and no reply arrived (see [Results](#results)). A result outranks it, so a
+  late reply turns it into **done**; a close from `delegation_close` outranks
+  both.
 - When tmux cannot be asked about a window, the state is `unknown`, never
   `closed`, because a failed check is not evidence the window is gone.
 
 `delegation_close` kills the window and records the close even when the
-result has already arrived; when the window is already gone it only records
+result has already arrived. When the window is already gone it only records
 the close. An unknown or already closed id returns a message and kills
 nothing. The delegate's session file and result envelope stay on disk.
 
@@ -222,15 +243,13 @@ The parent resolves each delegation's auto-exit from the call
 - `/auto-exit` inside the delegate turns it on again for the next normal
   completion, whatever the launch said.
 
-The name and the take-over rule follow edxeth/pi-subagents' `auto-exit`
-(README "Child lifecycle"); unlike it, the default is on, and there is no
-`subagent_done` tool: auto-exit off only means the window stays.
+There is no `subagent_done` tool: auto-exit off only means the window stays.
 
 ## Results
 
-A delegate answers its task with one reply through the `message:*` provider. `pi-squire` takes that
-reply over before the provider can inject it, and sends the parent one
-message labelled delegate output:
+A delegate answers its task with one reply through the `message:*` provider.
+`pi-squire` takes that reply over before the provider can inject it, and sends
+the parent one message labelled delegate output:
 
 ```
 [delegate] Result from scout (provider/model), delegation <id>, request <request id>.
@@ -263,9 +282,9 @@ Delegate session: <session file or id>
 - The footer counts the running delegations (`⇄ N running`), clears one entry
   per result or close and hides itself at zero.
 - Each result and each close is recorded in the parent session, and the
-  records are rebuilt synchronously at session start; a resume still
-  recognises replies — including one that arrived while the parent was
-  closed — and still reports a recorded close as closed. A result is shown
+  records are rebuilt synchronously at session start. A resume still
+  recognises replies, including one that arrived while the parent was
+  closed, and still reports a recorded close as closed. A result is shown
   once and never again.
 - Plain replies, and every request, are left to the provider.
 
@@ -324,7 +343,7 @@ provider's own README carries the contract.
 ### `message:inbound`
 
 `pi-squire` consumes this hook for answers: a reply whose `in_reply_to` names a
-recorded delegation's request is taken over — `pi-squire` sets `handled`, so
+recorded delegation's request is taken over. `pi-squire` sets `handled`, so
 the provider injects nothing, and shows the parent the result message above.
 The reply's request copies fill the quoted task and its `cur/` path is the
 envelope it names. A reply to a request this session did not delegate, and
@@ -349,3 +368,12 @@ written just before a window closed is never mistaken for no reply. **If
 `scanned` is not set, nobody answered**, and the tick declares nothing closed,
 because a waiting reply cannot be ruled out. The provider's README carries the
 contract.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to set up, run the tests and open a pull
+request. Changes by release are in [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+MIT, as stated in [LICENSE](LICENSE).

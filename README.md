@@ -10,9 +10,10 @@ answers with one message, which the parent session shows as a result.
 
 You need:
 
-- Pi 0.80.4 or later, on macOS or Linux (not Windows). Pi 1.0.0 is the version
-  pi-squire is tested with. The floor is the first version with the
-  `agent_settled` event; `--exclude-tools` needs 0.77.0 and `--session-id`
+- Pi 0.80.5 or later, on macOS or Linux (not Windows). Pi 1.0.0 is the version
+  pi-squire is tested with. The floor is the first installable release with
+  the `agent_settled` event (added in 0.80.4, which was never published to
+  npm); `--exclude-tools` needs 0.77.0 and `--session-id`
   0.76.0. The extension uses the `pi.events` bus, `pi.registerCommand` and
   `pi.registerTool`; Pi supplies the peer dependencies
   `@earendil-works/pi-coding-agent` and `typebox`.
@@ -400,7 +401,7 @@ Other extensions may rely on:
 - the `message:send`, `message:inbound` and `message:scan` hooks, consumed as
   their sections document;
 - the `delegate`, `delegation_status` and `delegation_close` tool names and
-  parameters, and their `details` shapes;
+  parameters;
 - the `/delegate` syntax and flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,

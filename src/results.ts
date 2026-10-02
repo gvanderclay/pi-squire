@@ -288,7 +288,8 @@ export function createResults(pi: ExtensionAPI): Results {
 		if (payload?.handled === true) return;
 		const reply = payload?.envelope;
 		if (reply === undefined || !Array.isArray(reply.in_reply_to) || reply.in_reply_to.length === 0) return;
-		const requestId = reply.in_reply_to.find((id) => byRequest.has(id));
+		// Only the delegate's own reply counts: `from` must be the delegation's id.
+		const requestId = reply.in_reply_to.find((id) => byRequest.get(id)?.id === reply.from);
 		if (requestId === undefined) return;
 		payload.handled = true;
 		if (shown.has(reply.id)) return;

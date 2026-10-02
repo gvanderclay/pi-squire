@@ -350,8 +350,10 @@ recorded delegation's request is taken over. `pi-squire` sets `handled`, so
 the provider injects nothing, and shows the parent the result message above.
 The reply's request copies fill the quoted task and its `cur/` path is the
 envelope it names. A reply to a request this session did not delegate, and
-every request, is left to the provider. The provider's README carries the
-contract.
+every request, is left to the provider. `pi-squire` reads `from` and requires
+it to be the sender's address, which for a delegate is its session id; a reply
+from any other sender is left to the provider, even when it answers a recorded
+request. The provider's README carries the contract.
 
 `pi-squire` rebuilds its records synchronously in its own `session_start`, so it
 relies on the provider not emitting `message:inbound` from inside a

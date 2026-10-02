@@ -147,7 +147,10 @@ set), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`. Anything else the
 parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
 reaches the child only through a `session:launch` contributor. `--model` and
 `--thinking` override the agent's defaults for one call, and an unknown value
-is refused with close matches. `--auto-exit` and `--no-auto-exit` override the
+is refused with close matches, and so is a model with no configured
+credentials. An API key that exists only as an environment variable in the
+parent's shell does not reach the delegate, so log in through Pi or make the
+variable part of the tmux server's environment. `--auto-exit` and `--no-auto-exit` override the
 agent's `auto-exit`.
 
 ## Tools

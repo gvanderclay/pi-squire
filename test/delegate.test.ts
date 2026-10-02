@@ -163,6 +163,18 @@ test("an unknown model or thinking level is refused with close matches", async (
 	assert.match(s.errors[2], /provider\/id/);
 });
 
+test("a model without credentials is refused, per call and as the agent default", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	writeAgent("keyless", agentFile({ description: "Needs a key", model: "beta/other-model", thinking: "low" }));
+	const s = session({ noCredentials: ["beta/other-model"] });
+	await s.delegate("scout --model beta/other-model do it");
+	await s.delegate("keyless do it");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
+	assert.equal(s.errors.length, 2);
+	for (const error of s.errors) assert.match(error, /no credentials for model "beta\/other-model".*provider "beta"/);
+});
+
 test("a malformed AGENT.md is warned about at call time and left out of the roster", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	writeAgent("broken", "---\ndescription: no thinking\nmodel: alpha/fast-model\n---\n\nDo it.\n");

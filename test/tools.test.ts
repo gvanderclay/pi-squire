@@ -75,6 +75,18 @@ test("an invalid agent, model or thinking level is refused with close matches an
 	assert.deepEqual(s.tmux.opened, []);
 });
 
+test("a model without credentials is refused by the delegate tool and starts nothing", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session({ noCredentials: ["beta/other-model"] });
+	await s.start();
+	await assert.rejects(
+		s.toolCall("delegate", { agent: "scout", task: "do it", model: "beta/other-model" }),
+		/no credentials for model "beta\/other-model".*provider "beta"/,
+	);
+	assert.deepEqual(s.sendCalls, []);
+	assert.deepEqual(s.tmux.opened, []);
+});
+
 test("outside tmux the delegate tool refuses and starts nothing", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session();

@@ -99,6 +99,8 @@ export type SessionOptions = {
 	ui?: UiAnswers;
 	/** The tool names `pi.getAllTools()` reports once the session has started. */
 	registeredTools?: readonly string[];
+	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
+	noCredentials?: readonly string[];
 };
 
 /** The tools a fake session has unless a test says otherwise. */
@@ -131,6 +133,8 @@ export function session(options: SessionOptions = {}) {
 		getAll: () => FAKE_MODELS,
 		getAvailable: () => FAKE_MODELS,
 		find: (provider: string, id: string) => FAKE_MODELS.find((model) => model.provider === provider && model.id === id),
+		hasConfiguredAuth: (model: { provider: string; id: string }) =>
+			!(options.noCredentials ?? []).includes(`${model.provider}/${model.id}`),
 	};
 	const tmux = new FakeTmux();
 	/** The current run's abort signal, as `ctx.signal` reports it; cleared when the run settles. */

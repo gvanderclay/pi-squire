@@ -180,7 +180,11 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 function modelProblem(value: string, registry: ModelRegistry): string | undefined {
 	const slash = value.indexOf("/");
 	if (slash <= 0 || slash === value.length - 1) return `--model takes provider/id, got ${JSON.stringify(value)}`;
-	if (registry.find(value.slice(0, slash), value.slice(slash + 1)) !== undefined) return undefined;
+	const known = registry.find(value.slice(0, slash), value.slice(slash + 1));
+	if (known !== undefined) {
+		if (registry.hasConfiguredAuth(known)) return undefined;
+		return `no credentials for model ${JSON.stringify(value)}; log in to the provider ${JSON.stringify(known.provider)} (/login), then try again`;
+	}
 	const names = registry.getAll().map((model) => `${model.provider}/${model.id}`);
 	const close = closest(value, names);
 	return `unknown model ${JSON.stringify(value)}${close.length > 0 ? `; close matches: ${close.join(", ")}` : ""}`;

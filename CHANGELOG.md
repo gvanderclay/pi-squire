@@ -8,6 +8,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Breaking
 
+- A model without configured credentials is refused, by `/delegate` and the
+  `delegate` tool alike, instead of failing in the delegate's window.
 - A reply counts as a delegation's result only when it comes from the delegate
   (`envelope.from` equals the delegation's id); a reply to its request from any
   other sender is left to the provider as ordinary mail.

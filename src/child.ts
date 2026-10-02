@@ -8,6 +8,13 @@
 // taking over — typing here, or stopping a run — turns it off for the rest of
 // the session, with a notice; `/auto-exit` turns it back on. Modelled on
 // edxeth/pi-subagents' `auto-exit` (README "Child lifecycle", `cf6dbf4`).
+//
+// It also takes over the parent's task request on `message:inbound` and sends
+// it as a user prompt. Pi 1.0.0 starts a custom-message turn without preparing
+// the system prompt, so a fresh delegate's first request would carry no
+// AGENTS.md, skills or role addendum (earendil-works/pi#5581). The provider
+// still arms the automatic answer for a request a listener took over.
+// ponytail: drop the takeover once #5581 lands and the minimum Pi has it.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 /** The launch variable that carries the parent's resolved setting. */
@@ -19,7 +26,24 @@ const ON_NOTICE = "delegate: auto-exit is on; this delegate closes after its nex
 
 type Message = { role?: string; stopReason?: unknown };
 
-export function registerChild(pi: ExtensionAPI): void {
+type Inbound = { envelope?: { from?: unknown; kind?: unknown; body?: unknown }; handled?: boolean };
+
+export function registerChild(pi: ExtensionAPI, parent: string): void {
+	let current: ExtensionContext | undefined;
+	pi.on("session_start", async (_event, ctx) => {
+		current = ctx;
+	});
+	pi.events.on("message:inbound", (data) => {
+		const payload = data as Inbound;
+		const envelope = payload?.envelope;
+		if (payload.handled === true || envelope?.kind !== "request" || envelope.from !== parent) return;
+		payload.handled = true;
+		const text = `[delegate] Your task, from the session that started you (${parent}). Your final message this turn goes back to it automatically.\n\n${String(envelope.body ?? "")}`;
+		Promise.resolve(pi.sendUserMessage(text, { deliverAs: "steer" })).catch((err) =>
+			current?.ui.notify(`delegate: could not start the task: ${(err as Error).message}`, "error"),
+		);
+	});
+
 	let armed = process.env[AUTO_EXIT_ENV] === "1";
 	/** Whether the run that just ended finished normally: not stopped, not failed. */
 	let completed = false;

@@ -364,8 +364,18 @@ provider's own README carries the contract.
 recorded delegation's request is taken over. `pi-squire` sets `handled`, so
 the provider injects nothing, and shows the parent the result message above.
 The reply's request copies fill the quoted task and its `cur/` path is the
-envelope it names. A reply to a request this session did not delegate, and
-every request, is left to the provider. `pi-squire` reads `from` and requires
+envelope it names. A reply to a request this session did not delegate is left
+to the provider.
+
+Inside a delegate, `pi-squire` also takes over the task: a `request` whose
+`from` is the parent's address. It sets `handled` and sends the task as a user
+prompt labelled `[delegate]`, so the run starts the way a typed prompt does.
+Pi 1.0.0 starts a turn for an injected custom message without preparing the
+system prompt, so a fresh delegate's first request would otherwise carry no
+context files, skills or role paragraph
+([earendil-works/pi#5581](https://github.com/earendil-works/pi/issues/5581)).
+The provider still arms the automatic answer for a request a listener took
+over. Every other message to the delegate is left to the provider. `pi-squire` reads `from` and requires
 it to be the sender's address, which for a delegate is its session id; a reply
 from any other sender is left to the provider, even when it answers a recorded
 request. The provider's README carries the contract.

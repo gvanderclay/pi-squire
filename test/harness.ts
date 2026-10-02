@@ -112,6 +112,8 @@ export function session(options: SessionOptions = {}) {
 	const commands: Record<string, Command> = {};
 	const handlers: Record<string, Handler[]> = {};
 	const sent: { message: { customType: string; content: unknown; display?: boolean }; options: unknown }[] = [];
+	/** Every `pi.sendUserMessage` call, with its options. */
+	const userMessages: { text: string; options: unknown }[] = [];
 	const entries: Entry[] = [...(options.entries ?? [])];
 	const statuses: { key: string; text: string | undefined }[] = [];
 	const notes: string[] = [];
@@ -162,6 +164,9 @@ export function session(options: SessionOptions = {}) {
 			entries.push({ customType, data: data as Record<string, unknown> }),
 		sendMessage: (message: { customType: string; content: unknown; display?: boolean }, opts: unknown) =>
 			sent.push({ message, options: opts }),
+		sendUserMessage: (text: string, opts: unknown) => {
+			userMessages.push({ text, options: opts });
+		},
 	};
 	const ctx = {
 		cwd: root,
@@ -239,6 +244,7 @@ export function session(options: SessionOptions = {}) {
 		events,
 		pi,
 		sent,
+		userMessages,
 		entries,
 		statuses,
 		notes,

@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A delegate's task now arrives as a user prompt labelled `[delegate]` instead
+  of a `[mailbox]` message. Pi 1.0.0 started the injected message's turn
+  without the system prompt, so a fresh delegate saw no context files, skills
+  or role paragraph until after its first tool call, and could reject them as
+  an injection (earendil-works/pi#5581).
+
 ## [0.2.0] - 2026-10-02
 
 ### Breaking

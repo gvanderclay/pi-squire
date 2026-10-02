@@ -255,8 +255,9 @@ function toolDescription(agents: readonly Agent[]): string {
  */
 export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmuxClient()): void {
 	// A delegate registers only its auto-exit side: `delegate` is one level deep (Q27).
-	if ((process.env[PARENT_ENV] ?? "") !== "") {
-		registerChild(pi);
+	const parentId = process.env[PARENT_ENV] ?? "";
+	if (parentId !== "") {
+		registerChild(pi, parentId);
 		return;
 	}
 

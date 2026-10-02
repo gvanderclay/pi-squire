@@ -150,3 +150,20 @@ test("/auto-exit works in a delegate started with auto-exit off", async () => {
 	await s.run("completed");
 	assert.equal(s.shutdowns(), 1);
 });
+
+// ---------------------------------------------------------------------------
+// The delegate: its task
+
+test("the parent's request reaches the delegate as a user prompt; other mail is left to the provider", async () => {
+	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
+	await s.start();
+	const task = { envelope: { from: "some-parent", kind: "request", body: "do the thing" }, handled: false };
+	const peer = { envelope: { from: "someone-else", kind: "request", body: "x" }, handled: false };
+	const note = { envelope: { from: "some-parent", kind: "message", body: "y" }, handled: false };
+	for (const payload of [task, peer, note]) s.events.emit("message:inbound", payload);
+	assert.deepEqual([task.handled, peer.handled, note.handled], [true, false, false]);
+	assert.equal(s.userMessages.length, 1);
+	assert.match(s.userMessages[0].text, /^\[delegate\] Your task, from the session that started you \(some-parent\)/);
+	assert.match(s.userMessages[0].text, /\n\ndo the thing$/);
+	assert.deepEqual(s.userMessages[0].options, { deliverAs: "steer" });
+});

@@ -12,8 +12,10 @@ pnpm install
 pnpm check   # lint, typecheck and tests, as CI runs them
 ```
 
-One test file: `node --test test/hooks.test.ts`. To try a change in Pi, load
-your checkout: `pi -e <path to this checkout>`.
+The package has no runtime dependencies and no build step. The tests under
+`test/` are not loaded by Pi and not published to npm. Run one test file with
+`node --test test/hooks.test.ts`. To try a change in Pi, load your checkout:
+`pi -e <path to this checkout>`.
 
 ## Pull requests
 

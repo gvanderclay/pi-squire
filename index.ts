@@ -112,7 +112,7 @@ const USAGE =
 	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
-type LaunchPayload = { args: string[]; env: Record<string, string> };
+type LaunchPayload = { args: string[]; env: Record<string, string>; agent: string };
 type Parsed = { agent: string; model?: string; thinking?: string; label?: string; autoExit?: boolean; task: string };
 /** A request that passed the roster, model, thinking and label checks. */
 type Start = { agent: Agent; model: string; thinking: string; label?: string; autoExit: boolean; task: string };
@@ -413,7 +413,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		const sessionDir = process.env[SESSION_DIR_ENV];
 		if (sessionDir !== undefined && sessionDir !== "") env[SESSION_DIR_ENV] = sessionDir;
 		// Listeners may only append to `args` and add to `env`; there is no veto.
-		const payload: LaunchPayload = { args: argv, env };
+		const payload: LaunchPayload = { args: argv, env, agent: start.agent.name };
 		pi.events.emit(LAUNCH, payload);
 
 		const windowName = name;

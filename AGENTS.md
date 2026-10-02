@@ -37,8 +37,16 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
 - Fill in `.github/pull_request_template.md`. `CONTRIBUTING.md` is the
   human-facing copy of these rules; keep the two in step.
 - Add each user-visible change under `## [Unreleased]` in `CHANGELOG.md` as
-  it lands. Never edit `version` or tag by hand; there is no release flow yet,
-  and the package is not on npm.
+  it lands. Never edit `version` or tag by hand; see Releases.
+
+## Releases
+
+- Release with `pnpm release patch` (or `minor`, `major`) on an up-to-date
+  `main`: it bumps the version, moves the CHANGELOG entries and opens a
+  release pull request set to auto-merge. It refuses when `[Unreleased]` is
+  empty. Once that merges, `release.yml` sees an untagged version on `main`,
+  checks, tags, publishes to npm by trusted publishing, and makes the GitHub
+  release.
 
 ## Rules
 

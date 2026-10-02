@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-02
+
 ### Breaking
 
 - A model without configured credentials is refused, by `/delegate` and the
@@ -67,5 +69,6 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gvanderclay/pi-squire/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gvanderclay/pi-squire/releases/tag/v0.1.0

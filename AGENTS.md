@@ -22,7 +22,9 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   with a fresh `HOME` and no `PI_CODING_AGENT_DIR`.
 - A single file: `node --test test/hooks.test.ts`.
 - `node scripts/check-pack.mjs` after changing `package.json` `files` or adding
-  a file under `src/`. Every `.ts` file under `src/` must be packed.
+  a file under `src/`. Every `.ts` file under `src/` must be packed. It also
+  packs the bundle and loads it into the project's Pi, so run `pnpm install`
+  first.
 - `biome.json` relaxes some rules for the files that predate this repository
   (one override per file). New files get the full rules; do not add a file to
   an override to get past a rule.

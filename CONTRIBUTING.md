@@ -14,7 +14,10 @@ pnpm check   # lint, typecheck and tests, as CI runs them
 
 The package has no runtime dependencies and no build step. The tests under
 `test/` are not loaded by Pi and not published to npm. Run one test file with
-`node --test test/hooks.test.ts`. To try a change in Pi, load your checkout:
+`node --test test/hooks.test.ts`. After changing `package.json` `files` or
+adding a file under `src/`, run `node scripts/check-pack.mjs`: it checks the
+file list `npm pack` would publish, then loads the packed bundle into Pi, so run
+`pnpm install` first. To try a change in Pi, load your checkout:
 `pi -e <path to this checkout>`.
 
 ## Pull requests

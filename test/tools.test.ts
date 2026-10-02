@@ -2,8 +2,9 @@
 // `delegation_status` and `delegation_close`. These tests drive the extension
 // only through its registration function: a temporary agent directory, a fake
 // Pi session with a scripted `ctx.ui`, the fake tmux, `message:send` stubbed.
-import { test, beforeEach, after } from "node:test";
+
 import assert from "node:assert/strict";
+import { after, beforeEach, test } from "node:test";
 
 import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
 
@@ -269,7 +270,10 @@ test("delegation_status refuses an unknown id with the ones that exist", async (
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = s.entries[0].data.id as string;
-	await assert.rejects(s.toolCall("delegation_status", { id: "nope" }), new RegExp(`no delegation "nope"; known: ${id}`));
+	await assert.rejects(
+		s.toolCall("delegation_status", { id: "nope" }),
+		new RegExp(`no delegation "nope"; known: ${id}`),
+	);
 });
 
 test("delegation_close kills the window, records the close, and reports it once", async () => {
@@ -283,7 +287,10 @@ test("delegation_close kills the window, records the close, and reports it once"
 	const closed = await s.toolCall("delegation_close", { id });
 	assert.deepEqual(s.tmux.killed, [windowId]);
 	assert.deepEqual(s.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
-	assert.match(closed.content[0].text, new RegExp(`Closed delegation ${id}: killed window scout-${id.slice(0, 8)} \\(${windowId}\\)\\.`));
+	assert.match(
+		closed.content[0].text,
+		new RegExp(`Closed delegation ${id}: killed window scout-${id.slice(0, 8)} \\(${windowId}\\)\\.`),
+	);
 	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: undefined });
 
 	const again = await s.toolCall("delegation_close", { id });
@@ -329,7 +336,10 @@ test("delegation_close refuses an unknown id and kills nothing", async () => {
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = s.entries[0].data.id as string;
-	await assert.rejects(s.toolCall("delegation_close", { id: "nope" }), new RegExp(`no delegation "nope"; known: ${id}`));
+	await assert.rejects(
+		s.toolCall("delegation_close", { id: "nope" }),
+		new RegExp(`no delegation "nope"; known: ${id}`),
+	);
 	assert.deepEqual(s.tmux.killed, []);
 	assert.equal(s.entries.length, 1);
 });

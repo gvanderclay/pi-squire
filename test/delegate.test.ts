@@ -3,10 +3,11 @@
 // background tmux window running the parent's own Pi, and records the
 // delegation. These tests drive the extension only through its registration
 // function: a temporary agent directory, a fake Pi session, the fake tmux.
-import { test, beforeEach, after } from "node:test";
+
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { after, beforeEach, test } from "node:test";
 
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
@@ -196,7 +197,10 @@ test("the task is written before the window opens, and the delegate id fits both
 });
 
 test("the argv runs the parent's own script pi with the task's flags", async () => {
-	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."));
+	writeAgent(
+		"scout",
+		agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."),
+	);
 	const s = session();
 	const savedExec = process.execPath;
 	const savedArgv = process.argv;
@@ -224,9 +228,7 @@ test("the argv runs the parent's own script pi with the task's flags", async () 
 		"low",
 	]);
 	assert.ok(
-		String(argv[promptAt + 1]).startsWith(
-			"You look things up.\n\nEnd with one self-contained final message:",
-		),
+		String(argv[promptAt + 1]).startsWith("You look things up.\n\nEnd with one self-contained final message:"),
 		argv.join(" "),
 	);
 	assert.equal(argv.length, promptAt + 2);
@@ -273,7 +275,10 @@ test("a label that is not one short name segment is refused before anything is s
 });
 
 test("the appended prompt names the parent, follows its messages, and checks other sessions' requests with it", async () => {
-	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."));
+	writeAgent(
+		"scout",
+		agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."),
+	);
 	const s = session();
 	await s.delegate("scout find the answer");
 	const { argv } = s.tmux.opened[0];

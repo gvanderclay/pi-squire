@@ -3,9 +3,10 @@
 // delegation closed without a result only when its window is gone and the
 // same tick's scan found no reply. Timers are node:test mock timers; tmux and
 // the mailbox are the harness's fakes.
-import { test, beforeEach, after } from "node:test";
-import type { TestContext } from "node:test";
+
 import assert from "node:assert/strict";
+import type { TestContext } from "node:test";
+import { after, beforeEach, test } from "node:test";
 
 import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
 
@@ -37,7 +38,15 @@ async function tick(t: TestContext, times = 1) {
 function reply(s: Session, status = "done") {
 	const requestId = (s.sendCalls[0].envelope as { id: string }).id;
 	return {
-		envelope: { id: `reply-${status}`, from: "d", to: s.parent, in_reply_to: [requestId], status, ts: "", body: "the answer" },
+		envelope: {
+			id: `reply-${status}`,
+			from: "d",
+			to: s.parent,
+			in_reply_to: [requestId],
+			status,
+			ts: "",
+			body: "the answer",
+		},
 		path: "/mail/cur/reply.json",
 		requests: [],
 		handled: false,
@@ -45,7 +54,8 @@ function reply(s: Session, status = "done") {
 }
 
 const closedMessages = (s: Session) => s.sent.filter((m) => /closed without a result/.test(String(m.message.content)));
-const resultMessages = (s: Session) => s.sent.filter((m) => /^\[delegate\] Result from/.test(String(m.message.content)));
+const resultMessages = (s: Session) =>
+	s.sent.filter((m) => /^\[delegate\] Result from/.test(String(m.message.content)));
 const statusText = async (s: Session) => (await s.toolCall("delegation_status", {})).content[0].text;
 
 test("a gone window whose reply the scan delivers is done, with no closed message", async (t) => {

@@ -5,9 +5,10 @@
 // change in the code fails here. The name after the fence's `js` marker
 // selects the test below that runs it, and `test("...")` at the end fails
 // when a fence has no runner.
-import { test, beforeEach, after } from "node:test";
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { after, beforeEach, test } from "node:test";
 
 import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
 
@@ -28,7 +29,7 @@ function readmeExamples(): Map<string, string> {
 }
 
 const examples = readmeExamples();
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
 	...args: string[]
 ) => (...args: unknown[]) => Promise<void>;
 

@@ -3,8 +3,9 @@
 // and passes it in the launch environment; the delegate's side shuts Pi down
 // after the run settles, and stays when the user typed, stopped a run, or the
 // run failed. `/auto-exit` inside the delegate turns it back on.
-import { test, beforeEach, after } from "node:test";
+
 import assert from "node:assert/strict";
+import { after, beforeEach, test } from "node:test";
 
 import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
 
@@ -47,7 +48,10 @@ test("an auto-exit that is not true or false leaves the agent out with a warning
 	const s = session();
 	await s.delegate("odd do the thing");
 	assert.deepEqual(s.tmux.opened, []);
-	assert.ok(s.warnings.some((warning) => /auto-exit "sometimes"/.test(warning)), s.warnings.join("\n"));
+	assert.ok(
+		s.warnings.some((warning) => /auto-exit "sometimes"/.test(warning)),
+		s.warnings.join("\n"),
+	);
 });
 
 test("the tool describes auto_exit, and completions offer both flags", async () => {

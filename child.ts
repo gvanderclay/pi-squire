@@ -53,7 +53,7 @@ export function registerChild(pi: ExtensionAPI): void {
 		const exit = armed && completed;
 		completed = false;
 		if (!exit) return;
-		// Later settle handlers (the mailbox's reply among them) run first.
+		// Later settle handlers (the `message:*` provider's reply among them) run first.
 		setImmediate(() => ctx.shutdown());
 	});
 

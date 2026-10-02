@@ -62,7 +62,8 @@ function parseAgent(
 	} catch (err) {
 		return { warning: `${path} is not readable frontmatter (${(err as Error).message}); skipped` };
 	}
-	if (frontmatter === null || typeof frontmatter !== "object") return { warning: `${path} has no frontmatter fields; skipped` };
+	if (frontmatter === null || typeof frontmatter !== "object")
+		return { warning: `${path} has no frontmatter fields; skipped` };
 	const description = field(frontmatter, "description");
 	const model = field(frontmatter, "model");
 	const thinking = field(frontmatter, "thinking");
@@ -72,9 +73,12 @@ function parseAgent(
 		thinking === undefined ? "thinking" : undefined,
 	].filter((key): key is string => key !== undefined);
 	if (missing.length > 0) return { warning: `${path} has no ${missing.join(", ")}; skipped` };
-	if (!MODEL.test(model as string)) return { warning: `${path} has model ${JSON.stringify(model)}, not provider/id; skipped` };
+	if (!MODEL.test(model as string))
+		return { warning: `${path} has model ${JSON.stringify(model)}, not provider/id; skipped` };
 	if (!isThinking(thinking as string))
-		return { warning: `${path} has thinking ${JSON.stringify(thinking)}, not one of ${THINKING_LEVELS.join(", ")}; skipped` };
+		return {
+			warning: `${path} has thinking ${JSON.stringify(thinking)}, not one of ${THINKING_LEVELS.join(", ")}; skipped`,
+		};
 	if (body === "") return { warning: `${path} has no prompt body; skipped` };
 	const autoExit = flag(frontmatter["auto-exit"]);
 	if (autoExit === null)
@@ -87,7 +91,9 @@ function parseAgent(
 	const excludeTools = listed ?? [];
 	const unknownTool = tools === undefined ? undefined : excludeTools.find((tool) => !tools.includes(tool));
 	if (unknownTool !== undefined)
-		return { warning: `${path} has exclude-tools ${JSON.stringify(unknownTool)}, not a tool this session has; skipped` };
+		return {
+			warning: `${path} has exclude-tools ${JSON.stringify(unknownTool)}, not a tool this session has; skipped`,
+		};
 	return {
 		agent: {
 			name,
@@ -106,9 +112,7 @@ function toolList(value: unknown): string[] | undefined | null {
 	if (value === undefined || value === null) return undefined;
 	const names = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : null;
 	if (names === null || !names.every((name) => typeof name === "string")) return null;
-	return names
-		.map((name) => name.trim())
-		.filter((name) => name !== "");
+	return names.map((name) => name.trim()).filter((name) => name !== "");
 }
 
 /** A true/false frontmatter value; undefined when absent, null when it is neither. */

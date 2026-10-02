@@ -430,7 +430,7 @@ A `message:*` provider must:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) to set up, run the tests and open a pull
+See [CONTRIBUTING.md](https://github.com/gvanderclay/pi-squire/blob/main/CONTRIBUTING.md) to set up, run the tests and open a pull
 request. Changes by release are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License

@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The README links `CONTRIBUTING.md` on GitHub, since it is not in the npm
+  package and its relative link 404s on pi.dev.
+
 ## [0.2.1] - 2026-10-02
 
 ### Fixed

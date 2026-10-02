@@ -5,8 +5,9 @@
 // function: a temporary agent directory, a fake Pi session, the fake tmux.
 
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
@@ -239,9 +240,11 @@ test("the argv runs the parent's own script pi with the task's flags", async () 
 		"--thinking",
 		"low",
 	]);
+	const promptPath = String(argv[promptAt + 1]);
+	assert.ok(isAbsolute(promptPath), promptPath);
 	assert.ok(
-		String(argv[promptAt + 1]).startsWith("You look things up.\n\nEnd with one self-contained final message:"),
-		argv.join(" "),
+		readFileSync(promptPath, "utf8").startsWith("You look things up.\n\nEnd with one self-contained final message:"),
+		promptPath,
 	);
 	assert.equal(argv.length, promptAt + 2);
 	assert.equal(cwd, root);
@@ -294,13 +297,36 @@ test("the appended prompt names the parent, follows its messages, and checks oth
 	const s = session();
 	await s.delegate("scout find the answer");
 	const { argv } = s.tmux.opened[0];
-	const prompt = String(argv[argv.indexOf("--append-system-prompt") + 1]);
+	const promptPath = String(argv[argv.indexOf("--append-system-prompt") + 1]);
+	const prompt = readFileSync(promptPath, "utf8");
 	assert.ok(prompt.includes(s.parent), prompt);
 	assert.match(prompt, /instructions/);
 	assert.match(prompt, /colleagues/);
 	assert.match(prompt, /check with the session that started you before doing work it did not ask for/);
 	assert.ok(!/untrusted/.test(prompt), prompt);
 	assert.ok(!/mailbox|session_mail|pi-session-mail/.test(prompt), prompt);
+});
+
+test("the appended prompt is an owner-only file under the temporary folder, one per launch", async () => {
+	writeAgent(
+		"scout",
+		agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."),
+	);
+	const s = session();
+	await s.delegate("scout find the answer");
+	await s.delegate("scout find it again");
+	const paths = s.tmux.opened.map(({ argv }) => String(argv[argv.indexOf("--append-system-prompt") + 1]));
+	assert.notEqual(paths[0], paths[1]);
+	for (const path of paths) {
+		assert.ok(isAbsolute(path), path);
+		assert.ok(dirname(path).startsWith(tmpdir()), path);
+		assert.equal(statSync(dirname(path)).mode & 0o077, 0);
+		assert.equal(statSync(path).mode & 0o077, 0);
+	}
+	const prompt = readFileSync(paths[0], "utf8");
+	assert.ok(prompt.startsWith("You look things up.\n\nEnd with one self-contained final message:"), prompt);
+	assert.ok(prompt.includes(s.parent), prompt);
+	for (const element of s.tmux.opened[0].argv) assert.ok(!element.includes("You look things up."), element);
 });
 
 test("a compiled Pi binary is launched alone, with no script argument", async () => {

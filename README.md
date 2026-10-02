@@ -71,7 +71,9 @@ closes its own window ([auto-exit](#auto-exit)).
 reads the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task to
 the delegate's inbox through `message:send`, emits `session:launch` so other
 extensions can shape the launch, then opens a detached window running the
-parent's own Pi in the parent's working directory and agent root.
+parent's own Pi in the parent's working directory and agent root. The agent's
+prompt reaches the child as a path to a private file under the system
+temporary folder, not as text on the command line.
 
 - The window and the child's Pi session share one name: `<agent>-<label>`, or
   `<agent>-<first 8 characters of the id>` without a label. A label is at most
@@ -107,7 +109,9 @@ directory per agent, so a new agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`, and optionally
 `auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit))
 and `exclude-tools`. The body is the delegate's system prompt, appended to
-Pi's own prompt. The [first-use example](#first-use) is a complete `AGENT.md`.
+Pi's own prompt; it reaches the child as a path to a private file under the
+system temporary folder, so the text stays off the command line. The
+[first-use example](#first-use) is a complete `AGENT.md`.
 
 `exclude-tools` names the tools the delegate goes without, as a
 comma-separated list (`exclude-tools: edit, write`) or a YAML list

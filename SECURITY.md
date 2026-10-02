@@ -16,17 +16,19 @@ and the `session:launch` listeners you have installed.
 ## What reaches the delegate
 
 - Arguments: the parent's own Pi command, the session id and name, the model,
-  thinking level, the agent's `exclude-tools`, and an appended system prompt
-  made of the agent file's prompt and a note naming the parent. The task is
-  not on the command line; it travels as mail through the `message:*`
-  provider.
+  thinking level, the agent's `exclude-tools`, and a path to a private file
+  holding the appended system prompt, made of the agent file's prompt and a
+  note naming the parent. The task is not on the command line; it travels as
+  mail through the `message:*` provider.
 - Environment: tmux starts the window with the tmux server's environment plus
   `PI_CODING_AGENT_DIR`, `PI_DELEGATE_PARENT`, `PI_DELEGATE_AUTO_EXIT` and,
   when set, `PI_CODING_AGENT_SESSION_DIR`.
 - `session:launch` listeners may append arguments and add environment
   variables. Any installed extension can do this, and pi-squire passes them on
   unchanged. A listener also sees the agent's name, as the `agent` field of the
-  payload.
+  payload. Environment variables a listener adds appear briefly on the `tmux`
+  command line, which other local users can read, so a listener must not pass
+  secrets that way.
 - tmux runs the command directly from an argument list, with no shell.
 
 ## In scope

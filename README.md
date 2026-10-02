@@ -39,7 +39,7 @@ message when either is missing.
 ## Install
 
 ```bash
-pi install <path to this directory>
+pi install git:github.com/gvanderclay/pi-squire
 ```
 
 Once it is published, install it by name instead:
@@ -48,9 +48,10 @@ Once it is published, install it by name instead:
 pi install npm:pi-squire
 ```
 
-The package has no dependencies and no build step. The `pi` manifest loads only
+The package has no runtime dependencies and no build step. The `pi` manifest loads only
 `./index.ts`, and the tests under `test/` are neither loaded by Pi nor included
 in the npm tarball.
+Run them with `pnpm install && pnpm test`.
 
 ## Requirements
 

@@ -5,6 +5,12 @@
 	"keywords": [
 		"pi-package"
 	],
+	"license": "MIT",
+	"author": "Gage Vander Clay <gvanderclay@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/gvanderclay/pi-squire.git"
+	},
 	"type": "module",
 	"pi": {
 		"extensions": [
@@ -13,10 +19,12 @@
 	},
 	"files": [
 		"index.ts",
+		"child.ts",
 		"agents.ts",
 		"tmux.ts",
 		"results.ts",
-		"README.md"
+		"README.md",
+		"LICENSE"
 	],
 	"scripts": {
 		"test": "node --test test/*.test.ts"
@@ -24,5 +32,9 @@
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",
 		"typebox": "*"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "1.0.0",
+		"typebox": "1.3.27"
 	}
 }

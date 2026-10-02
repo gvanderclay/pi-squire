@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- A reply counts as a delegation's result only when it comes from the delegate
+  (`envelope.from` equals the delegation's id); a reply to its request from any
+  other sender is left to the provider as ordinary mail.
+- Providers must set `envelope.from` to the sender's address.
+- The `reply()` fixture in `test/poll.test.ts` now sends the delegation id as
+  `from` instead of `"d"`, to match.
+
 ### Changed
 
 - The sources moved to `src/`, so load the package directory (`pi -e .`), not

@@ -623,3 +623,14 @@ test("a reply whose task copy is missing names the request id alone", async () =
 	assert.ok(content.includes(delegation.requestId), content);
 	assert.match(content, /no copy in sent\//);
 });
+
+test("a reply from another session to the delegate's request is not taken as its result", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const payload = inbound(s.parent, delegation);
+	payload.envelope.from = "some-other-session";
+	s.events.emit("message:inbound", payload);
+	assert.equal(payload.handled, false);
+	assert.equal(s.sent.length, 0);
+	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: "⇄ 1 running" });
+});

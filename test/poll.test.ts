@@ -37,10 +37,11 @@ async function tick(t: TestContext, times = 1) {
 /** A reply envelope, as the mailbox emits it on `message:inbound`, to the first request this session sent. */
 function reply(s: Session, status = "done") {
 	const requestId = (s.sendCalls[0].envelope as { id: string }).id;
+	const delegationId = (s.entries[0].data as { id: string }).id;
 	return {
 		envelope: {
 			id: `reply-${status}`,
-			from: "d",
+			from: delegationId,
 			to: s.parent,
 			in_reply_to: [requestId],
 			status,

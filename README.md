@@ -311,13 +311,14 @@ that block.
 
 ### `session:launch`
 
-`pi-squire` provides this hook. It emits `{ args, env }` after the task has been
-sent and just before it opens the delegate's window.
+`pi-squire` provides this hook. It emits `{ args, env, agent }` after the task
+has been sent and just before it opens the delegate's window.
 
 | Field | Meaning |
 | --- | --- |
 | `args` | the child `pi`'s complete argument list, launcher first |
 | `env` | the child's environment, as `KEY`/`value` pairs |
+| `agent` | the agent's name, as in `<agent dir>/agents/<name>/AGENT.md`; read it, do not change it |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
 and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the

@@ -6,6 +6,10 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `session:launch` payloads carry the agent's name as `agent`.
+
 ## [0.1.0] - 2026-10-02
 
 The first public release. Before this repository the package lived in its

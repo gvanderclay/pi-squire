@@ -52,6 +52,17 @@ test("the README's session:launch example adds its flag and env key to the launc
 	assert.equal(opened.env.PI_DELEGATE_PARENT, s.parent, "the emitter's own env stays");
 });
 
+test("the payload a session:launch listener sees names the agent", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const s = session();
+	let seen: { agent?: unknown } | undefined;
+	s.events.on("session:launch", (payload) => {
+		seen = payload as { agent?: unknown };
+	});
+	await s.delegate("scout do the thing");
+	assert.equal(seen?.agent, "scout");
+});
+
 test("while a delegation runs, each tick emits message:scan with a payload the provider marks scanned", async (t) => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	t.mock.timers.enable({ apis: ["setInterval"] });

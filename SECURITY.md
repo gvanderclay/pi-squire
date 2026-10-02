@@ -25,7 +25,8 @@ and the `session:launch` listeners you have installed.
   when set, `PI_CODING_AGENT_SESSION_DIR`.
 - `session:launch` listeners may append arguments and add environment
   variables. Any installed extension can do this, and pi-squire passes them on
-  unchanged.
+  unchanged. A listener also sees the agent's name, as the `agent` field of the
+  payload.
 - tmux runs the command directly from an argument list, with no shell.
 
 ## In scope

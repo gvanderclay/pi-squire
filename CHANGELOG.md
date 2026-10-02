@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The sources moved to `src/`, so load the package directory (`pi -e .`), not
+  `index.ts`. Installs through npm or git are unaffected.
+
 ### Added
 
 - `session:launch` payloads carry the agent's name as `agent`.

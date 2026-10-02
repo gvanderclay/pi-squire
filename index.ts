@@ -1,4 +1,4 @@
-// `delegate`: hand a task to a delegate Pi session in a background tmux
+// pi-squire: hand a task to a delegate Pi session in a background tmux
 // window, over the `message:*` hooks.
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
@@ -43,7 +43,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { type Agent, isThinking, readRoster, type Roster, THINKING_LEVELS } from "./agents.ts";
+import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AUTO_EXIT_ENV, registerChild } from "./child.ts";
 import { createResults, findSession, type Recorded } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
@@ -128,7 +128,9 @@ const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
  * and its first user argument, if any, as `argv[1]`.
  */
 function parentCommand(execPath = process.execPath, argv = process.argv): string[] {
-	const runner = basename(execPath).replace(/\.exe$/i, "").toLowerCase();
+	const runner = basename(execPath)
+		.replace(/\.exe$/i, "")
+		.toLowerCase();
 	const script = argv[1];
 	if (RUNTIMES.has(runner) && typeof script === "string" && script !== "") return [execPath, script];
 	return [execPath];
@@ -140,11 +142,7 @@ function distance(a: string, b: string): number {
 	for (let i = 1; i <= a.length; i++) {
 		const current = [i];
 		for (let j = 1; j <= b.length; j++) {
-			current[j] = Math.min(
-				previous[j] + 1,
-				current[j - 1] + 1,
-				previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-			);
+			current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
 		}
 		previous = current;
 	}
@@ -241,7 +239,10 @@ function toolDescription(agents: readonly Agent[]): string {
 }
 
 /** The one result every tool returns. */
-function toolResult(payload: string, details: unknown = {}): { content: { type: "text"; text: string }[]; details: unknown } {
+function toolResult(
+	payload: string,
+	details: unknown = {},
+): { content: { type: "text"; text: string }[]; details: unknown } {
 	return { content: [{ type: "text", text: payload }], details };
 }
 
@@ -278,7 +279,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			if (results.running().length === 0) return stopPolling();
 			const scan: { scanned?: boolean } = {};
 			pi.events.emit(SCAN, scan);
-			if (scan.scanned !== true) return; // no mailbox: a waiting reply cannot be ruled out
+			if (scan.scanned !== true) return; // no message:* provider: a waiting reply cannot be ruled out
 			for (const record of results.running()) {
 				let alive: boolean;
 				try {
@@ -567,7 +568,8 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 	function stateLine(state: string, record: Recorded): string {
 		if (state === "running") return "running — the window is open and no result has arrived";
-		if (state === "gone") return "closed without a result — the window is gone and no reply arrived; a late reply would make it done";
+		if (state === "gone")
+			return "closed without a result — the window is gone and no reply arrived; a late reply would make it done";
 		if (state === "done") return `done — result status: ${record.result?.status ?? "unknown"}`;
 		if (state === "closed") {
 			return record.closed === true ? "closed — delegation_close recorded it" : "closed — the window is gone";
@@ -612,7 +614,8 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 				envelopePath: record.result?.envelopePath,
 				sessionPath: record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id),
 			}));
-			if (records.length === 0) return toolResult("No delegations are recorded in this session.", { delegations: details });
+			if (records.length === 0)
+				return toolResult("No delegations are recorded in this session.", { delegations: details });
 			const blocks: string[] = [];
 			for (const record of records) blocks.push(await describe(record, ctx));
 			const heading = `${records.length} delegation${records.length === 1 ? "" : "s"}:`;
@@ -637,7 +640,11 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		) {
 			const record = results.find(params.id);
 			if (record === undefined) {
-				const known = results.list().map((item) => item.id).join(", ") || "none";
+				const known =
+					results
+						.list()
+						.map((item) => item.id)
+						.join(", ") || "none";
 				throw new Error(`no delegation ${JSON.stringify(params.id)}; known: ${known}`);
 			}
 			if (record.closed === true)
@@ -656,8 +663,14 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 				}
 			}
 			results.recordClose(record.id);
-			const how = alive ? `killed window ${record.windowName} (${record.windowId})` : `its window ${record.windowName} was already gone`;
-			return toolResult(`Closed delegation ${record.id}: ${how}.`, { id: record.id, windowId: record.windowId, killed: alive });
+			const how = alive
+				? `killed window ${record.windowName} (${record.windowId})`
+				: `its window ${record.windowName} was already gone`;
+			return toolResult(`Closed delegation ${record.id}: ${how}.`, {
+				id: record.id,
+				windowId: record.windowId,
+				killed: alive,
+			});
 		},
 	};
 

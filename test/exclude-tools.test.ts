@@ -3,8 +3,9 @@
 // roster line, and a name the session has no tool for leaves the agent out.
 // These tests drive the extension only through its registration function: a
 // temporary agent directory, a fake Pi session, the fake tmux.
-import { test, beforeEach, after } from "node:test";
+
 import assert from "node:assert/strict";
+import { after, beforeEach, test } from "node:test";
 
 import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
 
@@ -43,7 +44,10 @@ test("a tool the session does not have leaves the agent out with a warning, so i
 	const s = session({ registeredTools: ["read", "bash", "edit", "write"] });
 	await s.start();
 	assert.ok(!s.tool("delegate").description.includes("scout"), s.tool("delegate").description);
-	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "do it" }), /no agent named "scout"; available: worker/);
+	await assert.rejects(
+		s.toolCall("delegate", { agent: "scout", task: "do it" }),
+		/no agent named "scout"; available: worker/,
+	);
 	await s.delegate("scout do it");
 	assert.deepEqual(s.tmux.opened, []);
 	assert.ok(
@@ -73,7 +77,9 @@ test("an exclude-tools that is not a list of names leaves the agent out with a w
 	assert.deepEqual(s.tmux.opened, []);
 	assert.ok(
 		s.warnings.some((warning) =>
-			warning.endsWith(`scout/AGENT.md has exclude-tools {"edit":true}, not a comma-separated list of tool names; skipped`),
+			warning.endsWith(
+				`scout/AGENT.md has exclude-tools {"edit":true}, not a comma-separated list of tool names; skipped`,
+			),
 		),
 		s.warnings.join("\n"),
 	);

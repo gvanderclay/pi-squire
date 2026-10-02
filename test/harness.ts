@@ -2,8 +2,9 @@
 // with a real event bus, a `message:send` provider stub and the fake tmux.
 // Tests drive the extension only through its registration function and watch
 // the bus, the injected messages, the recorded entries and the fake tmux.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+
 import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,13 +67,7 @@ export type Tool = {
 	name: string;
 	description: string;
 	parameters: unknown;
-	execute: (
-		toolCallId: string,
-		params: never,
-		signal: unknown,
-		onUpdate: unknown,
-		ctx: unknown,
-	) => Promise<ToolResult>;
+	execute: (toolCallId: string, params: never, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<ToolResult>;
 };
 
 /** The answers a scripted `ctx.ui` gives, one queue per dialog. */
@@ -85,7 +80,7 @@ export type UiAnswers = {
 let counter = 0;
 
 /** One custom entry, the shape `pi.appendEntry` writes and `getEntries` returns. */
-export type Entry = { customType: string; data: unknown };
+export type Entry = { customType: string; data: Record<string, unknown> };
 
 export type SessionOptions = {
 	/** Whether `ctx.hasUI` is true. */
@@ -135,8 +130,7 @@ export function session(options: SessionOptions = {}) {
 	const registry = {
 		getAll: () => FAKE_MODELS,
 		getAvailable: () => FAKE_MODELS,
-		find: (provider: string, id: string) =>
-			FAKE_MODELS.find((model) => model.provider === provider && model.id === id),
+		find: (provider: string, id: string) => FAKE_MODELS.find((model) => model.provider === provider && model.id === id),
 	};
 	const tmux = new FakeTmux();
 	/** The current run's abort signal, as `ctx.signal` reports it; cleared when the run settles. */
@@ -160,7 +154,8 @@ export function session(options: SessionOptions = {}) {
 		registerTool: (tool: Tool) => {
 			tools[tool.name] = tool;
 		},
-		appendEntry: (customType: string, data: unknown) => entries.push({ customType, data }),
+		appendEntry: (customType: string, data: unknown) =>
+			entries.push({ customType, data: data as Record<string, unknown> }),
 		sendMessage: (message: { customType: string; content: unknown; display?: boolean }, opts: unknown) =>
 			sent.push({ message, options: opts }),
 	};

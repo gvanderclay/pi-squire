@@ -1,7 +1,7 @@
-# delegate
+# pi-squire
 
-Hands a task to a delegate Pi session in a background tmux window. The npm
-package is `pi-squire`.
+Hands a task to a delegate Pi session in a background tmux window, through the
+`/delegate` command and the `delegate` tool.
 
 `/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task…>` reads
 the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task to the
@@ -62,8 +62,8 @@ Run them with `pnpm install && pnpm test`.
   as a peer dependency and supplied by Pi.
 - tmux, with the session running in a tmux pane. A window is opened in the
   pane's session, so a client attached elsewhere does not matter.
-- A provider of `message:*`, such as the `mailbox` package (npm
-  `pi-session-mail`). Without one there is no way to send the task or get an
+- A provider of `message:*`, such as
+  [pi-session-mail](https://github.com/gvanderclay/pi-session-mail). Without one there is no way to send the task or get an
   answer, so `/delegate` refuses rather than starting a delegate that cannot
   report back.
 
@@ -84,7 +84,7 @@ otherwise turn on. It is a denylist only: without it the delegate gets every
 tool, and no flag is passed. There is no per-call override. Each name is
 checked against the tools the parent session has registered
 (`pi.getAllTools()`), since Pi ignores an unknown name without a word; the
-delegate's result reaches the parent through the mailbox's reply when its run
+delegate's result reaches the parent through the `message:*` provider's reply when its run
 settles, not through a tool, so excluding tools cannot stop it answering.
 
 The body is followed by one fixed final-message line and a paragraph naming
@@ -117,7 +117,7 @@ add one. The package ships no agents.
 
 ## Configuration
 
-None beyond the roster. `delegate` reads no settings file and no environment
+None beyond the roster. `pi-squire` reads no settings file and no environment
 variable of its own; `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
 for the child, never read as configuration by the parent. The window starts
 with the tmux server's environment plus only these from the parent:
@@ -226,7 +226,7 @@ The name and the take-over rule follow edxeth/pi-subagents' `auto-exit`
 
 ## Results
 
-A delegate answers its task with one mailbox reply. `delegate` takes that
+A delegate answers its task with one reply through the `message:*` provider. `pi-squire` takes that
 reply over before the provider can inject it, and sends the parent one
 message labelled delegate output:
 
@@ -290,7 +290,7 @@ that block.
 
 ### `session:launch`
 
-`delegate` provides this hook. It emits `{ args, env }` after the task has been
+`pi-squire` provides this hook. It emits `{ args, env }` after the task has been
 sent and just before it opens the delegate's window.
 
 | Field | Meaning |
@@ -299,7 +299,7 @@ sent and just before it opens the delegate's window.
 | `env` | the child's environment, as `KEY`/`value` pairs |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
-and `delegate` passes both to tmux unchanged. Do all work synchronously: the
+and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
 emitter reads the payload the moment `emit` returns.
 
 ```js session:launch
@@ -312,37 +312,37 @@ pi.events.on("session:launch", (payload) => {
 
 ### `message:send`
 
-`delegate` consumes this hook to write the task; the provider writes the
+`pi-squire` consumes this hook to write the task; the provider writes the
 envelope from its own session's address and sets `envelope` (or `error`) on the
 payload before `emit` returns. **If neither is set, no provider is installed**
-and `delegate` refuses with a message naming `message:*`. The envelope's `id`
+and `pi-squire` refuses with a message naming `message:*`. The envelope's `id`
 is kept in the delegation's record, so an answer can be matched to it. The
 provider's own README carries the contract.
 
 ### `message:inbound`
 
-`delegate` consumes this hook for answers: a reply whose `in_reply_to` names a
-recorded delegation's request is taken over — `delegate` sets `handled`, so
+`pi-squire` consumes this hook for answers: a reply whose `in_reply_to` names a
+recorded delegation's request is taken over — `pi-squire` sets `handled`, so
 the provider injects nothing, and shows the parent the result message above.
 The reply's request copies fill the quoted task and its `cur/` path is the
 envelope it names. A reply to a request this session did not delegate, and
 every request, is left to the provider. The provider's README carries the
 contract.
 
-`delegate` rebuilds its records synchronously in its own `session_start`, so it
+`pi-squire` rebuilds its records synchronously in its own `session_start`, so it
 relies on the provider not emitting `message:inbound` from inside a
 `session_start` handler: mail waiting at session start must be claimed on a
-later event-loop turn, as `mailbox`'s `message:inbound` contract guarantees.
+later event-loop turn, as pi-session-mail's `message:inbound` contract guarantees.
 That is what makes a result that arrived while the parent was closed reach the
 rebuilt records. Keep extensions whose `session_start` waits on I/O from
-loading between the provider and `delegate`.
+loading between the provider and `pi-squire`.
 
 ### `message:scan`
 
-`delegate` consumes this hook on every poll tick (see Results): it emits `{}`,
+`pi-squire` consumes this hook on every poll tick (see Results): it emits `{}`,
 and the provider claims the mail waiting in its inbox, emitting each reply as
 `message:inbound`, before setting `scanned` to `true` on the payload and
-returning from `emit`. Only then does `delegate` check windows, so a reply
+returning from `emit`. Only then does `pi-squire` check windows, so a reply
 written just before a window closed is never mistaken for no reply. **If
 `scanned` is not set, nobody answered**, and the tick declares nothing closed,
 because a waiting reply cannot be ruled out. The provider's README carries the

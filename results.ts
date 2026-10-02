@@ -133,9 +133,7 @@ function resultText(delegation: Delegation, payload: Inbound, session: string | 
 	} else {
 		const cut = cap(copy.envelope.body, TASK_CAP);
 		const lines =
-			cut === undefined
-				? copy.envelope.body
-				: `${cut}\n[delegate] Task cut at 2 KiB; the full copy is ${copy.path}`;
+			cut === undefined ? copy.envelope.body : `${cut}\n[delegate] Task cut at 2 KiB; the full copy is ${copy.path}`;
 		quote = `Task, quoted from ${copy.path}:\n${lines
 			.split("\n")
 			.map((line) => `> ${line}`)
@@ -168,7 +166,10 @@ export function createResults(pi: ExtensionAPI): Results {
 	let footerShown = false;
 
 	/** A delegation still going: no result and no recorded close. */
-	const running = (): Recorded[] => [...byId.values()].filter((record) => record.result === undefined && record.closed !== true && record.gone !== true);
+	const running = (): Recorded[] =>
+		[...byId.values()].filter(
+			(record) => record.result === undefined && record.closed !== true && record.gone !== true,
+		);
 
 	/** The footer counts the running delegations, and hides itself at zero. */
 	function updateFooter(): void {
@@ -230,7 +231,8 @@ export function createResults(pi: ExtensionAPI): Results {
 
 	function recordGone(id: string): boolean {
 		const record = byId.get(id);
-		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true) return false;
+		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true)
+			return false;
 		const session = findSession(ctx?.sessionManager.getSessionDir(), record.id);
 		pi.appendEntry(CUSTOM_TYPE, { id, gone: true });
 		record.gone = true;
@@ -278,5 +280,14 @@ export function createResults(pi: ExtensionAPI): Results {
 
 	pi.events.on(INBOUND, (data) => takeReply(data as Inbound));
 
-	return { restore, recordStart, recordClose, running, recordGone, list: () => [...byId.values()], find: (id) => byId.get(id), takeReply };
+	return {
+		restore,
+		recordStart,
+		recordClose,
+		running,
+		recordGone,
+		list: () => [...byId.values()],
+		find: (id) => byId.get(id),
+		takeReply,
+	};
 }

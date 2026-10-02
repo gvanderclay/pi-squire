@@ -43,6 +43,12 @@ follows [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `session:launch` payloads carry the agent's name as `agent`.
+- The README's Install section names its requirements: tmux 3.0 or later, Pi
+  0.80.4 or later (tested with Pi 1.0.0), macOS and Linux, and
+  `pi install npm:pi-session-mail` as an example `message:*` provider.
+- A README "Compatibility" section names the contracts other extensions rely
+  on, the below-1.0 rule that breaking one bumps the minor version, and what a
+  `message:*` provider must do.
 
 ## [0.1.0] - 2026-10-02
 

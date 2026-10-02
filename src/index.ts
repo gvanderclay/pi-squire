@@ -33,6 +33,8 @@
 // The `session:launch` contract this package provides, and the `message:*`
 // hooks it consumes, live in this package's README.
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import {
@@ -105,6 +107,23 @@ type Parsed = { agent: string; model?: string; thinking?: string; label?: string
 type Start = { agent: Agent; model: string; thinking: string; label?: string; autoExit: boolean; task: string };
 /** A delegation that is open in a tmux window. */
 type Launched = { id: string; name: string; windowId: string; windowName: string; requestId: string };
+
+/**
+ * Write the appended system prompt to a fresh owner-only directory under the
+ * system temporary folder and return the file's path. Pi reads an existing
+ * path as a file, so the prompt stays off the delegate's command line and out
+ * of `ps`. The directory comes from `mkdtemp`, which no other user can
+ * pre-create or swap.
+ *
+ * ponytail: one file per launch accumulates until the operating system clears
+ * its temporary folder; the upgrade path is to delete the file once the poll
+ * finds the window gone.
+ */
+function writePromptFile(prompt: string): string {
+	const path = join(mkdtempSync(join(tmpdir(), "pi-squire-")), "prompt.md");
+	writeFileSync(path, prompt, { mode: 0o600 });
+	return path;
+}
 
 /** The runtimes whose executable needs the script from `process.argv[1]`. */
 const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
@@ -331,6 +350,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 		const parent = ctx.sessionManager.getSessionId();
 		const name = delegateName(start.agent.name, id, start.label);
+		const prompt = writePromptFile(`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}`);
 		const argv = [
 			...parentCommand(),
 			"--session-id",
@@ -343,7 +363,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			start.thinking,
 			...(start.agent.excludeTools.length > 0 ? ["--exclude-tools", start.agent.excludeTools.join(",")] : []),
 			"--append-system-prompt",
-			`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}`,
+			prompt,
 		];
 		const env: Record<string, string> = {
 			PI_CODING_AGENT_DIR: getAgentDir(),

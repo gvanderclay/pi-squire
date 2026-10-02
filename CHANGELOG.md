@@ -24,6 +24,11 @@ follows [Semantic Versioning](https://semver.org/).
 - Each check (a poll tick, a `delegation_status` call, a `delegation_close`
   call) asks tmux once, however many delegations run, instead of once per
   delegation.
+- The appended system prompt reaches the delegate as a path to a private file
+  under the system temporary folder, so its text stays off the command line
+  and out of `ps`. A `session:launch` listener now sees that path where the
+  prompt text was. The argv tests in `test/delegate.test.ts` read the prompt
+  from the file instead of from argv, a deliberate behaviour change.
 
 ### Fixed
 

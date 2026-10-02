@@ -10,23 +10,30 @@ answers with one message, which the parent session shows as a result.
 
 You need:
 
-- Pi, with the `pi.events` bus, `pi.registerCommand` and `pi.registerTool`.
-  Pi supplies the peer dependencies `@earendil-works/pi-coding-agent` and
-  `typebox`.
-- tmux, with the Pi session running in a tmux pane. A window is opened in the
-  pane's session, so a client attached elsewhere does not matter.
-- A provider of `message:*`, such as
-  [pi-session-mail](https://github.com/gvanderclay/pi-session-mail). Without
-  one there is no way to send the task or get an answer, so `/delegate`
-  refuses rather than start a delegate that cannot report back.
+- Pi 0.80.5 or later, on macOS or Linux (not Windows). Pi 1.0.0 is the version
+  pi-squire is tested with. The floor is the first installable release with
+  the `agent_settled` event (added in 0.80.4, which was never published to
+  npm); `--exclude-tools` needs 0.77.0 and `--session-id`
+  0.76.0. The extension uses the `pi.events` bus, `pi.registerCommand` and
+  `pi.registerTool`; Pi supplies the peer dependencies
+  `@earendil-works/pi-coding-agent` and `typebox`.
+- tmux 3.0 or later, with the Pi session running in a tmux pane. That is the
+  first version with `new-window -e`. A window is opened in the pane's
+  session, so a client attached elsewhere does not matter.
+- A provider of `message:*`;
+  [pi-session-mail](https://github.com/gvanderclay/pi-session-mail) is one
+  example. Without a provider there is no way to send the task or get an
+  answer, so `/delegate` refuses rather than start a delegate that cannot
+  report back.
 
-Install the package from npm:
+With pi-session-mail as the provider, for example, install both from npm:
 
 ```bash
+pi install npm:pi-session-mail
 pi install npm:pi-squire
 ```
 
-To follow the latest commit instead, install it from GitHub:
+To follow the latest commit of pi-squire instead, install it from GitHub:
 
 ```bash
 pi install git:github.com/gvanderclay/pi-squire
@@ -100,7 +107,8 @@ temporary folder, not as text on the command line.
   cannot start delegates of its own.
 - Without a UI the command and the `delegate` tool still work. They need tmux
   and a provider of `message:*`, and refuse with a message when either is
-  missing.
+  missing. In print mode (`pi -p`) Pi does not show the refusal notices, so
+  the refusal is silent there.
 
 ## Agents
 
@@ -194,21 +202,21 @@ level is refused with close matches and nothing starts.
 <id> scout (provider/model, thinking low)
   name: scout-<first 8 of the id>
   state: running — the window is open and no result has arrived
-  window: scout-<id> (@1)
+  window: scout-<first 8 of the id> (@1)
   auto-exit: on — the delegate closes its window after a normal completion unless the user took over there
   session: <the delegate's session file, or its id when there is none yet>
 
 <id> researcher (provider/other, thinking high)
   name: researcher-<first 8 of the id>
   state: done — result status: done
-  window: researcher-<id> (@2)
+  window: researcher-<first 8 of the id> (@2)
   auto-exit: off — the window stays open after the result
   session: <session file>
   envelope: <the reply's path in the parent's cur/>
 ```
 
 - **Name** is the delegate's Pi session name, its agent and the first 8
-  characters of its delegation id; the window keeps the full id.
+  characters of its delegation id.
 - **Running** means the window is open and no result has arrived. An open
   window is connection, not task state: the delegate may still be working, or
   waiting for the user, and only a result means done.
@@ -380,6 +388,35 @@ written just before a window closed is never mistaken for no reply. **If
 `scanned` is not set, nobody answered**, and the tick declares nothing closed,
 because a waiting reply cannot be ruled out. The provider's README carries the
 contract.
+
+## Compatibility
+
+While pi-squire is below 1.0, breaking any contract below bumps the minor
+version and is listed under "Breaking" in [CHANGELOG.md](CHANGELOG.md).
+
+Other extensions may rely on:
+
+- the `session:launch` payload `{ args, env, agent }`, emitted synchronously
+  after the task is sent and before the window opens (see [Hooks](#hooks));
+- the `message:send`, `message:inbound` and `message:scan` hooks, consumed as
+  their sections document;
+- the `delegate`, `delegation_status` and `delegation_close` tool names and
+  parameters;
+- the `/delegate` syntax and flags;
+- the `[delegate]` result text and the closed-without-a-result text;
+- `AGENT.md`'s frontmatter keys and its location,
+  `<agent dir>/agents/<name>/AGENT.md`;
+- the child environment variables `PI_DELEGATE_PARENT` and
+  `PI_DELEGATE_AUTO_EXIT`.
+
+A `message:*` provider must:
+
+- implement `message:send`, `message:inbound` and `message:scan` as documented
+  under [Hooks](#hooks);
+- set a reply's `from` to the sender's address, so the delegate's reply can be
+  matched to its task;
+- reply on its own when the delegate's run settles, since that reply is what
+  becomes the result.
 
 ## Contributing
 

@@ -132,8 +132,11 @@ test("a label names the session and the window, shows in the reply and in delega
 	assert.equal(name, "scout-roster");
 	assert.equal(argv[argv.indexOf("--name") + 1], "scout-roster");
 	assert.ok(result.content[0].text.includes("in window scout-roster."), result.content[0].text);
-	const status = (await s.toolCall("delegation_status", {})).content[0].text;
+	const statusResult = await s.toolCall("delegation_status", {});
+	const status = statusResult.content[0].text;
 	assert.ok(status.includes("name: scout-roster\n"), status);
+	const [detail] = (statusResult.details as { delegations: { name: string }[] }).delegations;
+	assert.equal(detail.name, "scout-roster");
 	assert.ok(status.includes(`window: scout-roster (${windowId})`), status);
 });
 

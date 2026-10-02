@@ -9,7 +9,9 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
 
 - The extension is the `.ts` files in `src/`. `src/index.ts` is the entry Pi
   loads; `child.ts` is what a delegate itself registers, `agents.ts` reads
-  the roster, `results.ts` handles replies and `tmux.ts` talks to tmux.
+  the roster, `results.ts` handles replies and works out a delegation's
+  state, `tracking.ts` holds the poll and the status and close tools, and
+  `tmux.ts` talks to tmux.
 - Tests and their helpers (`harness.ts`, `fake-tmux.ts`) are in `test/`.
   Nothing under `test/` is published; `scripts/check-pack.mjs` enforces that.
 

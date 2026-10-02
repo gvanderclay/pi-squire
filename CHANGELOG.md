@@ -11,6 +11,11 @@ follows [Semantic Versioning](https://semver.org/).
 - The sources moved to `src/`, so load the package directory (`pi -e .`), not
   `index.ts`. Installs through npm or git are unaffected.
 
+### Fixed
+
+- `delegation_status` details name a labelled delegation's session
+  (`scout-roster`), as its text does, instead of `<agent>-<first 8 of the id>`.
+
 ### Added
 
 - `session:launch` payloads carry the agent's name as `agent`.

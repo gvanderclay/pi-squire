@@ -291,8 +291,10 @@ Delegate session: <session file or id>
 While any delegation is running (no result, no close), the parent polls every
 5 seconds; the timer does not keep the process alive and stops when nothing is
 running and on `session_shutdown`. Each tick first emits `message:scan`, so the
-provider claims waiting replies, and then asks tmux about each still-running
-window. A delegation whose window is gone and still has no result after that
+provider claims waiting replies, and then lists the tmux windows once and
+matches each still-running delegation to a window by id and name (window ids
+restart with every tmux server). A window whose program has exited counts as
+gone. A delegation whose window is gone and still has no result after that
 scan is recorded as closed without a result, a record separate from
 `delegation_close`'s, and the parent gets one `[delegate]` message naming the
 delegation, with the delegate session path when one is found, sent as a

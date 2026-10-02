@@ -253,7 +253,7 @@ test("delegation_status reports running, done and closed through the window and 
 	assert.equal(running.match(/state: running — the window is open and no result has arrived/g)?.length, 2);
 
 	s.events.emit("message:inbound", reply(s.parent, first));
-	s.tmux.alive.delete(w2.windowId);
+	s.tmux.windows.delete(w2.windowId);
 	const mixed = (await s.toolCall("delegation_status", {})).content[0].text;
 	assert.ok(mixed.includes(`${first.id} scout`), mixed);
 	assert.match(mixed, /state: done — result status: done/);
@@ -312,11 +312,70 @@ test("delegation_close kills the window of a delegation whose result already arr
 	const delegation = s.entries[0].data as Delegation;
 	const { windowId } = s.tmux.opened[0];
 	s.events.emit("message:inbound", reply(s.parent, delegation));
-	assert.equal(await s.tmux.isAlive(windowId), true);
+	assert.equal(s.tmux.windows.has(windowId), true);
 
 	await s.toolCall("delegation_close", { id: delegation.id });
 	assert.deepEqual(s.tmux.killed, [windowId]);
-	assert.equal(await s.tmux.isAlive(windowId), false);
+	assert.equal(s.tmux.windows.has(windowId), false);
+});
+
+test("delegation_close kills a matching window whose program has exited", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	await s.toolCall("delegate", { agent: "scout", task: "do it" });
+	const id = s.entries[0].data.id as string;
+	const { windowId } = s.tmux.opened[0];
+	s.tmux.exit(windowId);
+
+	await s.toolCall("delegation_close", { id });
+	assert.deepEqual(s.tmux.killed, [windowId]);
+});
+
+test("delegation_close kills nothing when the recorded id belongs to another window", async () => {
+	writeAgent("scout", SCOUT);
+	const first = session();
+	await first.start();
+	await first.toolCall("delegate", { agent: "scout", task: "do it" });
+	const id = first.entries[0].data.id as string;
+	const resumed = session({ entries: first.entries });
+	resumed.tmux.addWindow(first.tmux.opened[0].windowId, "vim");
+	await resumed.start();
+
+	const status = (await resumed.toolCall("delegation_status", { id })).content[0].text;
+	assert.match(status, /state: closed — the window is gone/);
+	const result = await resumed.toolCall("delegation_close", { id });
+	assert.match(result.content[0].text, /was already gone/);
+	assert.deepEqual(resumed.tmux.killed, []);
+	assert.deepEqual(resumed.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
+});
+
+test("delegation_close and delegation_status each ask tmux once", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	await s.toolCall("delegate", { agent: "scout", task: "one" });
+	await s.toolCall("delegate", { agent: "scout", task: "two" });
+	const id = s.entries[0].data.id as string;
+	let before = s.tmux.listCalls;
+	await s.toolCall("delegation_status", {});
+	assert.equal(s.tmux.listCalls - before, 1);
+	before = s.tmux.listCalls;
+	await s.toolCall("delegation_close", { id });
+	assert.equal(s.tmux.listCalls - before, 1);
+});
+
+test("a failed window list shows unknown and delegation_close refuses to guess", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	await s.toolCall("delegate", { agent: "scout", task: "do it" });
+	const id = s.entries[0].data.id as string;
+	s.tmux.failList = "no server";
+	const status = (await s.toolCall("delegation_status", { id })).content[0].text;
+	assert.match(status, /state: unknown/);
+	await assert.rejects(s.toolCall("delegation_close", { id }), /could not ask tmux/);
+	assert.deepEqual(s.tmux.killed, []);
 });
 
 test("delegation_close records a close when the window is already gone", async () => {
@@ -325,7 +384,7 @@ test("delegation_close records a close when the window is already gone", async (
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = s.entries[0].data.id as string;
-	s.tmux.alive.delete(s.tmux.opened[0].windowId);
+	s.tmux.windows.delete(s.tmux.opened[0].windowId);
 
 	const result = await s.toolCall("delegation_close", { id });
 	assert.match(result.content[0].text, /its window scout-.* was already gone/);

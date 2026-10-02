@@ -14,7 +14,7 @@ import {
 	recordedName,
 	type WindowState,
 } from "./results.ts";
-import type { TmuxClient } from "./tmux.ts";
+import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 
 /** The hook a tick emits so the provider claims waiting replies before windows are checked. */
 const SCAN = "message:scan";
@@ -50,13 +50,25 @@ type ToolDef = {
 	execute: (...args: never[]) => Promise<ReturnType<typeof toolResult>>;
 };
 
-/** What tmux says about a window; a failed ask is `unknown`, never `gone`. */
-async function windowState(tmux: TmuxClient, windowId: string): Promise<WindowState> {
+/** Every window on the server, asked once; a failed ask is `undefined`, never an empty list. */
+async function listWindows(tmux: TmuxClient): Promise<TmuxWindow[] | undefined> {
 	try {
-		return (await tmux.isAlive(windowId)) ? "open" : "gone";
+		return await tmux.listWindows();
 	} catch {
-		return "unknown";
+		return undefined;
 	}
+}
+
+/** The window a delegation owns: one with both its recorded id and its recorded name, since ids restart with every tmux server. */
+function ownWindow(windows: TmuxWindow[], record: Recorded): TmuxWindow | undefined {
+	return windows.find((window) => window.id === record.windowId && window.name === record.windowName);
+}
+
+/** What the listing says about a delegation's window; a matching window whose program exited counts as gone. */
+function windowState(windows: TmuxWindow[] | undefined, record: Recorded): WindowState {
+	if (windows === undefined) return "unknown";
+	const own = ownWindow(windows, record);
+	return own !== undefined && !own.exited ? "open" : "gone";
 }
 
 /** Records from before auto-exit existed kept their windows open, so they read off. */
@@ -88,8 +100,8 @@ function stateLine(state: DelegationState, record: Recorded): string {
 type View = { record: Recorded; state: DelegationState; name: string; sessionPath: string | undefined };
 
 /** The view of a delegation: its state and the fields the text and details share. */
-async function view(record: Recorded, tmux: TmuxClient, ctx: ExtensionContext): Promise<View> {
-	const state = deriveState(record, await windowState(tmux, record.windowId));
+function view(record: Recorded, windows: TmuxWindow[] | undefined, ctx: ExtensionContext): View {
+	const state = deriveState(record, windowState(windows, record));
 	const sessionPath = record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id);
 	return { record, state, name: recordedName(record), sessionPath };
 }
@@ -156,7 +168,18 @@ function createPoll(
 		poll = undefined;
 	}
 
-	/** Claim waiting replies first, then declare gone every window that is missing with still no result. */
+	/** Record gone each running delegation whose window is missing or exited; a failed list declares nothing. */
+	function declareGone(windows: TmuxWindow[] | undefined): void {
+		if (windows === undefined) return;
+		for (const record of results.running()) {
+			if (windowState(windows, record) !== "gone" || !live) continue;
+			// A reply may have landed while the windows before this one were checked.
+			pi.events.emit(SCAN, {});
+			results.recordGone(record.id);
+		}
+	}
+
+	/** Claim waiting replies first, then declare gone every delegation whose window is missing or exited with still no result. */
 	async function tick(): Promise<void> {
 		if (ticking) return;
 		ticking = true;
@@ -165,13 +188,7 @@ function createPoll(
 			const scan: { scanned?: boolean } = {};
 			pi.events.emit(SCAN, scan);
 			if (scan.scanned !== true) return; // no message:* provider: a waiting reply cannot be ruled out
-			for (const record of results.running()) {
-				const window = await windowState(tmux, record.windowId);
-				if (window !== "gone" || !live) continue; // an unknown window is never read as gone
-				// A reply may have landed while the windows before this one were checked.
-				pi.events.emit(SCAN, {});
-				results.recordGone(record.id);
-			}
+			declareGone(await listWindows(tmux)); // one ask per tick
 			if (results.running().length === 0) stopPolling();
 		} finally {
 			ticking = false;
@@ -216,8 +233,8 @@ function statusTool(results: Results, tmux: TmuxClient): ToolDef {
 			ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
 			const records = selectRecords(results, params.id);
-			const views: View[] = [];
-			for (const record of records) views.push(await view(record, tmux, ctx));
+			const windows = await listWindows(tmux);
+			const views = records.map((record) => view(record, windows, ctx));
 			const details = { delegations: views.map(viewDetails) };
 			if (views.length === 0) return toolResult("No delegations are recorded in this session.", details);
 			const heading = `${views.length} delegation${views.length === 1 ? "" : "s"}:`;
@@ -246,12 +263,14 @@ function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 			const [record] = selectRecords(results, params.id);
 			if (record.closed === true)
 				return toolResult(`Delegation ${record.id} is already closed.`, { id: record.id, closed: true });
-			let alive: boolean;
+			let windows: TmuxWindow[];
 			try {
-				alive = await tmux.isAlive(record.windowId);
+				windows = await tmux.listWindows();
 			} catch (err) {
 				throw new Error(`could not ask tmux about window ${record.windowName}: ${(err as Error).message}`);
 			}
+			// Only a window with the recorded id and name is ours, exited program or not.
+			const alive = ownWindow(windows, record) !== undefined;
 			if (alive) {
 				try {
 					await tmux.kill(record.windowId);

@@ -10,11 +10,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 - The sources moved to `src/`, so load the package directory (`pi -e .`), not
   `index.ts`. Installs through npm or git are unaffected.
+- Each check (a poll tick, a `delegation_status` call, a `delegation_close`
+  call) asks tmux once, however many delegations run, instead of once per
+  delegation.
 
 ### Fixed
 
 - `delegation_status` details name a labelled delegation's session
   (`scout-roster`), as its text does, instead of `<agent>-<first 8 of the id>`.
+- A recycled tmux window id is no longer mistaken for a delegate's window, nor
+  killed: a window counts as the delegate's only when its id and its name both
+  match.
+- A delegate whose program exited in a window kept open (`remain-on-exit`)
+  reads as gone instead of running.
 
 ### Added
 

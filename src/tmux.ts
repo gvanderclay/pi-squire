@@ -10,13 +10,16 @@ export type WindowSpec = {
 	env: Readonly<Record<string, string>>;
 };
 
+/** One window as tmux lists it: its id, its name, and whether the program in its pane has exited. */
+export type TmuxWindow = { id: string; name: string; exited: boolean };
+
 export interface TmuxClient {
 	/** Whether this process runs in a tmux pane. */
 	insideTmux(): boolean;
 	/** Open a detached window and return its id (for example `@3`). */
 	openWindow(spec: WindowSpec): Promise<string>;
-	/** Whether a window id is still listed. */
-	isAlive(windowId: string): Promise<boolean>;
+	/** Every window on the server, in one tmux call. */
+	listWindows(): Promise<TmuxWindow[]>;
 	/** Kill a window. */
 	kill(windowId: string): Promise<void>;
 }
@@ -63,9 +66,16 @@ export function createTmuxClient(): TmuxClient {
 			return windowId;
 		},
 
-		async isAlive(windowId) {
-			const ids = (await run(["list-windows", "-a", "-F", "#{window_id}"])).split("\n");
-			return ids.some((id) => id.trim() === windowId);
+		async listWindows() {
+			// The name goes last: it is the one field that could hold a tab.
+			const out = await run(["list-windows", "-a", "-F", "#{window_id}\t#{pane_dead}\t#{window_name}"]);
+			return out
+				.split("\n")
+				.filter((line) => line.trim() !== "")
+				.map((line) => {
+					const [id, dead, ...name] = line.split("\t");
+					return { id, name: name.join("\t"), exited: dead === "1" };
+				});
 		},
 
 		async kill(windowId) {

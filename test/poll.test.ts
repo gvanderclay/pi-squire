@@ -60,7 +60,7 @@ const statusText = async (s: Session) => (await s.toolCall("delegation_status", 
 
 test("a gone window whose reply the scan delivers is done, with no closed message", async (t) => {
 	const s = await started(t);
-	s.tmux.alive.clear();
+	s.tmux.windows.clear();
 	s.scan.queue.push(reply(s));
 	await tick(t);
 	assert.equal(closedMessages(s).length, 0);
@@ -70,7 +70,7 @@ test("a gone window whose reply the scan delivers is done, with no closed messag
 
 test("a gone window with no reply gives exactly one closed message that starts a turn, and the status reports it", async (t) => {
 	const s = await started(t);
-	s.tmux.alive.clear();
+	s.tmux.windows.clear();
 	await tick(t, 4);
 	const closed = closedMessages(s);
 	assert.equal(closed.length, 1);
@@ -94,18 +94,16 @@ test("no tick does any tmux work once no delegation is running", async (t) => {
 	await tick(t);
 	assert.equal(resultMessages(s).length, 1);
 	const calls = s.scan.calls;
-	let asked = 0;
-	const isAlive = s.tmux.isAlive.bind(s.tmux);
-	s.tmux.isAlive = async (id) => (asked++, isAlive(id));
+	const listed = s.tmux.listCalls;
 	await tick(t, 3);
-	assert.equal(asked, 0);
+	assert.equal(s.tmux.listCalls, listed);
 	assert.equal(s.scan.calls, calls, "the timer stopped");
 });
 
 test("a restored session with a running delegation polls and detects its gone window", async (t) => {
 	const first = await started(t);
 	const resumed = session({ entries: first.entries });
-	resumed.tmux.alive.clear();
+	resumed.tmux.windows.clear();
 	await resumed.start();
 	await tick(t);
 	assert.equal(closedMessages(resumed).length, 1);
@@ -113,7 +111,7 @@ test("a restored session with a running delegation polls and detects its gone wi
 
 test("a reply arriving after a closed record is delivered and the status then shows done", async (t) => {
 	const s = await started(t);
-	s.tmux.alive.clear();
+	s.tmux.windows.clear();
 	await tick(t);
 	assert.equal(closedMessages(s).length, 1);
 	s.events.emit("message:inbound", reply(s));
@@ -123,11 +121,11 @@ test("a reply arriving after a closed record is delivered and the status then sh
 
 test("a reply that lands while the window is being checked is claimed, not reported closed", async (t) => {
 	const s = await started(t);
-	s.tmux.alive.clear();
-	const isAlive = s.tmux.isAlive.bind(s.tmux);
-	s.tmux.isAlive = async (id) => {
+	s.tmux.windows.clear();
+	const listWindows = s.tmux.listWindows.bind(s.tmux);
+	s.tmux.listWindows = async () => {
 		s.scan.queue.push(reply(s));
-		return isAlive(id);
+		return listWindows();
 	};
 	await tick(t);
 	assert.equal(closedMessages(s).length, 0);
@@ -137,7 +135,7 @@ test("a reply that lands while the window is being checked is claimed, not repor
 
 test("a closed-without-a-result record survives a resume and is not polled again", async (t) => {
 	const s = await started(t);
-	s.tmux.alive.clear();
+	s.tmux.windows.clear();
 	await tick(t);
 	const resumed = session({ entries: s.entries });
 	await resumed.start();
@@ -161,7 +159,7 @@ test("a delegation closed with delegation_close keeps reporting closed", async (
 test("a bus where nobody answers message:scan never declares a delegation closed", async (t) => {
 	const s = await started(t);
 	s.scan.answering = false;
-	s.tmux.alive.clear();
+	s.tmux.windows.clear();
 	await tick(t, 3);
 	assert.equal(s.scan.calls, 3);
 	assert.equal(closedMessages(s).length, 0);
@@ -170,11 +168,44 @@ test("a bus where nobody answers message:scan never declares a delegation closed
 
 test("a tmux error declares nothing for that tick", async (t) => {
 	const s = await started(t);
-	s.tmux.isAlive = async () => {
-		throw new Error("tmux: server exited");
-	};
+	s.tmux.failList = "tmux: server exited";
 	await tick(t, 2);
 	assert.equal(closedMessages(s).length, 0);
+	assert.match(await statusText(s), /state: unknown/);
+});
+
+test("a window id that now belongs to a differently named window is closed without a result and never killed", async (t) => {
+	const first = await started(t);
+	const resumed = session({ entries: first.entries });
+	resumed.tmux.addWindow(first.tmux.opened[0].windowId, "vim");
+	await resumed.start();
+	await tick(t);
+	assert.equal(closedMessages(resumed).length, 1);
+	assert.equal(resultMessages(resumed).length, 0);
+	await tick(t, 2);
+	assert.equal(closedMessages(resumed).length, 1, "told once");
+	const id = (first.entries[0].data as { id: string }).id;
+	const closed = await resumed.toolCall("delegation_close", { id });
+	assert.match(closed.content[0].text, /was already gone/);
+	assert.deepEqual(resumed.tmux.killed, []);
+});
+
+test("a matching window whose program exited is recorded gone", async (t) => {
+	const s = await started(t);
+	s.tmux.exit(s.tmux.opened[0].windowId);
+	await tick(t);
+	assert.equal(closedMessages(s).length, 1);
+	assert.match(await statusText(s), /state: closed without a result/);
+});
+
+test("each tick lists the windows once, however many delegations run", async (t) => {
+	const s = await started(t);
+	await s.delegate("scout second");
+	await s.delegate("scout third");
+	assert.equal(s.tmux.opened.length, 3);
+	const before = s.tmux.listCalls;
+	await tick(t, 2);
+	assert.equal(s.tmux.listCalls - before, 2);
 });
 
 test("session_shutdown stops the poll", async (t) => {

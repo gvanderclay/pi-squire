@@ -81,7 +81,8 @@ async function loadInPi() {
 		const response = await new Promise((resolve, reject) => {
 			const timer = setTimeout(() => reject(new Error("timed out after 60s")), 60_000);
 			pi.on("error", reject);
-			pi.on("exit", (code) => reject(new Error(`Pi exited with code ${code}`)));
+			pi.stdin.on("error", reject);
+			pi.on("close", (code) => reject(new Error(`Pi exited with code ${code}`)));
 			pi.stdout.on("data", (chunk) => {
 				stdout += chunk;
 				for (const line of stdout.split("\n")) {

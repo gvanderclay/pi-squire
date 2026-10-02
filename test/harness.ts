@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
 
-import register from "../index.ts";
+import register from "../src/index.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 
 /** A throwaway root for this test file; `PI_CODING_AGENT_DIR` points inside it. */

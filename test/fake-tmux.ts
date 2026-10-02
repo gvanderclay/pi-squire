@@ -1,7 +1,7 @@
 // The test stand-in for tmux, the package's one injected seam. It records the
 // windows opened (name, cwd, argv, env) and the kills, and reports liveness as
 // the test sets it. The real client is exercised by hand, never here.
-import type { TmuxClient, WindowSpec } from "../tmux.ts";
+import type { TmuxClient, WindowSpec } from "../src/tmux.ts";
 
 export class FakeTmux implements TmuxClient {
 	/** Whether the session looks like it runs inside tmux. */

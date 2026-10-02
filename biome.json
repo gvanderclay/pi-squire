@@ -67,17 +67,7 @@
 	},
 	"overrides": [
 		{
-			"includes": ["index.ts"],
-			"linter": {
-				"rules": {
-					"style": {
-						"noDefaultExport": "off"
-					}
-				}
-			}
-		},
-		{
-			"includes": ["agents.ts"],
+			"includes": ["src/agents.ts"],
 			"linter": {
 				"rules": {
 					"complexity": {
@@ -90,7 +80,7 @@
 			}
 		},
 		{
-			"includes": ["child.ts"],
+			"includes": ["src/child.ts"],
 			"linter": {
 				"rules": {
 					"nursery": {
@@ -100,7 +90,7 @@
 			}
 		},
 		{
-			"includes": ["index.ts"],
+			"includes": ["src/index.ts"],
 			"linter": {
 				"rules": {
 					"complexity": {
@@ -111,6 +101,7 @@
 						"useExplicitType": "off"
 					},
 					"style": {
+						"noDefaultExport": "off",
 						"noExcessiveLinesPerFile": "off",
 						"noNestedTernary": "off"
 					}
@@ -118,7 +109,7 @@
 			}
 		},
 		{
-			"includes": ["results.ts"],
+			"includes": ["src/results.ts"],
 			"linter": {
 				"rules": {
 					"complexity": {
@@ -132,7 +123,7 @@
 			}
 		},
 		{
-			"includes": ["tmux.ts"],
+			"includes": ["src/tmux.ts"],
 			"linter": {
 				"rules": {
 					"nursery": {

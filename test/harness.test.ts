@@ -26,9 +26,19 @@ test("an errored run carries the failure a test chose, and a plain one keeps boo
 test("fire reaches handlers and extra models stay in their own session", async () => {
 	resetRoot();
 	const extra = { provider: "opencode-go", id: "fake-free", cost: { input: 0, output: 0 } };
-	const registries: { find: (p: string, i: string) => unknown; getAll: () => unknown[] }[] = [];
-	for (const extraModels of [[extra], undefined]) {
-		const s = session({ extraModels });
+	type Model = { provider: string; id: string };
+	const registries: {
+		find: (p: string, i: string) => unknown;
+		getAll: () => unknown[];
+		getAvailable: () => unknown[];
+		hasConfiguredAuth: (m: Model) => boolean;
+	}[] = [];
+	for (const [extraModels, noCredentials] of [
+		[[extra], undefined],
+		[undefined, undefined],
+		[[extra], ["opencode-go/fake-free"]],
+	] as const) {
+		const s = session({ extraModels, noCredentials });
 		s.pi.on("after_provider_response", (_event, ctx) => {
 			registries.push((ctx as { modelRegistry: (typeof registries)[number] }).modelRegistry);
 		});
@@ -38,4 +48,9 @@ test("fire reaches handlers and extra models stay in their own session", async (
 	assert.equal(registries[0].getAll().length, FAKE_MODELS.length + 1);
 	assert.equal(registries[1].find("opencode-go", "fake-free"), undefined);
 	assert.equal(registries[1].getAll().length, FAKE_MODELS.length);
+	assert.ok(registries[0].getAvailable().includes(extra));
+	assert.equal(registries[1].getAvailable().includes(extra), false);
+	assert.equal(registries[0].hasConfiguredAuth(extra), true);
+	assert.equal(registries[2].hasConfiguredAuth(extra), false);
+	assert.deepEqual((registries[0].find("opencode-go", "fake-free") as { cost: unknown }).cost, { input: 0, output: 0 });
 });

@@ -8,6 +8,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Before a launch, pi-squire reads Claude Code's usage cache for an
+  `anthropic` candidate on a Claude subscription login and skips it when its
+  5-hour or 7-day window is at 100%, or its model-scoped week is and names that
+  model. A stale cache is refreshed in the background with
+  `claude -p /usage`, at most every 5 minutes, without delaying the launch.
 - A delegate whose run ends on a usage-limit error (a quota message, or a
   `429` that survived Pi's retries) records a mark in
   `pi-squire-limits.json` in Pi's agent directory. Every Pi session then

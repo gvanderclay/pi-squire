@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, type TestContext, test } from "node:test";
 
+import type { ClaudeReading } from "../src/usage.ts";
 import { FakeUsage, win } from "./fake-usage.ts";
 import { agentDir, agentFile, cleanup, type RunFailure, resetRoot, session, writeAgent } from "./harness.ts";
 
@@ -814,4 +815,118 @@ test("/delegate-clear drops the cached reading, so the next launch reads afresh"
 	assert.match((await call(p, "fb")).content[0].text, /\(opencode-go\/paid,/);
 	assert.equal(usage.calls.length, 2);
 	assert.deepEqual(marks(), []);
+});
+
+const CLAUDE_EXTRA = [
+	{ provider: "anthropic", id: "claude-opus-4" },
+	{ provider: "anthropic", id: "claude-sonnet-4" },
+];
+const OAUTH = ["anthropic/claude-opus-4", "anthropic/claude-sonnet-4"];
+const claudeSession = (oauth = OAUTH) => {
+	const usage = new FakeUsage();
+	return { usage, p: session({ extraModels: CLAUDE_EXTRA, oauth, usage }) };
+};
+const cache = (over: Partial<Extract<ClaudeReading, { ok: true }>> = {}): ClaudeReading => ({
+	ok: true,
+	fiveHour: win("5h", 10),
+	sevenDay: win("7d", 10),
+	scoped: null,
+	fetchedAt: START,
+	...over,
+});
+
+test("a Claude 5h window at 100% skips an OAuth candidate for its fallback, with a provider mark", async (t) => {
+	clock(t);
+	writeAgent("cl", agentFile({ ...AGENT, model: "anthropic/claude-opus-4", fallback: "alpha/fast-model" }));
+	const { usage, p } = claudeSession();
+	usage.claude = cache({ fiveHour: win("5h", 100, RESET) });
+	await p.start();
+	const result = await call(p, "cl");
+	assert.match(
+		result.content[0].text,
+		/Used fallback alpha\/fast-model because anthropic\/claude-opus-4 is usage-limited/,
+	);
+	assert.deepEqual(
+		marks().map((m) => [m.scope, m.clearsAt, m.source]),
+		[["anthropic", RESET, "proactive"]],
+	);
+});
+
+test("a scoped Opus week at 100% blocks only the Opus candidate", async (t) => {
+	clock(t);
+	writeAgent("opus", agentFile({ ...AGENT, model: "anthropic/claude-opus-4" }));
+	writeAgent("sonnet", agentFile({ ...AGENT, model: "anthropic/claude-sonnet-4" }));
+	const { usage, p } = claudeSession();
+	usage.claude = cache({ scoped: win("Opus", 100, RESET) });
+	await p.start();
+	await assert.rejects(call(p, "opus"), /anthropic\/claude-opus-4 is usage-limited \(model anthropic\/claude-opus-4\)/);
+	assert.deepEqual(
+		marks().map((m) => m.scope),
+		["anthropic/claude-opus-4"],
+	);
+	await call(p, "sonnet");
+	assert.equal(p.tmux.opened.length, 1);
+});
+
+test("a non-OAuth anthropic candidate makes no cache read", async (t) => {
+	clock(t);
+	writeAgent("opus", agentFile({ ...AGENT, model: "anthropic/claude-opus-4" }));
+	const { usage, p } = claudeSession([]);
+	usage.claude = cache({ fiveHour: win("5h", 100, RESET) });
+	await p.start();
+	await call(p, "opus");
+	assert.equal(usage.claudeReads, 0);
+	assert.equal(usage.claudeRefreshes, 0);
+	assert.deepEqual(marks(), []);
+});
+
+test("a stale cache starts one background refresh per 5 minutes and the launch does not wait", async (t) => {
+	const tick = clock(t);
+	writeAgent("opus", agentFile({ ...AGENT, model: "anthropic/claude-opus-4" }));
+	const { usage, p } = claudeSession();
+	usage.claude = cache({ fetchedAt: START - 6 * 60_000 });
+	await p.start();
+	await call(p, "opus");
+	assert.equal(usage.claudeRefreshes, 1);
+	tick(4 * 60_000);
+	await call(p, "opus");
+	assert.equal(usage.claudeRefreshes, 1);
+	tick(60_000);
+	await call(p, "opus");
+	assert.equal(usage.claudeRefreshes, 2);
+	tick(10 * 60_000);
+	usage.claude = cache({ fetchedAt: Date.now() });
+	await call(p, "opus");
+	assert.equal(usage.claudeRefreshes, 2);
+});
+
+test("a refresh that throws never blocks a launch", async (t) => {
+	clock(t);
+	writeAgent("opus", agentFile({ ...AGENT, model: "anthropic/claude-opus-4" }));
+	const { usage, p } = claudeSession();
+	usage.claude = cache({ fetchedAt: null });
+	usage.refreshClaude = () => {
+		throw new Error("boom");
+	};
+	await p.start();
+	await call(p, "opus");
+	assert.equal(p.tmux.opened.length, 1);
+});
+
+test("a missing Claude cache fails open and shows as a reading error", async (t) => {
+	clock(t);
+	writeAgent("opus", agentFile({ ...AGENT, model: "anthropic/claude-opus-4" }));
+	const { usage, p } = claudeSession();
+	usage.claude = { ok: false, reason: "cache unreadable: ENOENT" };
+	await p.start();
+	const result = await call(p, "opus");
+	assert.ok(
+		result.content[0].text.includes(
+			"Could not read anthropic quota: cache unreadable: ENOENT; launched without a proactive check.",
+		),
+	);
+	const status = await p.toolCall("delegation_status", {});
+	assert.deepEqual((status.details as { readingErrors: unknown }).readingErrors, [
+		{ provider: "anthropic", reason: "cache unreadable: ENOENT", at: "2026-10-03T12:00:00.000Z" },
+	]);
 });

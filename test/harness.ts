@@ -106,6 +106,8 @@ export type SessionOptions = {
 	extraModels?: readonly { provider: string; id: string; cost?: { input: number; output: number } }[];
 	/** The fake usage client; a session without one gets a fake that reports no reading. */
 	usage?: FakeUsage;
+	/** Models ("provider/id") that count as logged in with OAuth; the rest use an API key. */
+	oauth?: string[];
 	/** Base URLs the fake registry reports per provider; none unless set. */
 	providerBaseUrls?: Record<string, string>;
 };
@@ -157,6 +159,8 @@ export function session(options: SessionOptions = {}) {
 		hasConfiguredAuth: (model: { provider: string; id: string }) =>
 			!(options.noCredentials ?? []).includes(`${model.provider}/${model.id}`),
 		getApiKeyForProvider: async (provider: string) => `fake-key-${provider}`,
+		isUsingOAuth: (model: { provider: string; id: string }) =>
+			(options.oauth ?? []).includes(`${model.provider}/${model.id}`),
 		getProvider: (provider: string) => {
 			const baseUrl = options.providerBaseUrls?.[provider];
 			return baseUrl === undefined ? undefined : { baseUrl };

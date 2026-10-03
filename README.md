@@ -290,9 +290,24 @@ is already marked is skipped without a read. The key is sent only to
 `https://opencode.ai`, with redirects refused: a provider or model base URL on
 another origin means no request at all.
 
-A failed reading (no key, a base URL off the Go origin, a non-2xx answer, an
-unreadable body, a timeout, a network error) never blocks a launch. The tool
-result and the command's notice gain "Could not read opencode-go quota:
+For an `anthropic` candidate used through a Claude subscription (an OAuth
+login; API-key users get no proactive check and rely on reactive marks),
+pi-squire reads Claude Code's own usage cache, the `cachedUsageUtilization`
+field of `$CLAUDE_CONFIG_DIR/.claude.json` (`~/.claude.json` when the variable
+is unset). It never calls Anthropic's usage endpoint. A 5-hour or 7-day window
+at 100% or more records a `proactive` mark on `anthropic`, cleared at that
+window's reset time. A model-scoped weekly window at 100% (for example Opus)
+marks only the `provider/model` candidates whose name or id contains the scope
+name, so other Anthropic models stay usable. The check reads the cache as it
+stands and never waits: when the cache is missing or older than 5 minutes,
+pi-squire starts `claude -p /usage --no-session-persistence` in the background
+(in a temporary directory, output discarded, killed after 30 seconds) so Claude
+Code rewrites it, at most once every 5 minutes per Pi process. A missing `claude`
+binary or config directory is ignored.
+
+A failed reading (for Go: no key, a base URL off the Go origin, a non-2xx answer, an
+unreadable body, a timeout, a network error; for Claude: a missing or unreadable cache) never blocks a launch. The tool
+result and the command's notice gain "Could not read <provider> quota:
 <reason>; launched without a proactive check.", and `delegation_status` lists the
 provider's last reading error and its time under the `Usage-limit marks:` block
 and in a `readingErrors` array of `{ provider, reason, at }`.

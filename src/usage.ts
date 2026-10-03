@@ -23,8 +23,9 @@ const CACHE_MS = 60_000;
 // --- windows carry no `windowMs` or credits (they never block); usage-status.ts
 // --- reads nothing when CLAUDE_CONFIG_DIR is unset, while claudeCachePath falls
 // --- back to ~/.claude.json, Claude Code's default location, so the check works
-// --- without the user's alias (refreshClaude then spawns only when ~/.claude.json
-// --- or ~/.claude exists, so it never runs for a user without Claude Code); and the 5-minute rate limit on refreshes lives in
+// --- without the user's alias (refreshClaude then spawns only when
+// --- ~/.claude.json or ~/.claude exists, so it never runs for a user without
+// --- Claude Code); and the 5-minute rate limit on refreshes lives in
 // --- createProactive, not here.
 
 const GO_TIMEOUT_MS = 20_000;

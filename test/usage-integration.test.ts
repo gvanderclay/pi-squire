@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 
@@ -153,4 +153,36 @@ test("a missing Claude cache fails open, and a missing `claude` binary is silent
 	await real.start();
 	const result = await real.toolCall("delegate", { agent: "claude", task: "t" });
 	assert.match(result.content[0].text, /Could not read anthropic quota: cache unreadable/);
+});
+
+// Runs one launch on a fresh session (a new 5-minute refresh limit) and reports whether `claude` ran.
+const claudeRan = async () => {
+	writeFileSync(argsFile, "");
+	const real = claudeSession();
+	await real.start();
+	await real.toolCall("delegate", { agent: "claude", task: "t" });
+	for (let i = 0; i < 50 && readFileSync(argsFile, "utf8") === ""; i++) await new Promise((r) => setTimeout(r, 50));
+	await new Promise((r) => setTimeout(r, 200));
+	return readFileSync(argsFile, "utf8") !== "";
+};
+
+test("with CLAUDE_CONFIG_DIR unset, `claude` runs only once ~/.claude exists", async (t) => {
+	const realHome = process.env.HOME;
+	const home = mkdtempSync(join(tmpdir(), "squire-home-"));
+	t.after(() => {
+		if (realHome === undefined) delete process.env.HOME;
+		else process.env.HOME = realHome;
+		rmSync(home, { recursive: true, force: true });
+	});
+	process.env.HOME = home;
+	if (homedir() !== home) return t.skip("os.homedir() ignores HOME here");
+	delete process.env.CLAUDE_CONFIG_DIR;
+	assert.equal(await claudeRan(), false);
+	mkdirSync(join(home, ".claude"));
+	assert.equal(await claudeRan(), true);
+});
+
+test("a CLAUDE_CONFIG_DIR that does not exist means `claude` never runs", async () => {
+	process.env.CLAUDE_CONFIG_DIR = join(tmp, "missing");
+	assert.equal(await claudeRan(), false);
 });

@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, type TestContext, test } from "node:test";
 
-import { agentDir, agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, type RunFailure, resetRoot, session, writeAgent } from "./harness.ts";
 
 const FILE = join(agentDir, "pi-squire-limits.json");
 const START = Date.parse("2026-10-03T12:00:00.000Z");
@@ -263,7 +263,7 @@ test("a model free only by registry cost is marked alone", async (t) => {
 });
 
 /** A delegate whose run sees `response` headers, then fails on `message`. */
-async function failWith(response: { status: number; headers: Record<string, string> }, message = GO_LIMIT) {
+async function failWith(response: NonNullable<RunFailure["response"]>, message = GO_LIMIT) {
 	const delegate = session({ parentEnv: "parent-x", parent: "delegation-1", extraModels: EXTRA });
 	delete process.env.PI_DELEGATE_PARENT;
 	await delegate.start();
@@ -311,10 +311,41 @@ test("a header reset beats the time in the error text", async (t) => {
 	assert.equal(marks()[0].clearsAt, START + 120_000);
 });
 
-test("headers of a 2xx response, or none usable, leave the ticket-02 clear time", async (t) => {
+test("headers of a 2xx response leave the ticket-02 clear time", async (t) => {
 	clock(t);
 	await failWith({ status: 200, headers: { "retry-after": "120" } });
 	assert.equal(marks()[0].clearsAt, START + 5 * 60_000);
+});
+
+test("a 2xx response after the 429 overwrites it, so no header reset applies", async (t) => {
+	clock(t);
+	await failWith([
+		{ status: 429, headers: { "retry-after": "120" } },
+		{ status: 200, headers: {} },
+	]);
+	assert.equal(marks()[0].clearsAt, START + 5 * 60_000);
+});
+
+test("past and unparseable header values are ignored", async (t) => {
+	clock(t);
+	await failWith({
+		status: 429,
+		headers: {
+			"retry-after": "garbage",
+			"anthropic-ratelimit-requests-reset": "2026-10-03T11:00:00Z",
+			"x-ratelimit-reset-requests": "soon",
+		},
+	});
+	assert.equal(marks()[0].clearsAt, START + 5 * 60_000);
+});
+
+test("a millisecond duration and a mixed-case header name are read", async (t) => {
+	clock(t);
+	await failWith({ status: 429, headers: { "X-RateLimit-Reset-Requests": "500ms" } });
+	assert.equal(marks()[0].clearsAt, START + 500);
+	writeFileSync(FILE, "[]");
+	await failWith({ status: 429, headers: { "Anthropic-RateLimit-Tokens-Reset": "2026-10-03T12:10:00Z" } });
+	assert.equal(marks()[0].clearsAt, Date.parse("2026-10-03T12:10:00Z"));
 });
 
 test("headers from an earlier run do not leak into a later run's mark", async (t) => {

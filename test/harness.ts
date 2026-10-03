@@ -105,13 +105,15 @@ export type SessionOptions = {
 	extraModels?: readonly { provider: string; id: string; cost?: { input: number; output: number } }[];
 };
 
+type ProviderResponse = { status: number; headers: Record<string, string> };
+
 /** How an `error` run fails: the last assistant message's text, provider and model. */
 export type RunFailure = {
 	errorMessage: string;
 	provider?: string;
 	model?: string;
-	/** A provider response seen during the run, fired as `after_provider_response`. */
-	response?: { status: number; headers: Record<string, string> };
+	/** Provider responses seen during the run, in order, fired as `after_provider_response`. */
+	response?: ProviderResponse | ProviderResponse[];
 };
 
 /** The tools a fake session has unless a test says otherwise. */
@@ -297,8 +299,10 @@ export function session(options: SessionOptions = {}) {
 		run: async (end: "completed" | "aborted" | "stopped" | "error" = "completed", failure?: RunFailure) => {
 			const controller = new AbortController();
 			signal = controller.signal;
+			const { response: _response, ...errorFields } = failure ?? {};
 			await fire("agent_start");
-			if (end === "error" && failure?.response) await fire("after_provider_response", failure.response);
+			if (end === "error")
+				for (const response of [failure?.response ?? []].flat()) await fire("after_provider_response", response);
 			if (end === "aborted" || end === "stopped") controller.abort();
 			const last =
 				end === "completed"
@@ -310,7 +314,7 @@ export function session(options: SessionOptions = {}) {
 								content: [],
 								stopReason: "error",
 								errorMessage: "boom",
-								...(end === "error" ? { ...failure, response: undefined } : undefined),
+								...(end === "error" ? errorFields : undefined),
 							};
 			await fire("agent_end", { messages: [{ role: "user", content: "q" }, last] });
 			signal = undefined;

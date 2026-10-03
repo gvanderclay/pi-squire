@@ -78,9 +78,6 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		if (event.source !== "extension") disarm(ctx);
 	});
 
-	// Stopped mid-text the last message says `aborted`; stopped during a tool
-	// call Pi 0.99.1 ends with an `error` message, and only the signal tells a
-	// stop from a real error. Either way it is the user taking over.
 	// The latest provider response of the current run; its headers may state the reset.
 	let response: Response | undefined;
 	pi.on("agent_start", async () => {
@@ -90,6 +87,9 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		response = { status: event.status, headers: event.headers };
 	});
 
+	// Stopped mid-text the last message says `aborted`; stopped during a tool
+	// call Pi 0.99.1 ends with an `error` message, and only the signal tells a
+	// stop from a real error. Either way it is the user taking over.
 	pi.on("agent_end", async (event, ctx) => {
 		let last: Message | undefined;
 		for (let i = event.messages.length - 1; i >= 0 && last === undefined; i--) {

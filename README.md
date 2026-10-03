@@ -255,8 +255,9 @@ A mark clears at the reset time the error states ("try again in 30 minutes",
 `resets_at`), otherwise after 5 minutes, doubling on each repeat hit up to 6
 hours. When the failed response's headers state a reset (`retry-after`,
 `anthropic-ratelimit-*-reset`, `x-ratelimit-reset-requests` or `-tokens`),
-that time wins over the error text. Until then `delegate` and `/delegate` refuse a marked model, whether
-it came from the agent or from `model` / `--model`, and say when it clears.
+that time wins over the error text. Until then `delegate` and `/delegate`
+refuse a marked model, whether it came from the agent or from `model` /
+`--model`, and say when it clears.
 
 ## Auto-exit
 

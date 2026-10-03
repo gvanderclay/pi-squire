@@ -33,6 +33,8 @@ export type Agent = {
 	autoExit: boolean;
 	/** Tools the delegate goes without, from `exclude-tools`; empty means all of them. */
 	excludeTools: string[];
+	/** Models to try, in order, when `model` is usage-limited; from `fallback`, empty when absent. */
+	fallback: string[];
 	/** The body of `AGENT.md`: the delegate's system prompt. */
 	prompt: string;
 };
@@ -54,7 +56,7 @@ function parseAgent(
 	path: string,
 	text: string,
 	tools: readonly string[] | undefined,
-): { agent?: Agent; warning?: string } {
+): { agent?: Agent; warning?: string; notes?: string[] } {
 	let frontmatter: Record<string, unknown>;
 	let body: string;
 	try {
@@ -94,7 +96,18 @@ function parseAgent(
 		return {
 			warning: `${path} has exclude-tools ${JSON.stringify(unknownTool)}, not a tool this session has; skipped`,
 		};
+	// A bad fallback entry is dropped with a note; it never costs the agent.
+	const notes: string[] = [];
+	const listedFallback = toolList(frontmatter.fallback);
+	if (listedFallback === null)
+		notes.push(`${path} has fallback ${JSON.stringify(frontmatter.fallback)}, not a list of provider/id; ignored`);
+	const fallback = (listedFallback ?? []).filter((entry) => {
+		if (MODEL.test(entry)) return true;
+		notes.push(`${path} has fallback ${JSON.stringify(entry)}, not provider/id; dropped`);
+		return false;
+	});
 	return {
+		notes,
 		agent: {
 			name,
 			description: description as string,
@@ -102,12 +115,13 @@ function parseAgent(
 			thinking: thinking as Thinking,
 			autoExit: autoExit ?? true,
 			excludeTools,
+			fallback,
 			prompt: body,
 		},
 	};
 }
 
-/** A tool list, comma-separated or a YAML list of names; undefined when absent, null when it is neither. */
+/** A list of names (tools or models), comma-separated or a YAML list of names; undefined when absent, null when it is neither. */
 function toolList(value: unknown): string[] | undefined | null {
 	if (value === undefined || value === null) return undefined;
 	const names = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : null;
@@ -153,7 +167,8 @@ export function readRoster(agentDir: string, tools?: readonly string[]): Roster 
 			warnings.push(`${path} is not under a usable agent name; skipped`);
 			continue;
 		}
-		const { agent, warning } = parseAgent(name, path, text, tools);
+		const { agent, warning, notes } = parseAgent(name, path, text, tools);
+		warnings.push(...(notes ?? []));
 		if (agent !== undefined) agents.push(agent);
 		else if (warning !== undefined) warnings.push(warning);
 	}

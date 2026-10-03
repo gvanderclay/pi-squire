@@ -47,9 +47,11 @@ import { Type } from "typebox";
 
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AUTO_EXIT_ENV, registerChild } from "./child.ts";
+import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
+import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 
 /** The hook a provider of `message:*` answers with the written request. */
 const SEND = "message:send";
@@ -104,7 +106,20 @@ type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; er
 type LaunchPayload = { args: string[]; env: Record<string, string>; agent: string };
 type Parsed = { agent: string; model?: string; thinking?: string; label?: string; autoExit?: boolean; task: string };
 /** A request that passed the roster, model, thinking and label checks. */
-type Start = { agent: Agent; model: string; thinking: string; label?: string; autoExit: boolean; task: string };
+type Start = {
+	agent: Agent;
+	model: string;
+	/** Candidates passed over for `model`, with why; empty unless a fallback was used. */
+	skipped: Skipped[];
+	/** Lines for the parent, such as a quota reading that failed. */
+	notices: string[];
+	thinking: string;
+	label?: string;
+	autoExit: boolean;
+	task: string;
+};
+/** A candidate model passed over: `why` finishes "<model> is …", `reason` is the long form for a refusal. */
+type Skipped = { model: string; why: string; reason: string };
 /** A delegation that is open in a tmux window. */
 type Launched = { id: string; name: string; windowId: string; windowName: string; requestId: string };
 
@@ -209,6 +224,71 @@ function modelProblem(value: string, registry: ModelRegistry): string | undefine
 	return `unknown model ${JSON.stringify(value)}${close.length > 0 ? `; close matches: ${close.join(", ")}` : ""}`;
 }
 
+/**
+ * The model for a launch. An explicit model is the only candidate; otherwise
+ * the agent's model then its fallbacks. The first candidate that passes
+ * `modelProblem` and has no active mark wins; the rest are returned as skipped.
+ * A paid candidate on a provider with a quota check is read first, and
+ * skipped when its quota is used up. Refuses, listing every candidate, when
+ * none is left.
+ */
+async function chooseModel(
+	explicit: string | undefined,
+	agent: Agent,
+	models: ModelRegistry,
+	proactive: Proactive,
+): Promise<{ model: string; skipped: Skipped[]; notices: string[] }> {
+	const candidates = explicit !== undefined ? [explicit] : [agent.model, ...agent.fallback];
+	const skipped: Skipped[] = [];
+	const notices: string[] = [];
+	for (const model of candidates) {
+		const problem = modelProblem(model, models);
+		if (problem !== undefined) {
+			skipped.push({ model, why: `unavailable (${problem})`, reason: problem });
+			continue;
+		}
+		const slash = model.indexOf("/");
+		const provider = model.slice(0, slash);
+		const id = model.slice(slash + 1);
+		let mark = activeMark(models, provider, id);
+		if (mark !== undefined) {
+			const cleared = await proactive.recheck(models, provider, id);
+			for (const line of cleared) if (!notices.includes(line)) notices.push(line);
+			if (cleared.length > 0) mark = activeMark(models, provider, id);
+		}
+		if (mark === undefined && !isFree(models, provider, id)) {
+			const checked = await proactive.check(models, provider, id);
+			if (checked.notice !== undefined && !notices.includes(checked.notice)) notices.push(checked.notice);
+			mark = activeMark(models, provider, id) ?? checked.mark;
+		}
+		if (mark === undefined) return { model, skipped, notices };
+		const what = mark.scope.includes("/") ? `model ${mark.scope}` : `provider ${mark.scope}`;
+		const until = new Date(mark.clearsAt).toISOString();
+		skipped.push({
+			model,
+			why: `usage-limited until ${until}`,
+			reason: `usage-limited (${what}) until ${until}: ${mark.reason}`,
+		});
+	}
+	if (skipped.length === 1) {
+		const [only] = skipped;
+		throw new Error(
+			only.why.startsWith("usage-limited")
+				? `${only.model} is ${only.reason}. Clear marks with /delegate-clear.`
+				: only.reason,
+		);
+	}
+	throw new Error(
+		`no model is available for agent ${agent.name}:\n${skipped.map((item) => `- ${item.model}: ${item.reason}`).join("\n")}\nClear marks with /delegate-clear.`,
+	);
+}
+
+/** The sentence that says a fallback ran, or "" when the agent's own model did. */
+const fallbackNote = (start: Start): string =>
+	start.skipped.length === 0
+		? ""
+		: `Used fallback ${start.model} because ${start.skipped.map((item) => `${item.model} is ${item.why}`).join("; ")}.`;
+
 /** Why `value` is not a thinking level, or undefined when it is. */
 function thinkingProblem(value: string): string | undefined {
 	if (isThinking(value)) return undefined;
@@ -236,7 +316,7 @@ function toolDescription(agents: readonly Agent[]): string {
 		"Agents:",
 		...agents.map(
 			(agent) =>
-				`- ${agent.name} — ${agent.description} (default ${agent.model}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"}${
+				`- ${agent.name} — ${agent.description} (default ${[agent.model, ...agent.fallback.map((model) => `fallback ${model}`)].join(", ")}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"}${
 					agent.excludeTools.length > 0 ? `, no ${agent.excludeTools.join("/")}` : ""
 				})`,
 		),
@@ -249,11 +329,15 @@ function toolDescription(agents: readonly Agent[]): string {
 }
 
 /**
- * Register `/delegate` and the three tools. The second parameter is a
- * test-only seam for tmux: Pi passes only `pi`, so it is not part of the
- * package's documented contract.
+ * Register `/delegate` and the three tools. The second and third
+ * parameters are test-only seams, for tmux and for the usage readers: Pi
+ * passes only `pi`, so they are not part of the package's documented contract.
  */
-export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmuxClient()): void {
+export default function delegate(
+	pi: ExtensionAPI,
+	tmux: TmuxClient = createTmuxClient(),
+	usage: UsageClient = createUsageClient(),
+): void {
 	// A delegate registers only its auto-exit side: `delegate` is one level deep (Q27).
 	const parentId = process.env[PARENT_ENV] ?? "";
 	if (parentId !== "") {
@@ -263,7 +347,8 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 	const results = createResults(pi);
 
-	const tracking = createTracking(pi, results, tmux);
+	const proactive = createProactive(usage);
+	const tracking = createTracking(pi, results, tmux, proactive.errors);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
@@ -294,7 +379,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	}
 
 	/** The request as a start, or an error naming what to fix. */
-	function validate(request: Parsed, roster: Roster, models: ModelRegistry): Start {
+	async function validate(request: Parsed, roster: Roster, models: ModelRegistry): Promise<Start> {
 		if (roster.agents.length === 0) {
 			throw new Error(
 				`no agents are defined; add ${join(
@@ -312,10 +397,8 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			);
 		}
 		if (request.task.trim() === "") throw new Error("a task is required");
-		const model = request.model ?? agent.model;
 		const thinking = request.thinking ?? agent.thinking;
-		const badModel = modelProblem(model, models);
-		if (badModel !== undefined) throw new Error(badModel);
+		const { model, skipped, notices } = await chooseModel(request.model, agent, models, proactive);
 		const badThinking = thinkingProblem(thinking);
 		if (badThinking !== undefined) throw new Error(badThinking);
 		const badLabel = request.label === undefined ? undefined : labelProblem(request.label);
@@ -323,6 +406,8 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		return {
 			agent,
 			model,
+			skipped,
+			notices,
 			thinking,
 			label: request.label,
 			autoExit: request.autoExit ?? agent.autoExit,
@@ -405,7 +490,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	}
 
 	const started = (launched: Launched, start: Start): string =>
-		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}`;
+		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
 
 	async function command(input: string, ctx: ExtensionContext): Promise<void> {
 		const fail = (message: string) => ctx.ui.notify(`delegate: ${message}`, "error");
@@ -415,7 +500,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			return;
 		}
 		try {
-			const start = validate(outcome.parsed, rosterFor(ctx), ctx.modelRegistry);
+			const start = await validate(outcome.parsed, rosterFor(ctx), ctx.modelRegistry);
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 		} catch (err) {
@@ -457,7 +542,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			ctx: ExtensionContext,
 		) {
 			if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
-			const start = validate(
+			const start = await validate(
 				{
 					agent: params.agent,
 					model: params.model,
@@ -472,12 +557,14 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
-				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}. It runs in the background and its result arrives as a message; delegation_status reports it and delegation_close ends it.`,
+				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}. It runs in the background and its result arrives as a message; delegation_status reports it and delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
 				{
 					outcome: "started",
 					id: launched.id,
 					agent: start.agent.name,
 					model: start.model,
+					skipped: start.skipped.map(({ model, reason }) => ({ model, reason })),
+					notices: start.notices,
 					thinking: start.thinking,
 					autoExit: start.autoExit,
 					windowId: launched.windowId,
@@ -518,6 +605,34 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		description: `Start a delegate Pi session in a background tmux window: ${USAGE}`,
 		getArgumentCompletions: completions,
 		handler: command,
+	});
+
+	pi.registerCommand("delegate-clear", {
+		description: "Clear usage-limit marks: all, a provider, or a provider/model",
+		getArgumentCompletions: (prefix: string) => {
+			const hits = [
+				"all",
+				...readMarks()
+					.filter((m) => m.clearsAt > Date.now())
+					.map((m) => m.scope),
+			].filter((v) => v.startsWith(prefix.trim()));
+			return hits.length > 0 ? hits.map((value) => ({ value, label: value })) : null;
+		},
+		handler: async (args: string, ctx: ExtensionContext) => {
+			const target = args.trim();
+			const cleared = target === "" ? [] : clearMarks(target);
+			if (cleared.length > 0) proactive.clear();
+			const active = readMarks().filter((m) => m.clearsAt > Date.now());
+			const list = active.map((m) => `${m.scope} until ${new Date(m.clearsAt).toISOString()}`).join(", ");
+			ctx.ui.notify(
+				cleared.length > 0
+					? `delegate-clear: cleared ${cleared.join(", ")}.`
+					: active.length === 0
+						? "delegate-clear: no usage-limit marks are active."
+						: `delegate-clear: ${target === "" ? "name a mark to clear" : `no active mark matches "${target}"`}. Active marks: ${list}. Use all, a provider or provider/model.`,
+				"info",
+			);
+		},
 	});
 
 	pi.registerTool(delegateTool() as never);

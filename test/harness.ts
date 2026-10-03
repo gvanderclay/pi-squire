@@ -12,6 +12,7 @@ import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
 
 import register from "../src/index.ts";
 import { FakeTmux } from "./fake-tmux.ts";
+import { FakeUsage } from "./fake-usage.ts";
 
 /** A throwaway root for this test file; `PI_CODING_AGENT_DIR` points inside it. */
 export const root = mkdtempSync(join(tmpdir(), "delegate-test-"));
@@ -101,6 +102,25 @@ export type SessionOptions = {
 	registeredTools?: readonly string[];
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
 	noCredentials?: readonly string[];
+	/** Models only this session's registry also knows, on top of `FAKE_MODELS`. */
+	extraModels?: readonly { provider: string; id: string; cost?: { input: number; output: number } }[];
+	/** The fake usage client; a session without one gets a fake that reports no reading. */
+	usage?: FakeUsage;
+	/** Models ("provider/id") that count as logged in with OAuth; the rest use an API key. */
+	oauth?: string[];
+	/** Base URLs the fake registry reports per provider; none unless set. */
+	providerBaseUrls?: Record<string, string>;
+};
+
+type ProviderResponse = { status: number; headers: Record<string, string> };
+
+/** How an `error` run fails: the last assistant message's text, provider and model. */
+export type RunFailure = {
+	errorMessage: string;
+	provider?: string;
+	model?: string;
+	/** Provider responses seen during the run, in order, fired as `after_provider_response`. */
+	response?: ProviderResponse | ProviderResponse[];
 };
 
 /** The tools a fake session has unless a test says otherwise. */
@@ -131,14 +151,23 @@ export function session(options: SessionOptions = {}) {
 	const editorAnswers = [...(options.ui?.editor ?? [])];
 	const customAnswers = [...(options.ui?.custom ?? [])];
 	const events: EventBus = createEventBus();
+	const models = [...FAKE_MODELS, ...(options.extraModels ?? [])];
 	const registry = {
-		getAll: () => FAKE_MODELS,
-		getAvailable: () => FAKE_MODELS,
-		find: (provider: string, id: string) => FAKE_MODELS.find((model) => model.provider === provider && model.id === id),
+		getAll: () => models,
+		getAvailable: () => models,
+		find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
 		hasConfiguredAuth: (model: { provider: string; id: string }) =>
 			!(options.noCredentials ?? []).includes(`${model.provider}/${model.id}`),
+		getApiKeyForProvider: async (provider: string) => `fake-key-${provider}`,
+		isUsingOAuth: (model: { provider: string; id: string }) =>
+			(options.oauth ?? []).includes(`${model.provider}/${model.id}`),
+		getProvider: (provider: string) => {
+			const baseUrl = options.providerBaseUrls?.[provider];
+			return baseUrl === undefined ? undefined : { baseUrl };
+		},
 	};
 	const tmux = new FakeTmux();
+	const usage = options.usage ?? new FakeUsage();
 	/** The current run's abort signal, as `ctx.signal` reports it; cleared when the run settles. */
 	let signal: AbortSignal | undefined;
 	/** How many times `ctx.shutdown()` was called. */
@@ -228,7 +257,7 @@ export function session(options: SessionOptions = {}) {
 	});
 	if (options.parentEnv !== undefined) process.env.PI_DELEGATE_PARENT = options.parentEnv;
 	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
-	register(pi as never, tmux);
+	register(pi as never, tmux, usage);
 	const fire = async (name: string, event: object = {}) => {
 		for (const handler of handlers[name] ?? []) await handler({ type: name, ...event }, ctx);
 	};
@@ -241,6 +270,7 @@ export function session(options: SessionOptions = {}) {
 	return {
 		parent,
 		tmux,
+		usage,
 		events,
 		pi,
 		sent,
@@ -268,10 +298,15 @@ export function session(options: SessionOptions = {}) {
 			return fire("session_start", { reason: "startup" });
 		},
 		shutdown: () => fire("session_shutdown"),
+		/** Fire any Pi event by name; every handler the extension registered runs with this session's context. */
+		fire,
 		/** How many times the extension asked Pi to shut down. */
 		shutdowns: () => shutdowns,
 		/** Type `/<name> <args>` for any command the extension registered. */
 		command: (name: string, args = "") => commands[name].handler(args, ctx),
+		/** Ask any registered command for argument completions. */
+		completionsFor: async (name: string, prefix: string) =>
+			(await commands[name].getArgumentCompletions?.(prefix)) as { value: string; label: string }[] | null,
 		/** The user types `text` into this session. */
 		type: (text: string) => fire("input", { text, source: "interactive" }),
 		/**
@@ -280,17 +315,26 @@ export function session(options: SessionOptions = {}) {
 		 * message with the signal aborted, as Pi 0.99.1 does), or `error` (an API
 		 * error, signal not aborted). Then the next event-loop turns run.
 		 */
-		run: async (end: "completed" | "aborted" | "stopped" | "error" = "completed") => {
+		run: async (end: "completed" | "aborted" | "stopped" | "error" = "completed", failure?: RunFailure) => {
 			const controller = new AbortController();
 			signal = controller.signal;
+			const { response: _response, ...errorFields } = failure ?? {};
 			await fire("agent_start");
+			if (end === "error")
+				for (const response of [failure?.response ?? []].flat()) await fire("after_provider_response", response);
 			if (end === "aborted" || end === "stopped") controller.abort();
 			const last =
 				end === "completed"
 					? { role: "assistant", content: [{ type: "text", text: "answer" }], stopReason: "stop" }
 					: end === "aborted"
 						? { role: "assistant", content: [{ type: "text", text: "part" }], stopReason: "aborted" }
-						: { role: "assistant", content: [], stopReason: "error", errorMessage: "boom" };
+						: {
+								role: "assistant",
+								content: [],
+								stopReason: "error",
+								errorMessage: "boom",
+								...(end === "error" ? errorFields : undefined),
+							};
 			await fire("agent_end", { messages: [{ role: "user", content: "q" }, last] });
 			signal = undefined;
 			await fire("agent_settled");

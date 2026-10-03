@@ -8,6 +8,43 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A delegate whose run ends on a usage-limit error (a quota message, or a
+  `429` that survived Pi's retries) records a mark in
+  `pi-squire-limits.json` in Pi's agent directory. Every Pi session then
+  refuses to launch a delegate on a marked model until the mark clears.
+- A usage-limit mark clears at the reset time in the failed response's headers
+  (`retry-after`, `anthropic-ratelimit-*-reset`, `x-ratelimit-reset-*`) when
+  Pi reports them, ahead of the time in the error text.
+- An agent's `fallback:` frontmatter (comma-separated or a YAML list of
+  `provider/id`) names models to launch on, in order, when its `model` is
+  usage-limited or unusable. The tool result and the command notice name the
+  substitute and the skipped model; the call is refused only when every
+  candidate is skipped. An explicit `model` is never substituted.
+- A `failed` result from a delegate that recorded a usage-limit mark gets a
+  `Usage limit:` line after `Status:`, naming the scope and clear time.
+  `delegation_status` ends with a `Usage-limit marks:` block of the active
+  marks, and its details gain `marks`.
+- `/delegate-clear <all|provider|provider/model>` removes usage-limit marks and
+  their repeat-hit history. An argument matching no active mark changes
+  nothing and lists the active marks. No tool can clear marks.
+- Before a launch on a paid `opencode-go` model, pi-squire reads the OpenCode
+  Go quota (cached for 60 seconds). A window at 100% or `rate-limited` skips
+  the model and records a `proactive` mark that clears at the window's reset
+  time. A failed reading never blocks a launch: the result and notice say
+  "Could not read opencode-go quota: …; launched without a proactive check.",
+  and `delegation_status` shows the error in `readingErrors` until a later
+  reading succeeds. `/delegate-clear` also drops the cached reading. A proactive
+  mark that cannot be written does not stop the launch.
+- Before a launch, pi-squire reads Claude Code's usage cache for an
+  `anthropic` candidate on a Claude subscription login and skips it when its
+  5-hour or 7-day window is at 100%, or its model-scoped week is and names that
+  model. A stale cache is refreshed in the background with
+  `claude -p /usage`, at most every 5 minutes, without delaying the launch.
+- A usage-limit mark clears early when a launch considers the marked
+  `opencode-go` or OAuth `anthropic` candidate and a re-check (at most every
+  10 minutes per provider) shows every window under 100% and a window cycle
+  that began after the mark was recorded. Headroom alone never clears a mark,
+  and a model-scoped mark on `opencode-go` never clears early.
 - `delegation_status` shows how long ago a running delegate last wrote its
   session file, at the end of its `state:` line (`last active 12 min ago`),
   and adds the same moment to its details as `lastActiveAt`. A long gap may

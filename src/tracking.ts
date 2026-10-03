@@ -7,6 +7,7 @@ import { statSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { type Mark, readMarks } from "./limits.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -17,6 +18,7 @@ import {
 	type WindowState,
 } from "./results.ts";
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
+import type { ReadingError } from "./usage.ts";
 
 /** The hook a tick emits so the provider claims waiting replies before windows are checked. */
 const SCAN = "message:scan";
@@ -166,6 +168,19 @@ function viewDetails({ record, name, sessionPath, lastActive }: View): Record<st
 	};
 }
 
+/** The usage-limit marks in force now, as `delegation_status` reports them. */
+function activeMarks(): { scope: string; source: Mark["source"]; reason: string; clearsAt: string }[] {
+	const now = Date.now();
+	return readMarks(now)
+		.filter((mark) => mark.clearsAt > now)
+		.map(({ scope, source, reason, clearsAt }) => ({
+			scope,
+			source,
+			reason: reason.length > 120 ? `${reason.slice(0, 119)}…` : reason,
+			clearsAt: new Date(clearsAt).toISOString(),
+		}));
+}
+
 /** Every delegation, or the one named; throws when a named id is unknown. */
 function selectRecords(results: Results, id: string | undefined): Recorded[] {
 	const all = results.list();
@@ -243,7 +258,7 @@ function createPoll(
 }
 
 /** The `delegation_status` tool. */
-function statusTool(results: Results, tmux: TmuxClient): ToolDef {
+function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => ReadingError[]): ToolDef {
 	return {
 		name: "delegation_status",
 		label: "Delegation status",
@@ -262,10 +277,25 @@ function statusTool(results: Results, tmux: TmuxClient): ToolDef {
 			const records = selectRecords(results, params.id);
 			const windows = await listWindows(tmux);
 			const views = records.map((record) => view(record, windows, ctx));
-			const details = { delegations: views.map(viewDetails) };
-			if (views.length === 0) return toolResult("No delegations are recorded in this session.", details);
+			const marks = activeMarks();
+			const errors = readingErrors();
+			const details = { delegations: views.map(viewDetails), marks, readingErrors: errors };
+			const block =
+				marks.length === 0 && errors.length === 0
+					? []
+					: [
+							[
+								"Usage-limit marks:",
+								...marks.map((m) => `- ${m.scope} (${m.source}) until ${m.clearsAt}: ${m.reason}`),
+								...errors.map((e) => `- could not read ${e.provider} quota at ${e.at}: ${e.reason}`),
+							].join("\n"),
+						];
 			const heading = `${views.length} delegation${views.length === 1 ? "" : "s"}:`;
-			return toolResult(`${heading}\n\n${views.map(viewText).join("\n\n")}`, details);
+			const parts =
+				views.length === 0
+					? ["No delegations are recorded in this session.", ...block]
+					: [`${heading}\n\n${views.map(viewText).join("\n\n")}`, ...block];
+			return toolResult(parts.join("\n\n"), details);
 		},
 	};
 }
@@ -319,11 +349,16 @@ function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 }
 
 /** The poll and the two tools, over the extension API, the records and tmux. */
-export function createTracking(pi: ExtensionAPI, results: Results, tmux: TmuxClient): Tracking {
+export function createTracking(
+	pi: ExtensionAPI,
+	results: Results,
+	tmux: TmuxClient,
+	readingErrors: () => ReadingError[] = () => [],
+): Tracking {
 	const poll = createPoll(pi, results, tmux);
 	return {
 		registerTools(): void {
-			pi.registerTool(statusTool(results, tmux) as never);
+			pi.registerTool(statusTool(results, tmux, readingErrors) as never);
 			pi.registerTool(closeTool(results, tmux) as never);
 		},
 		startPolling: poll.start,

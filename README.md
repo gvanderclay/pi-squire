@@ -115,10 +115,10 @@ temporary folder, not as text on the command line.
 The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
 directory per agent, so a new agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`, and optionally
-`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit))
-and `exclude-tools`. The body is the delegate's system prompt, appended to
-Pi's own prompt; it reaches the child as a path to a private file under the
-system temporary folder, so the text stays off the command line. The
+`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit)),
+`exclude-tools` and `fallback`. The body is the delegate's system prompt,
+appended to Pi's own prompt; it reaches the child as a path to a private file
+under the system temporary folder, so the text stays off the command line. The
 [first-use example](#first-use) is a complete `AGENT.md`.
 
 `exclude-tools` names the tools the delegate goes without, as a
@@ -132,6 +132,11 @@ checked against the tools the parent session has registered
 delegate's result reaches the parent through the `message:*` provider's reply
 when its run settles, not through a tool, so excluding tools cannot stop it
 answering.
+
+`fallback` lists models to try, in order, when the agent's `model` is
+usage-limited (see [Usage limits](#usage-limits)), as a comma-separated list
+or a YAML list of `provider/id`. An entry that is not `provider/id` is dropped
+with a warning; the agent still loads.
 
 The body is followed by one fixed final-message line and a paragraph naming the
 parent session's address. The delegate's task arrives as a message from that
@@ -239,10 +244,103 @@ level is refused with close matches and nothing starts.
 - When tmux cannot be asked about a window, the state is `unknown`, never
   `closed`, because a failed check is not evidence the window is gone.
 
+`delegation_status` also ends with a `Usage-limit marks:` block, one line per
+active mark: its scope, source (`reactive` or `proactive`), clear time and
+reason (cut to about 120 characters), then one line per provider whose last
+quota reading failed. The block is left out when there is neither, and shows
+even when no delegation is recorded. The details gain a `marks` array of
+`{ scope, source, reason, clearsAt }` and a `readingErrors` array (see
+[Usage limits](#usage-limits)).
+
 `delegation_close` kills the window and records the close even when the
 result has already arrived. When the window is already gone it only records
 the close. An unknown or already closed id returns a message and kills
 nothing. The delegate's session file and result envelope stay on disk.
+
+## Usage limits
+
+When a delegate's run ends on a usage-limit error, it records a mark in
+`pi-squire-limits.json` in Pi's agent directory, which every Pi session on the
+machine reads. Quota messages count, and so does a `429` that survived Pi's
+retries; overloaded and `5xx` errors do not. A mark covers the failing
+model's whole provider, except for a free model (an id ending in `-free`, or
+zero cost in Pi's registry), which is never covered by a provider mark and,
+when it is the one that failed, is marked alone.
+
+A mark clears at the reset time the error states ("try again in 30 minutes",
+`resets_at`), otherwise after 5 minutes, doubling on each repeat hit up to 6
+hours. When the failed response's headers state a reset (`retry-after`,
+`anthropic-ratelimit-*-reset`, `x-ratelimit-reset-requests` or `-tokens`),
+that time wins over the error text. Until then `delegate` and `/delegate`
+refuse a marked model passed as `model` / `--model`, and say when it clears.
+
+Without an explicit model, the delegation launches on the agent's model, or
+else on the first of its `fallback` models that has credentials and is not
+marked. The tool result and the command's notice then say, for example, "Used
+fallback opencode-go/b because alpha/fast-model is usage-limited until …", and
+the result details list the skipped models under `skipped`. When every
+candidate is marked or unusable, the call is refused with one line per
+candidate and why it was skipped.
+
+Before a launch, pi-squire also reads the OpenCode Go quota for a paid
+`opencode-go` candidate (`GET https://opencode.ai/zen/go/v1/usage`, with the
+provider's API key). A window at 100% or more, or one the provider reports as
+`rate-limited`, skips the candidate and records a `proactive` mark on
+`opencode-go`, for example "Go 5h window at 100%", that clears at that window's
+reset time (the 5-minute cooldown when none is given). A reading is reused for
+60 seconds. Free models and other providers are never read, and a candidate that
+is already marked is skipped without a read. The key is sent only to
+`https://opencode.ai`, with redirects refused: a provider or model base URL on
+another origin means no request at all.
+
+For an `anthropic` candidate used through a Claude subscription (an OAuth
+login; API-key users get no proactive check and rely on reactive marks),
+pi-squire reads Claude Code's own usage cache, the `cachedUsageUtilization`
+field of `$CLAUDE_CONFIG_DIR/.claude.json` (`~/.claude.json` when the variable
+is unset). It never calls Anthropic's usage endpoint. A 5-hour or 7-day window
+at 100% or more records a `proactive` mark on `anthropic`, cleared at that
+window's reset time. A model-scoped weekly window at 100% (for example Opus)
+marks only the `provider/model` candidates whose name or id contains the scope
+name, so other Anthropic models stay usable. The check reads the cache as it
+stands and never waits: when the cache is missing or older than 5 minutes,
+pi-squire starts `claude -p /usage --no-session-persistence` in the background
+(in a temporary directory, output discarded, killed after 30 seconds) so Claude
+Code rewrites it, at most once every 5 minutes per Pi process. It starts only
+when Claude Code state exists (`$CLAUDE_CONFIG_DIR`, or `~/.claude.json` or
+`~/.claude` when the variable is unset). A missing `claude` binary is ignored. A
+window at 100% whose reset time has already passed counts as reset and blocks
+nothing.
+
+A failed reading (for Go: no key, a base URL off the Go origin, a non-2xx
+answer, an unreadable body, a timeout, a network error; for Claude: a missing or
+unreadable cache) never blocks a launch. The tool result and the command's
+notice gain "Could not read <provider> quota: <reason>; launched without a
+proactive check.", and `delegation_status` lists the provider's last reading
+error and its time under the `Usage-limit marks:` block and in a `readingErrors`
+array of `{ provider, reason, at }`.
+
+A mark can also clear early. When a launch considers a marked `opencode-go` or
+OAuth `anthropic` candidate, pi-squire re-checks that provider's quota, at most
+once every 10 minutes per provider and never in the background, and not for a
+mark recorded less than 10 minutes ago. It clears a mark only when the reading
+succeeded, every applying window is under 100%, and a window began a new cycle
+after the mark was recorded (its reset time minus its length is later than the
+mark's time); headroom alone never clears one, because a quota endpoint can show
+headroom while the account still answers 429. A model-scoped Claude mark clears
+only when its scoped window has reset; a model-scoped mark on `opencode-go`
+never clears early, because Go has no scoped window. A window without a reset time or
+length cannot prove a reset. The tool result and the command's notice then say
+"Cleared the usage-limit mark on <scope>: its quota has reset since the mark was
+recorded." A failed re-check keeps the mark, lists the reading error in
+`delegation_status`, and adds no note.
+
+A mark can be stale (the quota came back, or the plan changed). Only you clear
+one, with `/delegate-clear <target>`: `all`, a provider (its mark and every
+model mark under it), or `provider/model` (that model's mark and the provider
+mark covering it). Clearing also forgets the repeat-hit history, so the next
+hit starts at 5 minutes again, and drops the cached quota reading so the next
+launch reads it afresh. With no argument, or one matching no active
+mark, it changes nothing and lists the active marks. No tool clears marks.
 
 ## Auto-exit
 
@@ -287,6 +385,13 @@ Delegate session: <session file or id>
   task, so the delegation stays running while the user steers it. The next
   run that completes sends the result, `done`, and its body opens with a note
   that the user took over partway.
+- A `failed` reply from a delegate that recorded a usage-limit mark (see
+  [Usage limits](#usage-limits)) gets one more line right after `Status:`,
+  for example `Usage limit: the delegate hit a usage limit on provider
+  opencode-go; it is marked until 2026-10-03T12:05:00.000Z and later
+  delegations skip it.` (a model scope reads `on model provider/id`; a mark
+  that has since cleared reads `it was marked until …`). A failed reply with
+  no such mark is unchanged.
 - The task is quoted from the request copy the provider puts on the payload,
   capped at 2 KiB with the copy's `sent/` path. A request with no copy is
   named by id alone.

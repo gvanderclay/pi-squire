@@ -12,6 +12,9 @@ follows [Semantic Versioning](https://semver.org/).
   `429` that survived Pi's retries) records a mark in
   `pi-squire-limits.json` in Pi's agent directory. Every Pi session then
   refuses to launch a delegate on a marked model until the mark clears.
+- A usage-limit mark clears at the reset time in the failed response's headers
+  (`retry-after`, `anthropic-ratelimit-*-reset`, `x-ratelimit-reset-*`) when
+  Pi reports them, ahead of the time in the error text.
 
 ## [0.2.2] - 2026-10-02
 

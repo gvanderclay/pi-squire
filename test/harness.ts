@@ -106,7 +106,13 @@ export type SessionOptions = {
 };
 
 /** How an `error` run fails: the last assistant message's text, provider and model. */
-export type RunFailure = { errorMessage: string; provider?: string; model?: string };
+export type RunFailure = {
+	errorMessage: string;
+	provider?: string;
+	model?: string;
+	/** A provider response seen during the run, fired as `after_provider_response`. */
+	response?: { status: number; headers: Record<string, string> };
+};
 
 /** The tools a fake session has unless a test says otherwise. */
 export const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
@@ -292,6 +298,7 @@ export function session(options: SessionOptions = {}) {
 			const controller = new AbortController();
 			signal = controller.signal;
 			await fire("agent_start");
+			if (end === "error" && failure?.response) await fire("after_provider_response", failure.response);
 			if (end === "aborted" || end === "stopped") controller.abort();
 			const last =
 				end === "completed"
@@ -303,7 +310,7 @@ export function session(options: SessionOptions = {}) {
 								content: [],
 								stopReason: "error",
 								errorMessage: "boom",
-								...(end === "error" ? failure : undefined),
+								...(end === "error" ? { ...failure, response: undefined } : undefined),
 							};
 			await fire("agent_end", { messages: [{ role: "user", content: "q" }, last] });
 			signal = undefined;

@@ -100,6 +100,49 @@ function statedReset(message: string, now: number): number | undefined {
 	return /^\d+(\.\d+)?$/.test(text) ? Number(text) * (Number(text) > 1e12 ? 1 : 1000) : Date.parse(text);
 }
 
+export type Response = { status: number; headers: Record<string, string> };
+
+const UNIT_MS: Record<string, number> = { ms: 1, s: 1000, m: MINUTE, h: HOUR };
+
+/** A duration string such as `1s` or `6m0s`, in milliseconds. */
+function duration(text: string): number | undefined {
+	const parts = [...text.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/g)];
+	return parts.length === 0 || parts.map((part) => part[0]).join("") !== text.trim()
+		? undefined
+		: parts.reduce((sum, part) => sum + Number(part[1]) * UNIT_MS[part[2]], 0);
+}
+
+/**
+ * The reset time a failed response's headers state, if any, in the order
+ * `retry-after`, `anthropic-ratelimit-*-reset`, `x-ratelimit-reset-*`. Only a
+ * non-2xx response counts, and only a time in the future.
+ */
+export function headerReset(response: Response | undefined, now = Date.now()): number | undefined {
+	if (response === undefined || (response.status >= 200 && response.status < 300)) return undefined;
+	const headers = Object.entries(response.headers).map(([name, value]) => [name.toLowerCase(), String(value)] as const);
+	const future = (times: (number | undefined)[]): number | undefined => {
+		const found = times.filter((time): time is number => time !== undefined && time > now);
+		return found.length === 0 ? undefined : Math.max(...found);
+	};
+	const retry = headers.find(([name]) => name === "retry-after")?.[1].trim();
+	let retryTime: number | undefined;
+	if (retry !== undefined) retryTime = /^\d+$/.test(retry) ? now + Number(retry) * 1000 : Date.parse(retry);
+	const retryAt = future([retryTime]);
+	if (retryAt !== undefined) return retryAt;
+	const anthropic = future(
+		headers.filter(([name]) => /^anthropic-ratelimit-.*-reset$/.test(name)).map(([, value]) => Date.parse(value)),
+	);
+	if (anthropic !== undefined) return anthropic;
+	return future(
+		headers
+			.filter(([name]) => name === "x-ratelimit-reset-requests" || name === "x-ratelimit-reset-tokens")
+			.map(([, value]) => {
+				const ms = duration(value);
+				return ms === undefined ? undefined : now + ms;
+			}),
+	);
+}
+
 /**
  * Whether an error message (Pi's `<status>: <body>`) is a usage limit, and
  * the reset time the text states, if any. Overloaded and 5xx errors never are.
@@ -117,7 +160,7 @@ export function classify(message: string, now = Date.now()): { resetAt?: number 
  */
 export function recordLimit(
 	models: Models,
-	hit: { provider: string; model: string; message: string; delegation: string },
+	hit: { provider: string; model: string; message: string; delegation: string; response?: Response },
 	now = Date.now(),
 ): void {
 	const limit = classify(hit.message, now);
@@ -131,7 +174,8 @@ export function recordLimit(
 		scope,
 		reason: hit.message.slice(0, MAX_REASON),
 		recordedAt: now,
-		clearsAt: limit.resetAt ?? now + Math.min(FIRST_COOLDOWN * 2 ** (hits - 1), MAX_COOLDOWN),
+		clearsAt:
+			headerReset(hit.response, now) ?? limit.resetAt ?? now + Math.min(FIRST_COOLDOWN * 2 ** (hits - 1), MAX_COOLDOWN),
 		source: "reactive",
 		hits,
 		delegations: [...(old?.delegations ?? []), hit.delegation].slice(-MAX_DELEGATIONS),

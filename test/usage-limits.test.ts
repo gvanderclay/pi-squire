@@ -261,3 +261,66 @@ test("a model free only by registry cost is marked alone", async (t) => {
 	await p.delegate("zero t");
 	assert.match(p.errors.join("\n"), /model opencode-go\/zero/);
 });
+
+/** A delegate whose run sees `response` headers, then fails on `message`. */
+async function failWith(response: { status: number; headers: Record<string, string> }, message = GO_LIMIT) {
+	const delegate = session({ parentEnv: "parent-x", parent: "delegation-1", extraModels: EXTRA });
+	delete process.env.PI_DELEGATE_PARENT;
+	await delegate.start();
+	await delegate.run("error", { errorMessage: message, provider: "opencode-go", model: "paid", response });
+	return delegate;
+}
+
+test("retry-after seconds set the clear time when the text states none", async (t) => {
+	clock(t);
+	await failWith({ status: 429, headers: { "Retry-After": "120" } });
+	assert.equal(marks()[0].clearsAt, START + 120_000);
+});
+
+test("retry-after as an HTTP date", async (t) => {
+	clock(t);
+	await failWith({ status: 429, headers: { "retry-after": "Sat, 03 Oct 2026 13:00:00 GMT" } });
+	assert.equal(marks()[0].clearsAt, Date.parse("2026-10-03T13:00:00Z"));
+});
+
+test("the latest future anthropic-ratelimit reset wins, past ones are ignored", async (t) => {
+	clock(t);
+	await failWith({
+		status: 429,
+		headers: {
+			"anthropic-ratelimit-unified-reset": "2026-10-03T14:00:00Z",
+			"anthropic-ratelimit-tokens-reset": "2026-10-03T13:00:00Z",
+			"anthropic-ratelimit-requests-reset": "2026-10-03T11:00:00Z",
+		},
+	});
+	assert.equal(marks()[0].clearsAt, Date.parse("2026-10-03T14:00:00Z"));
+});
+
+test("the longer of the x-ratelimit-reset durations wins", async (t) => {
+	clock(t);
+	await failWith({ status: 429, headers: { "x-ratelimit-reset-requests": "1s", "x-ratelimit-reset-tokens": "6m0s" } });
+	assert.equal(marks()[0].clearsAt, START + 6 * 60_000);
+});
+
+test("a header reset beats the time in the error text", async (t) => {
+	clock(t);
+	await failWith(
+		{ status: 429, headers: { "retry-after": "120" } },
+		"429: usage limit reached, try again in 30 minutes",
+	);
+	assert.equal(marks()[0].clearsAt, START + 120_000);
+});
+
+test("headers of a 2xx response, or none usable, leave the ticket-02 clear time", async (t) => {
+	clock(t);
+	await failWith({ status: 200, headers: { "retry-after": "120" } });
+	assert.equal(marks()[0].clearsAt, START + 5 * 60_000);
+});
+
+test("headers from an earlier run do not leak into a later run's mark", async (t) => {
+	clock(t);
+	const delegate = await failWith({ status: 429, headers: { "retry-after": "120" } });
+	writeFileSync(FILE, "[]");
+	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
+	assert.equal(marks()[0].clearsAt, START + 5 * 60_000);
+});

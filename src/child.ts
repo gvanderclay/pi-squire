@@ -17,7 +17,7 @@
 // ponytail: drop the takeover once #5581 lands and the minimum Pi has it.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { recordLimit } from "./limits.ts";
+import { type Response, recordLimit } from "./limits.ts";
 
 /** The launch variable that carries the parent's resolved setting. */
 export const AUTO_EXIT_ENV = "PI_DELEGATE_AUTO_EXIT";
@@ -31,7 +31,7 @@ type Message = { role?: string; stopReason?: unknown; errorMessage?: unknown; pr
 type Inbound = { envelope?: { from?: unknown; kind?: unknown; body?: unknown }; handled?: boolean };
 
 /** A run that ended on a usage-limit error leaves a mark for every Pi session. */
-function recordUsageLimit(last: Message, ctx: ExtensionContext): void {
+function recordUsageLimit(last: Message, ctx: ExtensionContext, response?: Response): void {
 	const { provider, model, errorMessage } = last;
 	if (typeof provider !== "string" || typeof model !== "string" || typeof errorMessage !== "string") return;
 	try {
@@ -40,6 +40,7 @@ function recordUsageLimit(last: Message, ctx: ExtensionContext): void {
 			model,
 			message: errorMessage,
 			delegation: ctx.sessionManager.getSessionId(),
+			response,
 		});
 	} catch {
 		// A mark that cannot be written must not break the run's end.
@@ -80,6 +81,15 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 	// Stopped mid-text the last message says `aborted`; stopped during a tool
 	// call Pi 0.99.1 ends with an `error` message, and only the signal tells a
 	// stop from a real error. Either way it is the user taking over.
+	// The latest provider response of the current run; its headers may state the reset.
+	let response: Response | undefined;
+	pi.on("agent_start", async () => {
+		response = undefined;
+	});
+	pi.on("after_provider_response", async (event) => {
+		response = { status: event.status, headers: event.headers };
+	});
+
 	pi.on("agent_end", async (event, ctx) => {
 		let last: Message | undefined;
 		for (let i = event.messages.length - 1; i >= 0 && last === undefined; i--) {
@@ -88,7 +98,7 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		}
 		const stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 		if (stopped) disarm(ctx);
-		if (!stopped && last?.stopReason === "error") recordUsageLimit(last, ctx);
+		if (!stopped && last?.stopReason === "error") recordUsageLimit(last, ctx, response);
 		completed = !stopped && last?.stopReason !== "error";
 	});
 

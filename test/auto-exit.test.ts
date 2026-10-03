@@ -109,6 +109,19 @@ test("a failed run does not exit, and the next normal completion does", async ()
 	assert.equal(s.shutdowns(), 1);
 });
 
+test("a usage-limit failure exits like a completion when auto-exit is on, and only then", async () => {
+	const limit = { errorMessage: '429: {"type":"GoUsageLimitError","message":"Go usage limit exceeded"}' };
+	for (const [autoExitEnv, shutdowns] of [
+		["1", 1],
+		["0", 0],
+	] as const) {
+		const s = session({ parentEnv: "some-parent", autoExitEnv });
+		await s.start();
+		await s.run("error", limit);
+		assert.equal(s.shutdowns(), shutdowns, `auto-exit ${autoExitEnv}`);
+	}
+});
+
 test("typing in the delegate turns auto-exit off with a notice", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
 	await s.start();

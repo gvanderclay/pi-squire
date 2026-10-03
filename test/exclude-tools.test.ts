@@ -7,7 +7,8 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { readRoster } from "../src/agents.ts";
+import { agentDir, agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -83,4 +84,27 @@ test("an exclude-tools that is not a list of names leaves the agent out with a w
 		),
 		s.warnings.join("\n"),
 	);
+});
+
+test("fallback parses as a comma-separated string or a YAML list, and is empty when absent", async () => {
+	writeAgent("a", agentFile({ ...SCOUT, fallback: "beta/other-model, alpha/deep-model" }));
+	writeAgent("b", agentFile({ ...SCOUT, fallback: "[beta/other-model, alpha/deep-model]" }));
+	writeAgent("c", agentFile(SCOUT));
+	const { agents } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.fallback),
+		[["beta/other-model", "alpha/deep-model"], ["beta/other-model", "alpha/deep-model"], []],
+	);
+});
+
+test("a bad fallback entry is dropped with a warning and the agent still loads", async () => {
+	writeAgent("a", agentFile({ ...SCOUT, fallback: "not-a-model, beta/other-model" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(agents[0].fallback, ["beta/other-model"]);
+	assert.ok(warnings[0].endsWith(`a/AGENT.md has fallback "not-a-model", not provider/id; dropped`), warnings[0]);
+	const s = session();
+	await s.start();
+	await s.delegate("a go");
+	assert.equal(s.tmux.opened.length, 1);
+	assert.ok(s.warnings.some((warning) => warning.includes(`fallback "not-a-model"`)));
 });

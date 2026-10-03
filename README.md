@@ -116,7 +116,7 @@ The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
 directory per agent, so a new agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`, and optionally
 `auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit))
-and `exclude-tools`. The body is the delegate's system prompt, appended to
+`exclude-tools` and `fallback`. The body is the delegate's system prompt, appended to
 Pi's own prompt; it reaches the child as a path to a private file under the
 system temporary folder, so the text stays off the command line. The
 [first-use example](#first-use) is a complete `AGENT.md`.
@@ -132,6 +132,11 @@ checked against the tools the parent session has registered
 delegate's result reaches the parent through the `message:*` provider's reply
 when its run settles, not through a tool, so excluding tools cannot stop it
 answering.
+
+`fallback` lists models to try, in order, when the agent's `model` is
+usage-limited (see [Usage limits](#usage-limits)), as a comma-separated list
+or a YAML list of `provider/id`. An entry that is not `provider/id` is dropped
+with a warning; the agent still loads.
 
 The body is followed by one fixed final-message line and a paragraph naming the
 parent session's address. The delegate's task arrives as a message from that
@@ -256,8 +261,15 @@ A mark clears at the reset time the error states ("try again in 30 minutes",
 hours. When the failed response's headers state a reset (`retry-after`,
 `anthropic-ratelimit-*-reset`, `x-ratelimit-reset-requests` or `-tokens`),
 that time wins over the error text. Until then `delegate` and `/delegate`
-refuse a marked model, whether it came from the agent or from `model` /
-`--model`, and say when it clears.
+refuse a marked model passed as `model` / `--model`, and say when it clears.
+
+Without an explicit model, the delegation launches on the agent's model, or
+else on the first of its `fallback` models that has credentials and is not
+marked. The tool result and the command's notice then say, for example, "Used
+fallback opencode-go/b because alpha/fast-model is usage-limited until …", and
+the result details list the skipped models under `skipped`. When every
+candidate is marked or unusable, the call is refused with one line per
+candidate and why it was skipped.
 
 ## Auto-exit
 

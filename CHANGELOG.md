@@ -15,6 +15,11 @@ follows [Semantic Versioning](https://semver.org/).
 - A usage-limit mark clears at the reset time in the failed response's headers
   (`retry-after`, `anthropic-ratelimit-*-reset`, `x-ratelimit-reset-*`) when
   Pi reports them, ahead of the time in the error text.
+- An agent's `fallback:` frontmatter (comma-separated or a YAML list of
+  `provider/id`) names models to launch on, in order, when its `model` is
+  usage-limited or unusable. The tool result and the command notice name the
+  substitute and the skipped model; the call is refused only when every
+  candidate is skipped. An explicit `model` is never substituted.
 
 ## [0.2.2] - 2026-10-02
 

@@ -355,3 +355,93 @@ test("headers from an earlier run do not leak into a later run's mark", async (t
 	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
 	assert.equal(marks()[0].clearsAt, START + 5 * 60_000);
 });
+
+const FB = (fallback: string) => agentFile({ ...AGENT, model: "opencode-go/paid", fallback });
+
+test("a marked model launches on the first fallback that is not marked, and says so", async (t) => {
+	clock(t);
+	writeAgent("fb", FB("opencode-go/zero, beta/other-model"));
+	await fail(GO_LIMIT);
+	await fail('429: {"type":"FreeUsageLimitError"}', "zero", "d2");
+	const p = parent();
+	await p.start();
+	const result = await p.toolCall("delegate", { agent: "fb", task: "t" });
+	const argv = p.tmux.opened[0].argv;
+	assert.equal(argv[argv.indexOf("--model") + 1], "beta/other-model");
+	const text = result.content[0].text;
+	assert.match(
+		text,
+		/Used fallback beta\/other-model because opencode-go\/paid is usage-limited until 2026-10-03T12:05:00\.000Z; opencode-go\/zero is usage-limited until /,
+	);
+	assert.deepEqual(
+		(result.details as { skipped: { model: string }[] }).skipped.map((item) => item.model),
+		["opencode-go/paid", "opencode-go/zero"],
+	);
+	await p.delegate("fb t");
+	assert.match(p.notes.join("\n"), /Used fallback beta\/other-model because/);
+	assert.match(
+		p.tool("delegate").description,
+		/default opencode-go\/paid, fallback opencode-go\/zero, fallback beta\/other-model, thinking/,
+	);
+});
+
+test("an unmarked model gets no fallback note, and an agent without fallbacks is refused as before", async (t) => {
+	clock(t);
+	writeAgent("fb", FB("beta/other-model"));
+	const p = parent();
+	await p.start();
+	const result = await p.toolCall("delegate", { agent: "fb", task: "t" });
+	assert.doesNotMatch(result.content[0].text, /fallback/);
+	await fail(GO_LIMIT);
+	await assert.rejects(
+		p.toolCall("delegate", { agent: "paid", task: "t" }),
+		/^Error: opencode-go\/paid is usage-limited/,
+	);
+});
+
+test("with every candidate marked or unusable the call is refused, one line each", async (t) => {
+	clock(t);
+	writeAgent("fb", FB("opencode-go/space-free, alpha/deep-model"));
+	await fail("429: try again in 30 minutes");
+	await fail("429: try again in 30 minutes", "space-free", "d2");
+	const p = session({ extraModels: EXTRA, noCredentials: ["alpha/deep-model"] });
+	await p.start();
+	await p.toolCall("delegate", { agent: "fb", task: "t" }).then(
+		() => assert.fail("launched"),
+		(err: Error) => {
+			const lines = err.message.split("\n");
+			assert.match(
+				lines[1],
+				/^- opencode-go\/paid: usage-limited \(provider opencode-go\) until 2026-10-03T12:30:00\.000Z/,
+			);
+			assert.match(
+				lines[2],
+				/^- opencode-go\/space-free: usage-limited \(model opencode-go\/space-free\) until 2026-10-03T12:30:00/,
+			);
+			assert.match(lines[3], /^- alpha\/deep-model: no credentials/);
+		},
+	);
+	assert.deepEqual(p.tmux.opened, []);
+});
+
+test("a fallback without credentials is skipped for the next one", async (t) => {
+	clock(t);
+	writeAgent("fb", FB("alpha/deep-model, beta/other-model"));
+	await fail(GO_LIMIT);
+	const p = session({ extraModels: EXTRA, noCredentials: ["alpha/deep-model"] });
+	await p.delegate("fb t");
+	const argv = p.tmux.opened[0].argv;
+	assert.equal(argv[argv.indexOf("--model") + 1], "beta/other-model");
+	assert.match(p.notes.join("\n"), /alpha\/deep-model is unavailable \(no credentials/);
+});
+
+test("an explicit model that is marked is refused even when the agent has fallbacks", async (t) => {
+	clock(t);
+	writeAgent("fb", FB("beta/other-model"));
+	await fail(GO_LIMIT);
+	const p = parent();
+	await p.start();
+	await assert.rejects(p.toolCall("delegate", { agent: "fb", task: "t", model: "opencode-go/paid" }), /usage-limited/);
+	await p.delegate("fb --model opencode-go/paid t");
+	assert.deepEqual(p.tmux.opened, []);
+});

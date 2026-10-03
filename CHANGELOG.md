@@ -8,16 +8,6 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- A usage-limit mark clears early when a launch considers the marked
-  `opencode-go` or OAuth `anthropic` candidate and a re-check (at most every
-  10 minutes per provider) shows every window under 100% and a window cycle
-  that began after the mark was recorded. Headroom alone never clears a mark, and a model-scoped mark on
-  `opencode-go` never clears early.
-- Before a launch, pi-squire reads Claude Code's usage cache for an
-  `anthropic` candidate on a Claude subscription login and skips it when its
-  5-hour or 7-day window is at 100%, or its model-scoped week is and names that
-  model. A stale cache is refreshed in the background with
-  `claude -p /usage`, at most every 5 minutes, without delaying the launch.
 - A delegate whose run ends on a usage-limit error (a quota message, or a
   `429` that survived Pi's retries) records a mark in
   `pi-squire-limits.json` in Pi's agent directory. Every Pi session then
@@ -45,6 +35,16 @@ follows [Semantic Versioning](https://semver.org/).
   and `delegation_status` shows the error in `readingErrors` until a later
   reading succeeds. `/delegate-clear` also drops the cached reading. A proactive
   mark that cannot be written does not stop the launch.
+- Before a launch, pi-squire reads Claude Code's usage cache for an
+  `anthropic` candidate on a Claude subscription login and skips it when its
+  5-hour or 7-day window is at 100%, or its model-scoped week is and names that
+  model. A stale cache is refreshed in the background with
+  `claude -p /usage`, at most every 5 minutes, without delaying the launch.
+- A usage-limit mark clears early when a launch considers the marked
+  `opencode-go` or OAuth `anthropic` candidate and a re-check (at most every
+  10 minutes per provider) shows every window under 100% and a window cycle
+  that began after the mark was recorded. Headroom alone never clears a mark,
+  and a model-scoped mark on `opencode-go` never clears early.
 
 ## [0.2.2] - 2026-10-02
 

@@ -13,9 +13,9 @@ test("an errored run carries the failure a test chose, and a plain one keeps boo
 		seen.push((event as { messages: Record<string, unknown>[] }).messages[1]);
 	});
 	await s.start();
-	await s.run("error", { errorMessage: "429: limit", provider: "opencode-go", model: "fake-go-model" });
+	await s.run("error", { errorMessage: "400: bad request", provider: "opencode-go", model: "fake-go-model" });
 	await s.run("error");
-	assert.equal(seen[0].errorMessage, "429: limit");
+	assert.equal(seen[0].errorMessage, "400: bad request");
 	assert.equal(seen[0].provider, "opencode-go");
 	assert.equal(seen[0].model, "fake-go-model");
 	assert.equal(seen[1].errorMessage, "boom");

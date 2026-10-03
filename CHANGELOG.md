@@ -11,7 +11,8 @@ follows [Semantic Versioning](https://semver.org/).
 - With auto-exit on, a delegate whose run ends on a usage-limit error now
   closes its window, as after a normal completion. The parent still gets the
   `failed` reply and the session file stays. Other failures still leave the
-  window open.
+  window open. `test/harness.test.ts` now fails its run with a `400` instead
+  of a `429`, since a `429` is a usage limit and now exits.
 
 ## [0.3.0] - 2026-10-03
 

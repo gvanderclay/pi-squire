@@ -448,3 +448,80 @@ test("an explicit model that is marked is refused even when the agent has fallba
 	await p.delegate("fb --model opencode-go/paid t");
 	assert.deepEqual(p.tmux.opened, []);
 });
+
+// Seeing marks: the result line and delegation_status
+
+/** The `failed` or `done` reply the mailbox would deliver for the parent's first delegation. */
+function reply(s: ReturnType<typeof parent>, status: string) {
+	const requestId = (s.sendCalls[0].envelope as { id: string }).id;
+	const id = (s.entries[0].data as { id: string }).id;
+	return {
+		envelope: {
+			id: `reply-${status}`,
+			from: id,
+			to: s.parent,
+			in_reply_to: [requestId],
+			status,
+			ts: "",
+			body: "the answer",
+		},
+		path: "/mail/cur/reply.json",
+		requests: [],
+		handled: false,
+	};
+}
+
+/** The delegation id of the parent's first delegation. */
+const firstId = (s: ReturnType<typeof parent>) => (s.entries[0].data as { id: string }).id;
+
+const resultOf = (s: ReturnType<typeof parent>) =>
+	String(s.sent.find((m) => /^\[delegate\] Result from/.test(String(m.message.content)))?.message.content);
+
+test("a failed reply from a delegate that hit a usage limit carries the limit line after Status", async (t) => {
+	clock(t);
+	const p = parent();
+	await p.start();
+	await p.delegate("plain t");
+	await fail(GO_LIMIT, "paid", firstId(p));
+	p.scan.queue.push(reply(p, "failed"));
+	p.events.emit("message:scan", {});
+	const lines = resultOf(p).split("\n");
+	assert.equal(lines[1], "Status: failed");
+	assert.equal(
+		lines[2],
+		"Usage limit: the delegate hit a usage limit on provider opencode-go; it is marked until 2026-10-03T12:05:00.000Z and later delegations skip it.",
+	);
+});
+
+test("a failed reply with no matching mark has no limit line", async (t) => {
+	clock(t);
+	const p = parent();
+	await p.start();
+	await p.delegate("plain t");
+	await fail(GO_LIMIT, "paid", "someone-else");
+	p.scan.queue.push(reply(p, "failed"));
+	p.events.emit("message:scan", {});
+	const lines = resultOf(p).split("\n");
+	assert.equal(lines[1], "Status: failed");
+	assert.match(lines[2], /^\[delegate\] The task /);
+	assert.doesNotMatch(resultOf(p), /Usage limit/);
+});
+
+test("delegation_status lists active marks, in the details too, until they clear", async (t) => {
+	const tick = clock(t);
+	await fail(GO_LIMIT);
+	const p = parent();
+	await p.start();
+	const result = await p.toolCall("delegation_status", {});
+	assert.match(
+		result.content[0].text,
+		/^No delegations are recorded in this session\.\n\nUsage-limit marks:\n- opencode-go \(reactive\) until 2026-10-03T12:05:00\.000Z: 429: .*GoUsageLimitError/s,
+	);
+	assert.deepEqual((result.details as { marks: unknown[] }).marks, [
+		{ scope: "opencode-go", source: "reactive", reason: GO_LIMIT, clearsAt: "2026-10-03T12:05:00.000Z" },
+	]);
+	tick(5 * 60_000);
+	const after = await p.toolCall("delegation_status", {});
+	assert.equal(after.content[0].text, "No delegations are recorded in this session.");
+	assert.deepEqual((after.details as { marks: unknown[] }).marks, []);
+});

@@ -20,6 +20,10 @@ follows [Semantic Versioning](https://semver.org/).
   usage-limited or unusable. The tool result and the command notice name the
   substitute and the skipped model; the call is refused only when every
   candidate is skipped. An explicit `model` is never substituted.
+- A `failed` result from a delegate that recorded a usage-limit mark gets a
+  `Usage limit:` line after `Status:`, naming the scope and clear time.
+  `delegation_status` ends with a `Usage-limit marks:` block of the active
+  marks, and its details gain `marks`.
 
 ## [0.2.2] - 2026-10-02
 

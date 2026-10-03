@@ -4,7 +4,7 @@
 // about the window and words what it is told.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
+import { type Mark, readMarks } from "./limits.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -139,6 +139,19 @@ function viewDetails({ record, name, sessionPath }: View): Record<string, unknow
 	};
 }
 
+/** The usage-limit marks in force now, as `delegation_status` reports them. */
+function activeMarks(): { scope: string; source: Mark["source"]; reason: string; clearsAt: string }[] {
+	const now = Date.now();
+	return readMarks(now)
+		.filter((mark) => mark.clearsAt > now)
+		.map(({ scope, source, reason, clearsAt }) => ({
+			scope,
+			source,
+			reason: reason.length > 120 ? `${reason.slice(0, 119)}…` : reason,
+			clearsAt: new Date(clearsAt).toISOString(),
+		}));
+}
+
 /** Every delegation, or the one named; throws when a named id is unknown. */
 function selectRecords(results: Results, id: string | undefined): Recorded[] {
 	const all = results.list();
@@ -235,10 +248,22 @@ function statusTool(results: Results, tmux: TmuxClient): ToolDef {
 			const records = selectRecords(results, params.id);
 			const windows = await listWindows(tmux);
 			const views = records.map((record) => view(record, windows, ctx));
-			const details = { delegations: views.map(viewDetails) };
-			if (views.length === 0) return toolResult("No delegations are recorded in this session.", details);
+			const marks = activeMarks();
+			const details = { delegations: views.map(viewDetails), marks };
+			const block =
+				marks.length === 0
+					? []
+					: [
+							`Usage-limit marks:\n${marks
+								.map((m) => `- ${m.scope} (${m.source}) until ${m.clearsAt}: ${m.reason}`)
+								.join("\n")}`,
+						];
 			const heading = `${views.length} delegation${views.length === 1 ? "" : "s"}:`;
-			return toolResult(`${heading}\n\n${views.map(viewText).join("\n\n")}`, details);
+			const parts =
+				views.length === 0
+					? ["No delegations are recorded in this session.", ...block]
+					: [`${heading}\n\n${views.map(viewText).join("\n\n")}`, ...block];
+			return toolResult(parts.join("\n\n"), details);
 		},
 	};
 }

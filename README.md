@@ -241,6 +241,12 @@ level is refused with close matches and nothing starts.
 - When tmux cannot be asked about a window, the state is `unknown`, never
   `closed`, because a failed check is not evidence the window is gone.
 
+`delegation_status` also ends with a `Usage-limit marks:` block, one line per
+active mark: its scope, source (`reactive` or `proactive`), clear time and
+reason (cut to about 120 characters). The block is left out when no mark is
+active, and shows even when no delegation is recorded. The details gain a
+`marks` array of `{ scope, source, reason, clearsAt }`.
+
 `delegation_close` kills the window and records the close even when the
 result has already arrived. When the window is already gone it only records
 the close. An unknown or already closed id returns a message and kills
@@ -314,6 +320,13 @@ Delegate session: <session file or id>
   task, so the delegation stays running while the user steers it. The next
   run that completes sends the result, `done`, and its body opens with a note
   that the user took over partway.
+- A `failed` reply from a delegate that recorded a usage-limit mark (see
+  [Usage limits](#usage-limits)) gets one more line right after `Status:`,
+  for example `Usage limit: the delegate hit a usage limit on provider
+  opencode-go; it is marked until 2026-10-03T12:05:00.000Z and later
+  delegations skip it.` (a model scope reads `on model provider/id`; a mark
+  that has since cleared reads `it was marked until …`). A failed reply with
+  no such mark is unchanged.
 - The task is quoted from the request copy the provider puts on the payload,
   capped at 2 KiB with the copy's `sent/` path. A request with no copy is
   named by id alone.

@@ -27,6 +27,12 @@ follows [Semantic Versioning](https://semver.org/).
 - `/delegate-clear <all|provider|provider/model>` removes usage-limit marks and
   their repeat-hit history. An argument matching no active mark changes
   nothing and lists the active marks. No tool can clear marks.
+- Before a launch on a paid `opencode-go` model, pi-squire reads the OpenCode
+  Go quota (cached for 60 seconds). A window at 100% or `rate-limited` skips
+  the model and records a `proactive` mark that clears at the window's reset
+  time. A failed reading never blocks a launch: the result and notice say
+  "Could not read opencode-go quota: …; launched without a proactive check.",
+  and `delegation_status` shows the error in `readingErrors`.
 
 ## [0.2.2] - 2026-10-02
 

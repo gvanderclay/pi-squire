@@ -12,6 +12,7 @@ import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
 
 import register from "../src/index.ts";
 import { FakeTmux } from "./fake-tmux.ts";
+import { FakeUsage } from "./fake-usage.ts";
 
 /** A throwaway root for this test file; `PI_CODING_AGENT_DIR` points inside it. */
 export const root = mkdtempSync(join(tmpdir(), "delegate-test-"));
@@ -103,6 +104,10 @@ export type SessionOptions = {
 	noCredentials?: readonly string[];
 	/** Models only this session's registry also knows, on top of `FAKE_MODELS`. */
 	extraModels?: readonly { provider: string; id: string; cost?: { input: number; output: number } }[];
+	/** The fake usage client; a session without one gets a fake that reports no reading. */
+	usage?: FakeUsage;
+	/** Base URLs the fake registry reports per provider; none unless set. */
+	providerBaseUrls?: Record<string, string>;
 };
 
 type ProviderResponse = { status: number; headers: Record<string, string> };
@@ -151,8 +156,14 @@ export function session(options: SessionOptions = {}) {
 		find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
 		hasConfiguredAuth: (model: { provider: string; id: string }) =>
 			!(options.noCredentials ?? []).includes(`${model.provider}/${model.id}`),
+		getApiKeyForProvider: async (provider: string) => `fake-key-${provider}`,
+		getProvider: (provider: string) => {
+			const baseUrl = options.providerBaseUrls?.[provider];
+			return baseUrl === undefined ? undefined : { baseUrl };
+		},
 	};
 	const tmux = new FakeTmux();
+	const usage = options.usage ?? new FakeUsage();
 	/** The current run's abort signal, as `ctx.signal` reports it; cleared when the run settles. */
 	let signal: AbortSignal | undefined;
 	/** How many times `ctx.shutdown()` was called. */
@@ -242,7 +253,7 @@ export function session(options: SessionOptions = {}) {
 	});
 	if (options.parentEnv !== undefined) process.env.PI_DELEGATE_PARENT = options.parentEnv;
 	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
-	register(pi as never, tmux);
+	register(pi as never, tmux, usage);
 	const fire = async (name: string, event: object = {}) => {
 		for (const handler of handlers[name] ?? []) await handler({ type: name, ...event }, ctx);
 	};
@@ -255,6 +266,7 @@ export function session(options: SessionOptions = {}) {
 	return {
 		parent,
 		tmux,
+		usage,
 		events,
 		pi,
 		sent,

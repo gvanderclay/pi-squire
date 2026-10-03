@@ -1,4 +1,4 @@
-// The test stand-in for tmux, the package's one injected seam. It records the
+// The test stand-in for tmux, one of the package's two injected seams. It records the
 // windows opened (name, cwd, argv, env) and the kills, and lists windows as
 // the test sets them. The real client is exercised by hand, never here.
 import type { TmuxClient, TmuxWindow, WindowSpec } from "../src/tmux.ts";

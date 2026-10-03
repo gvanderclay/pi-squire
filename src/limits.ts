@@ -184,6 +184,31 @@ export function recordLimit(
 }
 
 /**
+ * Record a proactive mark: a quota reading says `provider` is used up. It
+ * clears at `clearsAt`, or after the escalating cooldown when none is known.
+ */
+export function recordProactive(
+	provider: string,
+	reason: string,
+	clearsAt: number | undefined,
+	now = Date.now(),
+): void {
+	const marks = readMarks(now);
+	const old = marks.find((mark) => mark.scope === provider);
+	const hits = (old?.hits ?? 0) + 1;
+	const mark: Mark = {
+		scope: provider,
+		reason: reason.slice(0, MAX_REASON),
+		recordedAt: now,
+		clearsAt: clearsAt ?? now + Math.min(FIRST_COOLDOWN * 2 ** (hits - 1), MAX_COOLDOWN),
+		source: "proactive",
+		hits,
+		delegations: old?.delegations ?? [],
+	};
+	writeMarks([...marks.filter((item) => item !== old), mark]);
+}
+
+/**
  * Remove marks for `target`: `all`, a provider (its mark and every model mark
  * under it) or `provider/model` (that mark and the provider mark covering it).
  * Removing also forgets the escalation history. Returns the scopes of the

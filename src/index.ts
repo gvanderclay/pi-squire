@@ -47,10 +47,11 @@ import { Type } from "typebox";
 
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AUTO_EXIT_ENV, registerChild } from "./child.ts";
-import { activeMark, clearMarks, readMarks } from "./limits.ts";
+import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
+import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 
 /** The hook a provider of `message:*` answers with the written request. */
 const SEND = "message:send";
@@ -110,6 +111,8 @@ type Start = {
 	model: string;
 	/** Candidates passed over for `model`, with why; empty unless a fallback was used. */
 	skipped: Skipped[];
+	/** Lines for the parent, such as a quota reading that failed. */
+	notices: string[];
 	thinking: string;
 	label?: string;
 	autoExit: boolean;
@@ -225,15 +228,19 @@ function modelProblem(value: string, registry: ModelRegistry): string | undefine
  * The model for a launch. An explicit model is the only candidate; otherwise
  * the agent's model then its fallbacks. The first candidate that passes
  * `modelProblem` and has no active mark wins; the rest are returned as skipped.
- * Refuses, listing every candidate, when none is left.
+ * A paid candidate on a provider with a quota check is read first, and
+ * skipped when its quota is used up. Refuses, listing every candidate, when
+ * none is left.
  */
-function chooseModel(
+async function chooseModel(
 	explicit: string | undefined,
 	agent: Agent,
 	models: ModelRegistry,
-): { model: string; skipped: Skipped[] } {
+	proactive: Proactive,
+): Promise<{ model: string; skipped: Skipped[]; notices: string[] }> {
 	const candidates = explicit !== undefined ? [explicit] : [agent.model, ...agent.fallback];
 	const skipped: Skipped[] = [];
+	const notices: string[] = [];
 	for (const model of candidates) {
 		const problem = modelProblem(model, models);
 		if (problem !== undefined) {
@@ -241,8 +248,15 @@ function chooseModel(
 			continue;
 		}
 		const slash = model.indexOf("/");
-		const mark = activeMark(models, model.slice(0, slash), model.slice(slash + 1));
-		if (mark === undefined) return { model, skipped };
+		const provider = model.slice(0, slash);
+		const id = model.slice(slash + 1);
+		let mark = activeMark(models, provider, id);
+		if (mark === undefined && !isFree(models, provider, id)) {
+			const notice = await proactive.check(models, provider, id);
+			if (notice !== undefined && !notices.includes(notice)) notices.push(notice);
+			mark = activeMark(models, provider, id);
+		}
+		if (mark === undefined) return { model, skipped, notices };
 		const what = mark.scope.includes("/") ? `model ${mark.scope}` : `provider ${mark.scope}`;
 		const until = new Date(mark.clearsAt).toISOString();
 		skipped.push({
@@ -310,11 +324,15 @@ function toolDescription(agents: readonly Agent[]): string {
 }
 
 /**
- * Register `/delegate` and the three tools. The second parameter is a
- * test-only seam for tmux: Pi passes only `pi`, so it is not part of the
- * package's documented contract.
+ * Register `/delegate` and the three tools. The second and third
+ * parameters are test-only seams, for tmux and for the usage readers: Pi
+ * passes only `pi`, so they are not part of the package's documented contract.
  */
-export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmuxClient()): void {
+export default function delegate(
+	pi: ExtensionAPI,
+	tmux: TmuxClient = createTmuxClient(),
+	usage: UsageClient = createUsageClient(),
+): void {
 	// A delegate registers only its auto-exit side: `delegate` is one level deep (Q27).
 	const parentId = process.env[PARENT_ENV] ?? "";
 	if (parentId !== "") {
@@ -324,7 +342,8 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 
 	const results = createResults(pi);
 
-	const tracking = createTracking(pi, results, tmux);
+	const proactive = createProactive(usage);
+	const tracking = createTracking(pi, results, tmux, proactive.errors);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
@@ -355,7 +374,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	}
 
 	/** The request as a start, or an error naming what to fix. */
-	function validate(request: Parsed, roster: Roster, models: ModelRegistry): Start {
+	async function validate(request: Parsed, roster: Roster, models: ModelRegistry): Promise<Start> {
 		if (roster.agents.length === 0) {
 			throw new Error(
 				`no agents are defined; add ${join(
@@ -374,7 +393,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		}
 		if (request.task.trim() === "") throw new Error("a task is required");
 		const thinking = request.thinking ?? agent.thinking;
-		const { model, skipped } = chooseModel(request.model, agent, models);
+		const { model, skipped, notices } = await chooseModel(request.model, agent, models, proactive);
 		const badThinking = thinkingProblem(thinking);
 		if (badThinking !== undefined) throw new Error(badThinking);
 		const badLabel = request.label === undefined ? undefined : labelProblem(request.label);
@@ -383,6 +402,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			agent,
 			model,
 			skipped,
+			notices,
 			thinking,
 			label: request.label,
 			autoExit: request.autoExit ?? agent.autoExit,
@@ -465,7 +485,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 	}
 
 	const started = (launched: Launched, start: Start): string =>
-		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}`;
+		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
 
 	async function command(input: string, ctx: ExtensionContext): Promise<void> {
 		const fail = (message: string) => ctx.ui.notify(`delegate: ${message}`, "error");
@@ -475,7 +495,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			return;
 		}
 		try {
-			const start = validate(outcome.parsed, rosterFor(ctx), ctx.modelRegistry);
+			const start = await validate(outcome.parsed, rosterFor(ctx), ctx.modelRegistry);
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 		} catch (err) {
@@ -517,7 +537,7 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			ctx: ExtensionContext,
 		) {
 			if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
-			const start = validate(
+			const start = await validate(
 				{
 					agent: params.agent,
 					model: params.model,
@@ -532,13 +552,14 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
-				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}. It runs in the background and its result arrives as a message; delegation_status reports it and delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}`,
+				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}. It runs in the background and its result arrives as a message; delegation_status reports it and delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
 				{
 					outcome: "started",
 					id: launched.id,
 					agent: start.agent.name,
 					model: start.model,
 					skipped: start.skipped.map(({ model, reason }) => ({ model, reason })),
+					notices: start.notices,
 					thinking: start.thinking,
 					autoExit: start.autoExit,
 					windowId: launched.windowId,

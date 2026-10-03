@@ -243,9 +243,11 @@ level is refused with close matches and nothing starts.
 
 `delegation_status` also ends with a `Usage-limit marks:` block, one line per
 active mark: its scope, source (`reactive` or `proactive`), clear time and
-reason (cut to about 120 characters). The block is left out when no mark is
-active, and shows even when no delegation is recorded. The details gain a
-`marks` array of `{ scope, source, reason, clearsAt }`.
+reason (cut to about 120 characters), then one line per provider whose last
+quota reading failed. The block is left out when there is neither, and shows
+even when no delegation is recorded. The details gain a `marks` array of
+`{ scope, source, reason, clearsAt }` and a `readingErrors` array (see
+[Usage limits](#usage-limits)).
 
 `delegation_close` kills the window and records the close even when the
 result has already arrived. When the window is already gone it only records
@@ -276,6 +278,24 @@ fallback opencode-go/b because alpha/fast-model is usage-limited until …", and
 the result details list the skipped models under `skipped`. When every
 candidate is marked or unusable, the call is refused with one line per
 candidate and why it was skipped.
+
+Before a launch, pi-squire also reads the OpenCode Go quota for a paid
+`opencode-go` candidate (`GET https://opencode.ai/zen/go/v1/usage`, with the
+provider's API key). A window at 100% or more, or one the provider reports as
+`rate-limited`, skips the candidate and records a `proactive` mark on
+`opencode-go`, for example "Go 5h window at 100%", that clears at that window's
+reset time (the 5-minute cooldown when none is given). A reading is reused for
+60 seconds. Free models and other providers are never read, and a candidate that
+is already marked is skipped without a read. The key is sent only to
+`https://opencode.ai`, with redirects refused: a provider or model base URL on
+another origin means no request at all.
+
+A failed reading (no key, a base URL off the Go origin, a non-2xx answer, an
+unreadable body, a timeout, a network error) never blocks a launch. The tool
+result and the command's notice gain "Could not read opencode-go quota:
+<reason>; launched without a proactive check.", and `delegation_status` lists the
+provider's last reading error and its time under the `Usage-limit marks:` block
+and in a `readingErrors` array of `{ provider, reason, at }`.
 
 A mark can be stale (the quota came back, or the plan changed). Only you clear
 one, with `/delegate-clear <target>`: `all`, a provider (its mark and every

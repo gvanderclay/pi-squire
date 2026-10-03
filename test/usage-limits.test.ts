@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, type TestContext, test } from "node:test";
 
+import { FakeUsage, win } from "./fake-usage.ts";
 import { agentDir, agentFile, cleanup, type RunFailure, resetRoot, session, writeAgent } from "./harness.ts";
 
 const FILE = join(agentDir, "pi-squire-limits.json");
@@ -41,7 +42,8 @@ async function fail(errorMessage: string, model = "paid", id = "delegation-1") {
 /** A fresh parent session, as another Pi session on the machine. */
 const parent = () => session({ extraModels: EXTRA });
 
-const marks = () => JSON.parse(readFileSync(FILE, "utf8")) as { clearsAt: number; hits: number; scope: string }[];
+const marks = () =>
+	JSON.parse(readFileSync(FILE, "utf8")) as { clearsAt: number; hits: number; scope: string; source: string }[];
 
 function clock(t: TestContext) {
 	t.mock.timers.enable({ apis: ["Date"], now: START });
@@ -668,4 +670,104 @@ test("/delegate-clear completes all and the active scopes, and is absent in a de
 	delete process.env.PI_DELEGATE_PARENT;
 	assert.ok(!child.commands().includes("delegate-clear"));
 	assert.ok(p.commands().includes("delegate-clear"));
+});
+
+// --- Proactive OpenCode Go check (ticket 07), through the fake usage client.
+
+const RESET = START + 3 * 3_600_000;
+const withUsage = (usage = new FakeUsage()) => ({ usage, p: session({ extraModels: EXTRA, usage }) });
+const call = (p: ReturnType<typeof session>, agent: string) => p.toolCall("delegate", { agent, task: "t" });
+
+test("a Go window at 100% launches on the fallback and records a proactive mark", async (t) => {
+	clock(t);
+	writeAgent("fb", agentFile({ ...AGENT, model: "opencode-go/paid", fallback: "alpha/fast-model" }));
+	const { usage, p } = withUsage();
+	usage.go = { ok: true, windows: [win("5h", 100, RESET), win("wk", 10)] };
+	await p.start();
+	const result = await call(p, "fb");
+	assert.match(result.content[0].text, /Used fallback alpha\/fast-model because opencode-go\/paid is usage-limited/);
+	assert.deepEqual(
+		marks().map((m) => [m.scope, m.clearsAt]),
+		[["opencode-go", RESET]],
+	);
+	const status = await p.toolCall("delegation_status", {});
+	assert.match(
+		status.content[0].text,
+		/opencode-go \(proactive\) until 2026-10-03T15:00:00\.000Z: Go 5h window at 100%/,
+	);
+});
+
+test("a rate-limited Go window blocks; with no fallback the launch is refused", async (t) => {
+	clock(t);
+	const { usage, p } = withUsage();
+	usage.go = { ok: true, windows: [win("wk", null, null, true)] };
+	await p.start();
+	await assert.rejects(call(p, "paid"), /opencode-go\/paid is usage-limited .*Go wk window rate-limited/s);
+	assert.equal(marks()[0].clearsAt, START + 5 * 60_000); // no reset time: the cooldown
+	assert.equal(marks()[0].source, "proactive");
+});
+
+test("Go windows below 100% let the agent's model launch", async (t) => {
+	clock(t);
+	const { usage, p } = withUsage();
+	usage.go = { ok: true, windows: [win("5h", 99, RESET), win("wk", 40), win("mo", 0)] };
+	await p.start();
+	assert.match((await call(p, "paid")).content[0].text, /\(opencode-go\/paid,/);
+	assert.deepEqual(marks(), []);
+});
+
+test("free Go models and other providers never trigger a read", async (t) => {
+	clock(t);
+	const { usage, p } = withUsage();
+	await p.start();
+	await call(p, "free");
+	await call(p, "zero");
+	await call(p, "plain");
+	assert.equal(usage.calls.length, 0);
+});
+
+test("readings are reused for 60 seconds, then read again", async (t) => {
+	const tick = clock(t);
+	const { usage, p } = withUsage();
+	usage.go = { ok: true, windows: [win("5h", 10)] };
+	await p.start();
+	await call(p, "paid");
+	tick(59_000);
+	await call(p, "paid");
+	assert.equal(usage.calls.length, 1);
+	tick(2_000);
+	await call(p, "paid");
+	assert.equal(usage.calls.length, 2);
+	assert.equal(usage.calls[0].key, "fake-key-opencode-go");
+});
+
+test("a candidate that already has an active mark is skipped without a read", async (t) => {
+	clock(t);
+	await fail(GO_LIMIT);
+	const { usage, p } = withUsage();
+	await p.start();
+	await assert.rejects(call(p, "paid"), /usage-limited/);
+	assert.equal(usage.calls.length, 0);
+});
+
+test("a failed reading fails open, says so in the result and the notice, and shows in delegation_status", async (t) => {
+	clock(t);
+	const { usage, p } = withUsage();
+	usage.go = { ok: false, reason: "HTTP 503" };
+	await p.start();
+	const result = await call(p, "paid");
+	const line = "Could not read opencode-go quota: HTTP 503; launched without a proactive check.";
+	assert.ok(result.content[0].text.includes(line));
+	await p.delegate("paid t");
+	assert.ok(p.notes.at(-1)?.includes(line));
+	assert.equal(p.tmux.opened.length, 2);
+	const status = await p.toolCall("delegation_status", {});
+	assert.match(
+		status.content[0].text,
+		/Usage-limit marks:\n- could not read opencode-go quota at 2026-10-03T12:00:00\.000Z: HTTP 503/,
+	);
+	assert.deepEqual((status.details as { readingErrors: unknown }).readingErrors, [
+		{ provider: "opencode-go", reason: "HTTP 503", at: "2026-10-03T12:00:00.000Z" },
+	]);
+	assert.deepEqual((status.details as { marks: unknown }).marks, []);
 });

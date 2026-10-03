@@ -25,10 +25,14 @@ export interface TmuxClient {
 }
 
 /** Run one tmux command and return its stdout; never a shell. */
-function run(args: string[]): Promise<string> {
+function runTmux(args: string[], timeout: number): Promise<string> {
 	return new Promise((resolve, reject) => {
-		execFile("tmux", args, { encoding: "utf8" }, (error, stdout, stderr) => {
+		execFile("tmux", args, { encoding: "utf8", timeout }, (error, stdout, stderr) => {
 			if (error) {
+				if (error.killed) {
+					reject(new Error(`tmux ${args[0]} timed out after ${timeout / 1000} s`));
+					return;
+				}
 				const detail = typeof stderr === "string" && stderr.trim() !== "" ? stderr.trim() : error.message;
 				reject(new Error(detail));
 				return;
@@ -43,7 +47,10 @@ function run(args: string[]): Promise<string> {
  * `TMUX_PANE`, not in whatever session a client happens to have attached, so
  * it works with several clients on one server.
  */
-export function createTmuxClient(): TmuxClient {
+export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClient {
+	const timeoutMs = options.timeoutMs ?? 10_000;
+	const run = (args: string[]) => runTmux(args, timeoutMs);
+
 	/** The id of the session this pane belongs to, when known. */
 	async function targetSession(): Promise<string | undefined> {
 		const pane = process.env.TMUX_PANE;

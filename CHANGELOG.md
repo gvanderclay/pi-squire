@@ -45,6 +45,16 @@ follows [Semantic Versioning](https://semver.org/).
   10 minutes per provider) shows every window under 100% and a window cycle
   that began after the mark was recorded. Headroom alone never clears a mark,
   and a model-scoped mark on `opencode-go` never clears early.
+- `delegation_status` shows how long ago a running delegate last wrote its
+  session file, at the end of its `state:` line (`last active 12 min ago`),
+  and adds the same moment to its details as `lastActiveAt`. A long gap may
+  mean the delegate is stuck but does not prove it.
+
+### Fixed
+
+- A tmux call that hangs now fails after 10 seconds with
+  `tmux <subcommand> timed out after 10 s`, instead of hanging `delegate`,
+  `delegation_status`, `delegation_close` and the background poll.
 
 ## [0.2.2] - 2026-10-02
 

@@ -2,6 +2,8 @@
 // and the `delegation_status` and `delegation_close` tools. A delegation's
 // state comes from `results.ts` (`deriveState`); this module only asks tmux
 // about the window and words what it is told.
+import { statSync } from "node:fs";
+
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -99,21 +101,45 @@ function stateLine(state: DelegationState, record: Recorded): string {
 }
 
 /** One delegation as `delegation_status` reports it; its text and details both read from this. */
-type View = { record: Recorded; state: DelegationState; name: string; sessionPath: string | undefined };
+type View = {
+	record: Recorded;
+	state: DelegationState;
+	name: string;
+	sessionPath: string | undefined;
+	/** When the session file was last written; set only for a running delegation with a file. */
+	lastActive: Date | undefined;
+};
+
+/** How long ago, worded for the `state:` line: `just now`, `N min ago` or `N h M min ago`. */
+function ago(ms: number): string {
+	const minutes = Math.floor(ms / 60_000);
+	if (minutes < 1) return "just now";
+	if (minutes < 60) return `${minutes} min ago`;
+	return `${Math.floor(minutes / 60)} h ${minutes % 60} min ago`;
+}
 
 /** The view of a delegation: its state and the fields the text and details share. */
 function view(record: Recorded, windows: TmuxWindow[] | undefined, ctx: ExtensionContext): View {
 	const state = deriveState(record, windowState(windows, record));
 	const sessionPath = record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id);
-	return { record, state, name: recordedName(record), sessionPath };
+	let lastActive: Date | undefined;
+	if (state === "running" && sessionPath !== undefined) {
+		try {
+			lastActive = statSync(sessionPath).mtime;
+		} catch {
+			// a failed stat counts as no file
+		}
+	}
+	return { record, state, name: recordedName(record), sessionPath, lastActive };
 }
 
 /** The text block for one delegation. */
-function viewText({ record, state, name, sessionPath }: View): string {
+function viewText({ record, state, name, sessionPath, lastActive }: View): string {
+	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
 	const lines = [
 		`${record.id} ${record.agent} (${record.model}, thinking ${record.thinking})`,
 		`  name: ${name}`,
-		`  state: ${stateLine(state, record)}`,
+		`  state: ${stateLine(state, record)}${seen}`,
 		`  window: ${record.windowName} (${record.windowId})`,
 		`  auto-exit: ${autoExitLine(record)}`,
 		`  session: ${sessionPath ?? `${record.id} (no session file yet)`}`,
@@ -123,7 +149,7 @@ function viewText({ record, state, name, sessionPath }: View): string {
 }
 
 /** The structured details for one delegation. */
-function viewDetails({ record, name, sessionPath }: View): Record<string, unknown> {
+function viewDetails({ record, name, sessionPath, lastActive }: View): Record<string, unknown> {
 	return {
 		id: record.id,
 		name,
@@ -138,6 +164,7 @@ function viewDetails({ record, name, sessionPath }: View): Record<string, unknow
 		status: record.result?.status,
 		envelopePath: record.result?.envelopePath,
 		sessionPath,
+		...(lastActive === undefined ? {} : { lastActiveAt: lastActive.toISOString() }),
 	};
 }
 
@@ -236,7 +263,7 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Names the delegation id, agent, session name, model, thinking, window, delegate session path and result envelope path. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
+			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Names the delegation id, agent, session name, model, thinking, window, delegate session path and result envelope path. A running delegation also shows when its session file was last written; a long gap may mean it is stuck but does not prove it. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
 		parameters: Type.Object({
 			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
 		}),

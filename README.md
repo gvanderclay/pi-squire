@@ -206,7 +206,7 @@ level is refused with close matches and nothing starts.
 
 <id> scout (provider/model, thinking low)
   name: scout-<first 8 of the id>
-  state: running — the window is open and no result has arrived
+  state: running — the window is open and no result has arrived (last active 12 min ago)
   window: scout-<first 8 of the id> (@1)
   auto-exit: on — the delegate closes its window after a normal completion unless the user took over there
   session: <the delegate's session file, or its id when there is none yet>
@@ -225,6 +225,9 @@ level is refused with close matches and nothing starts.
 - **Running** means the window is open and no result has arrived. An open
   window is connection, not task state: the delegate may still be working, or
   waiting for the user, and only a result means done.
+  When the delegate's session file exists, the line ends with when it was last
+  written (`just now`, `12 min ago`, `2 h 5 min ago`). That is a hint, not
+  proof: a long gap may mean the delegate is stuck, or just thinking.
 - **Done** comes from the recorded result, and shows the envelope's status
   (`done`, `failed` or `stopped`).
 - A delegate that closed itself by auto-exit reads **done**: its result

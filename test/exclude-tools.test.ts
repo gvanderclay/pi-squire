@@ -97,6 +97,25 @@ test("fallback parses as a comma-separated string or a YAML list, and is empty w
 	);
 });
 
+test("fallback may be a block-style YAML list", async () => {
+	writeAgent("a", agentFile({ ...SCOUT, fallback: "\n  - beta/other-model\n  - alpha/deep-model" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(agents[0].fallback, ["beta/other-model", "alpha/deep-model"]);
+	assert.deepEqual(warnings, []);
+});
+
+test("a fallback that is not a list is ignored with a warning and the agent still loads", async () => {
+	writeAgent("a", agentFile({ ...SCOUT, fallback: "5" }));
+	writeAgent("b", agentFile({ ...SCOUT, fallback: "\n  x: y" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.fallback),
+		[[], []],
+	);
+	assert.ok(warnings[0].endsWith(`a/AGENT.md has fallback 5, not a list of provider/id; ignored`), warnings[0]);
+	assert.ok(warnings[1].endsWith(`b/AGENT.md has fallback {"x":"y"}, not a list of provider/id; ignored`), warnings[1]);
+});
+
 test("a bad fallback entry is dropped with a warning and the agent still loads", async () => {
 	writeAgent("a", agentFile({ ...SCOUT, fallback: "not-a-model, beta/other-model" }));
 	const { agents, warnings } = readRoster(agentDir);

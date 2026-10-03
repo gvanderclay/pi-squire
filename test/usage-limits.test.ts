@@ -379,6 +379,9 @@ test("a marked model launches on the first fallback that is not marked, and says
 	);
 	await p.delegate("fb t");
 	assert.match(p.notes.join("\n"), /Used fallback beta\/other-model because/);
+	const status = (await p.toolCall("delegation_status", {})).content[0].text;
+	assert.match(status, /fb \(beta\/other-model, thinking/);
+	assert.doesNotMatch(status, /fb \(opencode-go\/paid/);
 	assert.match(
 		p.tool("delegate").description,
 		/default opencode-go\/paid, fallback opencode-go\/zero, fallback beta\/other-model, thinking/,

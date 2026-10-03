@@ -115,10 +115,10 @@ temporary folder, not as text on the command line.
 The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
 directory per agent, so a new agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`, and optionally
-`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit))
-`exclude-tools` and `fallback`. The body is the delegate's system prompt, appended to
-Pi's own prompt; it reaches the child as a path to a private file under the
-system temporary folder, so the text stays off the command line. The
+`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit)),
+`exclude-tools` and `fallback`. The body is the delegate's system prompt,
+appended to Pi's own prompt; it reaches the child as a path to a private file
+under the system temporary folder, so the text stays off the command line. The
 [first-use example](#first-use) is a complete `AGENT.md`.
 
 `exclude-tools` names the tools the delegate goes without, as a

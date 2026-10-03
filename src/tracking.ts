@@ -4,6 +4,7 @@
 // about the window and words what it is told.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+
 import { type Mark, readMarks } from "./limits.ts";
 import {
 	type DelegationState,

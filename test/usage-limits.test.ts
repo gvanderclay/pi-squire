@@ -501,10 +501,36 @@ test("a failed reply with no matching mark has no limit line", async (t) => {
 	await fail(GO_LIMIT, "paid", "someone-else");
 	p.scan.queue.push(reply(p, "failed"));
 	p.events.emit("message:scan", {});
+	const requestId = (p.sendCalls[0].envelope as { id: string }).id;
+	assert.equal(
+		resultOf(p),
+		[
+			`[delegate] Result from plain (alpha/fast-model), delegation ${firstId(p)}, request ${requestId}.`,
+			"Status: failed",
+			`[delegate] The task ${requestId} has no copy in sent/; only its id is known.`,
+			"Envelope: /mail/cur/reply.json",
+			`Delegate session: ${firstId(p)}`,
+			"",
+			"the answer",
+		].join("\n"),
+	);
+});
+
+test("a failed reply after the mark expired says it was marked, not that it is", async (t) => {
+	const tick = clock(t);
+	const p = parent();
+	await p.start();
+	await p.delegate("plain t");
+	await fail(GO_LIMIT, "paid", firstId(p));
+	tick(10 * 60_000); // past clearsAt (5 min), well inside the 24 h history window
+	p.scan.queue.push(reply(p, "failed"));
+	p.events.emit("message:scan", {});
 	const lines = resultOf(p).split("\n");
 	assert.equal(lines[1], "Status: failed");
-	assert.match(lines[2], /^\[delegate\] The task /);
-	assert.doesNotMatch(resultOf(p), /Usage limit/);
+	assert.equal(
+		lines[2],
+		"Usage limit: the delegate hit a usage limit on provider opencode-go; it was marked until 2026-10-03T12:05:00.000Z.",
+	);
 });
 
 test("delegation_status lists active marks, in the details too, until they clear", async (t) => {

@@ -101,7 +101,12 @@ export type SessionOptions = {
 	registeredTools?: readonly string[];
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
 	noCredentials?: readonly string[];
+	/** Models only this session's registry also knows, on top of `FAKE_MODELS`. */
+	extraModels?: readonly { provider: string; id: string; cost?: { input: number; output: number } }[];
 };
+
+/** How an `error` run fails: the last assistant message's text, provider and model. */
+export type RunFailure = { errorMessage: string; provider?: string; model?: string };
 
 /** The tools a fake session has unless a test says otherwise. */
 export const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
@@ -131,10 +136,11 @@ export function session(options: SessionOptions = {}) {
 	const editorAnswers = [...(options.ui?.editor ?? [])];
 	const customAnswers = [...(options.ui?.custom ?? [])];
 	const events: EventBus = createEventBus();
+	const models = [...FAKE_MODELS, ...(options.extraModels ?? [])];
 	const registry = {
-		getAll: () => FAKE_MODELS,
-		getAvailable: () => FAKE_MODELS,
-		find: (provider: string, id: string) => FAKE_MODELS.find((model) => model.provider === provider && model.id === id),
+		getAll: () => models,
+		getAvailable: () => models,
+		find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
 		hasConfiguredAuth: (model: { provider: string; id: string }) =>
 			!(options.noCredentials ?? []).includes(`${model.provider}/${model.id}`),
 	};
@@ -268,6 +274,8 @@ export function session(options: SessionOptions = {}) {
 			return fire("session_start", { reason: "startup" });
 		},
 		shutdown: () => fire("session_shutdown"),
+		/** Fire any Pi event by name; every handler the extension registered runs with this session's context. */
+		fire,
 		/** How many times the extension asked Pi to shut down. */
 		shutdowns: () => shutdowns,
 		/** Type `/<name> <args>` for any command the extension registered. */
@@ -280,7 +288,7 @@ export function session(options: SessionOptions = {}) {
 		 * message with the signal aborted, as Pi 0.99.1 does), or `error` (an API
 		 * error, signal not aborted). Then the next event-loop turns run.
 		 */
-		run: async (end: "completed" | "aborted" | "stopped" | "error" = "completed") => {
+		run: async (end: "completed" | "aborted" | "stopped" | "error" = "completed", failure?: RunFailure) => {
 			const controller = new AbortController();
 			signal = controller.signal;
 			await fire("agent_start");
@@ -290,7 +298,13 @@ export function session(options: SessionOptions = {}) {
 					? { role: "assistant", content: [{ type: "text", text: "answer" }], stopReason: "stop" }
 					: end === "aborted"
 						? { role: "assistant", content: [{ type: "text", text: "part" }], stopReason: "aborted" }
-						: { role: "assistant", content: [], stopReason: "error", errorMessage: "boom" };
+						: {
+								role: "assistant",
+								content: [],
+								stopReason: "error",
+								errorMessage: "boom",
+								...(end === "error" ? failure : undefined),
+							};
 			await fire("agent_end", { messages: [{ role: "user", content: "q" }, last] });
 			signal = undefined;
 			await fire("agent_settled");

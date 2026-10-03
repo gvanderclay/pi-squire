@@ -1,7 +1,7 @@
 // Proactive quota checks: read a provider's usage before a launch, so a model
 // whose quota is used up is skipped without spending a request. Only OpenCode
 // Go for now. A failed reading never throws and never blocks a launch.
-import { recordProactive } from "./limits.ts";
+import { type Mark, recordProactive } from "./limits.ts";
 
 const PROVIDER = "opencode-go";
 /** How long one reading is reused, so a burst of launches makes one request. */
@@ -106,23 +106,25 @@ type Registry = {
 };
 
 /** The windows that are used up, recorded as one proactive mark on `provider`. */
-function recordFull(provider: string, windows: UsageWindow[], now: number): void {
+function recordFull(provider: string, windows: UsageWindow[], now: number): Mark | undefined {
 	const full = windows.filter((w) => w.limited || (w.percent ?? 0) >= 100);
-	if (full.length === 0) return;
+	if (full.length === 0) return undefined;
 	const resets = full.map((w) => w.resetsAt).filter((t): t is number => t !== null && t > now);
 	const reason = full
 		.map((w) => (w.percent === null ? `Go ${w.label} window rate-limited` : `Go ${w.label} window at ${w.percent}%`))
 		.join(", ");
-	recordProactive(provider, reason, resets.length > 0 ? Math.max(...resets) : undefined, now);
+	return recordProactive(provider, reason, resets.length > 0 ? Math.max(...resets) : undefined, now);
 }
 
 /** Proactive checks over one usage client, with their cache and last reading errors. */
 export function createProactive(client: UsageClient): {
 	errors(): ReadingError[];
-	check(models: Registry, provider: string, id: string): Promise<string | undefined>;
+	/** Forget cached readings, so the next check reads afresh. */
+	clear(): void;
+	check(models: Registry, provider: string, id: string): Promise<{ notice?: string; mark?: Mark }>;
 } {
 	let cached: { at: number; reading: GoReading } | undefined;
-	let lastError: ReadingError | undefined;
+	const lastErrors = new Map<string, ReadingError>();
 
 	async function read(models: Registry, provider: string, id: string, now: number): Promise<GoReading> {
 		if (cached !== undefined && now - cached.at < CACHE_MS) return cached.reading;
@@ -136,24 +138,29 @@ export function createProactive(client: UsageClient): {
 			reading = { ok: false, reason: `error: ${String((err as Error)?.message).slice(0, 100)}` };
 		}
 		cached = { at: now, reading };
-		if (!reading.ok) lastError = { provider, reason: reading.reason, at: new Date(now).toISOString() };
+		if (reading.ok) lastErrors.delete(provider);
+		else lastErrors.set(provider, { provider, reason: reading.reason, at: new Date(now).toISOString() });
 		return reading;
 	}
 
 	return {
 		/** The last failed reading per provider. */
-		errors: (): ReadingError[] => (lastError ? [lastError] : []),
+		errors: (): ReadingError[] => [...lastErrors.values()],
+		clear: (): void => {
+			cached = undefined;
+		},
 		/**
 		 * Check `provider/id` against its quota. Records a `proactive` mark when a
-		 * window is used up. Returns the fail-open line when the reading failed.
+		 * window is used up and returns it (even if the file could not be written),
+		 * or the fail-open line as `notice` when the reading failed.
 		 */
-		async check(models: Registry, provider: string, id: string): Promise<string | undefined> {
-			if (provider !== PROVIDER) return undefined;
+		async check(models: Registry, provider: string, id: string): Promise<{ notice?: string; mark?: Mark }> {
+			if (provider !== PROVIDER) return {};
 			const now = Date.now();
 			const reading = await read(models, provider, id, now);
-			if (reading.ok) recordFull(provider, reading.windows, now);
-			else return `Could not read ${provider} quota: ${reading.reason}; launched without a proactive check.`;
-			return undefined;
+			if (!reading.ok)
+				return { notice: `Could not read ${provider} quota: ${reading.reason}; launched without a proactive check.` };
+			return { mark: recordFull(provider, reading.windows, now) };
 		},
 	};
 }

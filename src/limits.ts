@@ -186,13 +186,14 @@ export function recordLimit(
 /**
  * Record a proactive mark: a quota reading says `provider` is used up. It
  * clears at `clearsAt`, or after the escalating cooldown when none is known.
+ * A failed write is swallowed; the mark is returned either way.
  */
 export function recordProactive(
 	provider: string,
 	reason: string,
 	clearsAt: number | undefined,
 	now = Date.now(),
-): void {
+): Mark {
 	const marks = readMarks(now);
 	const old = marks.find((mark) => mark.scope === provider);
 	const hits = (old?.hits ?? 0) + 1;
@@ -205,7 +206,12 @@ export function recordProactive(
 		hits,
 		delegations: old?.delegations ?? [],
 	};
-	writeMarks([...marks.filter((item) => item !== old), mark]);
+	try {
+		writeMarks([...marks.filter((item) => item !== old), mark]);
+	} catch {
+		// The reading is real even if the file is not writable: the caller blocks on the returned mark.
+	}
+	return mark;
 }
 
 /**

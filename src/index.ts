@@ -252,9 +252,9 @@ async function chooseModel(
 		const id = model.slice(slash + 1);
 		let mark = activeMark(models, provider, id);
 		if (mark === undefined && !isFree(models, provider, id)) {
-			const notice = await proactive.check(models, provider, id);
-			if (notice !== undefined && !notices.includes(notice)) notices.push(notice);
-			mark = activeMark(models, provider, id);
+			const checked = await proactive.check(models, provider, id);
+			if (checked.notice !== undefined && !notices.includes(checked.notice)) notices.push(checked.notice);
+			mark = activeMark(models, provider, id) ?? checked.mark;
 		}
 		if (mark === undefined) return { model, skipped, notices };
 		const what = mark.scope.includes("/") ? `model ${mark.scope}` : `provider ${mark.scope}`;
@@ -616,6 +616,7 @@ export default function delegate(
 		handler: async (args: string, ctx: ExtensionContext) => {
 			const target = args.trim();
 			const cleared = target === "" ? [] : clearMarks(target);
+			proactive.clear();
 			const active = readMarks().filter((m) => m.clearsAt > Date.now());
 			const list = active.map((m) => `${m.scope} until ${new Date(m.clearsAt).toISOString()}`).join(", ");
 			ctx.ui.notify(

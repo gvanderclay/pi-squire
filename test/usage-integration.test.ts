@@ -13,9 +13,9 @@ const realFetch = globalThis.fetch;
 const URL_ = "https://opencode.ai/zen/go/v1/usage";
 const FULL = {
 	usage: {
-		rolling: { status: "rate-limited", percent: 100, resetsAt: "2026-10-03T15:00:00.000Z" },
-		weekly: { status: "ok", percent: 30, resetsAt: "2026-10-08T00:00:00.000Z" },
-		monthly: { status: "ok", percent: 12, resetsAt: "2026-11-01T00:00:00.000Z" },
+		rolling: { status: "rate-limited", percent: 100, resetsAt: "2999-10-03T15:00:00.000Z" },
+		weekly: { status: "ok", percent: 30, resetsAt: "2999-10-08T00:00:00.000Z" },
+		monthly: { status: "ok", percent: 12, resetsAt: "2999-11-01T00:00:00.000Z" },
 	},
 };
 const requests: { url: string; init: RequestInit | undefined }[] = [];

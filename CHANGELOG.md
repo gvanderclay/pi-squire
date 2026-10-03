@@ -32,7 +32,9 @@ follows [Semantic Versioning](https://semver.org/).
   the model and records a `proactive` mark that clears at the window's reset
   time. A failed reading never blocks a launch: the result and notice say
   "Could not read opencode-go quota: …; launched without a proactive check.",
-  and `delegation_status` shows the error in `readingErrors`.
+  and `delegation_status` shows the error in `readingErrors` until a later
+  reading succeeds. `/delegate-clear` also drops the cached reading. A mark
+  that cannot be written does not stop the launch.
 
 ## [0.2.2] - 2026-10-02
 

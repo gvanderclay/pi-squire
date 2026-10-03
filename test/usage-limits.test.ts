@@ -3,7 +3,7 @@
 // to launch on a marked model until the mark clears. Time is a mock Date.
 
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, type TestContext, test } from "node:test";
 
@@ -770,4 +770,48 @@ test("a failed reading fails open, says so in the result and the notice, and sho
 		{ provider: "opencode-go", reason: "HTTP 503", at: "2026-10-03T12:00:00.000Z" },
 	]);
 	assert.deepEqual((status.details as { marks: unknown }).marks, []);
+});
+
+test("a mark file that cannot be written still blocks this launch and never throws", async (t) => {
+	clock(t);
+	rmSync(FILE);
+	mkdirSync(FILE); // a directory where the marks file belongs: reads and writes fail
+	writeAgent("fb", agentFile({ ...AGENT, model: "opencode-go/paid", fallback: "alpha/fast-model" }));
+	const { usage, p } = withUsage();
+	usage.go = { ok: true, windows: [win("5h", 100, RESET)] };
+	await p.start();
+	const result = await call(p, "fb");
+	assert.match(result.content[0].text, /Used fallback alpha\/fast-model because opencode-go\/paid is usage-limited/);
+	await assert.rejects(call(p, "paid"), /opencode-go\/paid is usage-limited/);
+	rmSync(FILE, { recursive: true });
+});
+
+test("a later successful reading clears the provider's reading error", async (t) => {
+	const tick = clock(t);
+	const { usage, p } = withUsage();
+	usage.go = { ok: false, reason: "HTTP 503" };
+	await p.start();
+	await call(p, "paid");
+	usage.go = { ok: true, windows: [win("5h", 10)] };
+	tick(61_000);
+	await call(p, "paid");
+	const status = await p.toolCall("delegation_status", {});
+	assert.deepEqual((status.details as { readingErrors: unknown }).readingErrors, []);
+	assert.doesNotMatch(status.content[0].text, /could not read/);
+});
+
+test("/delegate-clear drops the cached reading, so the next launch reads afresh", async (t) => {
+	const tick = clock(t);
+	writeAgent("fb", agentFile({ ...AGENT, model: "opencode-go/paid", fallback: "alpha/fast-model" }));
+	const { usage, p } = withUsage();
+	usage.go = { ok: true, windows: [win("5h", 100, RESET)] };
+	await p.start();
+	await call(p, "fb");
+	assert.equal(marks()[0].source, "proactive");
+	await p.command("delegate-clear", GO_MARK);
+	usage.go = { ok: true, windows: [win("5h", 20)] };
+	tick(5_000);
+	assert.match((await call(p, "fb")).content[0].text, /\(opencode-go\/paid,/);
+	assert.equal(usage.calls.length, 2);
+	assert.deepEqual(marks(), []);
 });

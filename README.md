@@ -301,7 +301,8 @@ A mark can be stale (the quota came back, or the plan changed). Only you clear
 one, with `/delegate-clear <target>`: `all`, a provider (its mark and every
 model mark under it), or `provider/model` (that model's mark and the provider
 mark covering it). Clearing also forgets the repeat-hit history, so the next
-hit starts at 5 minutes again. With no argument, or one matching no active
+hit starts at 5 minutes again, and drops the cached quota reading so the next
+launch reads it afresh. With no argument, or one matching no active
 mark, it changes nothing and lists the active marks. No tool clears marks.
 
 ## Auto-exit

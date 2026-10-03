@@ -324,8 +324,9 @@ succeeded, every applying window is under 100%, and a window began a new cycle
 after the mark was recorded (its reset time minus its length is later than the
 mark's time); headroom alone never clears one, because a quota endpoint can show
 headroom while the account still answers 429. A model-scoped Claude mark clears
-only when its scoped window has reset. A window without a reset time or length
-cannot prove a reset. The tool result and the command's notice then say
+only when its scoped window has reset; a model-scoped mark on `opencode-go`
+never clears early, because Go has no scoped window. A window without a reset time or
+length cannot prove a reset. The tool result and the command's notice then say
 "Cleared the usage-limit mark on <scope>: its quota has reset since the mark was
 recorded." A failed re-check keeps the mark, lists the reading error in
 `delegation_status`, and adds no note.

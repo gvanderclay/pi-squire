@@ -17,7 +17,7 @@
 // ponytail: drop the takeover once #5581 lands and the minimum Pi has it.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { type Response, recordLimit } from "./limits.ts";
+import { classify, type Response, recordLimit } from "./limits.ts";
 
 /** The launch variable that carries the parent's resolved setting. */
 export const AUTO_EXIT_ENV = "PI_DELEGATE_AUTO_EXIT";
@@ -99,7 +99,9 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		const stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 		if (stopped) disarm(ctx);
 		if (!stopped && last?.stopReason === "error") recordUsageLimit(last, ctx, response);
-		completed = !stopped && last?.stopReason !== "error";
+		// A usage limit is final until the quota resets, so it ends the work like a completion.
+		const limited = typeof last?.errorMessage === "string" && classify(last.errorMessage) !== undefined;
+		completed = !stopped && (last?.stopReason !== "error" || limited);
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {

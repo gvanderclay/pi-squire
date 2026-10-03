@@ -353,7 +353,9 @@ The parent resolves each delegation's auto-exit from the call
   down (`ctx.shutdown()`) on the next event-loop turn, after the settle
   reply has been sent, so its tmux window closes. The session file stays, and
   `pi --session <path>` reopens it.
-- A run that ended stopped or failed never exits the delegate.
+- A run that ended stopped, or failed on anything but a usage limit, never
+  exits the delegate. A usage-limit failure is final until the quota resets,
+  so it exits like a normal completion; the parent still gets the failed reply.
 - The user taking over turns it off for the rest of the session, with a
   notice: typed or RPC input, or a run the user stopped (Esc).
 - `/auto-exit` inside the delegate turns it on again for the next normal

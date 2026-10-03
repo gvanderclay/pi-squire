@@ -230,3 +230,13 @@ export function clearMarks(target: string, now = Date.now()): string[] {
 	if (cleared.length > 0) writeMarks(marks.filter((mark) => !hit(mark)));
 	return cleared;
 }
+
+/** Remove the mark with exactly this scope, and with it the escalation history. False when it could not be written. */
+export function removeMark(scope: string, now = Date.now()): boolean {
+	try {
+		writeMarks(readMarks(now).filter((mark) => mark.scope !== scope));
+		return true;
+	} catch {
+		return false;
+	}
+}

@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Mark, recordProactive } from "./limits.ts";
+import { isFree, type Mark, readMarks, recordProactive, removeMark } from "./limits.ts";
 
 const PROVIDER = "opencode-go";
 const CLAUDE = "anthropic";
@@ -15,12 +15,16 @@ const CLAUDE_FETCH_AFTER_MS = 5 * 60_000;
 const CLAUDE_TIMEOUT_MS = 30_000;
 /** How long one reading is reused, so a burst of launches makes one request. */
 const CACHE_MS = 60_000;
+/** A marked provider is re-checked for an early clear at most this often. */
+const RECHECK_MS = 10 * 60_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS: number = 24 * HOUR_MS;
 
 // --- Twin of ../dotfiles/pi/extensions/usage-status.ts (parseGoUsage, resetTime,
 // --- num, goOriginAllowed, the fetch in refreshGo, parseClaudeCache,
 // --- scopedApplies and refreshClaudeCache). Copied, not shared; keep the two in
 // --- step until the user decides how to package them. Differences: Claude
-// --- windows carry no `windowMs` or credits (they never block); usage-status.ts
+// --- windows carry no credits (they never block); usage-status.ts
 // --- reads nothing when CLAUDE_CONFIG_DIR is unset, while claudeCachePath falls
 // --- back to ~/.claude.json, Claude Code's default location, so the check works
 // --- without the user's alias (refreshClaude then spawns only when
@@ -33,7 +37,14 @@ const GO_ORIGIN = "https://opencode.ai";
 const GO_USAGE_URL = `${GO_ORIGIN}/zen/go/v1/usage`;
 
 /** One quota window; `limited` is the provider's own `rate-limited` status. */
-export type UsageWindow = { label: string; percent: number | null; resetsAt: number | null; limited: boolean };
+export type UsageWindow = {
+	label: string;
+	percent: number | null;
+	resetsAt: number | null;
+	limited: boolean;
+	/** The window's full length, which with `resetsAt` gives the start of its cycle. */
+	windowMs?: number;
+};
 
 function num(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -55,10 +66,10 @@ export function parseGoUsage(payload: unknown): UsageWindow[] | null {
 	)?.usage;
 	if (typeof usage !== "object" || usage === null) return null;
 	const windows: UsageWindow[] = [];
-	for (const [key, label] of [
-		["rolling", "5h"],
-		["weekly", "wk"],
-		["monthly", "mo"],
+	for (const [key, label, windowMs] of [
+		["rolling", "5h", 5 * HOUR_MS],
+		["weekly", "wk", 7 * DAY_MS],
+		["monthly", "mo", 30 * DAY_MS],
 	] as const) {
 		const raw = usage[key];
 		const ok = raw?.status === "ok" || raw?.status === "rate-limited";
@@ -67,6 +78,7 @@ export function parseGoUsage(payload: unknown): UsageWindow[] | null {
 			percent: ok ? num(raw?.percent) : null,
 			resetsAt: ok ? resetTime(raw?.resetsAt) : null,
 			limited: raw?.status === "rate-limited",
+			windowMs,
 		});
 	}
 	return windows.some((w) => w.percent !== null || w.limited) ? windows : null;
@@ -105,20 +117,21 @@ export function parseClaudeCache(state: unknown): ClaudeUsage | null {
 	if (typeof u !== "object" || u === null) return null;
 	const rows: ClaudeRow[] = Array.isArray(u.limits) ? u.limits : [];
 	const row = (kind: string): ClaudeRow | undefined => rows.find((r) => r?.kind === kind);
-	const window = (label: string, kind: string, legacy: ClaudeLegacy | undefined): UsageWindow => {
+	const window = (label: string, kind: string, legacy: ClaudeLegacy | undefined, windowMs: number): UsageWindow => {
 		const r = row(kind);
 		return {
 			label,
 			percent: num(r?.percent) ?? num(legacy?.utilization),
 			resetsAt: resetTime(r?.resets_at) ?? resetTime(legacy?.resets_at),
 			limited: false,
+			windowMs,
 		};
 	};
 	const scopedRow = row("weekly_scoped");
 	const scopedName = scopedRow?.scope?.model?.display_name;
 	return {
-		fiveHour: window("5h", "session", u.five_hour),
-		sevenDay: window("7d", "weekly_all", u.seven_day),
+		fiveHour: window("5h", "session", u.five_hour, 5 * HOUR_MS),
+		sevenDay: window("7d", "weekly_all", u.seven_day, 7 * DAY_MS),
 		scoped:
 			typeof scopedName === "string" && scopedName
 				? {
@@ -126,6 +139,7 @@ export function parseClaudeCache(state: unknown): ClaudeUsage | null {
 						percent: num(scopedRow?.percent),
 						resetsAt: resetTime(scopedRow?.resets_at),
 						limited: false,
+						windowMs: 7 * DAY_MS,
 					}
 				: null,
 		fetchedAt: num(entry?.fetchedAtMs),
@@ -221,7 +235,18 @@ export type ReadingError = { provider: string; reason: string; at: string };
 type Registry = {
 	getApiKeyForProvider(provider: string): Promise<string | undefined>;
 	getProvider(provider: string): { baseUrl?: string } | undefined;
-	find(provider: string, id: string): { baseUrl?: string; name?: string; id?: string; provider?: string } | undefined;
+	find(
+		provider: string,
+		id: string,
+	):
+		| {
+				baseUrl?: string;
+				name?: string;
+				id?: string;
+				provider?: string;
+				cost?: { input?: number; output?: number };
+		  }
+		| undefined;
 	isUsingOAuth(model: { provider?: string; id?: string }): boolean;
 };
 
@@ -241,16 +266,101 @@ function recordFull(scope: string, windows: UsageWindow[], now: number, name = "
 	return recordProactive(scope, reason, resets.length > 0 ? Math.max(...resets) : undefined, now);
 }
 
+type Rechecker = {
+	readGo(models: Registry, provider: string, id: string, now: number): Promise<GoReading>;
+	readClaude(now: number): ClaudeReading;
+	/** When each provider was last re-checked, in memory only. */
+	rechecked: Map<string, number>;
+};
+
+/** The provider's windows, and the scoped one when it applies to the candidate; undefined when unreadable. */
+async function windowsFor(
+	r: Rechecker,
+	models: Registry,
+	provider: string,
+	id: string,
+	now: number,
+): Promise<{ provider: UsageWindow[]; scoped?: UsageWindow } | undefined> {
+	if (provider === PROVIDER) {
+		const reading = await r.readGo(models, provider, id, now);
+		return reading.ok ? { provider: reading.windows } : undefined;
+	}
+	const model = models.find(CLAUDE, id);
+	if (!model || !models.isUsingOAuth(model)) return undefined;
+	const reading = r.readClaude(now);
+	if (!reading.ok) return undefined;
+	const { scoped } = reading;
+	return {
+		provider: [reading.fiveHour, reading.sevenDay],
+		scoped: scoped && scopedApplies(scoped.label, model) ? scoped : undefined,
+	};
+}
+
+/** Whether `w` began a new cycle after `at`; a window without a reset time or length cannot say. */
+const resetSince = (w: UsageWindow | undefined, at: number): boolean =>
+	w !== undefined && w.resetsAt !== null && !!w.windowMs && w.resetsAt - w.windowMs > at;
+
+/**
+ * Clear the active marks on `provider/id` whose quota has reset since they were
+ * recorded, at most once per provider every 10 minutes. Headroom alone proves
+ * nothing: every applying window must be under 100%, and for a provider mark one
+ * of them must have begun a new cycle after the mark (for a model mark, the
+ * scoped window). A failed reading keeps the marks.
+ */
+async function recheckMarks(r: Rechecker, models: Registry, provider: string, id: string): Promise<string[]> {
+	const now = Date.now();
+	const marks = readMarks(now).filter(
+		(m) =>
+			m.clearsAt > now &&
+			now - m.recordedAt >= RECHECK_MS && // a mark this fresh is itself a recent check
+			(m.scope === `${provider}/${id}` || (m.scope === provider && !isFree(models, provider, id))),
+	);
+	if (marks.length === 0 || (provider !== PROVIDER && provider !== CLAUDE)) return [];
+	if (now - (r.rechecked.get(provider) ?? Number.NEGATIVE_INFINITY) < RECHECK_MS) return [];
+	r.rechecked.set(provider, now);
+	const found = await windowsFor(r, models, provider, id, now);
+	if (!found) return [];
+	const windows = [...found.provider, ...(found.scoped ? [found.scoped] : [])].filter(
+		(w) => w.limited || w.percent !== null,
+	);
+	if (windows.some((w) => w.limited || (w.percent ?? 0) >= 100)) return [];
+	return marks
+		.filter((m) =>
+			m.scope.includes("/") ? resetSince(found.scoped, m.recordedAt) : windows.some((w) => resetSince(w, m.recordedAt)),
+		)
+		.filter((m) => removeMark(m.scope, now))
+		.map((m) => `Cleared the usage-limit mark on ${m.scope}: its quota has reset since the mark was recorded.`);
+}
+
+/** The mark a Claude reading calls for on `anthropic/id`: the 5h or 7d window used up, else the scoped week when it names the model. */
+function claudeMark(
+	reading: ClaudeUsage,
+	model: { name?: string; id?: string },
+	id: string,
+	now: number,
+): Mark | undefined {
+	const { scoped } = reading;
+	return (
+		recordFull(CLAUDE, [reading.fiveHour, reading.sevenDay], now, "Claude") ??
+		(scoped && scopedApplies(scoped.label, model) ? recordFull(`${CLAUDE}/${id}`, [scoped], now, "Claude") : undefined)
+	);
+}
+
 /** Proactive checks over one usage client, with their cache and last reading errors. */
-export function createProactive(client: UsageClient): {
+export type Proactive = {
 	errors(): ReadingError[];
 	/** Forget cached readings, so the next check reads afresh. */
 	clear(): void;
 	check(models: Registry, provider: string, id: string): Promise<{ notice?: string; mark?: Mark }>;
-} {
+	/** Clear marks whose quota has reset since they were recorded; a line per mark cleared. */
+	recheck(models: Registry, provider: string, id: string): Promise<string[]>;
+};
+
+export function createProactive(client: UsageClient): Proactive {
 	let refreshedAt = Number.NEGATIVE_INFINITY;
 	let cached: { at: number; reading: GoReading } | undefined;
 	const lastErrors = new Map<string, ReadingError>();
+	const rechecked = new Map<string, number>();
 
 	async function read(models: Registry, provider: string, id: string, now: number): Promise<GoReading> {
 		if (cached !== undefined && now - cached.at < CACHE_MS) return cached.reading;
@@ -280,24 +390,24 @@ export function createProactive(client: UsageClient): {
 		}
 	}
 
+	/** Read Claude's cache, refreshing a stale one in the background, and keep the reading error. */
+	function readClaude(now: number): ClaudeReading {
+		const reading = client.readClaude();
+		if (!(reading.ok && reading.fetchedAt !== null && now - reading.fetchedAt <= CLAUDE_FETCH_AFTER_MS))
+			refreshClaude(now);
+		if (reading.ok) lastErrors.delete(CLAUDE);
+		else lastErrors.set(CLAUDE, { provider: CLAUDE, reason: reading.reason, at: new Date(now).toISOString() });
+		return reading;
+	}
+
 	/** Claude subscription (OAuth) logins only; API-key users rely on reactive marks. */
 	function checkClaude(models: Registry, id: string, now: number): { notice?: string; mark?: Mark } {
 		const model = models.find(CLAUDE, id);
 		if (!model || !models.isUsingOAuth(model)) return {};
-		const reading = client.readClaude();
-		const fresh = reading.ok && reading.fetchedAt !== null && now - reading.fetchedAt <= CLAUDE_FETCH_AFTER_MS;
-		if (!fresh) refreshClaude(now);
-		if (!reading.ok) {
-			lastErrors.set(CLAUDE, { provider: CLAUDE, reason: reading.reason, at: new Date(now).toISOString() });
+		const reading = readClaude(now);
+		if (!reading.ok)
 			return { notice: `Could not read ${CLAUDE} quota: ${reading.reason}; launched without a proactive check.` };
-		}
-		lastErrors.delete(CLAUDE);
-		const mark = recordFull(CLAUDE, [reading.fiveHour, reading.sevenDay], now, "Claude");
-		if (mark) return { mark };
-		const scoped = reading.scoped;
-		if (scoped && scopedApplies(scoped.label, model))
-			return { mark: recordFull(`${CLAUDE}/${id}`, [scoped], now, "Claude") };
-		return {};
+		return { mark: claudeMark(reading, model, id, now) };
 	}
 
 	return {
@@ -306,11 +416,9 @@ export function createProactive(client: UsageClient): {
 		clear: (): void => {
 			cached = undefined;
 		},
-		/**
-		 * Check `provider/id` against its quota. Records a `proactive` mark when a
-		 * window is used up and returns it (even if the file could not be written),
-		 * or the fail-open line as `notice` when the reading failed.
-		 */
+		recheck: (models: Registry, provider: string, id: string): Promise<string[]> =>
+			recheckMarks({ readGo: read, readClaude, rechecked }, models, provider, id),
+		/** Check `provider/id` against its quota: a `proactive` mark when a window is used up, or the fail-open `notice`. */
 		async check(models: Registry, provider: string, id: string): Promise<{ notice?: string; mark?: Mark }> {
 			const now = Date.now();
 			if (provider === CLAUDE) return checkClaude(models, id, now);
@@ -322,5 +430,3 @@ export function createProactive(client: UsageClient): {
 		},
 	};
 }
-
-export type Proactive = ReturnType<typeof createProactive>;

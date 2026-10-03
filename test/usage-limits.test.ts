@@ -941,3 +941,114 @@ test("a missing Claude cache fails open and shows as a reading error", async (t)
 		{ provider: "anthropic", reason: "cache unreadable: ENOENT", at: "2026-10-03T12:00:00.000Z" },
 	]);
 });
+
+// --- Early clearing (ticket 09): a re-check clears a mark only after the quota reset since it.
+
+const H = 3_600_000;
+/** A Go reading whose 5h window began `agoMs` before now (so it resets 5h after that). */
+const goCycle = (agoMs: number, percent = 10) => ({
+	ok: true as const,
+	windows: [
+		win("5h", percent, START + 6 * H - agoMs + 5 * H, false, 5 * H),
+		win("wk", 10, START + 6 * H + 3 * 24 * H, false, 7 * 24 * H),
+	],
+});
+const CLEARED = "Cleared the usage-limit mark on opencode-go: its quota has reset since the mark was recorded.";
+
+async function markedGo(t: TestContext) {
+	const tick = clock(t);
+	writeAgent("fb", agentFile({ ...AGENT, model: "opencode-go/paid", fallback: "alpha/fast-model" }));
+	await fail(`${GO_LIMIT} try again in 10 hours`);
+	tick(6 * H);
+	const { usage, p } = withUsage();
+	await p.start();
+	return { usage, p, tick };
+}
+
+test("a reading whose window began after the mark clears it and launches on the agent's model", async (t) => {
+	const { usage, p } = await markedGo(t);
+	usage.go = goCycle(1 * H);
+	const result = await call(p, "fb");
+	assert.ok(result.content[0].text.includes(CLEARED));
+	assert.ok(!result.content[0].text.includes("Used fallback"));
+	assert.deepEqual(marks(), []);
+	assert.equal(p.tmux.opened.length, 1);
+});
+
+test("a window cycle that began before the mark leaves it and uses the fallback", async (t) => {
+	const { usage, p } = await markedGo(t);
+	usage.go = goCycle(6 * H + 30 * 60_000);
+	const result = await call(p, "fb");
+	assert.match(result.content[0].text, /Used fallback alpha\/fast-model/);
+	assert.ok(!result.content[0].text.includes("Cleared"));
+	assert.equal(marks().length, 1);
+});
+
+test("headroom without a reset time leaves the mark", async (t) => {
+	const { usage, p } = await markedGo(t);
+	usage.go = { ok: true, windows: [win("5h", 10), win("wk", 10)] };
+	const result = await call(p, "fb");
+	assert.match(result.content[0].text, /Used fallback/);
+	assert.equal(marks().length, 1);
+});
+
+test("a reset window does not clear the mark while another window is at 100%", async (t) => {
+	const { usage, p } = await markedGo(t);
+	const reading = goCycle(1 * H);
+	usage.go = { ok: true, windows: [reading.windows[0], win("wk", 100, START + 7 * H, false, 7 * 24 * H)] };
+	await call(p, "fb");
+	assert.equal(marks().length, 1);
+});
+
+test("launches within 10 minutes make one re-check; a later one makes another", async (t) => {
+	const { usage, p, tick } = await markedGo(t);
+	usage.go = goCycle(6 * H + 30 * 60_000);
+	await call(p, "fb");
+	tick(2 * 60_000);
+	await call(p, "fb");
+	assert.equal(usage.calls.length, 1);
+	tick(9 * 60_000);
+	await call(p, "fb");
+	assert.equal(usage.calls.length, 2);
+});
+
+test("a failed re-check keeps the mark, shows the error, and adds no fail-open note", async (t) => {
+	const { usage, p } = await markedGo(t);
+	usage.go = { ok: false, reason: "HTTP 503" };
+	const result = await call(p, "fb");
+	assert.match(result.content[0].text, /Used fallback/);
+	assert.ok(!result.content[0].text.includes("Could not read"));
+	assert.equal(marks().length, 1);
+	const status = await p.toolCall("delegation_status", {});
+	assert.deepEqual((status.details as { readingErrors: unknown }).readingErrors, [
+		{ provider: "opencode-go", reason: "HTTP 503", at: new Date(START + 6 * H).toISOString() },
+	]);
+});
+
+test("a model-scoped Claude mark is cleared only by its scoped window resetting", async (t) => {
+	const tick = clock(t);
+	writeAgent("opus", agentFile({ ...AGENT, model: "anthropic/claude-opus-4" }));
+	const { usage, p } = claudeSession();
+	usage.claude = cache({ scoped: win("Opus", 100, START + 12 * H, false, 7 * 24 * H) });
+	await p.start();
+	await assert.rejects(call(p, "opus"), /usage-limited/);
+	tick(6 * H);
+	const now = START + 6 * H;
+	// Only the 5h window reset: the scoped mark stays.
+	usage.claude = cache({
+		fetchedAt: now,
+		fiveHour: win("5h", 5, now + 4 * H, false, 5 * H),
+		scoped: win("Opus", 50, now + 24 * H, false, 7 * 24 * H),
+	});
+	await assert.rejects(call(p, "opus"), /usage-limited/);
+	assert.equal(marks().length, 1);
+	tick(11 * 60_000);
+	const later = now + 11 * 60_000;
+	usage.claude = cache({
+		fetchedAt: later,
+		scoped: win("Opus", 5, later + 7 * 24 * H - H, false, 7 * 24 * H),
+	});
+	const result = await call(p, "opus");
+	assert.ok(result.content[0].text.includes("Cleared the usage-limit mark on anthropic/claude-opus-4:"));
+	assert.deepEqual(marks(), []);
+});

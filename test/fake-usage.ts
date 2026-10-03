@@ -9,11 +9,13 @@ export const win = (
 	percent: number | null,
 	resetsAt: number | null = null,
 	limited = false,
+	windowMs?: number,
 ): UsageWindow => ({
 	label,
 	percent,
 	resetsAt,
 	limited,
+	...(windowMs === undefined ? {} : { windowMs }),
 });
 
 export class FakeUsage implements UsageClient {

@@ -251,6 +251,11 @@ async function chooseModel(
 		const provider = model.slice(0, slash);
 		const id = model.slice(slash + 1);
 		let mark = activeMark(models, provider, id);
+		if (mark !== undefined) {
+			const cleared = await proactive.recheck(models, provider, id);
+			for (const line of cleared) if (!notices.includes(line)) notices.push(line);
+			if (cleared.length > 0) mark = activeMark(models, provider, id);
+		}
 		if (mark === undefined && !isFree(models, provider, id)) {
 			const checked = await proactive.check(models, provider, id);
 			if (checked.notice !== undefined && !notices.includes(checked.notice)) notices.push(checked.notice);

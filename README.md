@@ -316,6 +316,20 @@ proactive check.", and `delegation_status` lists the provider's last reading
 error and its time under the `Usage-limit marks:` block and in a `readingErrors`
 array of `{ provider, reason, at }`.
 
+A mark can also clear early. When a launch considers a marked `opencode-go` or
+OAuth `anthropic` candidate, pi-squire re-checks that provider's quota, at most
+once every 10 minutes per provider and never in the background, and not for a
+mark recorded less than 10 minutes ago. It clears a mark only when the reading
+succeeded, every applying window is under 100%, and a window began a new cycle
+after the mark was recorded (its reset time minus its length is later than the
+mark's time); headroom alone never clears one, because a quota endpoint can show
+headroom while the account still answers 429. A model-scoped Claude mark clears
+only when its scoped window has reset. A window without a reset time or length
+cannot prove a reset. The tool result and the command's notice then say
+"Cleared the usage-limit mark on <scope>: its quota has reset since the mark was
+recorded." A failed re-check keeps the mark, lists the reading error in
+`delegation_status`, and adds no note.
+
 A mark can be stale (the quota came back, or the plan changed). Only you clear
 one, with `/delegate-clear <target>`: `all`, a provider (its mark and every
 model mark under it), or `provider/model` (that model's mark and the provider

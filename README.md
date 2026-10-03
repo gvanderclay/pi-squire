@@ -241,6 +241,21 @@ result has already arrived. When the window is already gone it only records
 the close. An unknown or already closed id returns a message and kills
 nothing. The delegate's session file and result envelope stay on disk.
 
+## Usage limits
+
+When a delegate's run ends on a usage-limit error, it records a mark in
+`pi-squire-limits.json` in Pi's agent directory, which every Pi session on the
+machine reads. Quota messages count, and so does a `429` that survived Pi's
+retries; overloaded and `5xx` errors do not. A mark covers the failing
+model's whole provider, except for a free model (an id ending in `-free`, or
+zero cost in Pi's registry), which is never covered by a provider mark and,
+when it is the one that failed, is marked alone.
+
+A mark clears at the reset time the error states ("try again in 30 minutes",
+`resets_at`), otherwise after 5 minutes, doubling on each repeat hit up to 6
+hours. Until then `delegate` and `/delegate` refuse a marked model, whether
+it came from the agent or from `model` / `--model`, and say when it clears.
+
 ## Auto-exit
 
 The parent resolves each delegation's auto-exit from the call

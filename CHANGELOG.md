@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A delegate whose run ends on a usage-limit error (a quota message, or a
+  `429` that survived Pi's retries) records a mark in
+  `pi-squire-limits.json` in Pi's agent directory. Every Pi session then
+  refuses to launch a delegate on a marked model until the mark clears.
+
 ## [0.2.2] - 2026-10-02
 
 ### Fixed

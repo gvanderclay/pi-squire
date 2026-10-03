@@ -17,6 +17,8 @@
 // ponytail: drop the takeover once #5581 lands and the minimum Pi has it.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { recordLimit } from "./limits.ts";
+
 /** The launch variable that carries the parent's resolved setting. */
 export const AUTO_EXIT_ENV = "PI_DELEGATE_AUTO_EXIT";
 
@@ -24,9 +26,25 @@ const OFF_NOTICE =
 	"delegate: auto-exit is off for this session because you took over here; the window stays open. /auto-exit turns it back on.";
 const ON_NOTICE = "delegate: auto-exit is on; this delegate closes after its next normal completion.";
 
-type Message = { role?: string; stopReason?: unknown };
+type Message = { role?: string; stopReason?: unknown; errorMessage?: unknown; provider?: unknown; model?: unknown };
 
 type Inbound = { envelope?: { from?: unknown; kind?: unknown; body?: unknown }; handled?: boolean };
+
+/** A run that ended on a usage-limit error leaves a mark for every Pi session. */
+function recordUsageLimit(last: Message, ctx: ExtensionContext): void {
+	const { provider, model, errorMessage } = last;
+	if (typeof provider !== "string" || typeof model !== "string" || typeof errorMessage !== "string") return;
+	try {
+		recordLimit(ctx.modelRegistry, {
+			provider,
+			model,
+			message: errorMessage,
+			delegation: ctx.sessionManager.getSessionId(),
+		});
+	} catch {
+		// A mark that cannot be written must not break the run's end.
+	}
+}
 
 export function registerChild(pi: ExtensionAPI, parent: string): void {
 	let current: ExtensionContext | undefined;
@@ -70,6 +88,7 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		}
 		const stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 		if (stopped) disarm(ctx);
+		if (!stopped && last?.stopReason === "error") recordUsageLimit(last, ctx);
 		completed = !stopped && last?.stopReason !== "error";
 	});
 

@@ -47,6 +47,7 @@ import { Type } from "typebox";
 
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AUTO_EXIT_ENV, registerChild } from "./child.ts";
+import { activeMark } from "./limits.ts";
 import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
@@ -316,6 +317,14 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		const thinking = request.thinking ?? agent.thinking;
 		const badModel = modelProblem(model, models);
 		if (badModel !== undefined) throw new Error(badModel);
+		const slash = model.indexOf("/");
+		const marked = activeMark(models, model.slice(0, slash), model.slice(slash + 1));
+		if (marked !== undefined) {
+			const what = marked.scope.includes("/") ? `model ${marked.scope}` : `provider ${marked.scope}`;
+			throw new Error(
+				`${model} is usage-limited (${what}) until ${new Date(marked.clearsAt).toISOString()}: ${marked.reason}. Clear marks with /delegate-clear.`,
+			);
+		}
 		const badThinking = thinkingProblem(thinking);
 		if (badThinking !== undefined) throw new Error(badThinking);
 		const badLabel = request.label === undefined ? undefined : labelProblem(request.label);

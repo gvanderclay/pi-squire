@@ -4,9 +4,11 @@
 // Pi session with a scripted `ctx.ui`, the fake tmux, `message:send` stubbed.
 
 import assert from "node:assert/strict";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { agentFile, cleanup, resetRoot, session, sessionDir, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -277,6 +279,49 @@ test("delegation_status reports running, done and closed through the window and 
 	assert.match(filtered, /^1 delegation:/);
 	assert.ok(filtered.includes(second.id), filtered);
 	assert.ok(!filtered.includes(first.id), filtered);
+});
+
+test("delegation_status shows when a running delegate's session file was last written", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	await s.toolCall("delegate", { agent: "scout", task: "one" });
+	await s.toolCall("delegate", { agent: "scout", task: "two" });
+	await s.toolCall("delegate", { agent: "scout", task: "three" });
+	const [a, b, c] = s.entries.map((entry) => entry.data as Delegation);
+	mkdirSync(sessionDir, { recursive: true });
+	const touch = (d: Delegation, agoMs: number) => {
+		const when = new Date(Date.now() - agoMs);
+		const file = join(sessionDir, `x_${d.id}.jsonl`);
+		writeFileSync(file, "");
+		utimesSync(file, when, when);
+		return when;
+	};
+	const twelve = touch(a, 12.5 * 60_000);
+	touch(b, 125.5 * 60_000);
+	const status = async (id: string) => s.toolCall("delegation_status", { id });
+	const first = await status(a.id);
+	assert.match(first.content[0].text, /state: running[^\n]* \(last active 12 min ago\)\n/);
+	const detail = (first.details as { delegations: Record<string, unknown>[] }).delegations[0];
+	assert.equal(detail.lastActiveAt, twelve.toISOString());
+	assert.match((await status(b.id)).content[0].text, /\(last active 2 h 5 min ago\)/);
+	touch(c, 1000);
+	assert.match((await status(c.id)).content[0].text, /\(last active just now\)/);
+
+	s.events.emit("message:inbound", reply(s.parent, a));
+	const done = await status(a.id);
+	assert.ok(!done.content[0].text.includes("last active"), done.content[0].text);
+	assert.ok(!("lastActiveAt" in (done.details as { delegations: object[] }).delegations[0]));
+});
+
+test("delegation_status shows no last-active text for a running delegate without a session file", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	await s.toolCall("delegate", { agent: "scout", task: "one" });
+	const res = await s.toolCall("delegation_status", {});
+	assert.ok(!res.content[0].text.includes("last active"), res.content[0].text);
+	assert.ok(!("lastActiveAt" in (res.details as { delegations: object[] }).delegations[0]));
 });
 
 test("delegation_status refuses an unknown id with the ones that exist", async () => {

@@ -852,6 +852,17 @@ test("a Claude 5h window at 100% skips an OAuth candidate for its fallback, with
 	);
 });
 
+test("a Claude window at 100% whose reset has passed is stale: the launch goes ahead, no mark", async (t) => {
+	clock(t);
+	writeAgent("cl", agentFile({ ...AGENT, model: "anthropic/claude-opus-4" }));
+	const { usage, p } = claudeSession();
+	usage.claude = cache({ fiveHour: win("5h", 100, START - 1000) });
+	await p.start();
+	await call(p, "cl");
+	assert.equal(p.tmux.opened.length, 1);
+	assert.deepEqual(marks(), []);
+});
+
 test("a scoped Opus week at 100% blocks only the Opus candidate", async (t) => {
 	clock(t);
 	writeAgent("opus", agentFile({ ...AGENT, model: "anthropic/claude-opus-4" }));

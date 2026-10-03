@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { type Mark, recordProactive } from "./limits.ts";
 
 const PROVIDER = "opencode-go";
@@ -23,7 +23,8 @@ const CACHE_MS = 60_000;
 // --- windows carry no `windowMs` or credits (they never block); usage-status.ts
 // --- reads nothing when CLAUDE_CONFIG_DIR is unset, while claudeCachePath falls
 // --- back to ~/.claude.json, Claude Code's default location, so the check works
-// --- without the user's alias; and the 5-minute rate limit on refreshes lives in
+// --- without the user's alias (refreshClaude then spawns only when ~/.claude.json
+// --- or ~/.claude exists, so it never runs for a user without Claude Code); and the 5-minute rate limit on refreshes lives in
 // --- createProactive, not here.
 
 const GO_TIMEOUT_MS = 20_000;
@@ -153,7 +154,7 @@ export type UsageClient = {
 	readGo(key: string | undefined, baseUrls: (string | undefined)[]): Promise<GoReading>;
 	/** Read Claude Code's usage cache as it stands; never waits for a refresh. */
 	readClaude(): ClaudeReading;
-	/** Start `claude -p /usage` in the background so Claude Code rewrites its cache. Fire and forget; does nothing when the config directory is missing. */
+	/** Start `claude -p /usage` in the background so Claude Code rewrites its cache. Fire and forget; does nothing without Claude Code state (see the guard). */
 	refreshClaude(): void;
 };
 
@@ -169,7 +170,15 @@ export function createUsageClient(): UsageClient {
 		},
 		refreshClaude(): void {
 			try {
-				if (!existsSync(dirname(claudeCachePath()))) return;
+				// Never spawn without Claude Code state: the config directory, or with
+				// CLAUDE_CONFIG_DIR unset, ~/.claude.json or ~/.claude.
+				const dir = process.env.CLAUDE_CONFIG_DIR;
+				if (
+					!(dir
+						? existsSync(dir)
+						: existsSync(join(homedir(), ".claude.json")) || existsSync(join(homedir(), ".claude")))
+				)
+					return;
 				const child = spawn("claude", ["-p", "/usage", "--no-session-persistence"], { cwd: tmpdir(), stdio: "ignore" });
 				const kill = setTimeout(() => child.kill(), CLAUDE_TIMEOUT_MS);
 				kill.unref();
@@ -217,7 +226,10 @@ type Registry = {
 
 /** The windows that are used up, recorded as one proactive mark on `provider`. */
 function recordFull(scope: string, windows: UsageWindow[], now: number, name = "Go"): Mark | undefined {
-	const full = windows.filter((w) => w.limited || (w.percent ?? 0) >= 100);
+	// A window at 100% whose reset time has passed has reset; the reading is stale.
+	const full = windows.filter(
+		(w) => w.limited || ((w.percent ?? 0) >= 100 && (w.resetsAt === null || w.resetsAt > now)),
+	);
 	if (full.length === 0) return undefined;
 	const resets = full.map((w) => w.resetsAt).filter((t): t is number => t !== null && t > now);
 	const reason = full

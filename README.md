@@ -302,15 +302,19 @@ name, so other Anthropic models stay usable. The check reads the cache as it
 stands and never waits: when the cache is missing or older than 5 minutes,
 pi-squire starts `claude -p /usage --no-session-persistence` in the background
 (in a temporary directory, output discarded, killed after 30 seconds) so Claude
-Code rewrites it, at most once every 5 minutes per Pi process. A missing `claude`
-binary or config directory is ignored.
+Code rewrites it, at most once every 5 minutes per Pi process. It starts only
+when Claude Code state exists (`$CLAUDE_CONFIG_DIR`, or `~/.claude.json` or
+`~/.claude` when the variable is unset). A missing `claude` binary is ignored. A
+window at 100% whose reset time has already passed counts as reset and blocks
+nothing.
 
-A failed reading (for Go: no key, a base URL off the Go origin, a non-2xx answer, an
-unreadable body, a timeout, a network error; for Claude: a missing or unreadable cache) never blocks a launch. The tool
-result and the command's notice gain "Could not read <provider> quota:
-<reason>; launched without a proactive check.", and `delegation_status` lists the
-provider's last reading error and its time under the `Usage-limit marks:` block
-and in a `readingErrors` array of `{ provider, reason, at }`.
+A failed reading (for Go: no key, a base URL off the Go origin, a non-2xx
+answer, an unreadable body, a timeout, a network error; for Claude: a missing or
+unreadable cache) never blocks a launch. The tool result and the command's
+notice gain "Could not read <provider> quota: <reason>; launched without a
+proactive check.", and `delegation_status` lists the provider's last reading
+error and its time under the `Usage-limit marks:` block and in a `readingErrors`
+array of `{ provider, reason, at }`.
 
 A mark can be stale (the quota came back, or the plan changed). Only you clear
 one, with `/delegate-clear <target>`: `all`, a provider (its mark and every

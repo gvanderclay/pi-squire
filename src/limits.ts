@@ -182,3 +182,20 @@ export function recordLimit(
 	};
 	writeMarks([...marks.filter((item) => item !== old), mark]);
 }
+
+/**
+ * Remove marks for `target`: `all`, a provider (its mark and every model mark
+ * under it) or `provider/model` (that mark and the provider mark covering it).
+ * Removing also forgets the escalation history. Returns the scopes of the
+ * active marks removed; when none, the file is left alone.
+ */
+export function clearMarks(target: string, now = Date.now()): string[] {
+	const marks = readMarks(now);
+	const hit = (mark: Mark): boolean =>
+		target === "all" ||
+		mark.scope === target ||
+		(target.includes("/") ? mark.scope === target.slice(0, target.indexOf("/")) : mark.scope.startsWith(`${target}/`));
+	const cleared = marks.filter((mark) => hit(mark) && mark.clearsAt > now).map((mark) => mark.scope);
+	if (cleared.length > 0) writeMarks(marks.filter((mark) => !hit(mark)));
+	return cleared;
+}

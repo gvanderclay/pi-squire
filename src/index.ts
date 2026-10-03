@@ -47,7 +47,7 @@ import { Type } from "typebox";
 
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AUTO_EXIT_ENV, registerChild } from "./child.ts";
-import { activeMark } from "./limits.ts";
+import { activeMark, clearMarks, readMarks } from "./limits.ts";
 import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
@@ -579,6 +579,33 @@ export default function delegate(pi: ExtensionAPI, tmux: TmuxClient = createTmux
 		description: `Start a delegate Pi session in a background tmux window: ${USAGE}`,
 		getArgumentCompletions: completions,
 		handler: command,
+	});
+
+	pi.registerCommand("delegate-clear", {
+		description: "Clear usage-limit marks: all, a provider, or a provider/model",
+		getArgumentCompletions: (prefix: string) => {
+			const hits = [
+				"all",
+				...readMarks()
+					.filter((m) => m.clearsAt > Date.now())
+					.map((m) => m.scope),
+			].filter((v) => v.startsWith(prefix.trim()));
+			return hits.length > 0 ? hits.map((value) => ({ value, label: value })) : null;
+		},
+		handler: async (args: string, ctx: ExtensionContext) => {
+			const target = args.trim();
+			const cleared = target === "" ? [] : clearMarks(target);
+			const active = readMarks().filter((m) => m.clearsAt > Date.now());
+			const list = active.map((m) => `${m.scope} until ${new Date(m.clearsAt).toISOString()}`).join(", ");
+			ctx.ui.notify(
+				cleared.length > 0
+					? `delegate-clear: cleared ${cleared.join(", ")}.`
+					: active.length === 0
+						? "delegate-clear: no usage-limit marks are active."
+						: `delegate-clear: ${target === "" ? "name a mark to clear" : `no active mark matches "${target}"`}. Active marks: ${list}. Use all, a provider or provider/model.`,
+				"info",
+			);
+		},
 	});
 
 	pi.registerTool(delegateTool() as never);

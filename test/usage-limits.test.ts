@@ -551,3 +551,97 @@ test("delegation_status lists active marks, in the details too, until they clear
 	assert.equal(after.content[0].text, "No delegations are recorded in this session.");
 	assert.deepEqual((after.details as { marks: unknown[] }).marks, []);
 });
+
+const GO_MARK = "opencode-go";
+
+test("/delegate-clear <provider> removes the mark and the next delegation launches", async (t) => {
+	clock(t);
+	await fail(GO_LIMIT);
+	await fail(GO_LIMIT, "space-free", "delegation-2");
+	const p = parent();
+	await p.start();
+	await p.command("delegate-clear", GO_MARK);
+	assert.deepEqual(p.notes.slice(-1), ["delegate-clear: cleared opencode-go, opencode-go/space-free."]);
+	assert.deepEqual(marks(), []);
+	await p.delegate("paid t");
+	assert.deepEqual(p.errors, []);
+});
+
+test("/delegate-clear provider/model clears the model and its provider mark, not siblings", async (t) => {
+	clock(t);
+	await fail(GO_LIMIT);
+	await fail(GO_LIMIT, "space-free", "delegation-2");
+	const p = parent();
+	await p.start();
+	await p.command("delegate-clear", "opencode-go/space-free");
+	assert.deepEqual(p.notes.slice(-1), ["delegate-clear: cleared opencode-go, opencode-go/space-free."]);
+	await fail('429: {"type":"FreeUsageLimitError"}', "zero", "delegation-3");
+	await p.command("delegate-clear", "opencode-go/paid");
+	assert.deepEqual(
+		marks().map((m) => m.scope),
+		["opencode-go/zero"],
+	);
+});
+
+test("/delegate-clear all removes every mark", async (t) => {
+	clock(t);
+	await fail(GO_LIMIT);
+	await fail(GO_LIMIT, "plain", "delegation-2");
+	const p = parent();
+	await p.start();
+	await p.command("delegate-clear", "all");
+	assert.deepEqual(marks(), []);
+});
+
+test("/delegate-clear with nothing or nonsense changes nothing and lists the marks", async (t) => {
+	clock(t);
+	const p = parent();
+	await p.start();
+	await p.command("delegate-clear", "");
+	assert.deepEqual(p.notes.slice(-1), ["delegate-clear: no usage-limit marks are active."]);
+	await fail(GO_LIMIT);
+	const before = readFileSync(FILE, "utf8");
+	await p.command("delegate-clear", "nonsense");
+	await p.command("delegate-clear");
+	assert.equal(readFileSync(FILE, "utf8"), before);
+	assert.deepEqual(p.notes.slice(-2), [
+		'delegate-clear: no active mark matches "nonsense". Active marks: opencode-go until 2026-10-03T12:05:00.000Z. Use all, a provider or provider/model.',
+		"delegate-clear: name a mark to clear. Active marks: opencode-go until 2026-10-03T12:05:00.000Z. Use all, a provider or provider/model.",
+	]);
+});
+
+test("a hit after a clear starts at 5 minutes, not an escalated cooldown", async (t) => {
+	const tick = clock(t);
+	await fail(GO_LIMIT);
+	tick(5 * 60_000);
+	await fail(GO_LIMIT, "paid", "delegation-2");
+	assert.equal(marks()[0].hits, 2);
+	const p = parent();
+	await p.start();
+	await p.command("delegate-clear", GO_MARK);
+	await fail(GO_LIMIT, "paid", "delegation-3");
+	assert.equal(marks()[0].hits, 1);
+	assert.equal(marks()[0].clearsAt, Date.now() + 5 * 60_000);
+});
+
+test("/delegate-clear completes all and the active scopes, and is absent in a delegate", async (t) => {
+	clock(t);
+	await fail(GO_LIMIT);
+	const p = parent();
+	await p.start();
+	const complete = (prefix: string) => p.completionsFor("delegate-clear", prefix);
+	assert.deepEqual(
+		(await complete(""))?.map((c) => c.value),
+		["all", GO_MARK],
+	);
+	assert.deepEqual(
+		(await complete("op"))?.map((c) => c.value),
+		[GO_MARK],
+	);
+	assert.equal(await complete("zz"), null);
+	const child = session({ parentEnv: "parent-x", parent: "delegation-9" });
+	await child.start();
+	delete process.env.PI_DELEGATE_PARENT;
+	assert.ok(!child.commands().includes("delegate-clear"));
+	assert.ok(p.commands().includes("delegate-clear"));
+});

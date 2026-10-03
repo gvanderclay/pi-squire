@@ -277,6 +277,13 @@ the result details list the skipped models under `skipped`. When every
 candidate is marked or unusable, the call is refused with one line per
 candidate and why it was skipped.
 
+A mark can be stale (the quota came back, or the plan changed). Only you clear
+one, with `/delegate-clear <target>`: `all`, a provider (its mark and every
+model mark under it), or `provider/model` (that model's mark and the provider
+mark covering it). Clearing also forgets the repeat-hit history, so the next
+hit starts at 5 minutes again. With no argument, or one matching no active
+mark, it changes nothing and lists the active marks. No tool clears marks.
+
 ## Auto-exit
 
 The parent resolves each delegation's auto-exit from the call

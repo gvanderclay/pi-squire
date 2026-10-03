@@ -24,6 +24,9 @@ follows [Semantic Versioning](https://semver.org/).
   `Usage limit:` line after `Status:`, naming the scope and clear time.
   `delegation_status` ends with a `Usage-limit marks:` block of the active
   marks, and its details gain `marks`.
+- `/delegate-clear <all|provider|provider/model>` removes usage-limit marks and
+  their repeat-hit history. An argument matching no active mark changes
+  nothing and lists the active marks. No tool can clear marks.
 
 ## [0.2.2] - 2026-10-02
 

@@ -288,6 +288,9 @@ export function session(options: SessionOptions = {}) {
 		shutdowns: () => shutdowns,
 		/** Type `/<name> <args>` for any command the extension registered. */
 		command: (name: string, args = "") => commands[name].handler(args, ctx),
+		/** Ask any registered command for argument completions. */
+		completionsFor: async (name: string, prefix: string) =>
+			(await commands[name].getArgumentCompletions?.(prefix)) as { value: string; label: string }[] | null,
 		/** The user types `text` into this session. */
 		type: (text: string) => fire("input", { text, source: "interactive" }),
 		/**

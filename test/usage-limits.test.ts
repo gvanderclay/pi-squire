@@ -191,3 +191,73 @@ test("marks expired for over 24 hours are dropped when read", async (t) => {
 	await fail("429: x");
 	assert.equal(marks()[0].hits, 1);
 });
+
+test("the cooldown stops doubling at 6 hours", async (t) => {
+	const tick = clock(t);
+	for (let hit = 1; hit < 9; hit++) {
+		await fail("429: x");
+		tick(marks()[0].clearsAt - Date.now() + 1);
+	}
+	await fail("429: x");
+	assert.equal(marks()[0].hits, 9);
+	assert.equal(marks()[0].clearsAt, Date.now() + 6 * 3600_000);
+});
+
+test("a mark keeps only the last 10 delegation ids", async (t) => {
+	clock(t);
+	for (let n = 1; n <= 12; n++) await fail("429: x", "paid", `d${n}`);
+	const [mark] = JSON.parse(readFileSync(FILE, "utf8")) as { delegations: string[] }[];
+	assert.deepEqual(
+		mark.delegations,
+		Array.from({ length: 10 }, (_, i) => `d${i + 3}`),
+	);
+});
+
+test("the reason is cut to 300 characters", async (t) => {
+	clock(t);
+	await fail(`429: ${"x".repeat(1000)}`);
+	const [mark] = JSON.parse(readFileSync(FILE, "utf8")) as { reason: string }[];
+	assert.equal(mark.reason.length, 300);
+});
+
+for (const message of [
+	'{"error":{"type":"usage_limit_reached"}}',
+	"The usage limit reached for this plan",
+	'{"type":"rate_limit_error","message":"slow"}',
+	'429: {"type":"rate_limit_error"}',
+]) {
+	test(`Codex/Claude wording records a mark: ${message}`, async (t) => {
+		clock(t);
+		await fail(message);
+		assert.deepEqual(
+			marks().map((mark) => mark.scope),
+			["opencode-go"],
+		);
+	});
+}
+
+for (const missing of ["provider", "model"]) {
+	test(`a failure without ${missing} records nothing`, async (t) => {
+		clock(t);
+		const delegate = session({ parentEnv: "parent-x", extraModels: EXTRA });
+		delete process.env.PI_DELEGATE_PARENT;
+		await delegate.start();
+		const fields = { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid", [missing]: undefined };
+		await delegate.run("error", fields);
+		assert.deepEqual(marks(), []);
+		const p = parent();
+		await p.delegate("paid t");
+		assert.equal(p.tmux.opened.length, 1);
+	});
+}
+
+test("a model free only by registry cost is marked alone", async (t) => {
+	clock(t);
+	await fail(GO_LIMIT, "zero");
+	assert.equal(marks()[0].scope, "opencode-go/zero");
+	const p = parent();
+	await p.delegate("paid t");
+	assert.equal(p.tmux.opened.length, 1);
+	await p.delegate("zero t");
+	assert.match(p.errors.join("\n"), /model opencode-go\/zero/);
+});

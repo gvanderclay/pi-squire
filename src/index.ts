@@ -616,7 +616,7 @@ export default function delegate(
 		handler: async (args: string, ctx: ExtensionContext) => {
 			const target = args.trim();
 			const cleared = target === "" ? [] : clearMarks(target);
-			proactive.clear();
+			if (cleared.length > 0) proactive.clear();
 			const active = readMarks().filter((m) => m.clearsAt > Date.now());
 			const list = active.map((m) => `${m.scope} until ${new Date(m.clearsAt).toISOString()}`).join(", ");
 			ctx.ui.notify(

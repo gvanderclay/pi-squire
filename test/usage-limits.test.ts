@@ -776,6 +776,7 @@ test("a mark file that cannot be written still blocks this launch and never thro
 	clock(t);
 	rmSync(FILE);
 	mkdirSync(FILE); // a directory where the marks file belongs: reads and writes fail
+	t.after(() => rmSync(FILE, { recursive: true }));
 	writeAgent("fb", agentFile({ ...AGENT, model: "opencode-go/paid", fallback: "alpha/fast-model" }));
 	const { usage, p } = withUsage();
 	usage.go = { ok: true, windows: [win("5h", 100, RESET)] };
@@ -783,7 +784,6 @@ test("a mark file that cannot be written still blocks this launch and never thro
 	const result = await call(p, "fb");
 	assert.match(result.content[0].text, /Used fallback alpha\/fast-model because opencode-go\/paid is usage-limited/);
 	await assert.rejects(call(p, "paid"), /opencode-go\/paid is usage-limited/);
-	rmSync(FILE, { recursive: true });
 });
 
 test("a later successful reading clears the provider's reading error", async (t) => {

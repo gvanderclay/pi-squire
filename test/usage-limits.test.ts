@@ -583,6 +583,30 @@ test("/delegate-clear provider/model clears the model and its provider mark, not
 	);
 });
 
+test("/delegate-clear opencode does not clear opencode-go", async (t) => {
+	clock(t);
+	const mark = (scope: string) => ({
+		scope,
+		reason: GO_LIMIT,
+		recordedAt: START,
+		clearsAt: START + 5 * 60_000,
+		source: "reactive",
+		hits: 1,
+		delegations: [],
+	});
+	writeFileSync(FILE, JSON.stringify([mark("opencode"), mark("opencode/m"), mark("opencode-go")]));
+	const p = parent();
+	await p.start();
+	await p.command("delegate-clear", "opencode");
+	assert.deepEqual(p.notes.slice(-1), ["delegate-clear: cleared opencode, opencode/m."]);
+	assert.deepEqual(
+		marks().map((m) => m.scope),
+		["opencode-go"],
+	);
+	await p.delegate("paid t");
+	assert.match(p.errors.join("\n"), /opencode-go\/paid is usage-limited/);
+});
+
 test("/delegate-clear all removes every mark", async (t) => {
 	clock(t);
 	await fail(GO_LIMIT);

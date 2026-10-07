@@ -133,11 +133,14 @@ delegate's result reaches the parent through the `message:*` provider's reply
 when its run settles, not through a tool, so excluding tools cannot stop it
 answering.
 
-`tools` is the delegate's complete tool allowlist, as a comma-separated or YAML
-list (`tools: device_run`). It reaches the child as `--tools device_run`, which
-covers extension tools too. Names are not checked against the parent's tools,
-since a tool from one of the agent's own `extensions` exists only in the
-child. Empty or absent passes no flag. `exclude-tools` still applies alongside.
+`tools` lists tools for the delegate as a comma-separated or YAML list
+(`tools: device_run`). It reaches the child as `--tools device_run`, which
+covers extension tools too. Without discovery tools such as `codemode` or
+`tool_search`, only the listed tools are visible. Pi can keep unlisted MCP
+tools registered unless the list includes an `mcp__` entry; discovery tools can
+also expose them. Names are not checked against the parent's tools, since a
+tool from one of the agent's own `extensions` exists only in the child. Empty or
+absent passes no flag. `exclude-tools` still applies alongside.
 
 `extensions` lists extension paths only this agent's delegate loads, as a
 comma-separated or YAML list. Each reaches the child as a repeated

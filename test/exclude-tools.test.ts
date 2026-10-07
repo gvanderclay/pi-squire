@@ -152,6 +152,7 @@ test("extensions become repeated -e flags, ~ and relative paths resolved, and th
 		assert.deepEqual(s.errors, []);
 		const { argv } = s.tmux.opened[0];
 		assert.deepEqual(argv.flatMap((arg, i) => (arg === "-e" ? [argv[i + 1]] : [])).slice(-2), [rel, home]);
+		assert.ok(!argv.includes("--no-extensions") && !argv.includes("-ne"), argv.join(" "));
 		assert.ok(argv.includes("--append-system-prompt") && argv.includes("--session-id"));
 	} finally {
 		process.env.HOME = savedHome;

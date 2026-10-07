@@ -319,7 +319,7 @@ function toolDescription(agents: readonly Agent[]): string {
 			(agent) =>
 				`- ${agent.name} — ${agent.description} (default ${[agent.model, ...agent.fallback.map((model) => `fallback ${model}`)].join(", ")}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"}${
 					agent.excludeTools.length > 0 ? `, no ${agent.excludeTools.join("/")}` : ""
-				}${agent.tools.length > 0 ? `, only ${agent.tools.join("/")}` : ""})`,
+				}${agent.tools.length > 0 ? `, only listed (MCP/discovery caveat): ${agent.tools.join("/")}` : ""})`,
 		),
 		"",
 		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",

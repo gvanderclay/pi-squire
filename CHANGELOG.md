@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Agent frontmatter `extensions` lists extension paths loaded only by that
+  agent's delegate, each passed to its Pi as `-e` on top of its normal
+  extensions. `~` expands and relative paths resolve against the `AGENT.md`'s
+  directory; a path that does not exist leaves the agent out with a warning.
+- Agent frontmatter `tools` is the delegate's complete tool allowlist, passed
+  as `--tools`. Names are not checked against the parent's tools, and
+  `exclude-tools` still applies alongside.
+
 ## [0.3.1] - 2026-10-03
 
 ### Changed

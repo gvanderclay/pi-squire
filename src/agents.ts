@@ -2,10 +2,15 @@
 // call time so a new agent is usable without a reload. Frontmatter carries
 // `description`, `model` and `thinking`, and optionally `auto-exit` (default
 // true) and `exclude-tools` (tools the delegate goes without, passed to its Pi
-// as `--exclude-tools`; each must be a tool the parent session has); the body
+// as `--exclude-tools`; each must be a tool the parent session has), `tools`
+// (the delegate's complete tool allowlist, passed as `--tools`, not checked
+// against the parent) and `extensions` (extra extension paths for the
+// delegate only, each passed as `-e`; `~` expands, relative paths resolve
+// against the AGENT.md's directory, and a missing path leaves the agent out); the body
 // is the delegate's system prompt. A file that is missing or malformed is left out, with a warning.
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
@@ -33,6 +38,10 @@ export type Agent = {
 	autoExit: boolean;
 	/** Tools the delegate goes without, from `exclude-tools`; empty means all of them. */
 	excludeTools: string[];
+	/** The delegate's complete tool allowlist, from `tools`; empty means no `--tools` flag. */
+	tools: string[];
+	/** Absolute paths of extra extensions the delegate loads, from `extensions`; empty when absent. */
+	extensions: string[];
 	/** Models to try, in order, when `model` is usage-limited; from `fallback`, empty when absent. */
 	fallback: string[];
 	/** The body of `AGENT.md`: the delegate's system prompt. */
@@ -96,6 +105,8 @@ function parseAgent(
 		return {
 			warning: `${path} has exclude-tools ${JSON.stringify(unknownTool)}, not a tool this session has; skipped`,
 		};
+	const launch = launchFields(path, frontmatter);
+	if ("warning" in launch) return launch;
 	// A bad fallback entry is dropped with a note; it never costs the agent.
 	const notes: string[] = [];
 	const listedFallback = toolList(frontmatter.fallback);
@@ -115,10 +126,39 @@ function parseAgent(
 			thinking: thinking as Thinking,
 			autoExit: autoExit ?? true,
 			excludeTools,
+			...launch,
 			fallback,
 			prompt: body,
 		},
 	};
+}
+
+/** The `tools` and `extensions` fields, or the warning that leaves the agent out. */
+function launchFields(
+	path: string,
+	frontmatter: Record<string, unknown>,
+): { tools: string[]; extensions: string[] } | { warning: string } {
+	const tools = toolList(frontmatter.tools);
+	if (tools === null)
+		return {
+			warning: `${path} has tools ${JSON.stringify(frontmatter.tools)}, not a comma-separated list of tool names; skipped`,
+		};
+	const paths = toolList(frontmatter.extensions);
+	if (paths === null)
+		return {
+			warning: `${path} has extensions ${JSON.stringify(frontmatter.extensions)}, not a comma-separated list of paths; skipped`,
+		};
+	const extensions = (paths ?? []).map((entry) => resolveExtension(entry, dirname(path)));
+	const absent = extensions.find((entry) => !existsSync(entry));
+	if (absent !== undefined) return { warning: `${path} has extension ${absent}, which does not exist; skipped` };
+	return { tools: tools ?? [], extensions };
+}
+
+/** An extension path as an absolute one: `~` is the home directory, a relative path is against the AGENT.md's directory. */
+function resolveExtension(entry: string, dir: string): string {
+	if (entry === "~") return homedir();
+	if (entry.startsWith("~/")) return join(homedir(), entry.slice(2));
+	return isAbsolute(entry) ? entry : resolve(dir, entry);
 }
 
 /** A list of names (tools or models), comma-separated or a YAML list of names; undefined when absent, null when it is neither. */

@@ -17,7 +17,8 @@
 // call) the delegate closes its own window after a normal completion; the
 // delegate's side lives in `child.ts`. With it off the window stays open.
 // An agent's `exclude-tools` goes to the child as `--exclude-tools`; a name the
-// session has no tool for leaves the agent out of the roster.
+// session has no tool for leaves the agent out of the roster. Its `tools` goes
+// as `--tools` and each of its `extensions` as `-e`, both for the child alone.
 //
 // The model gets three tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
@@ -308,7 +309,7 @@ function toolDescription(agents: readonly Agent[]): string {
 			"agents",
 			"<name>",
 			"AGENT.md",
-		)} with frontmatter description, model and thinking and the prompt as its body; /delegate explains the format too.`;
+		)} with frontmatter description, model and thinking (optionally auto-exit, exclude-tools, tools, extensions and fallback) and the prompt as its body; /delegate explains the format too.`;
 	}
 	return [
 		intro,
@@ -318,7 +319,7 @@ function toolDescription(agents: readonly Agent[]): string {
 			(agent) =>
 				`- ${agent.name} — ${agent.description} (default ${[agent.model, ...agent.fallback.map((model) => `fallback ${model}`)].join(", ")}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"}${
 					agent.excludeTools.length > 0 ? `, no ${agent.excludeTools.join("/")}` : ""
-				})`,
+				}${agent.tools.length > 0 ? `, only ${agent.tools.join("/")}` : ""})`,
 		),
 		"",
 		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",
@@ -387,7 +388,7 @@ export default function delegate(
 					"agents",
 					"<name>",
 					"AGENT.md",
-				)} with frontmatter description, model and thinking, and the prompt as its body`,
+				)} with frontmatter description, model and thinking (optionally auto-exit, exclude-tools, tools, extensions and fallback), and the prompt as its body`,
 			);
 		}
 		const agent = roster.agents.find((candidate) => candidate.name === request.agent);
@@ -447,6 +448,8 @@ export default function delegate(
 			start.model,
 			"--thinking",
 			start.thinking,
+			...start.agent.extensions.flatMap((extension) => ["-e", extension]),
+			...(start.agent.tools.length > 0 ? ["--tools", start.agent.tools.join(",")] : []),
 			...(start.agent.excludeTools.length > 0 ? ["--exclude-tools", start.agent.excludeTools.join(",")] : []),
 			"--append-system-prompt",
 			prompt,

@@ -5,6 +5,9 @@
 // temporary agent directory, a fake Pi session, the fake tmux.
 
 import assert from "node:assert/strict";
+import { rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
 import { readRoster } from "../src/agents.ts";
@@ -126,4 +129,65 @@ test("a bad fallback entry is dropped with a warning and the agent still loads",
 	await s.delegate("a go");
 	assert.equal(s.tmux.opened.length, 1);
 	assert.ok(s.warnings.some((warning) => warning.includes(`fallback "not-a-model"`)));
+});
+
+// `extensions` and `tools` frontmatter: extra child-only extensions and a tool allowlist.
+
+const pair = (argv: readonly string[], flag: string) => argv.slice(argv.indexOf(flag), argv.indexOf(flag) + 2);
+
+test("extensions become repeated -e flags, ~ and relative paths resolved, and the child still gets the usual flags", async () => {
+	const rel = join(agentDir, "agents", "tester", "ext.ts");
+	writeAgent("tester", agentFile({ ...SCOUT, extensions: "./ext.ts, ~/home-ext.ts" }));
+	writeFileSync(rel, "");
+	const savedHome = process.env.HOME;
+	process.env.HOME = agentDir; // os.homedir() follows HOME on POSIX
+	const home = join(homedir(), "home-ext.ts");
+	writeFileSync(home, "");
+	try {
+		const { agents } = readRoster(agentDir);
+		assert.deepEqual(agents[0].extensions, [rel, home]);
+		const s = session();
+		await s.start();
+		await s.delegate("tester go");
+		assert.deepEqual(s.errors, []);
+		const { argv } = s.tmux.opened[0];
+		assert.deepEqual(argv.flatMap((arg, i) => (arg === "-e" ? [argv[i + 1]] : [])).slice(-2), [rel, home]);
+		assert.ok(!argv.includes("--no-extensions") && !argv.includes("-ne"), argv.join(" "));
+		assert.ok(argv.includes("--append-system-prompt") && argv.includes("--session-id"));
+	} finally {
+		process.env.HOME = savedHome;
+		rmSync(home);
+	}
+});
+
+test("a missing extension path leaves the agent out with a warning", async () => {
+	writeAgent("tester", agentFile({ ...SCOUT, extensions: "./nope.ts" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(agents, []);
+	assert.ok(warnings[0].includes("nope.ts, which does not exist; skipped"), warnings[0]);
+});
+
+test("tools and exclude-tools both reach the child; empty or absent lists pass no flags", async () => {
+	writeAgent("both", agentFile({ ...SCOUT, tools: "device_run, read", "exclude-tools": "edit" }));
+	writeAgent("empty", agentFile({ ...SCOUT, tools: "", extensions: "" }));
+	writeAgent("none", agentFile(SCOUT));
+	const s = session({ registeredTools: ["read", "bash", "edit", "write"] });
+	await s.start();
+	await s.delegate("both go");
+	await s.delegate("empty go");
+	await s.delegate("none go");
+	assert.deepEqual(s.errors, []);
+	const [both, empty, none] = s.tmux.opened.map((opened) => opened.argv);
+	assert.deepEqual(pair(both, "--tools"), ["--tools", "device_run,read"]);
+	assert.deepEqual(pair(both, "--exclude-tools"), ["--exclude-tools", "edit"]);
+	for (const argv of [empty, none]) {
+		assert.ok(!argv.includes("--tools") && !argv.includes("-e"), argv.join(" "));
+	}
+});
+
+test("a tools that is not a list leaves the agent out with a warning", async () => {
+	writeAgent("bad", agentFile({ ...SCOUT, tools: "{ a: 1 }" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(agents, []);
+	assert.ok(warnings[0].includes("has tools"), warnings[0]);
 });

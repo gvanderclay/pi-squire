@@ -116,7 +116,7 @@ The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
 directory per agent, so a new agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`, and optionally
 `auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit)),
-`exclude-tools` and `fallback`. The body is the delegate's system prompt,
+`exclude-tools`, `tools`, `extensions` and `fallback`. The body is the delegate's system prompt,
 appended to Pi's own prompt; it reaches the child as a path to a private file
 under the system temporary folder, so the text stays off the command line. The
 [first-use example](#first-use) is a complete `AGENT.md`.
@@ -132,6 +132,23 @@ checked against the tools the parent session has registered
 delegate's result reaches the parent through the `message:*` provider's reply
 when its run settles, not through a tool, so excluding tools cannot stop it
 answering.
+
+`tools` lists tools for the delegate as a comma-separated or YAML list
+(`tools: device_run`). It reaches the child as `--tools device_run`, which
+covers extension tools too. Without discovery tools such as `codemode` or
+`tool_search`, only the listed tools are visible. Pi can keep unlisted MCP
+tools registered unless the list includes an `mcp__` entry; discovery tools can
+also expose them. Names are not checked against the parent's tools, since a
+tool from one of the agent's own `extensions` exists only in the child. Empty or
+absent passes no flag. `exclude-tools` still applies alongside.
+
+`extensions` lists extension paths only this agent's delegate loads, as a
+comma-separated or YAML list. Each reaches the child as a repeated
+`-e <absolute path>`, on top of its normal extensions, so pi-squire and the
+`message:*` provider still load and the result still reaches the parent. `~`
+and `~/` expand to the home directory and a relative path resolves against the
+directory holding that `AGENT.md`. A path that does not exist when the roster
+is read leaves the agent out, with a warning.
 
 `fallback` lists models to try, in order, when the agent's `model` is
 usage-limited (see [Usage limits](#usage-limits)), as a comma-separated list
@@ -150,7 +167,8 @@ An `AGENT.md` that cannot be used is left out of the roster and named in a
 warning. That covers missing fields, a model that is not `provider/id`, an
 unknown thinking level, an `auto-exit` that is not `true` or `false`, an
 `exclude-tools` that is not a list of names or names a tool the session does
-not have, and an empty body. With no agents at all, `/delegate` says how to
+not have, a `tools` or `extensions` that is not a list, an extension path that
+does not exist, and an empty body. With no agents at all, `/delegate` says how to
 add one.
 
 ## Configuration

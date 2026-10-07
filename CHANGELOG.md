@@ -6,6 +6,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Agent frontmatter `extensions` lists extension paths loaded only by that
+  agent's delegate, each passed to its Pi as `-e` on top of its normal
+  extensions. `~` expands and relative paths resolve against the `AGENT.md`'s
+  directory; a path that does not exist leaves the agent out with a warning.
+- Agent frontmatter `tools` lists the delegate's visible tools, passed as
+  `--tools`. Without discovery tools such as `codemode` or `tool_search`, only
+  listed tools are visible; Pi can keep unlisted MCP tools registered unless
+  the list includes an `mcp__` entry, and discovery tools can expose them.
+  Names are not checked against the parent's tools, and `exclude-tools` still
+  applies alongside.
+
 ## [0.3.1] - 2026-10-03
 
 ### Changed

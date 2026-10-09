@@ -19,6 +19,12 @@ follows [Semantic Versioning](https://semver.org/).
   Names are not checked against the parent's tools, and `exclude-tools` still
   applies alongside.
 
+### Fixed
+
+- The `delegate` tool treats `null` or the string `"null"` in `model`,
+  `thinking` or `label` as unset, so the agent's defaults apply. Before, a
+  `null` model crashed the call and `"null"` was refused as not provider/id.
+
 ## [0.3.1] - 2026-10-03
 
 ### Changed

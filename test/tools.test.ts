@@ -137,6 +137,26 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-${id.slice(0, 8)}`);
 });
 
+test('null or "null" for an optional field means unset, so the agent\'s defaults apply', async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	for (const none of [null, "null"]) {
+		await s.toolCall("delegate", {
+			agent: "scout",
+			task: "find it",
+			model: none,
+			thinking: none,
+			label: none,
+			auto_exit: null,
+		});
+		const { argv, name } = s.tmux.opened[s.tmux.opened.length - 1];
+		assert.equal(argv[argv.indexOf("--model") + 1], "alpha/fast-model");
+		assert.equal(argv[argv.indexOf("--thinking") + 1], "low");
+		assert.doesNotMatch(name, /null/);
+	}
+});
+
 test("a label names the session and the window, shows in the reply and in delegation_status", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session();

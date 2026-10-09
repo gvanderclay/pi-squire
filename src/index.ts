@@ -539,18 +539,27 @@ export default function delegate(
 		}),
 		async execute(
 			_toolCallId: string,
-			params: { agent: string; task: string; model?: string; thinking?: string; label?: string; auto_exit?: boolean },
+			params: {
+				agent: string;
+				task: string;
+				model?: string | null;
+				thinking?: string | null;
+				label?: string | null;
+				auto_exit?: boolean | null;
+			},
 			_signal: unknown,
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		) {
 			if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
+			// Some models fill every optional field with null or the string "null"; both mean unset.
+			const given = (value: string | null | undefined) => (value == null || value === "null" ? undefined : value);
 			const start = await validate(
 				{
 					agent: params.agent,
-					model: params.model,
-					thinking: params.thinking,
-					label: params.label,
+					model: given(params.model),
+					thinking: given(params.thinking),
+					label: given(params.label),
 					autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
 					task: params.task ?? "",
 				},

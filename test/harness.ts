@@ -196,6 +196,7 @@ export function session(options: SessionOptions = {}) {
 		registerTool: (tool: Tool) => {
 			tools[tool.name] = tool;
 		},
+		registerMessageRenderer: () => {},
 		appendEntry: (customType: string, data: unknown) =>
 			entries.push({ customType, data: data as Record<string, unknown> }),
 		sendMessage: (message: { customType: string; content: unknown; display?: boolean }, opts: unknown) =>

@@ -19,6 +19,10 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A delegate is now told to put its findings in its final message and to
+  message the parent before then only with a question it cannot continue
+  without. Delegates mailed progress and findings that the result then
+  repeated, so the parent read the same report twice.
 - A delegate message in the chat now shows collapsed, as its first two
   lines, and expands with the tool-output toggle (Ctrl+O), in step with tool
   output. The model still gets the whole message.

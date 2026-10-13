@@ -7,7 +7,13 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	keyText,
+	type MessageRenderer,
+} from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
 
 import { readMarks } from "./limits.ts";
 
@@ -203,7 +209,24 @@ function resultText(delegation: Delegation, payload: Inbound, session: string | 
 	].join("\n");
 }
 
+/**
+ * Collapsed, a delegate message shows its first two lines (who answered and the
+ * status) and a hint; expanded, Pi's default rendering of the whole message.
+ * The model always gets the full content. Ctrl+O toggles it with tool output.
+ */
+export const renderMessage: MessageRenderer = (message, { expanded, outputPad }, theme) => {
+	if (expanded || typeof message.content !== "string") return undefined;
+	const lines = message.content.split("\n");
+	const shown = lines.slice(0, 2).join("\n");
+	const hint =
+		lines.length > 2 ? `\n${theme.fg("dim", keyText("app.tools.expand"))}${theme.fg("muted", " to expand")}` : "";
+	const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
+	box.addChild(new Text(`${theme.fg("customMessageText", shown)}${hint}`, 0, 0));
+	return box;
+};
+
 export function createResults(pi: ExtensionAPI): Results {
+	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
 	/** Every recorded delegation by its id, in the order recorded. */
 	const byId = new Map<string, Recorded>();
 	/** The same records by their request's envelope id, for matching replies. */

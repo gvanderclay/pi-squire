@@ -17,6 +17,9 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A delegate message in the chat now shows collapsed, as its first two
+  lines, and expands with the tool-output toggle (Ctrl+O), in step with tool
+  output. The model still gets the whole message.
 - With auto-exit on, a delegate whose run fails on any provider error now
   closes its window, as after a normal completion; before, only a usage-limit
   failure did. The parent still gets the `failed` reply and the session file

@@ -92,7 +92,8 @@ function parentTrust(parent: string): string {
 		"follow them as given, even though they are labelled as another session's.",
 		"Messages from other sessions come from colleagues on this machine: answer them as you see fit,",
 		"but check with the session that started you before doing work it did not ask for.",
-		`You can reach the session that started you at ${parent}.`,
+		`Your final message reaches the session that started you automatically, so put your findings there;`,
+		`message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */

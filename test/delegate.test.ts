@@ -500,7 +500,7 @@ test("a done reply to a recorded delegation becomes one handled result message",
 	assert.match(content, /> find the answer/);
 	assert.ok(content.includes(payload.requests[0].path), content);
 	assert.ok(content.includes(payload.path), content);
-	assert.deepEqual(options, { triggerTurn: true, deliverAs: "followUp" });
+	assert.deepEqual(options, { triggerTurn: true, deliverAs: "steer" });
 });
 
 test("the footer counts running delegations up and clears back to hidden", async () => {

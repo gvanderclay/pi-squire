@@ -23,6 +23,12 @@ follows [Semantic Versioning](https://semver.org/).
   message the parent before then only with a question it cannot continue
   without. Delegates mailed progress and findings that the result then
   repeated, so the parent read the same report twice.
+- A delegate's result now reaches a busy parent as a steer, after its current
+  tool calls and before its next model call, instead of as a follow-up once
+  its run ends. Queued until then, the result arrived after the parent had
+  read the envelope itself and answered, and cost a redundant turn.
+  `delegation_status` now says a done result arrives as a message on its own.
+  `test/delegate.test.ts` pins `steer` in place of `followUp`.
 - A delegate message in the chat now shows collapsed, as its first two
   lines, and expands with the tool-output toggle (Ctrl+O), in step with tool
   output. The model still gets the whole message.

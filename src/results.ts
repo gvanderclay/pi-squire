@@ -335,9 +335,10 @@ export function createResults(pi: ExtensionAPI): Results {
 		const delegation = byRequest.get(requestId) as Recorded;
 		shown.add(reply.id);
 		const session = findSession(ctx?.sessionManager.getSessionDir(), delegation.id);
+		// Steer, not follow-up: a busy parent gets the result before its next model call, not after it has answered.
 		pi.sendMessage(
 			{ customType: CUSTOM_TYPE, content: resultText(delegation, payload, session), display: true },
-			{ triggerTurn: true, deliverAs: "followUp" },
+			{ triggerTurn: true, deliverAs: "steer" },
 		);
 		const result: Result = {
 			status: reply.status,

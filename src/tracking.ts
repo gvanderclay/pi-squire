@@ -90,7 +90,7 @@ function stateLine(state: DelegationState, record: Recorded): string {
 		case "gone":
 			return "closed without a result — the window is gone and no reply arrived; a late reply would make it done";
 		case "done":
-			return `done — result status: ${record.result?.status ?? "unknown"}`;
+			return `done — result status: ${record.result?.status ?? "unknown"}; the result reaches this session as a [delegate] message on its own`;
 		case "closed":
 			return "closed — delegation_close recorded it";
 		case "window-closed":

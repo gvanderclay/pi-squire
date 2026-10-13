@@ -231,7 +231,7 @@ level is refused with close matches and nothing starts.
 
 <id> researcher (provider/other, thinking high)
   name: researcher-<first 8 of the id>
-  state: done — result status: done
+  state: done — result status: done; the result reaches this session as a [delegate] message on its own
   window: researcher-<first 8 of the id> (@2)
   auto-exit: off — the window stays open after the result
   session: <session file>
@@ -430,9 +430,11 @@ Delegate session: <session file or id>
   delegate's session path is found in the session directory by the delegation
   id, and the id alone is shown when no file exists yet.
 - The body is cut at 32 KiB with the envelope path.
-- The message is sent as a `followUp` with `triggerTurn`: a result starts a
-  turn when the parent is idle and arrives as a follow-up when it is
-  mid-turn.
+- The message is sent as a `steer` with `triggerTurn`: a result starts a
+  turn when the parent is idle, and when it is mid-turn arrives after the
+  current tool calls, before the next model call. A follow-up would wait
+  until the parent had answered, by which time it had often read the
+  envelope itself, and the late result cost a second, redundant turn.
 - The footer counts the running delegations (`⇄ N running`), clears one entry
   per result or close and hides itself at zero.
 - Each result and each close is recorded in the parent session, and the

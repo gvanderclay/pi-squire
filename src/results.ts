@@ -159,8 +159,8 @@ export function findSession(dir: string | undefined, id: string): string | undef
 	return name === undefined ? undefined : join(dir, name);
 }
 
-/** The line naming a usage-limit mark this delegation's failure recorded, if any. */
-function limitLine(id: string): string | undefined {
+/** The line naming a usage-limit mark this delegation recorded, if any; a `done` delegation finished on a fallback. */
+function limitLine(id: string, status: string): string | undefined {
 	const now = Date.now();
 	const mark = readMarks(now).find((item) => item.delegations.includes(id));
 	if (mark === undefined) return undefined;
@@ -168,7 +168,7 @@ function limitLine(id: string): string | undefined {
 	const until = new Date(mark.clearsAt).toISOString();
 	return `Usage limit: the delegate hit a usage limit on ${scope}; ${
 		mark.clearsAt > now ? `it is marked until ${until} and later delegations skip it.` : `it was marked until ${until}.`
-	}`;
+	}${status === "done" ? " It finished on a fallback model; its session names which." : ""}`;
 }
 
 /** The one message the parent sees for a settled delegation. */
@@ -190,7 +190,7 @@ function resultText(delegation: Delegation, payload: Inbound, session: string | 
 	const cut = cap(reply.body, BODY_CAP);
 	const result =
 		cut === undefined ? reply.body : `${cut}\n[delegate] Body cut at 32 KiB; the full envelope is ${payload.path}`;
-	const limit = reply.status === "failed" ? limitLine(delegation.id) : undefined;
+	const limit = reply.status === "stopped" ? undefined : limitLine(delegation.id, reply.status);
 	return [
 		`[delegate] Result from ${delegation.agent} (${delegation.model}), delegation ${delegation.id}, request ${delegation.requestId}.`,
 		`Status: ${reply.status}`,

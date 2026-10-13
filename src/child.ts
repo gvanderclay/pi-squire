@@ -5,7 +5,9 @@
 // settles, so its tmux window closes; the settle reply has been sent by
 // then, since the shutdown waits for the next event-loop turn. A failed run
 // exits too (the parent gets the error and the session file stays); only a
-// run the user stopped never exits. The user
+// run the user stopped never exits. A run that ends on a usage limit first
+// moves to the agent's next fallback, from `PI_DELEGATE_FALLBACK`, and
+// continues there; it exits only when no fallback is left. The user
 // taking over — typing here, or stopping a run — turns it off for the rest of
 // the session, with a notice; `/auto-exit` turns it back on. Modelled on
 // edxeth/pi-subagents' `auto-exit` (README "Child lifecycle", `cf6dbf4`).
@@ -18,10 +20,12 @@
 // ponytail: drop the takeover once #5581 lands and the minimum Pi has it.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { type Response, recordLimit } from "./limits.ts";
+import { activeMark, classify, type Response, recordLimit } from "./limits.ts";
 
 /** The launch variable that carries the parent's resolved setting. */
 export const AUTO_EXIT_ENV = "PI_DELEGATE_AUTO_EXIT";
+/** The launch variable listing, comma-separated, the agent's models after the one launched. */
+export const FALLBACK_ENV = "PI_DELEGATE_FALLBACK";
 
 const OFF_NOTICE =
 	"delegate: auto-exit is off for this session because you took over here; the window stays open. /auto-exit turns it back on.";
@@ -48,7 +52,20 @@ function recordUsageLimit(last: Message, ctx: ExtensionContext, response?: Respo
 	}
 }
 
-export function registerChild(pi: ExtensionAPI, parent: string): void {
+/** Switch to the first of `fallback` that is usable and not marked, taking each off the list; the one switched to, if any. */
+async function switchModel(pi: ExtensionAPI, ctx: ExtensionContext, fallback: string[]): Promise<string | undefined> {
+	for (let next = fallback.shift(); next !== undefined; next = fallback.shift()) {
+		const slash = next.indexOf("/");
+		const model = ctx.modelRegistry.find(next.slice(0, slash), next.slice(slash + 1));
+		if (model === undefined || !ctx.modelRegistry.hasConfiguredAuth(model)) continue;
+		if (activeMark(ctx.modelRegistry, model.provider, model.id) !== undefined) continue;
+		if (await pi.setModel(model)) return next;
+	}
+	return undefined;
+}
+
+/** Take over the parent's task request and send it as a user prompt. */
+function registerTakeover(pi: ExtensionAPI, parent: string): void {
 	let current: ExtensionContext | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		current = ctx;
@@ -63,6 +80,33 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 			current?.ui.notify(`delegate: could not start the task: ${(err as Error).message}`, "error"),
 		);
 	});
+}
+
+/**
+ * A usage limit moves the run to the next fallback that is usable and not
+ * marked, and continues it in this session; each fallback is tried once.
+ * Returns the setter for the model whose usage limit ended the last run.
+ */
+function registerFallback(pi: ExtensionAPI): (model: string | undefined) => void {
+	/** The models still to move to on a usage limit, in order. */
+	const fallback = (process.env[FALLBACK_ENV] ?? "").split(",").filter((model) => model.includes("/"));
+	let limited: string | undefined;
+	pi.on("agent_before_settle", async (_event, ctx) => {
+		const from = limited;
+		limited = undefined;
+		const next = from === undefined ? undefined : await switchModel(pi, ctx, fallback);
+		if (next === undefined) return;
+		const content = `[delegate] ${from} hit a usage limit, so this session switched to ${next}. Carry on with the task from where it stopped.`;
+		return { continue: true, entries: [{ type: "custom_message", customType: "delegate", content, display: true }] };
+	});
+	return (model) => {
+		limited = model;
+	};
+}
+
+export function registerChild(pi: ExtensionAPI, parent: string): void {
+	registerTakeover(pi, parent);
+	const setLimited = registerFallback(pi);
 
 	let armed = process.env[AUTO_EXIT_ENV] === "1";
 	/** Whether the run that just ended finished without the user stopping it. */
@@ -100,6 +144,11 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		const stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 		if (stopped) disarm(ctx);
 		if (!stopped && last?.stopReason === "error") recordUsageLimit(last, ctx, response);
+		setLimited(
+			!stopped && typeof last?.errorMessage === "string" && classify(last.errorMessage) !== undefined
+				? `${String(last.provider)}/${String(last.model)}`
+				: undefined,
+		);
 		// A failure ends the work like a completion: the parent gets the error, the session file stays.
 		completed = !stopped;
 	});

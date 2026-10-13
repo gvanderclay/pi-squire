@@ -456,6 +456,81 @@ test("an explicit model that is marked is refused even when the agent has fallba
 	assert.deepEqual(p.tmux.opened, []);
 });
 
+// Moving to a fallback mid-run
+
+test("the launch passes the agent's models after the one chosen, and none for an explicit model", async (t) => {
+	clock(t);
+	writeAgent("fb", FB("alpha/deep-model, beta/other-model"));
+	await fail(GO_LIMIT);
+	const p = parent();
+	await p.start();
+	await p.toolCall("delegate", { agent: "fb", task: "t" });
+	await p.toolCall("delegate", { agent: "fb", task: "t", model: "beta/other-model" });
+	await p.toolCall("delegate", { agent: "paid", task: "t", model: "alpha/fast-model" });
+	assert.deepEqual(
+		p.tmux.opened.map((window) => window.env.PI_DELEGATE_FALLBACK),
+		["beta/other-model", undefined, undefined],
+	);
+});
+
+/** A delegate whose launch passed `fallbackEnv`. */
+function fallbackDelegate(fallbackEnv: string) {
+	const delegate = session({
+		parentEnv: "parent-x",
+		parent: "delegation-1",
+		autoExitEnv: "1",
+		fallbackEnv,
+		extraModels: EXTRA,
+	});
+	delete process.env.PI_DELEGATE_PARENT;
+	delete process.env.PI_DELEGATE_FALLBACK;
+	return delegate;
+}
+
+test("a usage limit mid-run moves to the next usable, unmarked fallback and continues the session", async (t) => {
+	clock(t);
+	const delegate = fallbackDelegate("opencode-go/paid,nowhere/model,beta/other-model,alpha/deep-model");
+	await delegate.start();
+	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
+	// opencode-go/paid is now marked and nowhere/model is unknown, so both are passed over.
+	assert.deepEqual(delegate.modelSets, ["beta/other-model"]);
+	assert.equal(delegate.continuations.length, 1);
+	assert.match(
+		String(delegate.continuations[0].entries?.[0].content),
+		/opencode-go\/paid hit a usage limit, so this session switched to beta\/other-model/,
+	);
+	assert.equal(delegate.shutdowns(), 0);
+	await delegate.run("completed");
+	assert.equal(delegate.shutdowns(), 1);
+});
+
+test("each fallback is tried once; with none left the failed run settles and exits", async (t) => {
+	clock(t);
+	const delegate = fallbackDelegate("beta/other-model");
+	await delegate.start();
+	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
+	await delegate.run("error", {
+		errorMessage: '429: {"type":"rate_limit_error"}',
+		provider: "beta",
+		model: "other-model",
+	});
+	assert.deepEqual(delegate.modelSets, ["beta/other-model"]);
+	assert.equal(delegate.continuations.length, 1);
+	assert.equal(delegate.shutdowns(), 1);
+});
+
+test("a failure that is not a usage limit, or a stopped run, never moves to a fallback", async (t) => {
+	clock(t);
+	const failed = fallbackDelegate("beta/other-model");
+	await failed.start();
+	await failed.run("error", { errorMessage: "400: bad request", provider: "opencode-go", model: "paid" });
+	const stopped = fallbackDelegate("beta/other-model");
+	await stopped.start();
+	await stopped.run("stopped");
+	assert.deepEqual([...failed.modelSets, ...stopped.modelSets], []);
+	assert.deepEqual([...failed.continuations, ...stopped.continuations], []);
+});
+
 // Seeing marks: the result line and delegation_status
 
 /** The `failed` or `done` reply the mailbox would deliver for the parent's first delegation. */
@@ -497,6 +572,22 @@ test("a failed reply from a delegate that hit a usage limit carries the limit li
 	assert.equal(
 		lines[2],
 		"Usage limit: the delegate hit a usage limit on provider opencode-go; it is marked until 2026-10-03T12:05:00.000Z and later delegations skip it.",
+	);
+});
+
+test("a done reply from a delegate that hit a usage limit says it finished on a fallback", async (t) => {
+	clock(t);
+	const p = parent();
+	await p.start();
+	await p.delegate("plain t");
+	await fail(GO_LIMIT, "paid", firstId(p));
+	p.scan.queue.push(reply(p, "done"));
+	p.events.emit("message:scan", {});
+	const lines = resultOf(p).split("\n");
+	assert.equal(lines[1], "Status: done");
+	assert.equal(
+		lines[2],
+		"Usage limit: the delegate hit a usage limit on provider opencode-go; it is marked until 2026-10-03T12:05:00.000Z and later delegations skip it. It finished on a fallback model; its session names which.",
 	);
 });
 

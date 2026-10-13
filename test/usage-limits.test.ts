@@ -228,6 +228,7 @@ for (const message of [
 	"The usage limit reached for this plan",
 	'{"type":"rate_limit_error","message":"slow"}',
 	'429: {"type":"rate_limit_error"}',
+	"The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.",
 ]) {
 	test(`Codex/Claude wording records a mark: ${message}`, async (t) => {
 		clock(t);
@@ -441,13 +442,16 @@ test("a fallback without credentials is skipped for the next one", async (t) => 
 	assert.match(p.notes.join("\n"), /alpha\/deep-model is unavailable \(no credentials/);
 });
 
-test("an explicit model that is marked is refused even when the agent has fallbacks", async (t) => {
+test("an explicit model that is marked is refused even when the agent has fallbacks, naming the open one", async (t) => {
 	clock(t);
 	writeAgent("fb", FB("beta/other-model"));
 	await fail(GO_LIMIT);
 	const p = parent();
 	await p.start();
-	await assert.rejects(p.toolCall("delegate", { agent: "fb", task: "t", model: "opencode-go/paid" }), /usage-limited/);
+	await assert.rejects(
+		p.toolCall("delegate", { agent: "fb", task: "t", model: "opencode-go/paid" }),
+		/usage-limited.*Omit model to launch fb on beta\/other-model, or clear marks/s,
+	);
 	await p.delegate("fb --model opencode-go/paid t");
 	assert.deepEqual(p.tmux.opened, []);
 });

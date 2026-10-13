@@ -273,11 +273,18 @@ async function chooseModel(
 	}
 	if (skipped.length === 1) {
 		const [only] = skipped;
-		throw new Error(
-			only.why.startsWith("usage-limited")
-				? `${only.model} is ${only.reason}. Clear marks with /delegate-clear.`
-				: only.reason,
-		);
+		if (!only.why.startsWith("usage-limited")) throw new Error(only.reason);
+		// An explicit model is never substituted, but the refusal names the agent's models still open.
+		const open = [agent.model, ...agent.fallback].filter((model) => {
+			if (model === only.model || modelProblem(model, models) !== undefined) return false;
+			const slash = model.indexOf("/");
+			return activeMark(models, model.slice(0, slash), model.slice(slash + 1)) === undefined;
+		});
+		const hint =
+			explicit !== undefined && open.length > 0
+				? ` Omit model to launch ${agent.name} on ${open[0]}${open.length > 1 ? ` (also open: ${open.slice(1).join(", ")})` : ""}, or clear marks with /delegate-clear.`
+				: " Clear marks with /delegate-clear.";
+		throw new Error(`${only.model} is ${only.reason}.${hint}`);
 	}
 	throw new Error(
 		`no model is available for agent ${agent.name}:\n${skipped.map((item) => `- ${item.model}: ${item.reason}`).join("\n")}\nClear marks with /delegate-clear.`,

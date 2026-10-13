@@ -7,7 +7,7 @@ after(cleanup);
 
 test("an errored run carries the failure a test chose, and a plain one keeps boom", async () => {
 	resetRoot();
-	const s = session({ parentEnv: "p", autoExitEnv: "1" });
+	const s = session({ parentEnv: "p", autoExitEnv: "0" });
 	const seen: Record<string, unknown>[] = [];
 	s.pi.on("agent_end", (event) => {
 		seen.push((event as { messages: Record<string, unknown>[] }).messages[1]);
@@ -20,7 +20,6 @@ test("an errored run carries the failure a test chose, and a plain one keeps boo
 	assert.equal(seen[0].model, "fake-go-model");
 	assert.equal(seen[1].errorMessage, "boom");
 	assert.equal("provider" in seen[1], false);
-	assert.equal(s.shutdowns(), 0);
 });
 
 test("fire reaches handlers and extra models stay in their own session", async () => {

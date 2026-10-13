@@ -2,9 +2,10 @@
 //
 // The parent resolves the setting and passes it as `PI_DELEGATE_AUTO_EXIT`
 // (`1` on, `0` off). While it is on, the delegate shuts Pi down once a run
-// settles as a normal completion, so its tmux window closes; the settle
-// reply has been sent by then, since the shutdown waits for the next
-// event-loop turn. A run that ended stopped or failed never exits. The user
+// settles, so its tmux window closes; the settle reply has been sent by
+// then, since the shutdown waits for the next event-loop turn. A failed run
+// exits too (the parent gets the error and the session file stays); only a
+// run the user stopped never exits. The user
 // taking over — typing here, or stopping a run — turns it off for the rest of
 // the session, with a notice; `/auto-exit` turns it back on. Modelled on
 // edxeth/pi-subagents' `auto-exit` (README "Child lifecycle", `cf6dbf4`).
@@ -17,7 +18,7 @@
 // ponytail: drop the takeover once #5581 lands and the minimum Pi has it.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { classify, type Response, recordLimit } from "./limits.ts";
+import { type Response, recordLimit } from "./limits.ts";
 
 /** The launch variable that carries the parent's resolved setting. */
 export const AUTO_EXIT_ENV = "PI_DELEGATE_AUTO_EXIT";
@@ -64,7 +65,7 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 	});
 
 	let armed = process.env[AUTO_EXIT_ENV] === "1";
-	/** Whether the run that just ended finished normally: not stopped, not failed. */
+	/** Whether the run that just ended finished without the user stopping it. */
 	let completed = false;
 
 	function disarm(ctx: ExtensionContext): void {
@@ -99,9 +100,8 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		const stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 		if (stopped) disarm(ctx);
 		if (!stopped && last?.stopReason === "error") recordUsageLimit(last, ctx, response);
-		// A usage limit is final until the quota resets, so it ends the work like a completion.
-		const limited = typeof last?.errorMessage === "string" && classify(last.errorMessage) !== undefined;
-		completed = !stopped && (last?.stopReason !== "error" || limited);
+		// A failure ends the work like a completion: the parent gets the error, the session file stays.
+		completed = !stopped;
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {

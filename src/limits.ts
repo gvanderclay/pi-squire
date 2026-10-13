@@ -85,7 +85,7 @@ export function activeMark(models: Models, provider: string, id: string, now = D
 }
 
 const LIMIT_PATTERN =
-	/GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|insufficient_quota|quota exceeded|subscription_sharing_usage_limit_exceeded|usage_limit_reached|usage limit reached|rate_limit_error/i;
+	/GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|insufficient_quota|quota exceeded|subscription_sharing_usage_limit_exceeded|usage_limit_reached|usage limit reached|reached (?:their|your) .{0,40}usage limit|rate_limit_error/i;
 
 /** The reset time an error text states: "try again in N units", "retry after", or a `resets_at` field. */
 function statedReset(message: string, now: number): number | undefined {

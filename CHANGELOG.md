@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A delegate whose run ends on a usage limit now switches to the agent's next
+  fallback that has credentials and is not marked, and continues the task in
+  the same session instead of failing. The parent passes the candidates after
+  the launched model as `PI_DELEGATE_FALLBACK`; an explicit `model` passes
+  none. A `done` result from such a delegate carries the `Usage limit:` line,
+  saying it finished on a fallback.
+
 ### Changed
 
 - With auto-exit on, a delegate whose run fails on any provider error now

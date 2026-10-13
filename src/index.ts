@@ -47,7 +47,7 @@ import {
 import { Type } from "typebox";
 
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
-import { AUTO_EXIT_ENV, registerChild } from "./child.ts";
+import { AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
@@ -114,6 +114,8 @@ type Start = {
 	skipped: Skipped[];
 	/** Lines for the parent, such as a quota reading that failed. */
 	notices: string[];
+	/** The candidates after `model`, for the delegate to move to on a usage limit; empty for an explicit model. */
+	rest: string[];
 	thinking: string;
 	label?: string;
 	autoExit: boolean;
@@ -238,7 +240,7 @@ async function chooseModel(
 	agent: Agent,
 	models: ModelRegistry,
 	proactive: Proactive,
-): Promise<{ model: string; skipped: Skipped[]; notices: string[] }> {
+): Promise<{ model: string; skipped: Skipped[]; notices: string[]; rest: string[] }> {
 	const candidates = explicit !== undefined ? [explicit] : [agent.model, ...agent.fallback];
 	const skipped: Skipped[] = [];
 	const notices: string[] = [];
@@ -262,7 +264,7 @@ async function chooseModel(
 			if (checked.notice !== undefined && !notices.includes(checked.notice)) notices.push(checked.notice);
 			mark = activeMark(models, provider, id) ?? checked.mark;
 		}
-		if (mark === undefined) return { model, skipped, notices };
+		if (mark === undefined) return { model, skipped, notices, rest: candidates.slice(candidates.indexOf(model) + 1) };
 		const what = mark.scope.includes("/") ? `model ${mark.scope}` : `provider ${mark.scope}`;
 		const until = new Date(mark.clearsAt).toISOString();
 		skipped.push({
@@ -406,7 +408,7 @@ export default function delegate(
 		}
 		if (request.task.trim() === "") throw new Error("a task is required");
 		const thinking = request.thinking ?? agent.thinking;
-		const { model, skipped, notices } = await chooseModel(request.model, agent, models, proactive);
+		const { model, skipped, notices, rest } = await chooseModel(request.model, agent, models, proactive);
 		const badThinking = thinkingProblem(thinking);
 		if (badThinking !== undefined) throw new Error(badThinking);
 		const badLabel = request.label === undefined ? undefined : labelProblem(request.label);
@@ -416,6 +418,7 @@ export default function delegate(
 			model,
 			skipped,
 			notices,
+			rest,
 			thinking,
 			label: request.label,
 			autoExit: request.autoExit ?? agent.autoExit,
@@ -466,6 +469,7 @@ export default function delegate(
 			[PARENT_ENV]: parent,
 			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
 		};
+		if (start.rest.length > 0) env[FALLBACK_ENV] = start.rest.join(",");
 		const sessionDir = process.env[SESSION_DIR_ENV];
 		if (sessionDir !== undefined && sessionDir !== "") env[SESSION_DIR_ENV] = sessionDir;
 		// Listeners may only append to `args` and add to `env`; there is no veto.

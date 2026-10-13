@@ -36,6 +36,7 @@ export function resetRoot(): void {
 	rmSync(sessionDir, { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
+	delete process.env.PI_DELEGATE_FALLBACK;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
@@ -94,6 +95,8 @@ export type SessionOptions = {
 	parentEnv?: string;
 	/** Set `PI_DELEGATE_AUTO_EXIT` before the extension registers, as the launch does. */
 	autoExitEnv?: string;
+	/** Set `PI_DELEGATE_FALLBACK` before the extension registers, as the launch does. */
+	fallbackEnv?: string;
 	/** Custom entries the session already holds, as on a resume. */
 	entries?: readonly Entry[];
 	/** Answers `ctx.ui` gives, in order, one queue per dialog. An empty queue cancels. */
@@ -172,6 +175,10 @@ export function session(options: SessionOptions = {}) {
 	let signal: AbortSignal | undefined;
 	/** How many times `ctx.shutdown()` was called. */
 	let shutdowns = 0;
+	/** Every `pi.setModel` call, as provider/id. */
+	const modelSets: string[] = [];
+	/** Every `agent_before_settle` result that asked Pi to continue. */
+	const continuations: { continue: true; entries?: { content?: unknown }[] }[] = [];
 	/** Pi's action methods throw until the runtime binds, which is before `session_start`. */
 	let bound = false;
 	const registeredTools = options.registeredTools ?? DEFAULT_TOOLS;
@@ -195,6 +202,10 @@ export function session(options: SessionOptions = {}) {
 			sent.push({ message, options: opts }),
 		sendUserMessage: (text: string, opts: unknown) => {
 			userMessages.push({ text, options: opts });
+		},
+		setModel: async (model: { provider: string; id: string }) => {
+			modelSets.push(`${model.provider}/${model.id}`);
+			return true;
 		},
 	};
 	const ctx = {
@@ -257,9 +268,12 @@ export function session(options: SessionOptions = {}) {
 	});
 	if (options.parentEnv !== undefined) process.env.PI_DELEGATE_PARENT = options.parentEnv;
 	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
+	if (options.fallbackEnv !== undefined) process.env.PI_DELEGATE_FALLBACK = options.fallbackEnv;
 	register(pi as never, tmux, usage);
 	const fire = async (name: string, event: object = {}) => {
-		for (const handler of handlers[name] ?? []) await handler({ type: name, ...event }, ctx);
+		const results: unknown[] = [];
+		for (const handler of handlers[name] ?? []) results.push(await handler({ type: name, ...event }, ctx));
+		return results;
 	};
 	let calls = 0;
 	const callTool = (name: string, params: unknown): Promise<ToolResult> => {
@@ -302,6 +316,8 @@ export function session(options: SessionOptions = {}) {
 		fire,
 		/** How many times the extension asked Pi to shut down. */
 		shutdowns: () => shutdowns,
+		modelSets,
+		continuations,
 		/** Type `/<name> <args>` for any command the extension registered. */
 		command: (name: string, args = "") => commands[name].handler(args, ctx),
 		/** Ask any registered command for argument completions. */
@@ -337,6 +353,13 @@ export function session(options: SessionOptions = {}) {
 							};
 			await fire("agent_end", { messages: [{ role: "user", content: "q" }, last] });
 			signal = undefined;
+			// A continuation means Pi runs again instead of settling; the next `run` is that run.
+			const settle = await fire("agent_before_settle", { entries: [], continue: false });
+			const more = settle.find((result) => (result as { continue?: boolean } | undefined)?.continue === true);
+			if (more !== undefined) {
+				continuations.push(more as (typeof continuations)[number]);
+				return;
+			}
 			await fire("agent_settled");
 			await new Promise((resolve) => setImmediate(resolve));
 		},

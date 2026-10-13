@@ -302,6 +302,14 @@ the result details list the skipped models under `skipped`. When every
 candidate is marked or unusable, the call is refused with one line per
 candidate and why it was skipped.
 
+The launch also passes the candidates after the chosen one to the delegate as
+`PI_DELEGATE_FALLBACK` (none for an explicit model). When a delegate's run
+ends on a usage limit, it switches its session to the first of them that has
+credentials and is not marked, adds a message saying so, and continues the
+task there, so work done so far is kept. Each fallback is tried once; when
+none is left, the run fails as before. A `done` result from such a delegate
+carries the `Usage limit:` line too, saying it finished on a fallback.
+
 Before a launch, pi-squire also reads the OpenCode Go quota for a paid
 `opencode-go` candidate (`GET https://opencode.ai/zen/go/v1/usage`, with the
 provider's API key). A window at 100% or more, or one the provider reports as

@@ -290,7 +290,9 @@ A mark clears at the reset time the error states ("try again in 30 minutes",
 hours. When the failed response's headers state a reset (`retry-after`,
 `anthropic-ratelimit-*-reset`, `x-ratelimit-reset-requests` or `-tokens`),
 that time wins over the error text. Until then `delegate` and `/delegate`
-refuse a marked model passed as `model` / `--model`, and say when it clears.
+refuse a marked model passed as `model` / `--model`, say when it clears, and
+name the agent's own models that are not marked, so the caller can omit the
+model instead.
 
 Without an explicit model, the delegation launches on the agent's model, or
 else on the first of its `fallback` models that has credentials and is not
@@ -371,9 +373,10 @@ The parent resolves each delegation's auto-exit from the call
   down (`ctx.shutdown()`) on the next event-loop turn, after the settle
   reply has been sent, so its tmux window closes. The session file stays, and
   `pi --session <path>` reopens it.
-- A run that ended stopped, or failed on anything but a usage limit, never
-  exits the delegate. A usage-limit failure is final until the quota resets,
-  so it exits like a normal completion; the parent still gets the failed reply.
+- A failed run, such as one ending on a usage limit or another provider
+  error, exits like a normal completion; the parent still gets the failed
+  reply and the session file stays. Only a run the user stopped never exits
+  the delegate.
 - The user taking over turns it off for the rest of the session, with a
   notice: typed or RPC input, or a run the user stopped (Esc).
 - `/auto-exit` inside the delegate turns it on again for the next normal

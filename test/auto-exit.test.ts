@@ -1,8 +1,8 @@
 // `auto-exit`: a delegate closes itself after a normal completion unless the
 // user took over. The parent resolves the setting (call, then agent, then on)
 // and passes it in the launch environment; the delegate's side shuts Pi down
-// after the run settles, and stays when the user typed, stopped a run, or the
-// run failed. `/auto-exit` inside the delegate turns it back on.
+// after the run settles, including a failed run, and stays when the user
+// typed or stopped a run. `/auto-exit` inside the delegate turns it back on.
 
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
@@ -100,25 +100,21 @@ test("with auto-exit off, a normal completion leaves the delegate running", asyn
 	assert.equal(s.shutdowns(), 0);
 });
 
-test("a failed run does not exit, and the next normal completion does", async () => {
-	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
-	await s.start();
-	await s.run("error");
-	assert.equal(s.shutdowns(), 0);
-	await s.run("completed");
-	assert.equal(s.shutdowns(), 1);
-});
-
-test("a usage-limit failure exits like a completion when auto-exit is on, and only then", async () => {
-	const limit = { errorMessage: '429: {"type":"GoUsageLimitError","message":"Go usage limit exceeded"}' };
-	for (const [autoExitEnv, shutdowns] of [
-		["1", 1],
-		["0", 0],
-	] as const) {
-		const s = session({ parentEnv: "some-parent", autoExitEnv });
-		await s.start();
-		await s.run("error", limit);
-		assert.equal(s.shutdowns(), shutdowns, `auto-exit ${autoExitEnv}`);
+test("a failed run exits like a completion when auto-exit is on, and only then", async () => {
+	const failures = [
+		{ errorMessage: '429: {"type":"GoUsageLimitError","message":"Go usage limit exceeded"}' },
+		{ errorMessage: "400: bad request" },
+	];
+	for (const failure of failures) {
+		for (const [autoExitEnv, shutdowns] of [
+			["1", 1],
+			["0", 0],
+		] as const) {
+			const s = session({ parentEnv: "some-parent", autoExitEnv });
+			await s.start();
+			await s.run("error", failure);
+			assert.equal(s.shutdowns(), shutdowns, `auto-exit ${autoExitEnv}, ${failure.errorMessage}`);
+		}
 	}
 });
 

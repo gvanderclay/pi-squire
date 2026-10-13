@@ -6,6 +6,23 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- With auto-exit on, a delegate whose run fails on any provider error now
+  closes its window, as after a normal completion; before, only a usage-limit
+  failure did. The parent still gets the `failed` reply and the session file
+  stays. Only a run the user stopped keeps the window open.
+  `test/auto-exit.test.ts` and `test/harness.test.ts` change with it.
+- Refusing an explicit `model` that is usage-limited now names the agent's
+  models that are still open, so the caller can omit `model` and let the
+  fallbacks apply.
+
+### Fixed
+
+- ChatGPT's "The ChatGPT user has reached their Subscription Sharing usage
+  limit" error now counts as a usage limit, so it records a mark and later
+  launches skip the provider. Before, it recorded nothing.
+
 ## [0.3.2] - 2026-10-09
 
 ### Added

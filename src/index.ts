@@ -312,7 +312,7 @@ function thinkingProblem(value: string): string | undefined {
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 function toolDescription(agents: readonly Agent[]): string {
 	const intro =
-		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory and agent root and reports back later as one message. Use it when the work is self-contained and you would rather keep your own context for it.";
+		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory and agent root and reports back later as one message. While it runs, keep working or end your turn: its result starts your next turn on its own, so there is no need to ask the delegate for it or poll delegation_status. Use it when the work is self-contained and you would rather keep your own context for it.";
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${join(
 			getAgentDir(),
@@ -581,7 +581,7 @@ export default function delegate(
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
-				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}. It runs in the background and its result arrives as a message; delegation_status reports it and delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
+				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
 				{
 					outcome: "started",
 					id: launched.id,

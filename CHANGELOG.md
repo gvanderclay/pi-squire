@@ -13,6 +13,9 @@ follows [Semantic Versioning](https://semver.org/).
   on its own; the launch message says the same in place of pointing at
   `delegation_status`. GPT parents asked their own delegates for the result
   with `session_mail_ask`, so each report arrived twice.
+- The `delegation_status` description now says to call it to check on a
+  delegation that seems stuck or to find its files, not to wait for a result,
+  which arrives as a message on its own.
 
 ## [0.5.0] - 2026-10-13
 

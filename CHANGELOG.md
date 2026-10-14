@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The `delegate` tool's description now tells the parent to keep working or
+  end its turn while a delegate runs, since the result starts its next turn
+  on its own; the launch message says the same in place of pointing at
+  `delegation_status`. GPT parents asked their own delegates for the result
+  with `session_mail_ask`, so each report arrived twice.
+
 ## [0.5.0] - 2026-10-13
 
 ### Changed

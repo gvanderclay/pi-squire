@@ -469,6 +469,8 @@ export default function delegate(
 			PI_CODING_AGENT_DIR: getAgentDir(),
 			[PARENT_ENV]: parent,
 			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
+			// A general signal for any extension: no human watches this session, so don't wait on a dialog.
+			PI_UNATTENDED: "1",
 		};
 		if (start.rest.length > 0) env[FALLBACK_ENV] = start.rest.join(",");
 		const sessionDir = process.env[SESSION_DIR_ENV];

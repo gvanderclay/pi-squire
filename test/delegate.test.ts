@@ -353,6 +353,7 @@ test("the child's env names the parent's root and address, and the session dir w
 		PI_CODING_AGENT_DIR: agentDir,
 		PI_DELEGATE_PARENT: s.parent,
 		PI_DELEGATE_AUTO_EXIT: "1",
+		PI_UNATTENDED: "1",
 	});
 	process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/other-sessions";
 	const second = session();

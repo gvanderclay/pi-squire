@@ -21,8 +21,8 @@ and the `session:launch` listeners you have installed.
   note naming the parent. The task is not on the command line; it travels as
   mail through the `message:*` provider.
 - Environment: tmux starts the window with the tmux server's environment plus
-  `PI_CODING_AGENT_DIR`, `PI_DELEGATE_PARENT`, `PI_DELEGATE_AUTO_EXIT` and,
-  when set, `PI_CODING_AGENT_SESSION_DIR`.
+  `PI_CODING_AGENT_DIR`, `PI_DELEGATE_PARENT`, `PI_DELEGATE_AUTO_EXIT`,
+  `PI_UNATTENDED=1` and, when set, `PI_CODING_AGENT_SESSION_DIR`.
 - `session:launch` listeners may append arguments and add environment
   variables. Any installed extension can do this, and pi-squire passes them on
   unchanged. A listener also sees the agent's name, as the `agent` field of the

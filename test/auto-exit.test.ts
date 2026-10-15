@@ -40,6 +40,8 @@ test("an agent's auto-exit: false is its default, and a call beats it either way
 		s.tmux.opened.map((window) => window.env.PI_DELEGATE_AUTO_EXIT),
 		["0", "1", "0", "1", "0", "0"],
 	);
+	// A window kept open is still unattended until someone types in it.
+	assert.ok(s.tmux.opened.every((window) => window.env.PI_UNATTENDED === "1"));
 	assert.equal(s.sendCalls[1].body, "do the thing"); // the flag is not part of the task
 });
 

@@ -178,7 +178,11 @@ variable of its own. `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
 for the child, never read as configuration by the parent. The window starts
 with the tmux server's environment plus only these from the parent:
 `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` (when the parent has it
-set), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`. Anything else the
+set), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`, and it always gets `PI_UNATTENDED=1`.
+`PI_UNATTENDED=1` is a general signal, not specific to pi-squire: no human is
+watching this session, even though it runs in a TUI. Other extensions may read
+it to skip a dialog or confirmation instead of waiting on one, and any other
+runner that starts Pi unattended can set it too. Anything else the
 parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
 reaches the child only through a `session:launch` contributor. `--model` and
 `--thinking` override the agent's defaults for one call, and an unknown value
@@ -557,8 +561,8 @@ Other extensions may rely on:
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,
   `<agent dir>/agents/<name>/AGENT.md`;
-- the child environment variables `PI_DELEGATE_PARENT` and
-  `PI_DELEGATE_AUTO_EXIT`.
+- the child environment variables `PI_DELEGATE_PARENT`,
+  `PI_DELEGATE_AUTO_EXIT` and `PI_UNATTENDED=1`.
 
 A `message:*` provider must:
 

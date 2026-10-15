@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Every delegate now starts with `PI_UNATTENDED=1` in its environment, a
+  general signal that no human is watching the session. Delegates run as a
+  full TUI, so extensions that open a dialog, such as a handoff gate or an
+  approval prompt, waited on nobody and stalled the delegate; they can read
+  this variable to skip the dialog instead. The test that pins the child's
+  exact environment now includes it.
+
 ## [0.5.1] - 2026-10-14
 
 ### Changed

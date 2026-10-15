@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-15
+
 ### Added
 
 - Every delegate now starts with `PI_UNATTENDED=1` in its environment, a
@@ -237,7 +239,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/gvanderclay/pi-squire/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/gvanderclay/pi-squire/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/gvanderclay/pi-squire/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/gvanderclay/pi-squire/compare/v0.3.2...v0.4.0

@@ -568,8 +568,8 @@ export default function delegate(
 			),
 		}),
 		outputSchema: DelegateSchema,
-		// Opens a new window each call and removes nothing.
-		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+		// Opens a new window each call and removes nothing. Open world: the delegate calls a remote model and runs its agent's tools unattended.
+		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 		async execute(
 			_toolCallId: string,
 			params: {

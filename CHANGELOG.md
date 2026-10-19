@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-19
+
 ### Added
 
 - `delegate`, `delegation_status` and `delegation_close` declare an
@@ -255,7 +257,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/gvanderclay/pi-squire/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/gvanderclay/pi-squire/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/gvanderclay/pi-squire/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/gvanderclay/pi-squire/compare/v0.4.0...v0.5.0

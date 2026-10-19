@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `delegate`, `delegation_status` and `delegation_close` declare an
+  `outputSchema` and return matching `structuredContent`, so a codemode
+  script gets objects instead of text. `delegation_status` gives each
+  delegation its derived `state` (`running`, `done`, `gone`, `closed`,
+  `window-closed` or `unknown`), also added to its details.
+  `delegation_close` returns one shape on every path:
+  `{ id, windowId, windowName, closed, alreadyClosed, killed }`; its details
+  gain the fields each path lacked. The model-facing text is unchanged.
+- The three tools declare MCP-style `annotations`: `delegation_status` is
+  read-only and idempotent; `delegation_close` is destructive and idempotent;
+  `delegate` is neither, and is the only one that reaches an open world,
+  since the delegate it starts calls a remote model and runs tools
+  unattended.
+
 ## [0.6.0] - 2026-10-15
 
 ### Added

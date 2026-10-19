@@ -344,6 +344,66 @@ test("delegation_status shows no last-active text for a running delegate without
 	assert.ok(!("lastActiveAt" in (res.details as { delegations: object[] }).delegations[0]));
 });
 
+test("the tools declare all four annotations and stay direct", async () => {
+	const s = session();
+	const hints = (name: string) => s.tool(name).annotations;
+	const closedWorld = { openWorldHint: false };
+	assert.deepEqual(hints("delegate"), {
+		readOnlyHint: false,
+		destructiveHint: false,
+		idempotentHint: false,
+		openWorldHint: true,
+	});
+	assert.deepEqual(hints("delegation_status"), {
+		readOnlyHint: true,
+		destructiveHint: false,
+		idempotentHint: true,
+		...closedWorld,
+	});
+	assert.deepEqual(hints("delegation_close"), {
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: true,
+		...closedWorld,
+	});
+	for (const name of ["delegate", "delegation_status", "delegation_close"]) {
+		assert.equal((s.tool(name) as { exposure?: string }).exposure, undefined);
+	}
+});
+
+test("structured results carry each delegation's state and one close shape", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	const started = await s.toolCall("delegate", { agent: "scout", task: "one" });
+	const { id } = started.structuredContent as { id: string };
+	assert.equal(started.structuredContent, started.details);
+	const states = async () =>
+		(
+			(await s.toolCall("delegation_status", {})).structuredContent as { delegations: { state: string }[] }
+		).delegations.map((d) => d.state);
+	assert.deepEqual(await states(), ["running"]);
+	const { windowId, name: windowName } = s.tmux.opened[0];
+	const closed = await s.toolCall("delegation_close", { id });
+	assert.deepEqual(closed.structuredContent, {
+		id,
+		windowId,
+		windowName,
+		closed: true,
+		alreadyClosed: false,
+		killed: true,
+	});
+	assert.deepEqual((await s.toolCall("delegation_close", { id })).structuredContent, {
+		id,
+		windowId,
+		windowName,
+		closed: true,
+		alreadyClosed: true,
+		killed: false,
+	});
+	assert.deepEqual(await states(), ["closed"]);
+});
+
 test("delegation_status refuses an unknown id with the ones that exist", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session();

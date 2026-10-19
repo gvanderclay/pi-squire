@@ -99,6 +99,22 @@ function parentTrust(parent: string): string {
 /** The flags `/delegate` takes before the task. */
 const FLAGS = ["--model", "--thinking", "--label", "--auto-exit", "--no-auto-exit"] as const;
 
+/** The `delegate` tool's structured result, which is also its details. */
+export const DelegateSchema = Type.Object({
+	outcome: Type.Literal("started"),
+	id: Type.String({ description: "The delegation id that delegation_status and delegation_close take." }),
+	agent: Type.String(),
+	model: Type.String({ description: "The provider/id it started on, after any fallback." }),
+	skipped: Type.Array(Type.Object({ model: Type.String(), reason: Type.String() }), {
+		description: "Earlier models in the fallback list that were passed over, and why.",
+	}),
+	notices: Type.Array(Type.String()),
+	thinking: Type.String(),
+	autoExit: Type.Boolean(),
+	windowId: Type.String(),
+	windowName: Type.String(),
+});
+
 const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
 
 const USAGE =
@@ -551,6 +567,9 @@ export default function delegate(
 				}),
 			),
 		}),
+		outputSchema: DelegateSchema,
+		// Opens a new window each call and removes nothing.
+		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 		async execute(
 			_toolCallId: string,
 			params: {

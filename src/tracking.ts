@@ -37,13 +37,67 @@ export type Tracking = {
 	stop(): void;
 };
 
-/** The one result every tool returns. */
+/** The one result every tool returns. `details` doubles as `structuredContent`, so it must match the tool's `outputSchema`; Pi does not check it. */
 export function toolResult(
 	payload: string,
-	details: unknown = {},
-): { content: { type: "text"; text: string }[]; details: unknown } {
-	return { content: [{ type: "text", text: payload }], details };
+	details: unknown,
+): { content: { type: "text"; text: string }[]; details: unknown; structuredContent: unknown } {
+	return { content: [{ type: "text", text: payload }], details, structuredContent: details };
 }
+
+/** Every tool here touches only local state: tmux, the session's entries and files under the agent directory. */
+const CLOSED_WORLD = { openWorldHint: false } as const;
+
+const DELEGATION_STATES: readonly DelegationState[] = ["closed", "done", "gone", "running", "window-closed", "unknown"];
+
+/** One delegation in `delegation_status`'s structured result; `viewDetails` builds it. */
+const DelegationSchema = Type.Object({
+	id: Type.String(),
+	name: Type.String(),
+	agent: Type.String(),
+	model: Type.String(),
+	thinking: Type.String(),
+	autoExit: Type.Boolean(),
+	windowId: Type.String(),
+	windowName: Type.String(),
+	state: Type.Union(
+		DELEGATION_STATES.map((state) => Type.Literal(state)),
+		{
+			description:
+				"running: window open, no result. done: a result arrived (see status, envelopePath). gone: the window went with no result; a late reply makes it done. closed: delegation_close recorded it. window-closed: the window is gone. unknown: tmux could not be asked. done and closed are final; gone and window-closed turn done if a late reply arrives.",
+		},
+	),
+	closed: Type.Boolean(),
+	closedWithoutResult: Type.Boolean(),
+	status: Type.Optional(Type.String({ description: "The result envelope's status: done, failed or stopped." })),
+	envelopePath: Type.Optional(Type.String()),
+	sessionPath: Type.Optional(Type.String()),
+	lastActiveAt: Type.Optional(
+		Type.String({ description: "ISO time the session file was last written; running only." }),
+	),
+});
+
+export const StatusSchema = Type.Object({
+	delegations: Type.Array(DelegationSchema),
+	marks: Type.Array(
+		Type.Object({
+			scope: Type.String(),
+			source: Type.Union([Type.Literal("reactive"), Type.Literal("proactive")]),
+			reason: Type.String(),
+			clearsAt: Type.String(),
+		}),
+	),
+	readingErrors: Type.Array(Type.Object({ provider: Type.String(), reason: Type.String(), at: Type.String() })),
+});
+
+export const CloseSchema = Type.Object({
+	id: Type.String(),
+	windowId: Type.String(),
+	windowName: Type.String(),
+	closed: Type.Literal(true),
+	alreadyClosed: Type.Boolean({ description: "An earlier delegation_close had recorded it; nothing was done." }),
+	killed: Type.Boolean({ description: "This call killed the delegate's window." }),
+});
 
 /** A tool as registered; `execute` takes the tool's own parameters, which the registration call does not check. */
 type ToolDef = {
@@ -51,6 +105,8 @@ type ToolDef = {
 	label: string;
 	description: string;
 	parameters: unknown;
+	outputSchema: unknown;
+	annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
 	execute: (...args: never[]) => Promise<ReturnType<typeof toolResult>>;
 };
 
@@ -149,7 +205,7 @@ function viewText({ record, state, name, sessionPath, lastActive }: View): strin
 }
 
 /** The structured details for one delegation. */
-function viewDetails({ record, name, sessionPath, lastActive }: View): Record<string, unknown> {
+function viewDetails({ record, state, name, sessionPath, lastActive }: View): Record<string, unknown> {
 	return {
 		id: record.id,
 		name,
@@ -159,6 +215,7 @@ function viewDetails({ record, name, sessionPath, lastActive }: View): Record<st
 		autoExit: record.autoExit === true,
 		windowId: record.windowId,
 		windowName: record.windowName,
+		state,
 		closed: record.closed === true,
 		closedWithoutResult: record.gone === true && record.result === undefined && record.closed !== true,
 		status: record.result?.status,
@@ -267,6 +324,8 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 		parameters: Type.Object({
 			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
 		}),
+		outputSchema: StatusSchema,
+		annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...CLOSED_WORLD },
 		async execute(
 			_toolCallId: string,
 			params: { id?: string },
@@ -310,6 +369,9 @@ function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 		parameters: Type.Object({
 			id: Type.String({ description: "The delegation id to close." }),
 		}),
+		outputSchema: CloseSchema,
+		// Kills a window; a second close finds it recorded and does nothing.
+		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, ...CLOSED_WORLD },
 		async execute(
 			_toolCallId: string,
 			params: { id: string },
@@ -318,8 +380,15 @@ function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 			_ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
 			const [record] = selectRecords(results, params.id);
-			if (record.closed === true)
-				return toolResult(`Delegation ${record.id} is already closed.`, { id: record.id, closed: true });
+			const closed = (alreadyClosed: boolean, killed: boolean) => ({
+				id: record.id,
+				windowId: record.windowId,
+				windowName: record.windowName,
+				closed: true,
+				alreadyClosed,
+				killed,
+			});
+			if (record.closed === true) return toolResult(`Delegation ${record.id} is already closed.`, closed(true, false));
 			let windows: TmuxWindow[];
 			try {
 				windows = await tmux.listWindows();
@@ -339,11 +408,7 @@ function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 			const how = alive
 				? `killed window ${record.windowName} (${record.windowId})`
 				: `its window ${record.windowName} was already gone`;
-			return toolResult(`Closed delegation ${record.id}: ${how}.`, {
-				id: record.id,
-				windowId: record.windowId,
-				killed: alive,
-			});
+			return toolResult(`Closed delegation ${record.id}: ${how}.`, closed(false, alive));
 		},
 	};
 }

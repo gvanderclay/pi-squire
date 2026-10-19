@@ -10,6 +10,9 @@ import { join } from "node:path";
 
 import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
 
+import type { TSchema } from "typebox";
+import { Value } from "typebox/value";
+
 import register from "../src/index.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { FakeUsage } from "./fake-usage.ts";
@@ -62,13 +65,15 @@ type Command = {
 };
 
 /** One tool result, the shape `execute` returns. */
-export type ToolResult = { content: { type: string; text: string }[]; details: unknown };
+export type ToolResult = { content: { type: string; text: string }[]; details: unknown; structuredContent?: unknown };
 
 /** One registered tool, as much of it as the tests drive. */
 export type Tool = {
 	name: string;
 	description: string;
 	parameters: unknown;
+	outputSchema?: TSchema;
+	annotations?: Record<string, boolean>;
 	execute: (toolCallId: string, params: never, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<ToolResult>;
 };
 
@@ -128,6 +133,24 @@ export type RunFailure = {
 
 /** The tools a fake session has unless a test says otherwise. */
 export const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
+
+/**
+ * Pi passes `structuredContent` to codemode scripts without checking it, so
+ * every tool call in every test checks it here: it is set, matches the tool's
+ * `outputSchema` after a JSON round trip, and has no field the schema leaves out.
+ */
+function checkStructured(tool: Tool, result: ToolResult): void {
+	if (tool.outputSchema === undefined) throw new Error(`${tool.name} declares no outputSchema`);
+	const value: unknown = JSON.parse(JSON.stringify(result.structuredContent ?? null));
+	const errors = [...Value.Errors(tool.outputSchema, value)];
+	if (errors.length > 0) {
+		throw new Error(`${tool.name} structuredContent breaks its outputSchema: ${JSON.stringify(errors)}`);
+	}
+	const cleaned = Value.Clean(tool.outputSchema, structuredClone(value));
+	if (JSON.stringify(cleaned) !== JSON.stringify(value)) {
+		throw new Error(`${tool.name} structuredContent has fields its outputSchema leaves out: ${JSON.stringify(value)}`);
+	}
+}
 
 /** One fake Pi session running the extension under `parent`. */
 export function session(options: SessionOptions = {}) {
@@ -280,7 +303,10 @@ export function session(options: SessionOptions = {}) {
 	const callTool = (name: string, params: unknown): Promise<ToolResult> => {
 		const tool = tools[name];
 		if (tool === undefined) return Promise.reject(new Error(`no tool named ${name} is registered`));
-		return tool.execute(`call-${++calls}`, params as never, undefined, undefined, ctx);
+		return tool.execute(`call-${++calls}`, params as never, undefined, undefined, ctx).then((result) => {
+			checkStructured(tool, result);
+			return result;
+		});
 	};
 	return {
 		parent,

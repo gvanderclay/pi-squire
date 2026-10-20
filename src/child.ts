@@ -21,6 +21,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { activeMark, classify, type Response, recordLimit } from "./limits.ts";
+import { STATUS_KEY } from "./results.ts";
 
 /** The launch variable that carries the parent's resolved setting. */
 export const AUTO_EXIT_ENV = "PI_DELEGATE_AUTO_EXIT";
@@ -104,6 +105,19 @@ function registerFallback(pi: ExtensionAPI): (model: string | undefined) => void
 	};
 }
 
+/** This delegate's footer icon, picked once per load. */
+const ICON = Math.random() < 0.5 ? "👦" : "👧";
+
+function showStatus(ctx: ExtensionContext, armed: boolean): void {
+	const { theme } = ctx.ui;
+	ctx.ui.setStatus(
+		STATUS_KEY,
+		armed
+			? `${ICON} delegate · auto-exit ${theme.fg("success", "on")}`
+			: `${ICON} delegate · auto-exit ${theme.fg("dim", "off")} · /auto-exit to turn on`,
+	);
+}
+
 export function registerChild(pi: ExtensionAPI, parent: string): void {
 	registerTakeover(pi, parent);
 	const setLimited = registerFallback(pi);
@@ -112,10 +126,14 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 	/** Whether the run that just ended finished without the user stopping it. */
 	let completed = false;
 
+	// Reload and session replacement clear extension statuses, then start again.
+	pi.on("session_start", async (_event, ctx) => showStatus(ctx, armed));
+
 	function disarm(ctx: ExtensionContext): void {
 		if (!armed) return;
 		armed = false;
 		ctx.ui.notify(OFF_NOTICE, "info");
+		showStatus(ctx, armed);
 	}
 
 	// Typed text and RPC input are the user's; a prompt an extension sends is not.
@@ -166,6 +184,7 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		handler: async (_args, ctx) => {
 			armed = true;
 			ctx.ui.notify(ON_NOTICE, "info");
+			showStatus(ctx, armed);
 		},
 	});
 }

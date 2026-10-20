@@ -393,6 +393,10 @@ The parent resolves each delegation's auto-exit from the call
   notice: typed or RPC input, or a run the user stopped (Esc).
 - `/auto-exit` inside the delegate turns it on again for the next normal
   completion, whatever the launch said.
+- The footer shows that this is a delegate and whether auto-exit is on:
+  `👦 delegate · auto-exit on`, or
+  `👦 delegate · auto-exit off · /auto-exit to turn on`, with 👦 or 👧
+  picked at random per session.
 
 There is no `subagent_done` tool: auto-exit off only means the window stays.
 
@@ -439,8 +443,9 @@ Delegate session: <session file or id>
   current tool calls, before the next model call. A follow-up would wait
   until the parent had answered, by which time it had often read the
   envelope itself, and the late result cost a second, redundant turn.
-- The footer counts the running delegations (`⇄ N running`), clears one entry
-  per result or close and hides itself at zero.
+- The footer counts the running delegations (`👨 N delegates running`, with 👨 or 👩
+  picked at random per session), clears one entry per result or close and
+  hides itself at zero.
 - Each result and each close is recorded in the parent session, and the
   records are rebuilt synchronously at session start. A resume still
   recognises replies, including one that arrived while the parent was

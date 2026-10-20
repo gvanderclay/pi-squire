@@ -120,6 +120,24 @@ test("a failed run exits like a completion when auto-exit is on, and only then",
 	}
 });
 
+test("the delegate's footer shows auto-exit and follows it off and back on", async () => {
+	const on = { key: "delegate", text: "<child> delegate \u00b7 auto-exit on" };
+	const off = { key: "delegate", text: "<child> delegate \u00b7 auto-exit off \u00b7 /auto-exit to turn on" };
+	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
+	await s.start();
+	assert.deepEqual(s.statuses, [on]);
+	await s.type("also check the tests");
+	assert.deepEqual(s.statuses.at(-1), off);
+	await s.command("auto-exit");
+	assert.deepEqual(s.statuses.at(-1), on);
+	await s.fire("session_start", { reason: "reload" });
+	assert.deepEqual(s.statuses.at(-1), on, "a reload shows it again");
+
+	const closed = session({ parentEnv: "some-parent", autoExitEnv: "0" });
+	await closed.start();
+	assert.deepEqual(closed.statuses, [off]);
+});
+
 test("typing in the delegate turns auto-exit off with a notice", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
 	await s.start();

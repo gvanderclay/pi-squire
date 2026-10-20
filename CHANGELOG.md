@@ -10,7 +10,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 - A delegate's footer shows that it is a delegate and whether auto-exit is
   on: `👦 delegate · auto-exit on`, or
-  `👦 delegate · auto-exit off · /auto-exit to turn on`. It follows the
+  `👦 delegate · auto-exit off`. It follows the
   setting as typing turns it off and `/auto-exit` turns it back on.
 
 ### Changed

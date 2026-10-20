@@ -114,7 +114,7 @@ function showStatus(ctx: ExtensionContext, armed: boolean): void {
 		STATUS_KEY,
 		armed
 			? `${ICON} delegate · auto-exit ${theme.fg("success", "on")}`
-			: `${ICON} delegate · auto-exit ${theme.fg("dim", "off")} · /auto-exit to turn on`,
+			: `${ICON} delegate · auto-exit ${theme.fg("dim", "off")}`,
 	);
 }
 

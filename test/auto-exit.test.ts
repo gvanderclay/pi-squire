@@ -122,7 +122,7 @@ test("a failed run exits like a completion when auto-exit is on, and only then",
 
 test("the delegate's footer shows auto-exit and follows it off and back on", async () => {
 	const on = { key: "delegate", text: "<child> delegate \u00b7 auto-exit on" };
-	const off = { key: "delegate", text: "<child> delegate \u00b7 auto-exit off \u00b7 /auto-exit to turn on" };
+	const off = { key: "delegate", text: "<child> delegate \u00b7 auto-exit off" };
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
 	await s.start();
 	assert.deepEqual(s.statuses, [on]);

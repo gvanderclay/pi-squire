@@ -6,6 +6,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A delegate's footer shows that it is a delegate and whether auto-exit is
+  on: `👦 delegate · auto-exit on`, or
+  `👦 delegate · auto-exit off · /auto-exit to turn on`. It follows the
+  setting as typing turns it off and `/auto-exit` turns it back on.
+
+### Changed
+
+- The parent's footer reads `👨 N delegates running` instead of
+  `⇄ N running`. Each side picks its icon at random per session: 👨 or 👩
+  for the parent, 👦 or 👧 for a delegate. The footer tests in
+  `test/delegate.test.ts` change to match.
+
 ## [0.7.0] - 2026-10-19
 
 ### Added

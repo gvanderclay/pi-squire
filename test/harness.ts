@@ -257,7 +257,13 @@ export function session(options: SessionOptions = {}) {
 		ui: {
 			notify: (text: string, type?: string) =>
 				(type === "warning" ? warnings : type === "error" ? errors : notes).push(text),
-			setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }),
+			// The icons are picked at random; the placeholders pin which pair each side draws from.
+			setStatus: (key: string, text: string | undefined) =>
+				statuses.push({
+					key,
+					text: text?.replace(/^(?:👨|👩) /u, "<parent> ").replace(/^(?:👦|👧) /u, "<child> "),
+				}),
+			theme: { fg: (_color: string, text: string) => text },
 			select: async (title: string, options: string[]) => {
 				selects.push({ title, options });
 				return selectAnswers.shift();

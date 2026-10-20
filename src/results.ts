@@ -237,6 +237,7 @@ export function createResults(pi: ExtensionAPI): Results {
 	let ctx: ExtensionContext | undefined;
 	/** Whether the footer currently shows the entry, so a clear is sent only when needed. */
 	let footerShown = false;
+	const icon = Math.random() < 0.5 ? "👨" : "👩";
 
 	/** A delegation still going: no result and no recorded close. */
 	const running = (): Recorded[] =>
@@ -251,7 +252,7 @@ export function createResults(pi: ExtensionAPI): Results {
 		const visible = count > 0;
 		if (!visible && !footerShown) return;
 		footerShown = visible;
-		ctx.ui.setStatus(STATUS_KEY, visible ? `⇄ ${count} running` : undefined);
+		ctx.ui.setStatus(STATUS_KEY, visible ? `${icon} ${count} delegate${count === 1 ? "" : "s"} running` : undefined);
 	}
 
 	/** Rebuild the records from the session's entries, so a resume still recognises replies. */

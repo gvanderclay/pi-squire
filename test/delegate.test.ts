@@ -512,12 +512,12 @@ test("the footer counts running delegations up and clears back to hidden", async
 	await s.delegate("scout find the answer");
 	await s.delegate("researcher read the file");
 	assert.deepEqual(s.statuses, [
-		{ key: "delegate", text: "⇄ 1 running" },
-		{ key: "delegate", text: "⇄ 2 running" },
+		{ key: "delegate", text: "<parent> 1 delegate running" },
+		{ key: "delegate", text: "<parent> 2 delegates running" },
 	]);
 	const [scout, researcher] = s.entries.map((entry) => entry.data as Delegation);
 	s.events.emit("message:inbound", inbound(s.parent, scout));
-	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: "⇄ 1 running" });
+	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: "<parent> 1 delegate running" });
 	s.events.emit("message:inbound", inbound(s.parent, researcher, { replyId: "reply-researcher" }));
 	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: undefined });
 });
@@ -539,7 +539,7 @@ test("a resumed parent rebuilds its records and still takes a later reply", asyn
 
 	const resumed = session({ parent: first.parent, entries: saved });
 	await resumed.start();
-	assert.deepEqual(resumed.statuses.at(-1), { key: "delegate", text: "⇄ 1 running" });
+	assert.deepEqual(resumed.statuses.at(-1), { key: "delegate", text: "<parent> 1 delegate running" });
 
 	const delegation = saved[0].data as Delegation;
 	const payload = inbound(resumed.parent, delegation);
@@ -671,5 +671,5 @@ test("a reply from another session to the delegate's request is not taken as its
 	s.events.emit("message:inbound", payload);
 	assert.equal(payload.handled, false);
 	assert.equal(s.sent.length, 0);
-	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: "⇄ 1 running" });
+	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: "<parent> 1 delegate running" });
 });

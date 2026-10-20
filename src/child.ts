@@ -84,25 +84,37 @@ function registerTakeover(pi: ExtensionAPI, parent: string): void {
 }
 
 /**
- * A usage limit moves the run to the next fallback that is usable and not
- * marked, and continues it in this session; each fallback is tried once.
- * Returns the setter for the model whose usage limit ended the last run.
+ * A usage limit or an unavailable endpoint moves the run to the next fallback
+ * that is usable and not marked, and continues it in this session; each
+ * fallback is tried once. Returns the setter for what ended the last run, as
+ * `<provider/model> <what happened>`.
  */
-function registerFallback(pi: ExtensionAPI): (model: string | undefined) => void {
+function registerFallback(pi: ExtensionAPI): (failure: string | undefined) => void {
 	/** The models still to move to on a usage limit, in order. */
 	const fallback = (process.env[FALLBACK_ENV] ?? "").split(",").filter((model) => model.includes("/"));
-	let limited: string | undefined;
+	let failure: string | undefined;
 	pi.on("agent_before_settle", async (_event, ctx) => {
-		const from = limited;
-		limited = undefined;
+		const from = failure;
+		failure = undefined;
 		const next = from === undefined ? undefined : await switchModel(pi, ctx, fallback);
 		if (next === undefined) return;
-		const content = `[delegate] ${from} hit a usage limit, so this session switched to ${next}. Carry on with the task from where it stopped.`;
+		const content = `[delegate] ${from}, so this session switched to ${next}. Carry on with the task from where it stopped.`;
 		return { continue: true, entries: [{ type: "custom_message", customType: "delegate", content, display: true }] };
 	});
-	return (model) => {
-		limited = model;
+	return (value) => {
+		failure = value;
 	};
+}
+
+/** Why a failed run should move to a fallback, as `<provider/model> <what happened>`; undefined when it should not. */
+function fallbackReason(last: Message | undefined): string | undefined {
+	const error = last?.errorMessage;
+	if (typeof error !== "string") return undefined;
+	const model = `${String(last?.provider)}/${String(last?.model)}`;
+	if (classify(error) !== undefined) return `${model} hit a usage limit`;
+	// Pi has already retried an unavailable endpoint; it marks nothing, but this run moves on.
+	if (/unavailable/i.test(error)) return `${model} was unavailable (${error})`;
+	return undefined;
 }
 
 /** This delegate's footer icon, picked once per load. */
@@ -120,7 +132,7 @@ function showStatus(ctx: ExtensionContext, armed: boolean): void {
 
 export function registerChild(pi: ExtensionAPI, parent: string): void {
 	registerTakeover(pi, parent);
-	const setLimited = registerFallback(pi);
+	const setFailure = registerFallback(pi);
 
 	let armed = process.env[AUTO_EXIT_ENV] === "1";
 	/** Whether the run that just ended finished without the user stopping it. */
@@ -162,11 +174,7 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 		const stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 		if (stopped) disarm(ctx);
 		if (!stopped && last?.stopReason === "error") recordUsageLimit(last, ctx, response);
-		setLimited(
-			!stopped && typeof last?.errorMessage === "string" && classify(last.errorMessage) !== undefined
-				? `${String(last.provider)}/${String(last.model)}`
-				: undefined,
-		);
+		setFailure(stopped ? undefined : fallbackReason(last));
 		// A failure ends the work like a completion: the parent gets the error, the session file stays.
 		completed = !stopped;
 	});

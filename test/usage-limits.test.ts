@@ -520,6 +520,24 @@ test("each fallback is tried once; with none left the failed run settles and exi
 	assert.equal(delegate.shutdowns(), 1);
 });
 
+test("an unavailable endpoint mid-run moves to the fallback without marking the provider", async (t) => {
+	clock(t);
+	const delegate = fallbackDelegate("beta/other-model");
+	await delegate.start();
+	await delegate.run("error", {
+		errorMessage: "429: Endpoint is unavailable",
+		provider: "opencode-go",
+		model: "paid",
+	});
+	assert.deepEqual(delegate.modelSets, ["beta/other-model"]);
+	assert.match(
+		String(delegate.continuations[0].entries?.[0].content),
+		/opencode-go\/paid was unavailable \(429: Endpoint is unavailable\), so this session switched to beta\/other-model/,
+	);
+	assert.deepEqual(marks(), []);
+	assert.equal(delegate.shutdowns(), 0);
+});
+
 test("a failure that is not a usage limit, or a stopped run, never moves to a fallback", async (t) => {
 	clock(t);
 	const failed = fallbackDelegate("beta/other-model");

@@ -26,7 +26,9 @@ follows [Semantic Versioning](https://semver.org/).
   `429: Endpoint is unavailable`, no longer marks the provider as
   usage-limited. It is an outage, not a used-up quota, so `/delegate` keeps
   launching on the provider instead of refusing it for five minutes or more.
-  Pi has already retried the request by then.
+  Pi has already retried the request by then. A running delegate that hits
+  it moves to its next fallback model and carries on, as it does on a usage
+  limit.
 
 ## [0.7.0] - 2026-10-19
 

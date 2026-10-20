@@ -145,10 +145,12 @@ export function headerReset(response: Response | undefined, now = Date.now()): n
 
 /**
  * Whether an error message (Pi's `<status>: <body>`) is a usage limit, and
- * the reset time the text states, if any. Overloaded and 5xx errors never are.
+ * the reset time the text states, if any. Overloaded, unavailable and 5xx
+ * errors never are: OpenCode Go sends "429: Endpoint is unavailable" for an
+ * outage, with quota left.
  */
 export function classify(message: string, now = Date.now()): { resetAt?: number } | undefined {
-	if (/overloaded/i.test(message) || /^\s*5\d\d\b/.test(message)) return undefined;
+	if (/overloaded|unavailable/i.test(message) || /^\s*5\d\d\b/.test(message)) return undefined;
 	if (!LIMIT_PATTERN.test(message) && !/^\s*429\b/.test(message)) return undefined;
 	const resetAt = statedReset(message, now);
 	return resetAt !== undefined && resetAt > now ? { resetAt } : {};

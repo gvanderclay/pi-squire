@@ -110,9 +110,10 @@ test("a free model's own limit marks only that model", async (t) => {
 	assert.equal(p.tmux.opened.length, 1);
 });
 
-test("overloaded and 5xx errors record no mark", async (t) => {
+test("overloaded, unavailable and 5xx errors record no mark", async (t) => {
 	clock(t);
 	await fail('529: {"type":"overloaded_error","message":"Overloaded"}');
+	await fail("429: Endpoint is unavailable");
 	await fail("503: service unavailable rate_limit_error");
 	await fail("boom");
 	assert.deepEqual(marks(), []);
@@ -517,6 +518,24 @@ test("each fallback is tried once; with none left the failed run settles and exi
 	assert.deepEqual(delegate.modelSets, ["beta/other-model"]);
 	assert.equal(delegate.continuations.length, 1);
 	assert.equal(delegate.shutdowns(), 1);
+});
+
+test("an unavailable endpoint mid-run moves to the fallback without marking the provider", async (t) => {
+	clock(t);
+	const delegate = fallbackDelegate("beta/other-model");
+	await delegate.start();
+	await delegate.run("error", {
+		errorMessage: "429: Endpoint is unavailable",
+		provider: "opencode-go",
+		model: "paid",
+	});
+	assert.deepEqual(delegate.modelSets, ["beta/other-model"]);
+	assert.match(
+		String(delegate.continuations[0].entries?.[0].content),
+		/opencode-go\/paid was unavailable \(429: Endpoint is unavailable\), so this session switched to beta\/other-model/,
+	);
+	assert.deepEqual(marks(), []);
+	assert.equal(delegate.shutdowns(), 0);
 });
 
 test("a failure that is not a usage limit, or a stopped run, never moves to a fallback", async (t) => {

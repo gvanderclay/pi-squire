@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A 429 whose text says the endpoint is unavailable, such as OpenCode Go's
+  `429: Endpoint is unavailable`, no longer marks the provider as
+  usage-limited. It is an outage, not a used-up quota, so `/delegate` keeps
+  launching on the provider instead of refusing it for five minutes or more.
+  Pi has already retried the request by then. A running delegate that hits
+  it moves to its next fallback model and carries on, as it does on a usage
+  limit.
+
 ## [0.8.0] - 2026-10-20
 
 ### Added
@@ -21,16 +31,6 @@ follows [Semantic Versioning](https://semver.org/).
   `⇄ N running`. Each side picks its icon at random per session: 👨 or 👩
   for the parent, 👦 or 👧 for a delegate. The footer tests in
   `test/delegate.test.ts` change to match.
-
-### Fixed
-
-- A 429 whose text says the endpoint is unavailable, such as OpenCode Go's
-  `429: Endpoint is unavailable`, no longer marks the provider as
-  usage-limited. It is an outage, not a used-up quota, so `/delegate` keeps
-  launching on the provider instead of refusing it for five minutes or more.
-  Pi has already retried the request by then. A running delegate that hits
-  it moves to its next fallback model and carries on, as it does on a usage
-  limit.
 
 ## [0.7.0] - 2026-10-19
 

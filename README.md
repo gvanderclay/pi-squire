@@ -395,7 +395,7 @@ The parent resolves each delegation's auto-exit from the call
   completion, whatever the launch said.
 - The footer shows that this is a delegate and whether auto-exit is on:
   `👦 delegate · auto-exit on`, or
-  `👦 delegate · auto-exit off · /auto-exit to turn on`, with 👦 or 👧
+  `👦 delegate · auto-exit off`, with 👦 or 👧
   picked at random per session.
 
 There is no `subagent_done` tool: auto-exit off only means the window stays.

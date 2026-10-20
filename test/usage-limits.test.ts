@@ -110,9 +110,10 @@ test("a free model's own limit marks only that model", async (t) => {
 	assert.equal(p.tmux.opened.length, 1);
 });
 
-test("overloaded and 5xx errors record no mark", async (t) => {
+test("overloaded, unavailable and 5xx errors record no mark", async (t) => {
 	clock(t);
 	await fail('529: {"type":"overloaded_error","message":"Overloaded"}');
+	await fail("429: Endpoint is unavailable");
 	await fail("503: service unavailable rate_limit_error");
 	await fail("boom");
 	assert.deepEqual(marks(), []);

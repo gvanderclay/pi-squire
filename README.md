@@ -45,8 +45,8 @@ The package has no runtime dependencies and no build step.
 
 The package ships no agents, so create one first. `<agent dir>` is Pi's agent
 directory: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when that is set. Save this
-as `<agent dir>/agents/scout/AGENT.md`, replacing `provider/model-id` with a
-model your Pi can use:
+as `<agent dir>/squire/agents/scout/AGENT.md`, replacing
+`provider/model-id` with a model your Pi can use:
 
 ```markdown
 ---
@@ -75,10 +75,11 @@ closes its own window ([auto-exit](#auto-exit)).
 ## How a delegation works
 
 `/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task…>`
-reads the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task to
-the delegate's inbox through `message:send`, emits `session:launch` so other
-extensions can shape the launch, then opens a detached window running the
-parent's own Pi in the parent's working directory and agent root. The agent's
+reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes
+the task to the delegate's inbox through `message:send`, emits
+`session:launch` so other extensions can shape the launch, then opens a
+detached window running the parent's own Pi in the parent's working directory
+and agent root. The agent's
 prompt reaches the child as a path to a private file under the system
 temporary folder, not as text on the command line.
 
@@ -112,8 +113,9 @@ temporary folder, not as text on the command line.
 
 ## Agents
 
-The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
-directory per agent, so a new agent is usable without a reload. Frontmatter
+The roster is read at call time from
+`<agent dir>/squire/agents/<name>/AGENT.md`, one directory per agent, so a new
+agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`, and optionally
 `auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit)),
 `exclude-tools`, `tools`, `extensions` and `fallback`. The body is the delegate's system prompt,
@@ -485,7 +487,7 @@ has been sent and just before it opens the delegate's window.
 | --- | --- |
 | `args` | the child `pi`'s complete argument list, launcher first |
 | `env` | the child's environment, as `KEY`/`value` pairs |
-| `agent` | the agent's name, as in `<agent dir>/agents/<name>/AGENT.md`; read it, do not change it |
+| `agent` | the agent's name, as in `<agent dir>/squire/agents/<name>/AGENT.md`; read it, do not change it |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
 and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
@@ -565,7 +567,7 @@ Other extensions may rely on:
 - the `/delegate` syntax and flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,
-  `<agent dir>/agents/<name>/AGENT.md`;
+  `<agent dir>/squire/agents/<name>/AGENT.md`;
 - the child environment variables `PI_DELEGATE_PARENT`,
   `PI_DELEGATE_AUTO_EXIT` and `PI_UNATTENDED=1`.
 

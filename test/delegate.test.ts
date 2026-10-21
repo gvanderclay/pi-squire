@@ -10,7 +10,17 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import {
+	agentDir,
+	agentFile,
+	cleanup,
+	resetRoot,
+	root,
+	session,
+	sessionDir,
+	writeAgent,
+	writeLegacyAgent,
+} from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -41,7 +51,19 @@ test("a root with no agents explains how to add one", async () => {
 	assert.deepEqual(s.sendCalls, []);
 	assert.equal(s.errors.length, 1);
 	assert.match(s.errors[0], /AGENT\.md/);
-	assert.ok(s.errors[0].includes(`${agentDir}/agents/`), s.errors[0]);
+	assert.ok(s.errors[0].includes(`${agentDir}/squire/agents/`), s.errors[0]);
+});
+
+test("a legacy AGENT.md is not an agent and the command names the new location", async () => {
+	writeLegacyAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const s = session();
+	assert.equal(await s.completions(""), null);
+	await s.delegate("scout do the thing");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
+	assert.equal(s.errors.length, 1);
+	assert.match(s.errors[0], /no agents are defined/);
+	assert.ok(s.errors[0].includes(`${agentDir}/squire/agents/`), s.errors[0]);
 });
 
 test("an unknown agent is refused with the roster's names", async () => {

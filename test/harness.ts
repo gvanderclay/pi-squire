@@ -20,6 +20,10 @@ import { FakeUsage } from "./fake-usage.ts";
 /** A throwaway root for this test file; `PI_CODING_AGENT_DIR` points inside it. */
 export const root = mkdtempSync(join(tmpdir(), "delegate-test-"));
 export const agentDir = join(root, "agent");
+/** The roster's directory, `<agent dir>/squire/agents`. */
+export const rosterDir = join(agentDir, "squire", "agents");
+/** The retired roster directory, kept only so tests can write a fixture there. */
+const legacyRosterDir = join(agentDir, "agents");
 /** The session directory the fake `sessionManager` reports. */
 export const sessionDir = join(agentDir, "sessions");
 process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -35,7 +39,8 @@ export function agentFile(fields: Record<string, string>, body = "Do the task an
 
 /** Empty the roster and the session directory; the next write into either is the whole of it. */
 export function resetRoot(): void {
-	rmSync(join(agentDir, "agents"), { recursive: true, force: true });
+	rmSync(rosterDir, { recursive: true, force: true });
+	rmSync(legacyRosterDir, { recursive: true, force: true });
 	rmSync(sessionDir, { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
@@ -43,10 +48,16 @@ export function resetRoot(): void {
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
-/** Write `<agent dir>/agents/<name>/AGENT.md`. */
+/** Write `<agent dir>/squire/agents/<name>/AGENT.md`. */
 export function writeAgent(name: string, content: string): void {
-	mkdirSync(join(agentDir, "agents", name), { recursive: true });
-	writeFileSync(join(agentDir, "agents", name, "AGENT.md"), content);
+	mkdirSync(join(rosterDir, name), { recursive: true });
+	writeFileSync(join(rosterDir, name, "AGENT.md"), content);
+}
+
+/** Write `<agent dir>/agents/<name>/AGENT.md`, the retired location no roster reads. */
+export function writeLegacyAgent(name: string, content: string): void {
+	mkdirSync(join(legacyRosterDir, name), { recursive: true });
+	writeFileSync(join(legacyRosterDir, name, "AGENT.md"), content);
 }
 
 /** The models the fake registry knows, as `provider/id` pairs. Never a real model. */

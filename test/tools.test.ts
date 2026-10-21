@@ -8,7 +8,16 @@ import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, session, sessionDir, writeAgent } from "./harness.ts";
+import {
+	agentDir,
+	agentFile,
+	cleanup,
+	resetRoot,
+	session,
+	sessionDir,
+	writeAgent,
+	writeLegacyAgent,
+} from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -48,6 +57,21 @@ test("a roster written after registration shows up in the description at session
 test("with an empty roster the description says how to add an agent", async () => {
 	const s = session();
 	assert.match(s.tool("delegate").description, /AGENT\.md/);
+	assert.ok(
+		s.tool("delegate").description.includes(join(agentDir, "squire", "agents")),
+		s.tool("delegate").description,
+	);
+});
+
+test("an agent defined only under the legacy agents directory is neither listed nor launched", async () => {
+	writeLegacyAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	assert.doesNotMatch(s.tool("delegate").description, /scout|Looks things up/);
+	assert.equal(await s.completions(""), null);
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "do it" }), /no agents are defined/);
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
 });
 
 test("inside a delegate no tools are registered", async () => {

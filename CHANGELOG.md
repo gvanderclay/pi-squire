@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- Agent definitions now live under `<agent dir>/squire/agents/<name>/AGENT.md`,
+  and only there. The old `<agent dir>/agents/<name>/AGENT.md` location is no
+  longer read, with no fallback or dual discovery, so an agent left there is
+  neither listed nor launched.
+
 ### Fixed
 
 - A 429 whose text says the endpoint is unavailable, such as OpenCode Go's

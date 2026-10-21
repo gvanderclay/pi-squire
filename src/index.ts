@@ -3,7 +3,7 @@
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
 // [--label <name>] [--auto-exit | --no-auto-exit] <task…>`
-// reads the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task
+// reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens a window in the
 // parent's working directory running the parent's own Pi. The window and the
@@ -332,6 +332,7 @@ function toolDescription(agents: readonly Agent[]): string {
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${join(
 			getAgentDir(),
+			"squire",
 			"agents",
 			"<name>",
 			"AGENT.md",
@@ -411,6 +412,7 @@ export default function delegate(
 			throw new Error(
 				`no agents are defined; add ${join(
 					getAgentDir(),
+					"squire",
 					"agents",
 					"<name>",
 					"AGENT.md",

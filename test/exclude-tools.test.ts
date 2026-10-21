@@ -136,7 +136,7 @@ test("a bad fallback entry is dropped with a warning and the agent still loads",
 const pair = (argv: readonly string[], flag: string) => argv.slice(argv.indexOf(flag), argv.indexOf(flag) + 2);
 
 test("extensions become repeated -e flags, ~ and relative paths resolved, and the child still gets the usual flags", async () => {
-	const rel = join(agentDir, "agents", "tester", "ext.ts");
+	const rel = join(agentDir, "squire", "agents", "tester", "ext.ts");
 	writeAgent("tester", agentFile({ ...SCOUT, extensions: "./ext.ts, ~/home-ext.ts" }));
 	writeFileSync(rel, "");
 	const savedHome = process.env.HOME;

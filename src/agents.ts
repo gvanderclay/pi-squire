@@ -1,4 +1,4 @@
-// The parent's agent roster: `<agent dir>/agents/<name>/AGENT.md`, read at
+// The parent's agent roster: `<agent dir>/squire/agents/<name>/AGENT.md`, read at
 // call time so a new agent is usable without a reload. Frontmatter carries
 // `description`, `model` and `thinking`, and optionally `auto-exit` (default
 // true) and `exclude-tools` (tools the delegate goes without, passed to its Pi
@@ -179,14 +179,14 @@ function flag(value: unknown): boolean | undefined | null {
 }
 
 /**
- * Read every agent under `<agentDir>/agents/`, in name order. A directory
+ * Read every agent under `<agentDir>/squire/agents/`, in name order. A directory
  * with no `AGENT.md` is not an agent and is passed over quietly; an
  * `AGENT.md` that cannot be used is warned about and left out. `tools` are
  * the session's tool names, which `exclude-tools` is checked against;
  * undefined skips that check, as before the session's tools are known.
  */
 export function readRoster(agentDir: string, tools?: readonly string[]): Roster {
-	const dir = join(agentDir, "agents");
+	const dir = join(agentDir, "squire", "agents");
 	let names: string[];
 	try {
 		names = readdirSync(dir).sort();

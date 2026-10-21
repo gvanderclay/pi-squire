@@ -22,6 +22,16 @@ test("an errored run carries the failure a test chose, and a plain one keeps boo
 	assert.equal("provider" in seen[1], false);
 });
 
+test("prepare records messages returned by before_agent_start handlers", async () => {
+	resetRoot();
+	const s = session();
+	s.pi.on("before_agent_start", () => ({
+		message: { customType: "harness-check", content: "returned message", display: false },
+	}));
+	await s.prepare();
+	assert.deepEqual(s.preparedMessages, [{ customType: "harness-check", content: "returned message", display: false }]);
+});
+
 test("fire reaches handlers and extra models stay in their own session", async () => {
 	resetRoot();
 	const extra = { provider: "opencode-go", id: "fake-free", cost: { input: 0, output: 0 } };

@@ -19,6 +19,7 @@ import {
 	session,
 	sessionDir,
 	writeAgent,
+	writeDelegationPrompt,
 	writeLegacyAgent,
 } from "./harness.ts";
 
@@ -329,6 +330,25 @@ test("the appended prompt names the parent, follows its messages, and checks oth
 	assert.ok(!/mailbox|session_mail|pi-session-mail/.test(prompt), prompt);
 });
 
+test("the child sees only its own role body, never the parent prompt or another role", async () => {
+	writeDelegationPrompt("# Parent delegation\n\nPARENT-ONLY-GUIDANCE\n");
+	writeAgent(
+		"scout",
+		agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."),
+	);
+	writeAgent(
+		"researcher",
+		agentFile({ description: "Digs deeper", model: "alpha/deep-model", thinking: "high" }, "You dig deeper."),
+	);
+	const s = session();
+	await s.delegate("scout find the answer");
+	const { argv } = s.tmux.opened[0];
+	const prompt = readFileSync(String(argv[argv.indexOf("--append-system-prompt") + 1]), "utf8");
+	assert.ok(prompt.startsWith("You look things up.\n\nEnd with one self-contained final message:"), prompt);
+	assert.ok(!prompt.includes("PARENT-ONLY-GUIDANCE"), prompt);
+	assert.ok(!prompt.includes("You dig deeper."), prompt);
+});
+
 test("the appended prompt is an owner-only file under the temporary folder, one per launch", async () => {
 	writeAgent(
 		"scout",
@@ -524,6 +544,26 @@ test("a done reply to a recorded delegation becomes one handled result message",
 	assert.ok(content.includes(payload.requests[0].path), content);
 	assert.ok(content.includes(payload.path), content);
 	assert.deepEqual(options, { triggerTurn: true, deliverAs: "steer" });
+});
+
+test("an idle result still requests a parent turn, and that turn's preparation refreshes guidance", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	writeDelegationPrompt("First guidance.\n");
+	assert.equal(
+		(await s.prepare({ messageType: "custom" })).systemPromptOptions.sections.squire_parent_delegation,
+		"First guidance.\n",
+	);
+	s.events.emit("message:inbound", inbound(s.parent, delegation));
+	assert.equal(s.sent.length, 1);
+	assert.deepEqual(s.sent[0].options, { triggerTurn: true, deliverAs: "steer" });
+
+	writeDelegationPrompt("Second guidance.\n");
+	const wake = await s.prepare({
+		messageType: "custom",
+		message: { customType: "delegate", content: String(s.sent[0].message.content), display: true },
+	});
+	assert.equal(wake.systemPromptOptions.sections.squire_parent_delegation, "Second guidance.\n");
 });
 
 test("the footer counts running delegations up and clears back to hidden", async () => {

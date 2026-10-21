@@ -20,6 +20,12 @@ import { FakeUsage } from "./fake-usage.ts";
 /** A throwaway root for this test file; `PI_CODING_AGENT_DIR` points inside it. */
 export const root = mkdtempSync(join(tmpdir(), "delegate-test-"));
 export const agentDir = join(root, "agent");
+/** The roster's directory, `<agent dir>/squire/agents`. */
+export const rosterDir = join(agentDir, "squire", "agents");
+/** The retired roster directory, kept only so tests can write a fixture there. */
+const legacyRosterDir = join(agentDir, "agents");
+/** The optional parent guidance file. */
+export const delegationPromptPath = join(agentDir, "squire", "delegation_prompt.md");
 /** The session directory the fake `sessionManager` reports. */
 export const sessionDir = join(agentDir, "sessions");
 process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -35,7 +41,9 @@ export function agentFile(fields: Record<string, string>, body = "Do the task an
 
 /** Empty the roster and the session directory; the next write into either is the whole of it. */
 export function resetRoot(): void {
-	rmSync(join(agentDir, "agents"), { recursive: true, force: true });
+	rmSync(rosterDir, { recursive: true, force: true });
+	rmSync(legacyRosterDir, { recursive: true, force: true });
+	rmSync(delegationPromptPath, { recursive: true, force: true });
 	rmSync(sessionDir, { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
@@ -43,10 +51,22 @@ export function resetRoot(): void {
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
-/** Write `<agent dir>/agents/<name>/AGENT.md`. */
+/** Write `<agent dir>/squire/agents/<name>/AGENT.md`. */
 export function writeAgent(name: string, content: string): void {
-	mkdirSync(join(agentDir, "agents", name), { recursive: true });
-	writeFileSync(join(agentDir, "agents", name, "AGENT.md"), content);
+	mkdirSync(join(rosterDir, name), { recursive: true });
+	writeFileSync(join(rosterDir, name, "AGENT.md"), content);
+}
+
+/** Write `<agent dir>/squire/delegation_prompt.md`. */
+export function writeDelegationPrompt(content: string): void {
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(delegationPromptPath, content);
+}
+
+/** Write `<agent dir>/agents/<name>/AGENT.md`, the retired location no roster reads. */
+export function writeLegacyAgent(name: string, content: string): void {
+	mkdirSync(join(legacyRosterDir, name), { recursive: true });
+	writeFileSync(join(legacyRosterDir, name, "AGENT.md"), content);
 }
 
 /** The models the fake registry knows, as `provider/id` pairs. Never a real model. */
@@ -75,6 +95,45 @@ export type Tool = {
 	outputSchema?: TSchema;
 	annotations?: Record<string, boolean>;
 	execute: (toolCallId: string, params: never, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<ToolResult>;
+};
+
+/** The structured prompt options one fake run preparation starts from. */
+export type PrepareOptions = {
+	messageType?: "user" | "custom";
+	systemPrompt?: string;
+	prompt?: string;
+	message?: { customType: string; content: unknown; display: boolean };
+	selectedTools?: readonly string[];
+	hiddenTools?: readonly string[];
+	sections?: Record<string, string>;
+	toolSnippets?: Record<string, string>;
+	toolGuidelines?: Record<string, string[]>;
+	promptGuidelines?: readonly string[];
+	appendSystemPrompt?: string;
+};
+
+/** A message a `before_agent_start` handler returns, which Pi appends to the run's history. */
+export type ReturnedMessage = { customType: string; content: unknown; display: boolean; details?: unknown };
+
+/** The event a `before_agent_start` dispatch hands every handler. */
+export type PrepareEvent = {
+	type: "before_agent_start";
+	messageType: "user" | "custom";
+	prompt?: string;
+	message?: { customType: string; content: unknown; display: boolean };
+	systemPrompt: string;
+	systemPromptOptions: {
+		cwd: string;
+		selectedTools: string[];
+		hiddenTools: string[];
+		toolSnippets: Record<string, string>;
+		toolGuidelines: Record<string, string[]>;
+		promptGuidelines: string[];
+		appendSystemPrompt: string;
+		sections: Record<string, string>;
+		contextFiles: unknown[];
+		skills: unknown[];
+	};
 };
 
 /** The answers a scripted `ctx.ui` gives, one queue per dialog. */
@@ -166,7 +225,11 @@ export function session(options: SessionOptions = {}) {
 	const warnings: string[] = [];
 	const errors: string[] = [];
 	const sendCalls: SendPayload[] = [];
+	/** Every message a `before_agent_start` handler returned, in handler order. */
+	const preparedMessages: ReturnedMessage[] = [];
 	const tools: Record<string, Tool> = {};
+	/** Every `pi.registerTool` call, in order, so a test can count re-registrations. */
+	const registrations: string[] = [];
 	/** Every `ctx.ui.select` call, with what it showed. */
 	const selects: { title: string; options: string[] }[] = [];
 	/** Every `ctx.ui.editor` call, with what it pre-filled. */
@@ -217,6 +280,7 @@ export function session(options: SessionOptions = {}) {
 			commands[name] = command;
 		},
 		registerTool: (tool: Tool) => {
+			registrations.push(tool.name);
 			tools[tool.name] = tool;
 		},
 		registerMessageRenderer: () => {},
@@ -305,6 +369,38 @@ export function session(options: SessionOptions = {}) {
 		for (const handler of handlers[name] ?? []) results.push(await handler({ type: name, ...event }, ctx));
 		return results;
 	};
+	/** Dispatch one run preparation, with the structured options Pi would pass, and return the event after handlers. */
+	const prepare = async (options: PrepareOptions = {}): Promise<PrepareEvent> => {
+		const { messageType = "user", systemPrompt = "", prompt, message, ...promptOptions } = options;
+		const event: PrepareEvent = {
+			type: "before_agent_start",
+			messageType,
+			...(messageType === "custom"
+				? { message: message ?? { customType: "delegate", content: "result", display: true } }
+				: { prompt: prompt ?? "question" }),
+			systemPrompt,
+			systemPromptOptions: {
+				cwd: root,
+				selectedTools: [...(promptOptions.selectedTools ?? [...DEFAULT_TOOLS, "delegate"])],
+				hiddenTools: [...(promptOptions.hiddenTools ?? [])],
+				toolSnippets: { ...(promptOptions.toolSnippets ?? {}) },
+				toolGuidelines: { ...(promptOptions.toolGuidelines ?? {}) },
+				promptGuidelines: [...(promptOptions.promptGuidelines ?? [])],
+				appendSystemPrompt: promptOptions.appendSystemPrompt ?? "",
+				sections: { ...(promptOptions.sections ?? {}) },
+				contextFiles: [],
+				skills: [],
+			},
+		};
+		for (const handler of handlers.before_agent_start ?? []) {
+			const result = (await handler(event, ctx)) as { systemPrompt?: string; message?: ReturnedMessage } | undefined;
+			// Pi honors a handler's whole-prompt replacement; recording it makes the test observable.
+			if (result?.systemPrompt !== undefined) event.systemPrompt = result.systemPrompt;
+			// Pi appends a handler's returned message to the run's history; record it too.
+			if (result?.message !== undefined) preparedMessages.push(result.message);
+		}
+		return event;
+	};
 	let calls = 0;
 	const callTool = (name: string, params: unknown): Promise<ToolResult> => {
 		const tool = tools[name];
@@ -336,6 +432,12 @@ export function session(options: SessionOptions = {}) {
 		commands: () => Object.keys(commands),
 		/** The tools the extension registered, if any. */
 		tools: () => Object.keys(tools),
+		/** Every tool registration in order, so a test can count them. */
+		registrations,
+		/** Every message a `before_agent_start` handler returned, in handler order. */
+		preparedMessages,
+		/** Dispatch a run's preparation with structured prompt options; returns the event after handlers. */
+		prepare,
 		/** One registered tool's definition. */
 		tool: (name: string) => tools[name],
 		/** Call a tool the way Pi does, with this session's context. */

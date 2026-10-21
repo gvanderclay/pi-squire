@@ -6,6 +6,37 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- Agent definitions now live under `<agent dir>/squire/agents/<name>/AGENT.md`,
+  and only there. The old `<agent dir>/agents/<name>/AGENT.md` location is no
+  longer read, with no fallback or dual discovery, so an agent left there is
+  neither listed nor launched.
+- Pi 1.3.0 or later is now required. The raised floor supports structured
+  per-run system-prompt sections and `before_agent_start` preparation for runs
+  started by an idle custom-message result, so parent guidance and roster
+  metadata are current before each new run.
+
+### Added
+
+- Optional parent delegation guidance: Markdown in
+  `<agent dir>/squire/delegation_prompt.md` is inserted unchanged into the
+  `squire_parent_delegation` system-prompt section before each new run, only
+  while the `delegate` tool is active and not hidden. Missing, empty or deleted
+  files add no guidance; a read failure warns with the path, removes stale
+  guidance for that run, and leaves delegation working. The package ships no
+  default delegation or approval policy.
+- The `delegate` tool description now refreshes from the current roster before
+  each new run, including a run woken by an idle delegate result. A changed
+  agent description, addition or removal shows up in the run being prepared;
+  unchanged metadata is not re-registered.
+
+### Changed
+
+- The `delegate` tool now says to keep working or end the turn rather than poll
+  or send a blocking mail request merely to wait for a result, while a
+  substantive follow-up remains supported.
+
 ## [0.8.1] - 2026-10-20
 
 ### Fixed

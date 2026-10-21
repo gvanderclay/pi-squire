@@ -4,11 +4,24 @@
 // Pi session with a scripted `ctx.ui`, the fake tmux, `message:send` stubbed.
 
 import assert from "node:assert/strict";
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, session, sessionDir, writeAgent } from "./harness.ts";
+import {
+	agentDir,
+	agentFile,
+	cleanup,
+	DEFAULT_TOOLS,
+	delegationPromptPath,
+	resetRoot,
+	rosterDir,
+	session,
+	sessionDir,
+	writeAgent,
+	writeDelegationPrompt,
+	writeLegacyAgent,
+} from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -21,6 +34,7 @@ const RESEARCHER = agentFile(
 	{ description: "Digs deeper", model: "alpha/deep-model", thinking: "high" },
 	"You dig deeper.",
 );
+const SCOUT_EDITED = { description: "Looks things up differently", model: "alpha/fast-model", thinking: "low" };
 
 // ---------------------------------------------------------------------------
 // The tool description
@@ -48,11 +62,233 @@ test("a roster written after registration shows up in the description at session
 test("with an empty roster the description says how to add an agent", async () => {
 	const s = session();
 	assert.match(s.tool("delegate").description, /AGENT\.md/);
+	assert.ok(
+		s.tool("delegate").description.includes(join(agentDir, "squire", "agents")),
+		s.tool("delegate").description,
+	);
+});
+
+test("an agent defined only under the legacy agents directory is neither listed nor launched", async () => {
+	writeLegacyAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	assert.doesNotMatch(s.tool("delegate").description, /scout|Looks things up/);
+	assert.equal(await s.completions(""), null);
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "do it" }), /no agents are defined/);
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
 });
 
 test("inside a delegate no tools are registered", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session({ parentEnv: "some-parent" });
+	assert.deepEqual(s.tools(), []);
+});
+
+// ---------------------------------------------------------------------------
+// Parent delegation context
+
+const PARENT_SECTION = "squire_parent_delegation";
+const GUIDE = `# Delegation
+
+Use a delegate for broad exploration, and read a file directly when you need to decide.
+
+- Keep the main context focused.
+- Evaluate the findings before relying on them.
+`;
+
+test("the delegate tool explains self-contained tasks, automatic results, and substantive follow-ups", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	const description = s.tool("delegate").description;
+	assert.match(description, /the task must stand alone/);
+	assert.match(description, /its result starts your next turn on its own/);
+	assert.match(description, /Do not poll delegation_status or send a blocking mail request merely to wait/);
+	assert.match(description, /substantive follow-up/);
+});
+
+test("run preparation puts the exact prompt document in the owned section and nothing else", async () => {
+	writeDelegationPrompt(GUIDE);
+	const s = session();
+	await s.start();
+	const event = await s.prepare({
+		systemPrompt: "base prompt",
+		sections: { other: "keep this", [PARENT_SECTION]: "stale guidance" },
+		toolSnippets: { read: "Read a file" },
+		toolGuidelines: { read: ["Keep this guideline"] },
+		promptGuidelines: ["Keep this rule"],
+		appendSystemPrompt: "Keep this append",
+	});
+	const options = event.systemPromptOptions;
+	assert.equal(options.sections[PARENT_SECTION], GUIDE);
+	assert.equal(options.sections.other, "keep this");
+	assert.deepEqual(options.toolSnippets, { read: "Read a file" });
+	assert.deepEqual(options.toolGuidelines, { read: ["Keep this guideline"] });
+	assert.deepEqual(options.promptGuidelines, ["Keep this rule"]);
+	assert.equal(options.appendSystemPrompt, "Keep this append");
+	assert.deepEqual(options.selectedTools, [...DEFAULT_TOOLS, "delegate"]);
+	assert.deepEqual(options.hiddenTools, []);
+	assert.deepEqual(s.sent, [], "guidance is not a conversation message");
+	assert.deepEqual(s.userMessages, [], "guidance is not a user message");
+	assert.deepEqual(s.preparedMessages, [], "guidance is not a returned before_agent_start message");
+	assert.ok(!s.tool("delegate").description.includes(GUIDE), "guidance stays out of the tool description");
+	assert.equal(event.systemPrompt, "base prompt", "the whole prompt is not replaced");
+});
+
+test("no prompt file, or a whitespace-only one, adds no policy and removes stale guidance", async () => {
+	const s = session();
+	await s.start();
+	let event = await s.prepare({ sections: { [PARENT_SECTION]: "stale" } });
+	assert.deepEqual(event.systemPromptOptions.sections, {});
+	writeDelegationPrompt("  \n\t\n");
+	event = await s.prepare({ sections: { [PARENT_SECTION]: "stale" } });
+	assert.deepEqual(event.systemPromptOptions.sections, {});
+	assert.deepEqual(s.warnings, []);
+});
+
+test("editing the prompt replaces the section at the next preparation, and deleting it removes the section", async () => {
+	writeDelegationPrompt(GUIDE);
+	const s = session();
+	await s.start();
+	assert.equal((await s.prepare()).systemPromptOptions.sections[PARENT_SECTION], GUIDE);
+	writeDelegationPrompt("# Revised\n\nNew guidance.\n");
+	assert.equal((await s.prepare()).systemPromptOptions.sections[PARENT_SECTION], "# Revised\n\nNew guidance.\n");
+	rmSync(delegationPromptPath);
+	const removed = await s.prepare({ sections: { [PARENT_SECTION]: "stale" } });
+	assert.equal(PARENT_SECTION in removed.systemPromptOptions.sections, false);
+});
+
+test("an unreadable prompt warns with its path, removes stale guidance, and leaves delegation usable", async () => {
+	writeAgent("scout", SCOUT);
+	writeDelegationPrompt(GUIDE);
+	const s = session();
+	await s.start();
+	assert.equal((await s.prepare()).systemPromptOptions.sections[PARENT_SECTION], GUIDE);
+	rmSync(delegationPromptPath);
+	mkdirSync(delegationPromptPath);
+	const event = await s.prepare({ sections: { [PARENT_SECTION]: "stale" } });
+	assert.equal(PARENT_SECTION in event.systemPromptOptions.sections, false);
+	assert.equal(s.warnings.length, 1);
+	assert.ok(s.warnings[0].startsWith("delegate: could not read "), s.warnings[0]);
+	assert.ok(s.warnings[0].includes(delegationPromptPath), s.warnings[0]);
+	await assert.doesNotReject(s.toolCall("delegate", { agent: "scout", task: "do it" }));
+	assert.equal(s.tmux.opened.length, 1);
+});
+
+test("a prompt read error is reported and clears guidance even when delegation is inactive or hidden", async () => {
+	writeAgent("scout", SCOUT);
+	writeDelegationPrompt(GUIDE);
+	const s = session();
+	await s.start();
+	assert.equal((await s.prepare()).systemPromptOptions.sections[PARENT_SECTION], GUIDE);
+	writeAgent("researcher", RESEARCHER);
+	rmSync(delegationPromptPath);
+	mkdirSync(delegationPromptPath);
+	const before = s.registrations.length;
+
+	const hidden = await s.prepare({
+		selectedTools: [...DEFAULT_TOOLS, "delegate"],
+		hiddenTools: ["delegate"],
+		sections: { other: "keep", [PARENT_SECTION]: "stale" },
+	});
+	assert.deepEqual(hidden.systemPromptOptions.sections, { other: "keep" });
+	assert.deepEqual(hidden.systemPromptOptions.selectedTools, [...DEFAULT_TOOLS, "delegate"]);
+	assert.deepEqual(hidden.systemPromptOptions.hiddenTools, ["delegate"]);
+	assert.equal(s.registrations.length, before, "a hidden tool is not re-registered");
+	assert.equal(s.warnings.length, 1);
+	assert.ok(s.warnings[0].includes(delegationPromptPath), s.warnings[0]);
+
+	const inactive = await s.prepare({
+		selectedTools: DEFAULT_TOOLS,
+		sections: { other: "keep", [PARENT_SECTION]: "stale" },
+	});
+	assert.deepEqual(inactive.systemPromptOptions.sections, { other: "keep" });
+	assert.deepEqual(inactive.systemPromptOptions.selectedTools, DEFAULT_TOOLS);
+	assert.equal(s.registrations.length, before, "an inactive tool is not re-registered");
+	assert.equal(s.warnings.length, 2);
+	assert.ok(s.warnings[1].includes(delegationPromptPath), s.warnings[1]);
+	await assert.doesNotReject(s.toolCall("delegate", { agent: "scout", task: "do it" }));
+	assert.equal(s.tmux.opened.length, 1);
+});
+
+test("inactive or hidden delegation removes only the owned section and preserves selection", async () => {
+	writeDelegationPrompt(GUIDE);
+	const s = session();
+	await s.start();
+	const hidden = await s.prepare({
+		selectedTools: [...DEFAULT_TOOLS, "delegate"],
+		hiddenTools: ["delegate"],
+		sections: { other: "keep", [PARENT_SECTION]: "stale" },
+	});
+	assert.deepEqual(hidden.systemPromptOptions.sections, { other: "keep" });
+	assert.deepEqual(hidden.systemPromptOptions.selectedTools, [...DEFAULT_TOOLS, "delegate"]);
+	assert.deepEqual(hidden.systemPromptOptions.hiddenTools, ["delegate"]);
+
+	const inactive = await s.prepare({
+		selectedTools: DEFAULT_TOOLS,
+		sections: { other: "keep", [PARENT_SECTION]: "stale" },
+	});
+	assert.deepEqual(inactive.systemPromptOptions.sections, { other: "keep" });
+	assert.deepEqual(inactive.systemPromptOptions.selectedTools, DEFAULT_TOOLS);
+});
+
+test("a hidden tool's changed roster is not re-registered until it is active again", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	const before = s.registrations.length;
+	writeAgent("researcher", RESEARCHER);
+	await s.prepare({ hiddenTools: ["delegate"] });
+	assert.equal(s.registrations.length, before, "re-registering a hidden tool could reactivate it");
+	assert.doesNotMatch(s.tool("delegate").description, /researcher/);
+	await s.prepare();
+	assert.equal(s.registrations.length, before + 1);
+	assert.match(s.tool("delegate").description, /researcher/);
+});
+
+test("roster edits, additions and removals reach the current run preparation without churn", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	const before = s.registrations.length;
+	const unchanged = await s.prepare();
+	assert.equal(s.registrations.length, before, "unchanged metadata does not re-register");
+	assert.match(s.tool("delegate").description, /scout — Looks things up/);
+	assert.equal(unchanged.systemPromptOptions.sections[PARENT_SECTION], undefined);
+
+	writeAgent("researcher", RESEARCHER);
+	const added = await s.prepare({ messageType: "custom" });
+	assert.equal(s.registrations.length, before + 1, "a custom-result preparation refreshes too");
+	assert.match(s.tool("delegate").description, /researcher — Digs deeper/);
+	assert.equal(added.systemPromptOptions.sections[PARENT_SECTION], undefined);
+
+	writeAgent("scout", agentFile({ ...SCOUT_EDITED }));
+	rmSync(join(rosterDir, "researcher"), { recursive: true, force: true });
+	const changed = await s.prepare();
+	assert.equal(s.registrations.length, before + 2);
+	assert.match(s.tool("delegate").description, /scout — Looks things up differently/);
+	assert.doesNotMatch(s.tool("delegate").description, /researcher/);
+	assert.equal(changed.messageType, "user");
+});
+
+test("call-time validation reads a newly added agent before the description is refreshed", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	writeAgent("researcher", RESEARCHER);
+	assert.doesNotMatch(s.tool("delegate").description, /researcher/);
+	await s.toolCall("delegate", { agent: "researcher", task: "dig" });
+	assert.equal(s.tmux.opened.length, 1);
+	await s.prepare();
+	assert.match(s.tool("delegate").description, /researcher/);
+});
+
+test("inside a delegate run preparation adds no parent section and registers no parent tool", async () => {
+	writeDelegationPrompt(GUIDE);
+	const s = session({ parentEnv: "some-parent" });
+	await s.start();
+	const event = await s.prepare({ sections: { [PARENT_SECTION]: "keep" } });
+	assert.deepEqual(event.systemPromptOptions.sections, { [PARENT_SECTION]: "keep" });
 	assert.deepEqual(s.tools(), []);
 });
 

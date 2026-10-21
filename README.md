@@ -10,13 +10,12 @@ answers with one message, which the parent session shows as a result.
 
 You need:
 
-- Pi 0.80.5 or later, on macOS or Linux (not Windows). Pi 1.0.0 is the version
-  pi-squire is tested with. The floor is the first installable release with
-  the `agent_settled` event (added in 0.80.4, which was never published to
-  npm); `--exclude-tools` needs 0.77.0 and `--session-id`
-  0.76.0. The extension uses the `pi.events` bus, `pi.registerCommand` and
-  `pi.registerTool`; Pi supplies the peer dependencies
-  `@earendil-works/pi-coding-agent` and `typebox`.
+- Pi 1.3.0 or later, on macOS or Linux (not Windows). Pi 1.3.0 is the version
+  pi-squire is tested with. It provides the per-run `before_agent_start`
+  preparation for idle custom-message results, the structured system-prompt
+  options the parent guidance uses, and the extension APIs the package relies
+  on. Pi supplies the peer dependencies `@earendil-works/pi-coding-agent` and
+  `typebox`.
 - tmux 3.0 or later, with the Pi session running in a tmux pane. That is the
   first version with `new-window -e`. A window is opened in the pane's
   session, so a client attached elsewhere does not matter.
@@ -45,8 +44,8 @@ The package has no runtime dependencies and no build step.
 
 The package ships no agents, so create one first. `<agent dir>` is Pi's agent
 directory: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when that is set. Save this
-as `<agent dir>/agents/scout/AGENT.md`, replacing `provider/model-id` with a
-model your Pi can use:
+as `<agent dir>/squire/agents/scout/AGENT.md`, replacing
+`provider/model-id` with a model your Pi can use:
 
 ```markdown
 ---
@@ -60,8 +59,10 @@ You research one question at a time and answer concisely, citing the files
 you read.
 ```
 
-The roster is read at call time, so no reload is needed. Then, from a Pi
-session running in tmux, hand it a task:
+The roster is read at call time, so no reload is needed. Delegation guidance
+for the parent is optional: save Markdown as
+`<agent dir>/squire/delegation_prompt.md`, and it is read before each run.
+Then, from a Pi session running in tmux, hand it a task:
 
 ```text
 /delegate scout --label first Which files define the command-line entry point?
@@ -75,10 +76,11 @@ closes its own window ([auto-exit](#auto-exit)).
 ## How a delegation works
 
 `/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task…>`
-reads the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task to
-the delegate's inbox through `message:send`, emits `session:launch` so other
-extensions can shape the launch, then opens a detached window running the
-parent's own Pi in the parent's working directory and agent root. The agent's
+reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes
+the task to the delegate's inbox through `message:send`, emits
+`session:launch` so other extensions can shape the launch, then opens a
+detached window running the parent's own Pi in the parent's working directory
+and agent root. The agent's
 prompt reaches the child as a path to a private file under the system
 temporary folder, not as text on the command line.
 
@@ -112,8 +114,9 @@ temporary folder, not as text on the command line.
 
 ## Agents
 
-The roster is read at call time from `<agent dir>/agents/<name>/AGENT.md`, one
-directory per agent, so a new agent is usable without a reload. Frontmatter
+The roster is read at call time from
+`<agent dir>/squire/agents/<name>/AGENT.md`, one directory per agent, so a new
+agent is usable without a reload. Frontmatter
 carries `description`, `model` (`provider/id`) and `thinking`, and optionally
 `auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit)),
 `exclude-tools`, `tools`, `extensions` and `fallback`. The body is the delegate's system prompt,
@@ -173,8 +176,23 @@ add one.
 
 ## Configuration
 
-None beyond the roster. `pi-squire` reads no settings file and no environment
-variable of its own. `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
+`<agent dir>/squire/` holds the roster and the optional parent guidance file.
+`delegation_prompt.md` is Markdown, inserted unchanged as the
+`squire_parent_delegation` system-prompt section before each new run, including
+a run started by an idle delegate result. It is not a conversation or user
+message, is not duplicated in the `delegate` tool description or guidelines,
+and is not sent to the child. The guidance is added only while the `delegate`
+tool is active and not hidden; when delegation is inactive or hidden, the
+section is removed and tool selection is left as it was. A missing or whitespace-only
+file adds no section. Editing the file replaces the section at the next run;
+deleting it removes the section. A read failure other than a missing file
+warns with the path, removes stale guidance for that run, and leaves otherwise
+valid delegation working. The package ships no default delegation or approval
+policy.
+
+Refresh happens before a new run, not before every model request in a tool
+loop, and the extension does not watch the filesystem. `pi-squire` reads no
+settings file and no environment variable of its own. `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
 for the child, never read as configuration by the parent. The window starts
 with the tmux server's environment plus only these from the parent:
 `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` (when the parent has it
@@ -213,13 +231,18 @@ and its excluded tools.
 
 The model picks an agent from these lines without reading files. The
 description also tells the model to turn `auto_exit` off when it means to keep
-talking to the delegate by mail after its result. A tool's description is
-fixed when it is registered, so the description is rebuilt at every session
-start, and a roster change shows up in the next session. Pi cannot list the
-session's tools while extensions load, so the description built then skips the
-`exclude-tools` check, and the one built at session start applies it. The
-roster itself is read at call time, and an unknown agent, model or thinking
-level is refused with close matches and nothing starts.
+talking to the delegate by mail after its result. It says a task must stand
+alone, that results arrive automatically, and that the parent should keep
+working or end its turn rather than poll or send a blocking mail request
+merely to wait; a substantive follow-up remains fine. The description is
+rebuilt at session start and before each new run when the exposed roster
+changes, so an edit, addition or removal shows up in the run being prepared,
+including a run woken by an idle delegate result. Unchanged metadata is not
+re-registered. Pi cannot list the session's tools while extensions load, so
+the description built then skips the `exclude-tools` check, and the one built
+after startup applies it. The roster itself is still read at call time, and an
+unknown agent, model or thinking level is refused with close matches and
+nothing starts.
 
 `delegation_status` reports one state per delegation:
 
@@ -485,7 +508,7 @@ has been sent and just before it opens the delegate's window.
 | --- | --- |
 | `args` | the child `pi`'s complete argument list, launcher first |
 | `env` | the child's environment, as `KEY`/`value` pairs |
-| `agent` | the agent's name, as in `<agent dir>/agents/<name>/AGENT.md`; read it, do not change it |
+| `agent` | the agent's name, as in `<agent dir>/squire/agents/<name>/AGENT.md`; read it, do not change it |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
 and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
@@ -520,10 +543,6 @@ to the provider.
 Inside a delegate, `pi-squire` also takes over the task: a `request` whose
 `from` is the parent's address. It sets `handled` and sends the task as a user
 prompt labelled `[delegate]`, so the run starts the way a typed prompt does.
-Pi 1.0.0 starts a turn for an injected custom message without preparing the
-system prompt, so a fresh delegate's first request would otherwise carry no
-context files, skills or role paragraph
-([earendil-works/pi#5581](https://github.com/earendil-works/pi/issues/5581)).
 The provider still arms the automatic answer for a request a listener took
 over. Every other message to the delegate is left to the provider. `pi-squire` reads `from` and requires
 it to be the sender's address, which for a delegate is its session id; a reply
@@ -549,6 +568,16 @@ written just before a window closed is never mistaken for no reply. **If
 because a waiting reply cannot be ruled out. The provider's README carries the
 contract.
 
+## Testing limits
+
+The automated tests drive the extension through a fake Pi session. They check
+the registered tool definitions, the structured prompt options a simulated run
+preparation receives, file handling, visibility gating and the existing launch
+and result paths. They do not prove actual Pi event scheduling, final provider
+requests, compaction, cache behavior, or model obedience. The idle-result wake
+is simulated by dispatching the next preparation; the suite does not assert
+that the runtime emits it.
+
 ## Compatibility
 
 While pi-squire is below 1.0, breaking any contract below bumps the minor
@@ -565,7 +594,9 @@ Other extensions may rely on:
 - the `/delegate` syntax and flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,
-  `<agent dir>/agents/<name>/AGENT.md`;
+  `<agent dir>/squire/agents/<name>/AGENT.md`;
+- the optional `<agent dir>/squire/delegation_prompt.md` file and the
+  `squire_parent_delegation` system-prompt section;
 - the child environment variables `PI_DELEGATE_PARENT`,
   `PI_DELEGATE_AUTO_EXIT` and `PI_UNATTENDED=1`.
 

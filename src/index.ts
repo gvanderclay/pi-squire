@@ -3,7 +3,7 @@
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
 // [--label <name>] [--auto-exit | --no-auto-exit] <task…>`
-// reads the agent from `<agent dir>/agents/<name>/AGENT.md`, writes the task
+// reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens a window in the
 // parent's working directory running the parent's own Pi. The window and the
@@ -34,7 +34,7 @@
 // The `session:launch` contract this package provides, and the `message:*`
 // hooks it consumes, live in this package's README.
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -54,6 +54,10 @@ import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 
+/** The optional parent guidance file under `<agent dir>/squire/`. */
+const PARENT_PROMPT = "delegation_prompt.md";
+/** The parent system-prompt section this extension owns. */
+const PARENT_SECTION = "squire_parent_delegation";
 /** The hook a provider of `message:*` answers with the written request. */
 const SEND = "message:send";
 /** The hook emitted just before a delegate's window opens. */
@@ -325,13 +329,33 @@ function thinkingProblem(value: string): string | undefined {
 	}`;
 }
 
+/** Read `<agent dir>/squire/delegation_prompt.md`; missing or whitespace-only means no guidance. */
+function readParentPrompt(): { text?: string; error?: string } {
+	const path = join(getAgentDir(), "squire", PARENT_PROMPT);
+	try {
+		const text = readFileSync(path, "utf8");
+		return text.trim() === "" ? {} : { text };
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+		return {
+			error: `could not read ${path}: ${(err as Error).message}; parent delegation guidance is off for this run`,
+		};
+	}
+}
+
+/** Whether this run exposes `delegate` after tool selection and hidden declarations. */
+function delegateVisible(options: { selectedTools: string[]; hiddenTools: string[] }): boolean {
+	return options.selectedTools.includes("delegate") && !options.hiddenTools.includes("delegate");
+}
+
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 function toolDescription(agents: readonly Agent[]): string {
 	const intro =
-		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory and agent root and reports back later as one message. While it runs, keep working or end your turn: its result starts your next turn on its own, so there is no need to ask the delegate for it or poll delegation_status. Use it when the work is self-contained and you would rather keep your own context for it.";
+		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory and agent root and reports back later as one message. While it runs, keep working or end your turn: its result starts your next turn on its own. Do not poll delegation_status or send a blocking mail request merely to wait for the result; send a substantive follow-up only when you have something to add or ask. Use it when the work is self-contained and you would rather keep your own context for it.";
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${join(
 			getAgentDir(),
+			"squire",
 			"agents",
 			"<name>",
 			"AGENT.md",
@@ -411,6 +435,7 @@ export default function delegate(
 			throw new Error(
 				`no agents are defined; add ${join(
 					getAgentDir(),
+					"squire",
 					"agents",
 					"<name>",
 					"AGENT.md",
@@ -541,11 +566,13 @@ export default function delegate(
 		}
 	}
 
-	/** The tool's description is fixed at registration, so it is rebuilt at every session start. */
-	const delegateTool = () => ({
+	/** The roster description last registered, so unchanged metadata is not registered again. */
+	let registeredDescription: string | undefined;
+
+	const delegateTool = (description: string) => ({
 		name: "delegate",
 		label: "Delegate",
-		description: toolDescription(currentRoster().agents),
+		description,
 		parameters: Type.Object({
 			agent: Type.String({ description: "Roster agent name to run." }),
 			task: Type.String({
@@ -619,11 +646,32 @@ export default function delegate(
 		},
 	});
 
+	const registerDelegate = (description: string): void => {
+		pi.registerTool(delegateTool(description) as never);
+		registeredDescription = description;
+	};
+
 	pi.on("session_start", (_event, ctx) => {
 		registry = ctx.modelRegistry;
 		tracking.restore(ctx);
-		// The roster is read at call time; the description can only be fixed here.
-		pi.registerTool(delegateTool() as never);
+		// The roster is read at call time; the description is rebuilt here and before each run.
+		registerDelegate(toolDescription(currentRoster().agents));
+	});
+
+	// One roster/prompt snapshot prepares this run: refresh the description only when
+	// it changed, and replace only this extension's prompt section from the same snapshot.
+	pi.on("before_agent_start", (event, ctx) => {
+		const description = toolDescription(currentRoster().agents);
+		const prompt = readParentPrompt();
+		const visible = delegateVisible(event.systemPromptOptions);
+		// Report a read failure even when guidance cannot be used, so it does not go unseen.
+		if (prompt.error !== undefined) ctx.ui.notify(`delegate: ${prompt.error}`, "warning");
+		if (visible && description !== registeredDescription) registerDelegate(description);
+		if (!visible || prompt.error !== undefined || prompt.text === undefined) {
+			delete event.systemPromptOptions.sections[PARENT_SECTION];
+			return;
+		}
+		event.systemPromptOptions.sections[PARENT_SECTION] = prompt.text;
 	});
 
 	pi.on("session_shutdown", () => {
@@ -680,6 +728,6 @@ export default function delegate(
 		},
 	});
 
-	pi.registerTool(delegateTool() as never);
+	registerDelegate(toolDescription(currentRoster().agents));
 	tracking.registerTools();
 }

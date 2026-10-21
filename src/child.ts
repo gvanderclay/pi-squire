@@ -13,11 +13,11 @@
 // edxeth/pi-subagents' `auto-exit` (README "Child lifecycle", `cf6dbf4`).
 //
 // It also takes over the parent's task request on `message:inbound` and sends
-// it as a user prompt. Pi 1.0.0 starts a custom-message turn without preparing
-// the system prompt, so a fresh delegate's first request would carry no
-// AGENTS.md, skills or role addendum (earendil-works/pi#5581). The provider
-// still arms the automatic answer for a request a listener took over.
-// ponytail: drop the takeover once #5581 lands and the minimum Pi has it.
+// it as a user prompt, so the task starts through the same path as a typed
+// prompt, labelled `[delegate]`. Pi 1.2.0 already prepares the system prompt
+// for custom-message runs (earendil-works/pi#5581); this takeover remains the
+// package's pinned startup delivery path. The provider still arms the
+// automatic answer for a request a listener took over.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { activeMark, classify, type Response, recordLimit } from "./limits.ts";

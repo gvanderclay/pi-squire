@@ -125,7 +125,7 @@ const ICON = Math.random() < 0.5 ? "👦" : "👧";
 function showStatus(ctx: ExtensionContext, armed: boolean): void {
 	const { theme } = ctx.ui;
 	const agent = process.env[AGENT_ENV];
-	const label = agent === undefined || agent === "" ? "delegate" : `${agent} delegate`;
+	const label = agent === undefined || agent === "" ? "delegate" : `${theme.fg("accent", agent)} delegate`;
 	ctx.ui.setStatus(
 		STATUS_KEY,
 		armed

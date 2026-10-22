@@ -6,6 +6,10 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A delegate's footer shows its agent name in the theme's accent color.
+
 ## [0.9.1] - 2026-10-22
 
 ### Changed

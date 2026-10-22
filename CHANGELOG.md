@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A delegate's footer names its agent, as in `👦 worker delegate · auto-exit on`.
+  The launch passes the agent name to the delegate as `PI_DELEGATE_AGENT`.
+
 ## [0.9.0] - 2026-10-21
 
 ### Breaking

@@ -416,9 +416,9 @@ The parent resolves each delegation's auto-exit from the call
   notice: typed or RPC input, or a run the user stopped (Esc).
 - `/auto-exit` inside the delegate turns it on again for the next normal
   completion, whatever the launch said.
-- The footer shows that this is a delegate and whether auto-exit is on:
-  `👦 delegate · auto-exit on`, or
-  `👦 delegate · auto-exit off`, with 👦 or 👧
+- The footer shows that this is a delegate, its agent, and whether auto-exit
+  is on: `👦 worker delegate · auto-exit on`, or
+  `👦 worker delegate · auto-exit off`, with 👦 or 👧
   picked at random per session.
 
 There is no `subagent_done` tool: auto-exit off only means the window stays.

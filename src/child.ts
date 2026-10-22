@@ -27,6 +27,8 @@ import { STATUS_KEY } from "./results.ts";
 export const AUTO_EXIT_ENV = "PI_DELEGATE_AUTO_EXIT";
 /** The launch variable listing, comma-separated, the agent's models after the one launched. */
 export const FALLBACK_ENV = "PI_DELEGATE_FALLBACK";
+/** The launch variable naming the roster agent this delegate runs as, for its footer. */
+export const AGENT_ENV = "PI_DELEGATE_AGENT";
 
 const OFF_NOTICE =
 	"delegate: auto-exit is off for this session because you took over here; the window stays open. /auto-exit turns it back on.";
@@ -122,11 +124,13 @@ const ICON = Math.random() < 0.5 ? "👦" : "👧";
 
 function showStatus(ctx: ExtensionContext, armed: boolean): void {
 	const { theme } = ctx.ui;
+	const agent = process.env[AGENT_ENV];
+	const label = agent === undefined || agent === "" ? "delegate" : `${agent} delegate`;
 	ctx.ui.setStatus(
 		STATUS_KEY,
 		armed
-			? `${ICON} delegate · auto-exit ${theme.fg("success", "on")}`
-			: `${ICON} delegate · auto-exit ${theme.fg("dim", "off")}`,
+			? `${ICON} ${label} · auto-exit ${theme.fg("success", "on")}`
+			: `${ICON} ${label} · auto-exit ${theme.fg("dim", "off")}`,
 	);
 }
 

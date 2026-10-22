@@ -48,6 +48,7 @@ export function resetRoot(): void {
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
 	delete process.env.PI_DELEGATE_FALLBACK;
+	delete process.env.PI_DELEGATE_AGENT;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
@@ -161,6 +162,8 @@ export type SessionOptions = {
 	autoExitEnv?: string;
 	/** Set `PI_DELEGATE_FALLBACK` before the extension registers, as the launch does. */
 	fallbackEnv?: string;
+	/** Set `PI_DELEGATE_AGENT` before the extension registers, as the launch does. */
+	agentEnv?: string;
 	/** Custom entries the session already holds, as on a resume. */
 	entries?: readonly Entry[];
 	/** Answers `ctx.ui` gives, in order, one queue per dialog. An empty queue cancels. */
@@ -363,6 +366,7 @@ export function session(options: SessionOptions = {}) {
 	if (options.parentEnv !== undefined) process.env.PI_DELEGATE_PARENT = options.parentEnv;
 	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
 	if (options.fallbackEnv !== undefined) process.env.PI_DELEGATE_FALLBACK = options.fallbackEnv;
+	if (options.agentEnv !== undefined) process.env.PI_DELEGATE_AGENT = options.agentEnv;
 	register(pi as never, tmux, usage);
 	const fire = async (name: string, event: object = {}) => {
 		const results: unknown[] = [];

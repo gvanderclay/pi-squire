@@ -162,6 +162,12 @@ for (const end of ["aborted", "stopped"] as const) {
 	});
 }
 
+test("the delegate's footer names its agent when the launch gives one", async () => {
+	const s = session({ parentEnv: "some-parent", autoExitEnv: "1", agentEnv: "reviewer" });
+	await s.start();
+	assert.deepEqual(s.statuses, [{ key: "delegate", text: "<child> reviewer delegate \u00b7 auto-exit on" }]);
+});
+
 test("/auto-exit turns it back on for the next normal completion", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
 	await s.start();

@@ -47,7 +47,7 @@ import {
 import { Type } from "typebox";
 
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
-import { AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
+import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
@@ -510,6 +510,7 @@ export default function delegate(
 			PI_CODING_AGENT_DIR: getAgentDir(),
 			[PARENT_ENV]: parent,
 			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
+			[AGENT_ENV]: start.agent.name,
 			// A general signal for any extension: no human watches this session, so don't wait on a dialog.
 			PI_UNATTENDED: "1",
 		};

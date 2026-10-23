@@ -49,7 +49,8 @@ follows [Semantic Versioning](https://semver.org/).
   takes a fresh one each call. Lists are capped at 100 paths and 16 KiB with
   totals; Git gets 2 s per command, 5 s and 4 MiB per checkout, runs without
   optional index writes, and is asked only about the recorded checkout. A
-  snapshot is an observation, not attribution or merge advice. Result text
+  snapshot is an observation of the Git state at the recorded location, not
+  proof of the same repository on disk, attribution or merge advice. Result text
   gains `Checkout when the result arrived:` lines and status text
   `checkout now:` lines; the pinned result entry, details and result-text
   tests change with it.

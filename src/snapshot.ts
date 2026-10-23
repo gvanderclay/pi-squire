@@ -150,7 +150,11 @@ function budgetedGit(cwd: string): { run(args: string[]): GitAnswer; ask(args: s
 	return { run, ask };
 }
 
-/** Refuse a directory that is gone or no longer the checkout recorded at launch; another repository there is not this delegation's. */
+/**
+ * Refuse a directory that is gone or whose checkout root or common directory
+ * is not at its recorded location. A repository replaced at the same
+ * locations is observed like any other: this checks location, not continuity.
+ */
 function requireLaunchCheckout(
 	cwd: string,
 	launch: Extract<GitLaunch, { kind: "git" }>,

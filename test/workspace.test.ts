@@ -13,6 +13,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
 	symlinkSync,
 	utimesSync,
@@ -989,7 +990,7 @@ test("inspection failure cannot lose duplicate or late replies or other status",
 	for (const dir of [healthy, bad, plain, late, replaced, plainGone]) await call(s, dir);
 	const [healthyRecord, badRecord, nonGitRecord, lateRecord, replacedRecord, plainGoneRecord] = records(s);
 	rmSync(plainGone, { recursive: true, force: true });
-	// The launch subdirectory now holds its own clone: the launch commit exists there, but it is another repository.
+	// The launch subdirectory now holds its own clone: the launch commit exists, but the checkout root moved.
 	rmSync(replaced, { recursive: true, force: true });
 	git(base, "clone", "-q", replacedRoot, replaced);
 
@@ -1151,4 +1152,25 @@ test("committed paths ignore diff.relative and stay repository-relative from a s
 	assert.deepEqual([...snap.committed.paths].sort(), ["outside.txt", "sub/inside.txt"]);
 	assert.equal(snap.committed.total, 2);
 	assert.ok(snap.pending.untracked.paths.includes("pending-outside.txt"));
+});
+
+test("a repository replaced at the same location is observed against the recorded baseline", async () => {
+	base = fresh();
+	// A same-path clone reported as unknown, or compared with anything but the recorded launch commit.
+	const main = repo(join(base, "main"));
+	const s = await started();
+	await call(s, main);
+	const [record] = records(s);
+	renameSync(main, join(base, "moved away"));
+	git(base, "clone", "-q", join(base, "moved away"), main);
+	writeFileSync(join(main, "after replacement.txt"), "x\n");
+	git(main, "add", ".");
+	git(main, "commit", "-q", "-m", "after replacement");
+	const snap = itemFor((await statusOf(s)).items, record).workspaceSnapshot;
+	assert.equal(snap.kind, "git");
+	assert.equal(snap.baseline, record.workspace.git.baseline);
+	assert.equal(snap.head, git(main, "rev-parse", "HEAD"));
+	assert.equal(snap.ahead, 1);
+	assert.deepEqual(snap.committed.paths, ["after replacement.txt"]);
+	assert.equal(snap.workingState, "clean");
 });

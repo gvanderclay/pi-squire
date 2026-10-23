@@ -196,8 +196,9 @@ result's snapshot is history: a later status never changes it. Both are a
   `untracked` and `conflicted`. A clean working tree can still have commits
   and committed paths since launch;
 - `{ kind: "non-git" }` for a directory launched outside Git that still exists;
-- `{ kind: "unknown", reason }` when the directory is gone, is no longer the
-  checkout recorded at launch, its launch commit is missing, Git is missing,
+- `{ kind: "unknown", reason }` when the directory is gone, its checkout root
+  or Git common directory is no longer at the location recorded at launch, its
+  launch commit is missing, Git is missing,
   fails or passes a limit, its Git state at launch was unknown, or the record
   predates workspaces. Only the recorded checkout is inspected, never the
   parent's.
@@ -207,11 +208,17 @@ Each path list is `{ paths, total, truncated }`: at most 100 whole paths and
 NUL-separated Git output and are shown JSON-quoted, so spaces and newlines in
 a name stay data; a rename lists both its old and new path. An inspection
 gives each Git command 2 seconds, the whole checkout 5 seconds and 4 MiB of
-output; past any of those the snapshot is unknown, never a partial count. Git
-runs read-only, without optional index writes.
+output; a command still running at its limit is killed. Past any of those
+limits the snapshot is unknown, never a partial count, and stdout and stderr
+count together toward the 4 MiB. Committed paths are relative to the
+repository root whatever `diff.relative` says. Git runs read-only, without
+optional index writes.
 
-A snapshot is an observation of the checkout, not proof that the delegate made
-those changes, that the task succeeded, or that the branch is safe to merge.
+A snapshot observes the Git state at the recorded location, not that it is the
+same repository on disk: a repository replaced there, for example by a fresh
+clone, that still has the launch commit is reported normally against that
+commit. It is not proof that the delegate made those changes, that the task
+succeeded, or that the branch is safe to merge.
 It does not say whether the branch is merged anywhere, prints no cleanup
 command, and nothing acts on it.
 

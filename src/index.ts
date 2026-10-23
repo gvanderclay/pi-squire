@@ -49,6 +49,7 @@ import { Type } from "typebox";
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
+import { renderDelegateCall, renderDelegateResult } from "./render.ts";
 import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
@@ -596,6 +597,8 @@ export default function delegate(
 			),
 		}),
 		outputSchema: DelegateSchema,
+		renderCall: renderDelegateCall,
+		renderResult: renderDelegateResult,
 		// Opens a new window each call and removes nothing. Open world: the delegate calls a remote model and runs its agent's tools unattended.
 		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 		async execute(

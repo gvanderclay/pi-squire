@@ -453,7 +453,12 @@ Delegate session: <session file or id>
   delegate's name and the model, then the first 3 non-blank lines of the
   result with heading marks, backticks and bold stripped; expanded (Ctrl+O),
   the quoted task, the result as Markdown, then the ids and files, with the
-  home directory shown as `~`. The closed-without-a-result message gets the same header with ⊘.
+  home directory shown as `~`.
+- The `delegate` tool's own row is drawn the same way, so a launch and its
+  result match: a call line naming the agent and label, then a header with
+  a ◐ started icon, the delegate's name and the model it started on, a preview of the task and any skipped fallback models;
+  expanded, the whole task, then the delegation id, window, thinking and
+  auto-exit. A refused call keeps its plain error text. The closed-without-a-result message gets the same header with ⊘.
 - Stopping a delegate's run (Esc) sends no result: the provider holds the
   task, so the delegation stays running while the user steers it. The next
   run that completes sends the result, `done`, and its body opens with a note

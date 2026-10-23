@@ -1,5 +1,5 @@
 // The `delegate` tool's row: ○ with the agent, label and task while the call
-// is made, then ⟳ with the delegate's name, model and "started", matching the
+// is made, then ● with the delegate's name, model and "started", matching the
 // finished-tool-row look of the result message that arrives later. A refused
 // call keeps its plain error text.
 
@@ -83,11 +83,11 @@ test("a long first task line is cut at 100 characters", async () => {
 	);
 });
 
-test("a started row shows ⟳, the delegate's name, its model and started, then the task line", async () => {
+test("a started row shows ●, the delegate's name, its model and started, then the task line", async () => {
 	const args = { agent: "scout", task: TASK, label: "look" };
 	const { tool, result } = await launched(args);
 	assert.deepEqual(lines(tool.renderResult(result, { expanded: false }, theme, context(args, false))), [
-		"<accent:⟳> <toolTitle:<bold:scout-look>><dim: (alpha/fast-model) — started>",
+		"<accent:●> <toolTitle:<bold:scout-look>><dim: (alpha/fast-model) — started>",
 		"<toolOutput:## Look><muted: (5 lines)>",
 	]);
 });

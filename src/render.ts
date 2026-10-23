@@ -1,5 +1,5 @@
 // How delegations look in the parent. A delegation reads as one tool call that
-// changes state: the `delegate` row shows ○ while its arguments arrive and ⟳
+// changes state: the `delegate` row shows ○ while its arguments arrive and ●
 // once started, and the result message that arrives later is drawn as a
 // finished tool row (✓ or ✗ on Pi's tool success or error background). The
 // style follows amosblomqvist/pi-interactive-subagents (c3e8b53,
@@ -163,7 +163,7 @@ export function renderDelegateCall(
 }
 
 /**
- * The `delegate` tool's result: ⟳, the delegate's name, its model and
+ * The `delegate` tool's result: ●, the delegate's name, its model and
  * "started", the task line and any skipped fallback models; expanded, the ids too. A
  * refused or blocked call has no details and keeps its plain text.
  */
@@ -180,7 +180,7 @@ export function renderDelegateResult(
 	}
 	const started = details as Static<typeof DelegateSchema>;
 	const lines = [
-		`${theme.fg("accent", "⟳")} ${theme.fg("toolTitle", theme.bold(started.windowName))}${theme.fg(
+		`${theme.fg("accent", "●")} ${theme.fg("toolTitle", theme.bold(started.windowName))}${theme.fg(
 			"dim",
 			` (${started.model}) — started`,
 		)}`,

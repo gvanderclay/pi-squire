@@ -3,10 +3,15 @@
 // resolves that directory, observes its Git checkout read-only, and decides
 // the explicit Pi trust flag in the parent, asking the user only when no
 // saved or current decision applies and the target has protected resources.
-import { spawnSync } from "node:child_process";
+// Where a delegate runs and whether it trusts that project. A launch either
+// inherits the parent's cwd, selects an existing directory or, for a managed
+// worktree, runs in a new checkout (`worktree.ts`); this module resolves an
+// existing directory, observes its Git checkout read-only, and decides the
+// explicit Pi trust flag in the parent, asking the user only when no saved or
+// current decision applies and the target has protected resources.
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import {
 	type ExtensionContext,
@@ -15,48 +20,88 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-/** A bounded list of file names, as data; never shell text. */
-export type PathSummary = { paths: string[]; total: number; truncated: boolean };
-/** A checkout's repository, as canonical absolute paths. */
-export type GitIdentity = { mainRoot: string; commonDir: string; checkoutRoot: string };
-export type GitPosition = { branch: string; detached: false } | { branch: null; detached: true };
-/** A launch's Git facts: a checkout, proved not a checkout, or not known. */
-export type GitLaunch =
-	| { kind: "git"; identity: GitIdentity; position: GitPosition; head: string | null; baseline: string | null }
-	| { kind: "non-git" }
-	| { kind: "unknown"; reason: string };
+import { type GitLaunch, inspectGit, PathSummarySchema } from "./git.ts";
+import type { ManagedWorkspace } from "./worktree.ts";
+
+export {
+	askGit,
+	type GitAnswer,
+	type GitIdentity,
+	type GitLaunch,
+	type GitPosition,
+	onePath,
+	type PathSummary,
+} from "./git.ts";
+export { type ManagedWorkspace, prepareWorktree, type WorktreeOptions, type WorktreePlan } from "./worktree.ts";
+
 export type DirectoryWorkspace = {
 	mode: "inherited" | "existing";
 	cwd: string;
 	git: GitLaunch;
 };
-export type Workspace = DirectoryWorkspace;
+export type Workspace = DirectoryWorkspace | ManagedWorkspace;
 /** `GitPosition` as a schema. */
 export const PositionSchema = Type.Union([
 	Type.Object({ branch: Type.String(), detached: Type.Literal(false) }),
 	Type.Object({ branch: Type.Null(), detached: Type.Literal(true) }),
 ]);
 
+/** `GitIdentity` as a schema. */
+export const IdentitySchema = Type.Object({
+	mainRoot: Type.String(),
+	commonDir: Type.String(),
+	checkoutRoot: Type.String(),
+});
+
+const CheckoutSchema = Type.Object({
+	kind: Type.Literal("git"),
+	identity: IdentitySchema,
+	position: PositionSchema,
+	head: Type.Union([Type.String(), Type.Null()]),
+	baseline: Type.Union([Type.String(), Type.Null()], {
+		description: "The commit checked out at launch; null when the checkout had no commit yet.",
+	}),
+});
+
+const CWD_DESCRIPTION = "The directory the delegate's window opened in.";
+
 /** `Workspace` as a schema, for the tools' structured outputs. */
-export const WorkspaceSchema = Type.Object({
-	mode: Type.Union([Type.Literal("inherited"), Type.Literal("existing")]),
-	cwd: Type.String({ description: "The directory the delegate's window opened in." }),
-	git: Type.Union(
-		[
-			Type.Object({
-				kind: Type.Literal("git"),
-				identity: Type.Object({ mainRoot: Type.String(), commonDir: Type.String(), checkoutRoot: Type.String() }),
-				position: PositionSchema,
-				head: Type.Union([Type.String(), Type.Null()]),
-				baseline: Type.Union([Type.String(), Type.Null()], {
-					description: "The commit checked out at launch; null when the checkout had no commit yet.",
-				}),
-			}),
-			Type.Object({ kind: Type.Literal("non-git") }),
-			Type.Object({ kind: Type.Literal("unknown"), reason: Type.String() }),
-		],
-		{ description: "The checkout at launch: git, non-git, or unknown when Git could not be asked." },
-	),
+export const WorkspaceSchema = Type.Union([
+	Type.Object({
+		mode: Type.Union([Type.Literal("inherited"), Type.Literal("existing")]),
+		cwd: Type.String({ description: CWD_DESCRIPTION }),
+		git: Type.Union(
+			[
+				CheckoutSchema,
+				Type.Object({ kind: Type.Literal("non-git") }),
+				Type.Object({ kind: Type.Literal("unknown"), reason: Type.String() }),
+			],
+			{ description: "The checkout at launch: git, non-git, or unknown when Git could not be asked." },
+		),
+	}),
+	Type.Object({
+		mode: Type.Literal("managed"),
+		cwd: Type.String({ description: CWD_DESCRIPTION }),
+		git: CheckoutSchema,
+		sourceCwd: Type.String({ description: "The checkout the worktree was created from." }),
+		source: IdentitySchema,
+		createdBranch: Type.String({ description: "The branch created for the worktree, as originally named." }),
+		requestedBase: Type.String(),
+		baseCommit: Type.String({ description: "The commit the branch was created at." }),
+		sourceDirty: PathSummarySchema,
+	}),
+]);
+
+/** `WorktreePlan` as a schema: what an attempt intended. */
+export const WorktreePlanSchema = Type.Object({
+	sourceCwd: Type.String(),
+	source: IdentitySchema,
+	destination: Type.String(),
+	branch: Type.String(),
+	requestedBase: Type.String(),
+	baseCommit: Type.String(),
+	sourceDirty: PathSummarySchema,
+	trusted: Type.Boolean(),
 });
 
 /** Optional inputs some models fill with these instead of leaving them out. */
@@ -92,108 +137,6 @@ function resolveDirectory(value: string, base: string): string {
 		throw new Error(`${named} cannot be accessed: ${(err as Error).message}`);
 	}
 	return real;
-}
-
-/** How long one Git question may take before the answer is unknown. */
-const GIT_TIMEOUT_MS = 5000;
-
-/** A Git answer, with `bytes` the stdout and stderr it captured, so a caller can budget them together. */
-export type GitAnswer =
-	| { ok: true; out: string; bytes: number }
-	| { ok: false; status: number | null; message: string; bytes: number };
-
-/**
- * Ask Git read-only in `cwd`; never throws. A call past `timeout` is killed
- * with SIGKILL, which it cannot ignore, and one printing more than
- * `maxBuffer` on either stream fails; each failure names its limit.
- */
-export function askGit(
-	cwd: string,
-	args: string[],
-	limits: { timeout: number; maxBuffer?: number } = { timeout: GIT_TIMEOUT_MS },
-): GitAnswer {
-	const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0" };
-	// The parent's own repository variables would answer for the wrong directory.
-	for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"]) delete env[name];
-	const run = spawnSync("git", args, {
-		cwd,
-		env,
-		timeout: limits.timeout,
-		killSignal: "SIGKILL",
-		...(limits.maxBuffer === undefined ? {} : { maxBuffer: limits.maxBuffer }),
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-	const bytes = (run.stdout?.length ?? 0) + (run.stderr?.length ?? 0);
-	const code = (run.error as { code?: string } | undefined)?.code;
-	if (code === "ETIMEDOUT") {
-		return { ok: false, status: null, message: `timed out after the ${limits.timeout / 1000} s time limit`, bytes };
-	}
-	if (code === "ENOBUFS") {
-		return { ok: false, status: null, message: `printed more than the ${limits.maxBuffer} byte capture limit`, bytes };
-	}
-	if (run.error !== undefined) return { ok: false, status: null, message: run.error.message, bytes };
-	if (run.status === 0) return { ok: true, out: run.stdout.toString("utf8"), bytes };
-	const stderr = run.stderr.toString("utf8").trim();
-	const how = run.status === null ? `was killed by ${run.signal}` : `exited with status ${run.status}`;
-	return { ok: false, status: run.status, message: stderr === "" ? `git ${args[0]} ${how}` : stderr, bytes };
-}
-
-/** One path Git printed alone on its output: only the final newline is dropped, since a path may hold others. */
-export const onePath = (out: string): string => (out.endsWith("\n") ? out.slice(0, -1) : out);
-
-/** The repository and checkout `cwd` belongs to, or why not. */
-function identify(cwd: string): { identity: GitIdentity } | { launch: GitLaunch } {
-	// One question per path, so no output is split on a newline a path may contain.
-	const top = askGit(cwd, ["rev-parse", "--show-toplevel"]);
-	if (!top.ok) {
-		if (top.status === 128 && /not a git repository/i.test(top.message)) return { launch: { kind: "non-git" } };
-		return { launch: { kind: "unknown", reason: `git rev-parse failed: ${top.message}` } };
-	}
-	const common = askGit(cwd, ["rev-parse", "--git-common-dir"]);
-	if (!common.ok) return { launch: { kind: "unknown", reason: `git rev-parse failed: ${common.message}` } };
-	const own = askGit(cwd, ["rev-parse", "--git-dir"]);
-	if (!own.ok) return { launch: { kind: "unknown", reason: `git rev-parse failed: ${own.message}` } };
-	let checkoutRoot: string;
-	let commonDir: string;
-	let gitDir: string;
-	try {
-		checkoutRoot = realpathSync(onePath(top.out));
-		commonDir = realpathSync(resolve(cwd, onePath(common.out)));
-		gitDir = realpathSync(resolve(cwd, onePath(own.out)));
-	} catch (err) {
-		return { launch: { kind: "unknown", reason: `could not resolve the repository paths: ${(err as Error).message}` } };
-	}
-	// A main checkout's own Git directory is the common one, wherever it lives (`--separate-git-dir` included).
-	if (gitDir === commonDir) return { identity: { mainRoot: checkoutRoot, commonDir, checkoutRoot } };
-	// A linked worktree's main checkout is where Git keeps it: the folder holding a `.git` common directory.
-	// A linked worktree of a bare repository, or of a main checkout with a separate Git directory, has
-	// no main checkout Git can name for a trust key, so its identity stays unknown.
-	if (basename(commonDir) !== ".git") {
-		return {
-			launch: {
-				kind: "unknown",
-				reason: `the main checkout of the linked worktree ${checkoutRoot} cannot be located: its repository's Git directory ${commonDir} is not a checkout's .git`,
-			},
-		};
-	}
-	return { identity: { mainRoot: dirname(commonDir), commonDir, checkoutRoot } };
-}
-
-/** The checkout at `cwd` as it stands: identity, branch or detached, and the commit checked out. */
-function inspectGit(cwd: string): GitLaunch {
-	const found = identify(cwd);
-	if ("launch" in found) return found.launch;
-	const ref = askGit(cwd, ["symbolic-ref", "-q", "HEAD"]);
-	if (!ref.ok && ref.status !== 1) return { kind: "unknown", reason: `git symbolic-ref failed: ${ref.message}` };
-	const name = ref.ok ? ref.out.trim() : "";
-	const position: GitPosition = ref.ok
-		? { branch: name.startsWith("refs/heads/") ? name.slice("refs/heads/".length) : name, detached: false }
-		: { branch: null, detached: true };
-	const head = askGit(cwd, ["rev-parse", "-q", "--verify", "HEAD^{commit}"]);
-	// Exit 1 with nothing printed is an unborn branch: a valid checkout without a commit.
-	if (!head.ok && head.status !== 1) return { kind: "unknown", reason: `git rev-parse HEAD failed: ${head.message}` };
-	const commit = head.ok ? head.out.trim() : null;
-	return { kind: "git", identity: found.identity, position, head: commit, baseline: commit };
 }
 
 /** The trust dialog's choices, as Pi's own selector offers them. */

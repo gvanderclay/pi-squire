@@ -10,13 +10,17 @@ import { Type } from "typebox";
 
 import {
 	askGit,
+	fields,
 	type GitAnswer,
 	type GitLaunch,
 	type GitPosition,
 	onePath,
 	type PathSummary,
-	PositionSchema,
-} from "./workspace.ts";
+	PathSummarySchema,
+	pendingPaths,
+	summarize,
+} from "./git.ts";
+import { PositionSchema } from "./workspace.ts";
 
 /**
  * A checkout as observed at one moment: its position and head against the
@@ -36,12 +40,6 @@ export type WorkspaceSnapshot =
 			committed: PathSummary;
 			pending: { staged: PathSummary; unstaged: PathSummary; untracked: PathSummary; conflicted: PathSummary };
 	  };
-
-const PathSummarySchema = Type.Object({
-	paths: Type.Array(Type.String(), { description: "The first paths, whole; never more than 100 or 16 KiB." }),
-	total: Type.Number({ description: "Every path observed in this category." }),
-	truncated: Type.Boolean(),
-});
 
 /** `WorkspaceSnapshot` as a schema, for `delegation_status`. */
 export const WorkspaceSnapshotSchema = Type.Union(
@@ -74,55 +72,8 @@ export const WorkspaceSnapshotSchema = Type.Union(
 const SNAPSHOT_COMMAND_MS = 2000;
 const SNAPSHOT_TOTAL_MS = 5000;
 const SNAPSHOT_CAPTURE_BYTES = 4 * 1024 * 1024;
-const LIST_PATHS = 100;
-const LIST_BYTES = 16 * 1024;
-
 /** Why a snapshot is unknown; thrown during an inspection and caught by `inspectWorkspace`. */
 class Unknown extends Error {}
-
-/** The first paths that fit both caps, whole, with the count of all of them. */
-function summarize(paths: string[]): PathSummary {
-	const shown: string[] = [];
-	let bytes = 0;
-	for (const path of paths) {
-		const size = Buffer.byteLength(path, "utf8");
-		if (shown.length === LIST_PATHS || bytes + size > LIST_BYTES) break;
-		shown.push(path);
-		bytes += size;
-	}
-	return { paths: shown, total: paths.length, truncated: shown.length < paths.length };
-}
-
-/** NUL-terminated fields, as `-z` prints them. */
-const fields = (out: string): string[] => out.split("\0").slice(0, -1);
-
-/** Unmerged index states, as `git status` prints them. */
-const UNMERGED = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
-
-/** `git status --porcelain=v1 -z` split into pending categories. */
-function pendingPaths(out: string): Record<"staged" | "unstaged" | "untracked" | "conflicted", string[]> {
-	const pending = {
-		staged: [] as string[],
-		unstaged: [] as string[],
-		untracked: [] as string[],
-		conflicted: [] as string[],
-	};
-	const entries = fields(out);
-	for (let i = 0; i < entries.length; i++) {
-		const entry = entries[i];
-		const xy = entry.slice(0, 2);
-		const path = entry.slice(3);
-		// A rename or copy is followed by its source path; `--no-renames` should prevent one, but never misread it as an entry.
-		if (/[RC]/.test(xy)) i++;
-		if (xy === "??") pending.untracked.push(path);
-		else if (UNMERGED.has(xy)) pending.conflicted.push(path);
-		else {
-			if (xy[0] !== " ") pending.staged.push(path);
-			if (xy[1] !== " ") pending.unstaged.push(path);
-		}
-	}
-	return pending;
-}
 
 /** A Git runner bounded for one inspection: the per-command and total time limits and one capture budget. */
 function budgetedGit(cwd: string): { run(args: string[]): GitAnswer; ask(args: string[]): string } {

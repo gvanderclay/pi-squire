@@ -2,7 +2,7 @@
 // window, over the `message:*` hooks.
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
-// [--label <name>] [--cwd <dir>] [--auto-exit | --no-auto-exit] <task…>`
+// [--label <name>] [--cwd <dir> | --worktree <branch>] [--auto-exit | --no-auto-exit] <task…>`
 // reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens a window in the
@@ -51,12 +51,21 @@ import { Type } from "typebox";
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
-import { renderDelegateCall, renderDelegateResult } from "./render.ts";
-import { createResults, delegateName } from "./results.ts";
-import { createTmuxClient, type TmuxClient } from "./tmux.ts";
+import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
+import { createResults, delegateName, type WorkspaceAttempt } from "./results.ts";
+import { createTmuxClient, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 import { normalizeWorkspaceValue, prepareDirectory, type Workspace, WorkspaceSchema } from "./workspace.ts";
+import {
+	createWorktree,
+	inQueue,
+	prepareWorktree,
+	recoveryCommands,
+	revalidate,
+	rollbackWorktree,
+	type WorktreePlan,
+} from "./worktree.ts";
 
 /** The optional parent guidance file under `<agent dir>/squire/`. */
 const PARENT_PROMPT = "delegation_prompt.md";
@@ -105,7 +114,7 @@ function parentTrust(parent: string): string {
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */
-const FLAGS = ["--model", "--thinking", "--label", "--cwd", "--auto-exit", "--no-auto-exit"] as const;
+const FLAGS = ["--model", "--thinking", "--label", "--cwd", "--worktree", "--auto-exit", "--no-auto-exit"] as const;
 
 /** The `delegate` tool's structured result, which is also its details. */
 export const DelegateSchema = Type.Object({
@@ -129,7 +138,7 @@ export const DelegateSchema = Type.Object({
 const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
 
 const USAGE =
-	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir>] [--auto-exit | --no-auto-exit] <task>";
+	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch>] [--auto-exit | --no-auto-exit] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 /** `cwd` is informational: the window opens in the launch's own value, whatever a listener assigns. */
@@ -140,6 +149,7 @@ type Parsed = {
 	thinking?: string;
 	label?: string;
 	cwd?: string;
+	worktree?: string;
 	autoExit?: boolean;
 	task: string;
 };
@@ -157,6 +167,8 @@ type Start = {
 	label?: string;
 	/** The existing directory to run in, as given; undefined inherits the parent's. */
 	cwd?: string;
+	/** The new local branch to create a worktree for; undefined creates none. */
+	worktree?: string;
 	autoExit: boolean;
 	task: string;
 };
@@ -276,7 +288,13 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 			at = next.end;
 			continue;
 		}
-		if (flag !== "--model" && flag !== "--thinking" && flag !== "--label" && flag !== "--cwd") {
+		if (
+			flag !== "--model" &&
+			flag !== "--thinking" &&
+			flag !== "--label" &&
+			flag !== "--cwd" &&
+			flag !== "--worktree"
+		) {
 			return { error: `unknown flag ${flag}; ${USAGE}` };
 		}
 		const read = flagValue(text, next.end, flag);
@@ -284,7 +302,8 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 		if (flag === "--model") parsed.model = read.value;
 		else if (flag === "--thinking") parsed.thinking = read.value;
 		else if (flag === "--label") parsed.label = read.value;
-		else parsed.cwd = read.value;
+		else if (flag === "--cwd") parsed.cwd = read.value;
+		else parsed.worktree = read.value;
 		at = read.end;
 	}
 	// The task is the rest of the text from its first word, untouched by flag parsing.
@@ -431,7 +450,7 @@ function toolDescription(agents: readonly Agent[]): string {
 				}${agent.tools.length > 0 ? `, tools: ${agent.tools.join("/")}` : ""})`,
 		),
 		"",
-		"`cwd` runs the delegate in another existing directory, such as a checkout of another branch; it loads that directory's project instructions and settings.",
+		"`cwd` runs the delegate in another existing directory. Alternatively, `worktree` creates a new local branch and checkout from this repository's committed HEAD; source dirt is reported but not copied. The options are mutually exclusive.",
 		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",
 		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
 		"",
@@ -524,48 +543,33 @@ export default function delegate(
 			thinking,
 			label: request.label,
 			cwd: request.cwd,
+			worktree: request.worktree,
 			autoExit: request.autoExit ?? agent.autoExit,
 			task: request.task,
 		};
 	}
 
-	/** The launch order of the spec: directory and trust, task, argv, env, listeners, window, record. */
-	async function launch(start: Start, ctx: ExtensionContext, signal?: AbortSignal): Promise<Launched> {
-		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
-		// The child stores its session where the parent's lookups will search, whatever its cwd, project
-		// settings or the tmux server's environment would choose; a relative path would follow the child's cwd.
-		const sessionDir = ctx.sessionManager.getSessionDir();
-		if (!isAbsolute(sessionDir)) {
-			throw new Error(
-				`the parent's session directory ${JSON.stringify(sessionDir)} is not an absolute path, so the delegate's session could not be found again; start Pi with an absolute --session-dir`,
-			);
-		}
-		// Any trust question is answered before the task is sent or a window opens.
-		const { workspace, trusted } = await prepareDirectory({ cwd: start.cwd, signal }, ctx, getAgentDir());
-		const cwd = workspace.cwd;
-
-		// The task goes on disk before the window exists: the delegate finds it
-		// at session start without a handshake, and a window that fails leaves
-		// mail that is reported rather than cleaned up.
-		const id = randomUUID();
-		const sent: SendPayload = { to: id, body: start.task };
-		pi.events.emit(SEND, sent);
-		if (typeof sent.error === "string") throw new Error(`could not send the task to ${id}: ${sent.error}`);
-		if (sent.envelope === undefined) {
-			throw new Error(
-				`needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)`,
-			);
-		}
-		const requestId = sent.envelope.id;
-		if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${id}`);
-
+	async function launchWindow(input: {
+		id: string;
+		requestId: string;
+		workspace: Workspace;
+		trusted: boolean;
+		cwd: string;
+		sessionDir: string;
+		start: Start;
+		ctx: ExtensionContext;
+		onWindowOpened: () => void;
+	}): Promise<Launched> {
+		const { id, requestId, workspace, trusted, cwd, sessionDir, start, ctx, onWindowOpened } = input;
 		const parent = ctx.sessionManager.getSessionId();
 		const name = delegateName(start.agent.name, id, start.label);
-		const placed =
-			workspace.mode === "existing"
-				? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
-				: "";
-		const prompt = writePromptFile(`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}${placed}`);
+		const managedContext =
+			workspace.mode === "managed"
+				? `\n\nYour managed worktree is ${workspace.cwd}, branch ${workspace.createdBranch}, based on commit ${workspace.baseCommit}.`
+				: workspace.mode === "existing"
+					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
+					: "";
+		const prompt = writePromptFile(`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}${managedContext}`);
 		const argv = [
 			...parentCommand(),
 			"--session-id",
@@ -601,15 +605,16 @@ export default function delegate(
 		// Listeners may only append to `args` and add to `env`; there is no veto.
 		const payload: LaunchPayload = { args: argv, env, agent: start.agent.name, cwd };
 		pi.events.emit(LAUNCH, payload);
-
-		const windowName = name;
 		let windowId: string;
 		try {
-			windowId = await tmux.openWindow({ name: windowName, cwd, argv: payload.args, env: payload.env });
+			windowId = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env });
+			onWindowOpened();
 		} catch (err) {
-			throw new Error(`could not open window ${windowName} for ${id}: ${(err as Error).message}`);
+			if (err instanceof WindowOpenError) {
+				throw new WindowOpenError(`could not open window ${name} for ${id}: ${err.message}`, err.certainty);
+			}
+			throw new WindowOpenError(`could not open window ${name} for ${id}: ${(err as Error).message}`, "unknown");
 		}
-
 		// No task text in the record: the request copy in `sent/` has it.
 		results.recordStart(
 			{
@@ -619,7 +624,7 @@ export default function delegate(
 				thinking: start.thinking,
 				name,
 				windowId,
-				windowName,
+				windowName: name,
 				requestId,
 				autoExit: start.autoExit,
 				cwd,
@@ -629,15 +634,173 @@ export default function delegate(
 			ctx,
 		);
 		tracking.startPolling();
-		return { id, name, windowId, windowName, requestId, cwd, sessionDir, workspace };
+		return { id, name, windowId, windowName: name, requestId, cwd, sessionDir, workspace };
+	}
+
+	async function launch(start: Start, ctx: ExtensionContext, signal?: AbortSignal): Promise<Launched> {
+		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
+		const sessionDir = ctx.sessionManager.getSessionDir();
+		if (!isAbsolute(sessionDir))
+			throw new Error(
+				`the parent's session directory ${JSON.stringify(sessionDir)} is not an absolute path; start Pi with an absolute --session-dir`,
+			);
+		const cwdOption = normalizeWorkspaceValue(start.cwd, "cwd");
+		const worktreeOption = normalizeWorkspaceValue(start.worktree, "worktree");
+		if (cwdOption !== undefined && worktreeOption !== undefined)
+			throw new Error("cwd and worktree are mutually exclusive; name only one");
+		let plan: WorktreePlan | undefined;
+		let directory: Workspace | undefined;
+		let trusted: boolean;
+		if (worktreeOption !== undefined) {
+			plan = await prepareWorktree({ worktree: worktreeOption }, ctx, getAgentDir());
+			trusted = plan.trusted;
+		} else {
+			const prepared = await prepareDirectory({ cwd: cwdOption, signal }, ctx, getAgentDir());
+			directory = prepared.workspace;
+			trusted = prepared.trusted;
+		}
+		const id = randomUUID();
+		const parentId = ctx.sessionManager.getSessionId();
+		let attempt: WorkspaceAttempt | undefined;
+		let managed: Extract<Workspace, { mode: "managed" }> | undefined;
+		let windowOpened = false;
+		const run = async (): Promise<Launched> => {
+			if (plan !== undefined) {
+				revalidate(plan);
+				attempt = {
+					kind: "workspace-attempt",
+					id,
+					parentId,
+					agent: start.agent.name,
+					model: start.model,
+					thinking: start.thinking,
+					...(start.label === undefined ? {} : { name: start.label }),
+					sessionDir,
+					plan,
+					attempt: { phase: "planned", resources: { kind: "none" } },
+				};
+				results.recordAttempt(attempt, ctx);
+				const created = createWorktree(plan);
+				if (!("workspace" in created)) {
+					const recovery = recoveryCommands(plan, created.resources);
+					attempt = {
+						...attempt,
+						attempt:
+							created.resources.kind === "none"
+								? { phase: "rolled-back", resources: { kind: "none" }, cause: created.cause }
+								: { phase: "retained", resources: created.resources, cause: created.cause, recovery },
+					};
+					results.recordAttempt(attempt, ctx);
+					throw new Error(
+						`worktree launch ${id} from ${plan.sourceCwd} failed at ${plan.destination} (${plan.branch}): ${created.cause}; ${resourceLine(created.resources)}${recovery.length ? `; recovery: ${recovery.join("; ")}` : ""}`,
+					);
+				}
+				managed = created.workspace;
+				attempt = {
+					...attempt,
+					attempt: {
+						phase: "created",
+						resources: { kind: "worktree", cwd: managed.cwd, branch: managed.createdBranch, head: managed.baseCommit },
+					},
+				};
+				results.recordAttempt(attempt, ctx);
+			}
+			let workspace: Workspace;
+			if (managed !== undefined) workspace = managed;
+			else if (directory !== undefined) workspace = directory;
+			else throw new Error("workspace preparation did not produce a launch directory");
+			// The task goes on disk before the window exists: the delegate finds it
+			// at session start without a handshake, and a window that fails leaves
+			// mail that is reported rather than cleaned up.
+			const sent: SendPayload = { to: id, body: start.task };
+			pi.events.emit(SEND, sent);
+			if (typeof sent.error === "string") throw new Error(`could not send the task to ${id}: ${sent.error}`);
+			if (sent.envelope === undefined)
+				throw new Error(
+					"needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)",
+				);
+			const requestId = sent.envelope.id;
+			if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${id}`);
+			if (attempt !== undefined) {
+				attempt = { ...attempt, requestId };
+				results.recordAttempt(attempt, ctx);
+			}
+			return launchWindow({
+				id,
+				requestId,
+				workspace,
+				trusted,
+				cwd: workspace.cwd,
+				sessionDir,
+				start,
+				ctx,
+				onWindowOpened: () => {
+					windowOpened = true;
+				},
+			});
+		};
+		const runWithRollback = async (): Promise<Launched> => {
+			try {
+				return await run();
+			} catch (error) {
+				if (attempt !== undefined && managed !== undefined) {
+					const cause = (error as Error).message;
+					if (windowOpened || (error instanceof WindowOpenError && error.certainty === "unknown")) {
+						attempt = {
+							...attempt,
+							attempt: {
+								phase: "retained",
+								resources: {
+									kind: "worktree",
+									cwd: managed.cwd,
+									branch: managed.createdBranch,
+									head: managed.baseCommit,
+								},
+								cause,
+								recovery: [],
+							},
+						};
+					} else {
+						const rollbackPlan = plan;
+						if (rollbackPlan === undefined) throw error;
+						const rolled = rollbackWorktree(rollbackPlan, managed);
+						attempt =
+							rolled.kind === "rolled-back"
+								? { ...attempt, attempt: { phase: "rolled-back", resources: { kind: "none" }, cause } }
+								: {
+										...attempt,
+										attempt: {
+											phase: "retained",
+											resources: rolled.resources,
+											cause: `${cause}; ${rolled.reason}`,
+											recovery: recoveryCommands(rollbackPlan, rolled.resources),
+										},
+									};
+					}
+					results.recordAttempt(attempt, ctx);
+					const state = attempt.attempt;
+					const recovery =
+						state.phase === "retained" && state.recovery.length > 0 ? `; recovery: ${state.recovery.join("; ")}` : "";
+					throw new Error(
+						`worktree launch ${id} from ${managed.sourceCwd} at ${managed.cwd} (${managed.createdBranch}) failed: ${cause}; outcome ${state.phase}${recovery}`,
+						{ cause: error },
+					);
+				}
+				throw error;
+			}
+		};
+		if (plan === undefined) return runWithRollback();
+		const signals = [signal, ctx.signal].filter((item): item is AbortSignal => item !== undefined);
+		const combined = signals.length ? AbortSignal.any(signals) : undefined;
+		return inQueue(plan.source.commonDir, combined, runWithRollback);
 	}
 
 	/** Where a selected directory put the delegate, for the start text; inherited starts stay compact. */
 	const placedIn = (launched: Launched): string =>
-		launched.workspace.mode === "existing" ? ` in ${launched.cwd}` : "";
+		launched.workspace.mode !== "inherited" ? ` in ${launched.cwd}` : "";
 
 	const started = (launched: Launched, start: Start): string =>
-		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${placedIn(launched)}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
+		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${placedIn(launched)}${launched.workspace.mode === "managed" ? `. Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
 
 	async function command(input: string, ctx: ExtensionContext): Promise<void> {
 		const fail = (message: string) => ctx.ui.notify(`delegate: ${message}`, "error");
@@ -680,7 +843,13 @@ export default function delegate(
 			cwd: Type.Optional(
 				Type.Union([Type.String(), Type.Null()], {
 					description:
-						"An existing directory to run the delegate in: absolute, relative to this session's working directory, or starting with ~/. Omit to run in this session's working directory. The directory is used as it is; nothing is created or cleaned up.",
+						"An existing directory to run the delegate in: absolute, relative to this session's working directory, or starting with ~/. Omit to run in this session's working directory. The directory is used as it is; nothing is created or cleaned up. Mutually exclusive with worktree.",
+				}),
+			),
+			worktree: Type.Optional(
+				Type.Union([Type.String(), Type.Null()], {
+					description:
+						"Create a new managed worktree and local branch with this literal branch name, from this repository's committed HEAD. Source dirt is not copied. Mutually exclusive with cwd.",
 				}),
 			),
 			auto_exit: Type.Optional(
@@ -694,7 +863,7 @@ export default function delegate(
 		renderCall: renderDelegateCall,
 		renderResult: renderDelegateResult,
 		// Opens a new window each call and removes nothing. Open world: the delegate calls a remote model and runs its agent's tools unattended.
-		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 		async execute(
 			_toolCallId: string,
 			params: {
@@ -705,6 +874,7 @@ export default function delegate(
 				label?: string | null;
 				auto_exit?: boolean | null;
 				cwd?: unknown;
+				worktree?: unknown;
 			},
 			signal: AbortSignal | undefined,
 			_onUpdate: unknown,
@@ -714,6 +884,7 @@ export default function delegate(
 			// Some models fill every optional field with null or the string "null"; both mean unset.
 			const given = (value: string | null | undefined) => (value == null || value === "null" ? undefined : value);
 			const cwd = normalizeWorkspaceValue(params.cwd, "cwd");
+			const worktree = normalizeWorkspaceValue(params.worktree, "worktree");
 			const start = await validate(
 				{
 					agent: params.agent,
@@ -721,6 +892,7 @@ export default function delegate(
 					thinking: given(params.thinking),
 					label: given(params.label),
 					cwd,
+					worktree,
 					autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
 					task: params.task ?? "",
 				},
@@ -730,7 +902,7 @@ export default function delegate(
 			const launched = await launch(start, ctx, signal);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
-				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}${placedIn(launched)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
+				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}${placedIn(launched)}.${launched.workspace.mode === "managed" ? ` Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""} It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
 				{
 					outcome: "started",
 					id: launched.id,

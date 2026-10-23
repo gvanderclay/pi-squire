@@ -8,6 +8,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `/delegate --worktree <branch>` and the `delegate` tool's `worktree` input
+  create a managed worktree from the source checkout's frozen committed HEAD,
+  in the built-in sibling `{repo}-worktrees/{branch}` layout. Source dirty
+  paths are summarized but never copied. Launch attempts are journaled before
+  creation; known pre-window failures roll back only a proven pristine checkout
+  and branch, while uncertain or changed resources are retained with recovery
+  facts. Once a window opens, the workspace is retained. Managed workspace
+  facts appear in results, status and expanded rendering.
 - The `session:launch` payload gains a read-only `cwd`, the directory the
   delegate's window opens in. The window opens there whatever a listener
   assigns; appending args and adding env keys work as before. The README

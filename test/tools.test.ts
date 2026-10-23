@@ -591,7 +591,7 @@ test("the tools declare all four annotations and stay direct", async () => {
 	const closedWorld = { openWorldHint: false };
 	assert.deepEqual(hints("delegate"), {
 		readOnlyHint: false,
-		destructiveHint: false,
+		destructiveHint: true,
 		idempotentHint: false,
 		openWorldHint: true,
 	});

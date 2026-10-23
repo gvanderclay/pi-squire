@@ -308,9 +308,10 @@ test("quoted cwd parsing preserves the task substring", async (t) => {
 		assert.deepEqual(s.errors, []);
 		assert.equal(s.sendCalls[0].body, '"it is  open');
 	});
-	await t.test("--cwd is offered in completions", async () => {
+	await t.test("workspace flags are offered in completions", async () => {
 		const s = await started();
 		assert.ok((await s.completions("scout --c"))?.some((item) => item.label === "--cwd"));
+		assert.ok((await s.completions("scout --w"))?.some((item) => item.label === "--worktree"));
 	});
 });
 

@@ -75,12 +75,12 @@ closes its own window ([auto-exit](#auto-exit)).
 
 ## How a delegation works
 
-`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir>] [--auto-exit | --no-auto-exit] <task…>`
+`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch>] [--auto-exit | --no-auto-exit] <task…>`
 reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes
 the task to the delegate's inbox through `message:send`, emits
 `session:launch` so other extensions can shape the launch, then opens a
 detached window running the parent's own Pi in the parent's working directory,
-or the directory `--cwd` selects (see [Working directory](#working-directory)),
+or the directory `--cwd` selects or the new `--worktree` checkout creates (see [Working directory](#working-directory)),
 with the parent's agent root. The agent's
 prompt reaches the child as a path to a private file under the system
 temporary folder, not as text on the command line.
@@ -181,6 +181,32 @@ names the directory when it differs from the parent's; the tool's
 structured result always carries `cwd` and `workspace`, and status, results
 and their expanded views show them.
 
+### Managed worktrees
+
+`--worktree <branch>` (or the `worktree` tool input) creates a new local branch
+and worktree from the selected source checkout's committed `HEAD`. The default
+location is a sibling directory named `{repo}-worktrees/{branch}`, with `/` in
+the folder segment replaced by `-`; the branch name itself is unchanged.
+`cwd` and `worktree` cannot be combined. Branches and destinations are never
+reused, reset, suffixed or force-created. Git creation uses the frozen commit,
+not a later moving `HEAD`.
+
+Dirty staged, unstaged and untracked source paths are summarized in the start
+notice and recorded; none are copied. Ignored files remain in the source and
+are not transferred. No setup or submodule initialization is performed.
+The delegate starts at the created worktree root with factual branch and base
+context. The configured layout determines which ancestor instructions Pi
+finds and whether the worktree needs an ignore rule.
+
+A launch attempt is recorded before Git creation. If launch fails before a
+window is known to have opened, pi-squire removes only a checkout and branch
+it can prove it created and that remain pristine; it never uses force. Changed,
+ignored, untracked or uncertain resources are retained and reported with
+recovery facts. A timeout or other ambiguous tmux failure retains the worktree.
+Once tmux returns a window id, the worktree and branch are kept through later
+failure, completion and close; remove them manually when no longer needed.
+Worktrees isolate checkouts, not delegate permissions or filesystem access.
+
 ### Checkout snapshots
 
 A result records one snapshot of the delegation's checkout, taken when the
@@ -225,7 +251,8 @@ command, and nothing acts on it.
 ### Project trust
 
 The delegate's trust flag for a `--cwd` directory is decided in the parent,
-before the task is sent or a window opens. The model has no trust input.
+before the task is sent or a window opens. A same-repository managed worktree
+uses the parent's current trust for that repository. The model has no trust input.
 
 1. A directory in the parent's own repository, by Git's common directory, so
    including its linked worktrees, gets the parent's current trust, even a

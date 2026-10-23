@@ -1,7 +1,7 @@
 // The test stand-in for tmux, one of the package's two injected seams. It records the
 // windows opened (name, cwd, argv, env) and the kills, and lists windows as
 // the test sets them. The real client is exercised by hand, never here.
-import type { TmuxClient, TmuxWindow, WindowSpec } from "../src/tmux.ts";
+import { type TmuxClient, type TmuxWindow, WindowOpenError, type WindowSpec } from "../src/tmux.ts";
 
 export class FakeTmux implements TmuxClient {
 	/** Whether the session looks like it runs inside tmux. */
@@ -18,6 +18,8 @@ export class FakeTmux implements TmuxClient {
 	failList: string | undefined;
 	/** When set, `openWindow` rejects with this message instead of opening. */
 	failOpen: string | undefined;
+	/** Whether a `failOpen` failure could have left a window; a known failure by default. */
+	failOpenCertainty: "not-opened" | "unknown" | undefined;
 	private next = 0;
 
 	insideTmux(): boolean {
@@ -25,7 +27,7 @@ export class FakeTmux implements TmuxClient {
 	}
 
 	async openWindow(spec: WindowSpec): Promise<string> {
-		if (this.failOpen !== undefined) throw new Error(this.failOpen);
+		if (this.failOpen !== undefined) throw new WindowOpenError(this.failOpen, this.failOpenCertainty ?? "not-opened");
 		const windowId = `@${++this.next}`;
 		this.opened.push({ ...spec, argv: [...spec.argv], env: { ...spec.env }, windowId });
 		this.windows.set(windowId, { name: spec.name, exited: false });

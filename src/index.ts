@@ -679,6 +679,8 @@ export default function delegate(
 		if (baseOption !== undefined && worktreeOption === undefined) throw new Error("worktree_base requires worktree");
 		if (cwdOption !== undefined && worktreeOption !== undefined)
 			throw new Error("cwd and worktree are mutually exclusive; name only one");
+		const signals = [signal, ctx.signal].filter((item): item is AbortSignal => item !== undefined);
+		const combined = signals.length ? AbortSignal.any(signals) : undefined;
 		let plan: WorktreePlan | undefined;
 		let directory: Workspace | undefined;
 		let trusted: boolean;
@@ -692,7 +694,10 @@ export default function delegate(
 				ctx,
 				getAgentDir(),
 			);
-			trusted = await trustPlannedWorktree(plan, ctx, getAgentDir(), signal);
+			if (combined?.aborted) throw new Error("the launch was aborted");
+			trusted = await trustPlannedWorktree(plan, ctx, getAgentDir(), combined);
+			if (combined?.aborted) throw new Error("the launch was aborted");
+			plan.trusted = trusted;
 		} else {
 			const prepared = await prepareDirectory({ cwd: cwdOption, signal }, ctx, getAgentDir());
 			directory = prepared.workspace;
@@ -829,8 +834,6 @@ export default function delegate(
 			}
 		};
 		if (plan === undefined) return runWithRollback();
-		const signals = [signal, ctx.signal].filter((item): item is AbortSignal => item !== undefined);
-		const combined = signals.length ? AbortSignal.any(signals) : undefined;
 		return inQueue(plan.source.commonDir, combined, runWithRollback);
 	}
 

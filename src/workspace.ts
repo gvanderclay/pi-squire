@@ -310,7 +310,7 @@ function destinationHasAncestorSkills(destination: string): boolean {
 	while (ancestor !== dirname(ancestor)) {
 		const skills = join(ancestor, ".agents", "skills");
 		try {
-			if (hasTrustRequiringProjectResources(skills)) return true;
+			if (hasTrustRequiringProjectResources(ancestor)) return true;
 		} catch {
 			throw new Error(
 				`could not inspect destination ancestor skills at ${skills}; establish trust explicitly before delegating`,

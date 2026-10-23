@@ -876,9 +876,11 @@ is simulated by dispatching the next preparation; the suite does not assert
 that the runtime emits it.
 
 Working-directory and trust tests use real temporary Git repositories and
-Pi's real trust store under a temporary agent directory, but a fake tmux: that
-a real delegate loads the selected checkout's instructions and settings is
-checked by hand, not by the suite. Snapshot tests use real repositories and,
+Pi's real trust store under a temporary agent directory, but a fake tmux. The
+existing-directory/inherited launch evidence does not verify startup for a
+managed worktree or prove that a real delegate loads the selected checkout's
+instructions and settings; actual Pi/tmux startup and resource loading remain
+unverified. Snapshot tests use real repositories and,
 for hung, failing or flooding Git, a scripted `git` on `PATH`.
 
 ## Compatibility

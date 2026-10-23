@@ -428,9 +428,7 @@ const quote = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;
 /** Non-forced commands that remove exactly the resources known to remain; none when ownership is unknown. */
 export function recoveryCommands(plan: WorktreePlan, resources: ResourceFacts): string[] {
 	const source = `git -C ${quote(plan.source.checkoutRoot)}`;
-	if (resources.kind === "worktree") {
-		return [`${source} worktree remove ${quote(resources.cwd)}`, `${source} branch -d ${quote(resources.branch)}`];
-	}
+	if (resources.kind === "worktree") return [];
 	return resources.kind === "branch" ? [`${source} branch -d ${quote(resources.branch)}`] : [];
 }
 

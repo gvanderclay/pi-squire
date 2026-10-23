@@ -177,7 +177,7 @@ function stateLine(state: DelegationState, record: StartedRecorded): string {
 		case "rolled-back":
 		case "retained":
 		case "interrupted":
-			return `${state} — no window was opened`;
+			return `${state} — no window id/start was recorded; a window may still exist`;
 	}
 }
 
@@ -269,7 +269,7 @@ function attemptText(record: WorkspaceAttempt): string {
 	return [
 		`${record.id} ${record.agent} (${modelLabel(record.model, undefined)}, thinking ${record.thinking})`,
 		`  name: ${recordedName(record)}`,
-		`  state: ${record.attempt.phase} — no window was opened, so there is nothing to close or poll`,
+		`  state: ${record.attempt.phase} — no window id/start was recorded; a window may still exist (close requires a verified window id)`,
 		...attemptLines(record).map((line) => `  ${line}`),
 	].join("\n");
 }
@@ -440,7 +440,7 @@ function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 			const [record] = selectRecords(results, params.id);
 			if (!isStarted(record)) {
 				throw new Error(
-					`delegation ${record.id} is an unstarted workspace attempt (${record.attempt.phase}): no window was opened, so there is nothing to close`,
+					`delegation ${record.id} is a workspace attempt (${record.attempt.phase}): no verified window id was recorded; a window may still exist, so close is unavailable`,
 				);
 			}
 			const closed = (alreadyClosed: boolean, killed: boolean) => ({

@@ -96,7 +96,7 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 				throw new WindowOpenError((err as Error).message, "unknown");
 			}
 			const windowId = out.trim();
-			if (windowId === "") throw new WindowOpenError("tmux reported no window id", "unknown");
+			if (!/^@[0-9]+$/.test(windowId)) throw new WindowOpenError("tmux reported an invalid window id", "unknown");
 			return windowId;
 		},
 

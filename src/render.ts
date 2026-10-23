@@ -28,6 +28,8 @@ export function modelLabel(model: string, finished: string | undefined): string 
 }
 
 /** Where a delegation ran, or that its record, from before cwd was kept, does not say. */
+const displayReason = (reason: string): string => JSON.stringify(reason).slice(1, -1);
+
 export function cwdLine(cwd: string | undefined): string {
 	return cwd ?? "unknown (not recorded)";
 }
@@ -41,7 +43,7 @@ export function workspaceLine(workspace: Workspace): string {
 	const { mode, git } = workspace;
 	const how = mode === "inherited" ? "the parent's directory" : "existing directory";
 	if (git.kind === "non-git") return `${how}; not a Git checkout`;
-	if (git.kind === "unknown") return `${how}; Git state unknown (${git.reason})`;
+	if (git.kind === "unknown") return `${how}; Git state unknown (${displayReason(git.reason)})`;
 	const { mainRoot, checkoutRoot } = git.identity;
 	const linked = checkoutRoot === mainRoot ? "" : ` (linked worktree ${checkoutRoot})`;
 	const at = git.position.detached ? "detached HEAD" : `branch ${git.position.branch}`;
@@ -66,7 +68,7 @@ export function resourceLine(resources: ResourceFacts): string {
 		case "worktree":
 			return `the worktree ${resources.cwd} and its branch ${resources.branch} (at ${resources.head}) remain`;
 		case "unknown":
-			return `unknown: ${resources.reason}; observed paths ${JSON.stringify(resources.observedPaths)}, refs ${JSON.stringify(resources.observedRefs)}`;
+			return `unknown: ${displayReason(resources.reason)}; observed paths ${JSON.stringify(resources.observedPaths)}, refs ${JSON.stringify(resources.observedRefs)}`;
 	}
 }
 
@@ -83,7 +85,9 @@ export function attemptLines({ plan, attempt, requestId }: WorkspaceAttempt): st
 		...(attempt.phase === "retained" && attempt.recovery.length > 0
 			? ["recovery (non-forced; check each command's result):", ...attempt.recovery.map((line) => `  ${line}`)]
 			: []),
-		...(requestId === undefined ? [] : [`request: ${requestId} (the task was mailed; no delegate window opened)`]),
+		...(requestId === undefined
+			? []
+			: [`request: ${requestId} (the task was mailed; no window id/start was recorded and a window may still exist)`]),
 	];
 }
 
@@ -101,7 +105,7 @@ function pathList({ paths, total }: PathSummary): string {
  */
 export function snapshotLines(snapshot: WorkspaceSnapshot): string[] {
 	if (snapshot.kind === "non-git") return ["not a Git checkout"];
-	if (snapshot.kind === "unknown") return [`Git state unknown (${snapshot.reason})`];
+	if (snapshot.kind === "unknown") return [`Git state unknown (${displayReason(snapshot.reason)})`];
 	const { position, head, baseline, ahead, workingState, committed, pending } = snapshot;
 	const at = position.detached ? "detached HEAD" : `branch ${position.branch}`;
 	return [

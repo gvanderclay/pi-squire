@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-23
+
 ### Changed
 
 - The `delegate` tool's row is drawn in the same style as the result message:
@@ -362,7 +364,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/gvanderclay/pi-squire/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/gvanderclay/pi-squire/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/gvanderclay/pi-squire/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/gvanderclay/pi-squire/compare/v0.9.0...v0.9.1

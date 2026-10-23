@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-23
+
 ### Changed
 
 - A collapsed delegate result previews its first 3 non-blank lines, in a
@@ -352,7 +354,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/gvanderclay/pi-squire/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/gvanderclay/pi-squire/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/gvanderclay/pi-squire/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/gvanderclay/pi-squire/compare/v0.8.1...v0.9.0

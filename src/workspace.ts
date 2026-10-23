@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
 	type ExtensionContext,
@@ -118,28 +118,25 @@ function askGit(cwd: string, args: string[]): GitAnswer {
 	}
 }
 
+/** One path Git printed alone on its output: only the final newline is dropped, since a path may hold others. */
+const onePath = (out: string): string => (out.endsWith("\n") ? out.slice(0, -1) : out);
+
 /** The repository and checkout `cwd` belongs to, or why not. */
 function identify(cwd: string): { identity: GitIdentity } | { launch: GitLaunch } {
-	const top = askGit(cwd, ["rev-parse", "--show-toplevel", "--git-common-dir"]);
+	// One question per path, so no output is split on a newline a path may contain.
+	const top = askGit(cwd, ["rev-parse", "--show-toplevel"]);
 	if (!top.ok) {
 		if (top.status === 128 && /not a git repository/i.test(top.message)) return { launch: { kind: "non-git" } };
 		return { launch: { kind: "unknown", reason: `git rev-parse failed: ${top.message}` } };
 	}
-	const [checkout, common] = top.out.replace(/\n$/, "").split("\n");
-	// shortcut: the first porcelain line names the main worktree; a main root path with a newline in it is misread. Use `-z` once Git 2.36 is the floor.
-	const list = askGit(cwd, ["worktree", "list", "--porcelain"]);
-	const first = list.ok ? list.out.split("\n")[0] : "";
-	if (!first.startsWith("worktree ")) {
-		return { launch: { kind: "unknown", reason: `git worktree list failed: ${list.ok ? first : list.message}` } };
-	}
+	const common = askGit(cwd, ["rev-parse", "--git-common-dir"]);
+	if (!common.ok) return { launch: { kind: "unknown", reason: `git rev-parse failed: ${common.message}` } };
 	try {
-		return {
-			identity: {
-				mainRoot: realpathSync(first.slice("worktree ".length)),
-				commonDir: realpathSync(resolve(cwd, common)),
-				checkoutRoot: realpathSync(checkout),
-			},
-		};
+		const commonDir = realpathSync(resolve(cwd, onePath(common.out)));
+		// The main worktree's root the way Git names it (worktree.c get_main_worktree): the common
+		// directory without its `/.git`, or the common directory itself for a bare repository.
+		const mainRoot = basename(commonDir) === ".git" ? realpathSync(dirname(commonDir)) : commonDir;
+		return { identity: { mainRoot, commonDir, checkoutRoot: realpathSync(onePath(top.out)) } };
 	} catch (err) {
 		return { launch: { kind: "unknown", reason: `could not resolve the repository paths: ${(err as Error).message}` } };
 	}

@@ -373,6 +373,28 @@ test("same repository uses current trust but unrelated targets use saved scope",
 	});
 });
 
+test("checkout paths containing newlines are read as data", async () => {
+	// Splitting Git's output on newlines would misname the repository, break the trust key or call the checkout unknown.
+	base = fresh();
+	const main = repo(join(base, "main\nrepo"));
+	const linked = join(base, "linked\nwt");
+	git(main, "worktree", "add", "-q", "-b", "topic", linked);
+	protect(linked);
+	const store = new ProjectTrustStore(agentDir);
+	store.set(main, true);
+	const s = await started();
+	await call(s, linked);
+	const d = startRecord(s);
+	assert.deepEqual(d?.workspace.git.identity, {
+		mainRoot: main,
+		commonDir: realpathSync(join(main, ".git")),
+		checkoutRoot: realpathSync(linked),
+	});
+	assert.deepEqual(d?.workspace.git.position, { branch: "topic", detached: false });
+	assert.deepEqual(flags(s.tmux.opened[0].argv), ["--approve"], "the main repository's saved decision applies");
+	assert.equal(s.selects.length, 0);
+});
+
 test("ordinary main-checkout subdirectory preserves nearer denial and saved scope", async (t) => {
 	base = fresh();
 	// Keying an ordinary checkout's subdirectory by its repository root would replace a nearer denial with the root's approval.

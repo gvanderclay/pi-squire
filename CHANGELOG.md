@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A delegation is drawn as one tool call that changes state, in the style of
+  pi-interactive-subagents, replacing the 0.9.2 to 0.9.4 look: the `delegate`
+  row shows `○` with the agent, label and task, then `⟳ <name> (<model>) —
+  started`; the result arrives as a finished tool row on Pi's tool success
+  or error background, `✓ <name> (<model>) — done` or `✗` with the status,
+  with a 5-line preview. The renderer tests change with it.
+
 ## [0.9.4] - 2026-10-23
 
 ### Changed

@@ -25,6 +25,11 @@ export function modelLabel(model: string, finished: string | undefined): string 
 	return finished === undefined || finished === model ? model : `${model} → ${finished}`;
 }
 
+/** Where a delegation ran, or that its record, from before cwd was kept, does not say. */
+export function cwdLine(cwd: string | undefined): string {
+	return cwd ?? "unknown (not recorded)";
+}
+
 /** Lines of a result the collapsed message previews. */
 const PREVIEW_LINES = 5;
 /** Characters of the task's first line the call row shows. */
@@ -63,6 +68,7 @@ function idLines(details: MessageDetails): string[] {
 	const lines = [`delegation ${details.id}`, `request ${details.requestId}`];
 	if (details.kind === "result") lines.push(`envelope ${tilde(details.envelopePath)}`);
 	else lines.push(`window ${details.windowName}`);
+	lines.push(`cwd ${details.cwd === undefined ? cwdLine(undefined) : tilde(details.cwd)}`);
 	lines.push(
 		`session ${details.sessionPath === undefined ? `${details.id} (no session file found)` : tilde(details.sessionPath)}`,
 	);
@@ -194,6 +200,7 @@ export function renderDelegateResult(
 				...started.notices,
 				`delegation ${started.id}`,
 				`window ${started.windowName} (${started.windowId})`,
+				`cwd ${tilde(started.cwd)}`,
 				`thinking ${started.thinking}, auto-exit ${started.autoExit ? "on" : "off"}`,
 			].map((line) => theme.fg("dim", line)),
 		);

@@ -5,12 +5,12 @@
 // result. The records are the one source of truth for a delegation's state,
 // for the footer, `delegation_status` and `delegation_close`.
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { readMarks } from "./limits.ts";
-import { modelLabel, renderMessage } from "./render.ts";
+import { cwdLine, modelLabel, renderMessage } from "./render.ts";
 
 /** The session entry type both delegation records and results use. */
 export const CUSTOM_TYPE = "delegate";
@@ -36,6 +36,12 @@ export type Delegation = {
 	requestId: string;
 	/** Whether the delegate closes its own window after a normal completion; absent in records from before auto-exit. */
 	autoExit?: boolean;
+	/** The directory its window opened in; absent in records from before it was recorded, where it is unknown. */
+	cwd?: string;
+	/** The session-storage directory passed as `--session-dir`; absent in older records. */
+	sessionDir?: string;
+	/** The delegate's session file once found; never set at launch, when the file may not exist yet. */
+	sessionPath?: string;
 };
 
 /**
@@ -79,6 +85,8 @@ type CommonDetails = {
 	id: string;
 	requestId: string;
 	sessionPath?: string;
+	cwd?: string;
+	sessionDir?: string;
 };
 
 /** The task as the result quotes it: its text and copy path, or why there is none. */
@@ -194,6 +202,20 @@ export function findSession(dir: string | undefined, id: string): string | undef
 }
 
 /**
+ * The delegate's session file: the path already known, else a search of the
+ * recorded session directory. Only a record from before that directory was
+ * recorded searches `fallbackDir`, the parent's current one. A path found is
+ * kept on the record.
+ */
+export function locateSession(record: Recorded, fallbackDir: string | undefined): string | undefined {
+	const known = record.sessionPath ?? record.result?.sessionPath;
+	if (known !== undefined) return known;
+	const found = findSession(record.sessionDir ?? fallbackDir, record.id);
+	if (found !== undefined && isAbsolute(found)) record.sessionPath = found;
+	return found;
+}
+
+/**
  * The `provider/model` of the last assistant message in a delegate's session
  * file: the model that actually answered, after any fallback or `/model`.
  * Undefined when the file is missing or holds no assistant message.
@@ -266,6 +288,8 @@ function resultDetails(
 		requestId: delegation.requestId,
 		envelopePath: payload.path,
 		...(session === undefined ? {} : { sessionPath: session }),
+		...(delegation.cwd === undefined ? {} : { cwd: delegation.cwd }),
+		...(delegation.sessionDir === undefined ? {} : { sessionDir: delegation.sessionDir }),
 		...(limit === undefined ? {} : { limit }),
 		task,
 		body,
@@ -287,6 +311,7 @@ function resultText(details: ResultDetails): string {
 		`Status: ${details.status}`,
 		...(details.limit === undefined ? [] : [details.limit]),
 		quote,
+		`Working directory: ${cwdLine(details.cwd)}`,
 		`Envelope: ${details.envelopePath}`,
 		`Delegate session: ${details.sessionPath ?? details.id}`,
 		"",
@@ -347,7 +372,9 @@ export function createResults(pi: ExtensionAPI): Results {
 				if (record !== undefined) record.closed = true;
 			} else if (data.gone === true) {
 				const record = byId.get(data.id);
-				if (record !== undefined) record.gone = true;
+				if (record === undefined) continue;
+				record.gone = true;
+				if (typeof data.sessionPath === "string") record.sessionPath = data.sessionPath;
 			}
 		}
 		updateFooter();
@@ -374,9 +401,9 @@ export function createResults(pi: ExtensionAPI): Results {
 		const record = byId.get(id);
 		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true)
 			return false;
-		const session = findSession(ctx?.sessionManager.getSessionDir(), record.id);
+		const session = locateSession(record, ctx?.sessionManager.getSessionDir());
 		const finished = finishedModel(session);
-		pi.appendEntry(CUSTOM_TYPE, { id, gone: true });
+		pi.appendEntry(CUSTOM_TYPE, { id, gone: true, ...(session === undefined ? {} : { sessionPath: session }) });
 		record.gone = true;
 		const details: MessageDetails = {
 			kind: "gone",
@@ -387,6 +414,8 @@ export function createResults(pi: ExtensionAPI): Results {
 			id: record.id,
 			requestId: record.requestId,
 			...(session === undefined ? {} : { sessionPath: session }),
+			...(record.cwd === undefined ? {} : { cwd: record.cwd }),
+			...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
 			windowName: record.windowName,
 		};
 		pi.sendMessage(
@@ -395,6 +424,7 @@ export function createResults(pi: ExtensionAPI): Results {
 				details,
 				content: [
 					`[delegate] Delegation ${record.id} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+					`Working directory: ${cwdLine(record.cwd)}`,
 					`Delegate session: ${session ?? record.id}`,
 					"A reply that arrives later is still delivered.",
 				].join("\n"),
@@ -417,7 +447,7 @@ export function createResults(pi: ExtensionAPI): Results {
 		if (shown.has(reply.id)) return;
 		const delegation = byRequest.get(requestId) as Recorded;
 		shown.add(reply.id);
-		const session = findSession(ctx?.sessionManager.getSessionDir(), delegation.id);
+		const session = locateSession(delegation, ctx?.sessionManager.getSessionDir());
 		const finished = finishedModel(session);
 		const details = resultDetails(delegation, payload, session, finished);
 		// Steer, not follow-up: a busy parent gets the result before its next model call, not after it has answered.

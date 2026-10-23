@@ -36,7 +36,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 
 import {
 	type ExtensionAPI,
@@ -118,6 +118,8 @@ export const DelegateSchema = Type.Object({
 	autoExit: Type.Boolean(),
 	windowId: Type.String(),
 	windowName: Type.String(),
+	cwd: Type.String({ description: "The directory the delegate's window opened in." }),
+	sessionDir: Type.String({ description: "The session-storage directory the delegate was told to use." }),
 });
 
 const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
@@ -126,7 +128,8 @@ const USAGE =
 	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
-type LaunchPayload = { args: string[]; env: Record<string, string>; agent: string };
+/** `cwd` is informational: the window opens in the launch's own value, whatever a listener assigns. */
+type LaunchPayload = { args: string[]; env: Record<string, string>; agent: string; readonly cwd: string };
 type Parsed = { agent: string; model?: string; thinking?: string; label?: string; autoExit?: boolean; task: string };
 /** A request that passed the roster, model, thinking and label checks. */
 type Start = {
@@ -146,7 +149,15 @@ type Start = {
 /** A candidate model passed over: `why` finishes "<model> is …", `reason` is the long form for a refusal. */
 type Skipped = { model: string; why: string; reason: string };
 /** A delegation that is open in a tmux window. */
-type Launched = { id: string; name: string; windowId: string; windowName: string; requestId: string };
+type Launched = {
+	id: string;
+	name: string;
+	windowId: string;
+	windowName: string;
+	requestId: string;
+	cwd: string;
+	sessionDir: string;
+};
 
 /**
  * Write the appended system prompt to a fresh owner-only directory under the
@@ -472,6 +483,15 @@ export default function delegate(
 	/** The launch order of the spec: task, argv, env, listeners, window, record. */
 	async function launch(start: Start, ctx: ExtensionContext): Promise<Launched> {
 		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
+		const cwd = ctx.cwd;
+		// The child stores its session where the parent's lookups will search, whatever its cwd, project
+		// settings or the tmux server's environment would choose; a relative path would follow the child's cwd.
+		const sessionDir = ctx.sessionManager.getSessionDir();
+		if (!isAbsolute(sessionDir)) {
+			throw new Error(
+				`the parent's session directory ${JSON.stringify(sessionDir)} is not an absolute path, so the delegate's session could not be found again; start Pi with an absolute --session-dir`,
+			);
+		}
 
 		// The task goes on disk before the window exists: the delegate finds it
 		// at session start without a handshake, and a window that fails leaves
@@ -497,6 +517,10 @@ export default function delegate(
 			id,
 			"--name",
 			name,
+			// Always explicit, so a permissive global default cannot trust what the parent does not.
+			ctx.isProjectTrusted() ? "--approve" : "--no-approve",
+			"--session-dir",
+			sessionDir,
 			"--model",
 			start.model,
 			"--thinking",
@@ -516,16 +540,17 @@ export default function delegate(
 			PI_UNATTENDED: "1",
 		};
 		if (start.rest.length > 0) env[FALLBACK_ENV] = start.rest.join(",");
-		const sessionDir = process.env[SESSION_DIR_ENV];
-		if (sessionDir !== undefined && sessionDir !== "") env[SESSION_DIR_ENV] = sessionDir;
+		// Pi ranks `--session-dir` above this variable, so it cannot move the child's storage.
+		const envSessionDir = process.env[SESSION_DIR_ENV];
+		if (envSessionDir !== undefined && envSessionDir !== "") env[SESSION_DIR_ENV] = envSessionDir;
 		// Listeners may only append to `args` and add to `env`; there is no veto.
-		const payload: LaunchPayload = { args: argv, env, agent: start.agent.name };
+		const payload: LaunchPayload = { args: argv, env, agent: start.agent.name, cwd };
 		pi.events.emit(LAUNCH, payload);
 
 		const windowName = name;
 		let windowId: string;
 		try {
-			windowId = await tmux.openWindow({ name: windowName, cwd: ctx.cwd, argv: payload.args, env: payload.env });
+			windowId = await tmux.openWindow({ name: windowName, cwd, argv: payload.args, env: payload.env });
 		} catch (err) {
 			throw new Error(`could not open window ${windowName} for ${id}: ${(err as Error).message}`);
 		}
@@ -542,11 +567,13 @@ export default function delegate(
 				windowName,
 				requestId,
 				autoExit: start.autoExit,
+				cwd,
+				sessionDir,
 			},
 			ctx,
 		);
 		tracking.startPolling();
-		return { id, name, windowId, windowName, requestId };
+		return { id, name, windowId, windowName, requestId, cwd, sessionDir };
 	}
 
 	const started = (launched: Launched, start: Start): string =>
@@ -645,6 +672,8 @@ export default function delegate(
 					autoExit: start.autoExit,
 					windowId: launched.windowId,
 					windowName: launched.windowName,
+					cwd: launched.cwd,
+					sessionDir: launched.sessionDir,
 				},
 			);
 		},

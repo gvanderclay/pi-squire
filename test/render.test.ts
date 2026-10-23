@@ -55,6 +55,8 @@ const result = (overrides: Partial<MessageDetails & { kind: "result" }> = {}): M
 	requestId: "req-id",
 	envelopePath: "/mail/cur/reply.json",
 	sessionPath: "/sessions/s.jsonl",
+	cwd: "/work/checkout",
+	sessionDir: "/sessions",
 	task: { text: "look into it", path: "/mail/sent/req.json" },
 	body: "first\nsecond\nthird\nfourth",
 	...overrides,
@@ -158,6 +160,15 @@ test("an expanded result shows the body as Markdown, then the task, then the ids
 	);
 	for (const part of ["<dim:request req-id>", "<dim:envelope /mail/cur/reply.json>", "<dim:session /sessions/s.jsonl>"])
 		assert.ok(text.includes(part), `missing ${part}`);
+});
+
+test("an expanded result names the recorded cwd, and a record without one says it is unknown", () => {
+	const recorded = (render(result(), true) ?? []).join("\n");
+	assert.ok(recorded.includes("<dim:cwd /work/checkout>"), recorded);
+	const legacy = (render(result({ cwd: undefined }), true) ?? []).join("\n");
+	assert.ok(legacy.includes("<dim:cwd unknown (not recorded)>"), legacy);
+	assert.ok(!legacy.includes(process.cwd()), legacy);
+	assert.ok((render(gone, true) ?? []).includes("<dim:cwd unknown (not recorded)>"));
 });
 
 test("an expanded result with no task copy shows the note", () => {

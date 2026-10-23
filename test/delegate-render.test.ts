@@ -8,7 +8,7 @@ import { after, beforeEach, test } from "node:test";
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
-import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -97,7 +97,7 @@ test("an expanded started row adds the ids, window, thinking and auto-exit", asy
 	const { tool, result } = await launched(args);
 	const id = (result.details as { id: string }).id;
 	const shown = lines(tool.renderResult(result, { expanded: true }, theme, context(args, true)));
-	for (const part of [`<dim:delegation ${id}>`, "<dim:thinking low, auto-exit on>"])
+	for (const part of [`<dim:delegation ${id}>`, "<dim:thinking low, auto-exit on>", `<dim:cwd ${root}>`])
 		assert.ok(shown.includes(part), `missing ${part}\n${shown.join("\n")}`);
 	assert.ok(shown.some((line) => line.startsWith("<dim:window scout-look (")));
 });

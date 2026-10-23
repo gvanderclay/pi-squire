@@ -152,6 +152,12 @@ export type Entry = { customType: string; data: Record<string, unknown> };
 export type SessionOptions = {
 	/** Whether `ctx.hasUI` is true. */
 	hasUI?: boolean;
+	/** The parent's working directory, `ctx.cwd`; default `root`. */
+	cwd?: string;
+	/** What `ctx.isProjectTrusted()` answers; default false. */
+	projectTrusted?: boolean;
+	/** What `ctx.sessionManager.getSessionDir()` reports; default the exported `sessionDir`. */
+	sessionDir?: string;
 	/** This session's id, the parent address. */
 	parent?: string;
 	/** What the `message:send` provider stub answers. */
@@ -300,8 +306,9 @@ export function session(options: SessionOptions = {}) {
 		},
 	};
 	const ctx = {
-		cwd: root,
+		cwd: options.cwd ?? root,
 		hasUI: options.hasUI ?? true,
+		isProjectTrusted: () => options.projectTrusted ?? false,
 		modelRegistry: registry,
 		get signal() {
 			return signal;
@@ -311,7 +318,7 @@ export function session(options: SessionOptions = {}) {
 		},
 		sessionManager: {
 			getSessionId: () => parent,
-			getSessionDir: () => sessionDir,
+			getSessionDir: () => options.sessionDir ?? sessionDir,
 			getEntries: () =>
 				entries.map((entry, index) => ({
 					type: "custom",

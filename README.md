@@ -103,7 +103,21 @@ temporary folder, not as text on the command line.
   shown to the parent as one result message that quotes the task. By default
   the delegate then closes its own window ([auto-exit](#auto-exit)). With
   auto-exit off the window stays open so you can read it or keep working in it.
-- Delegations are recorded in the parent session without the task text.
+- Delegations are recorded in the parent session without the task text. Each
+  record keeps the directory the window opened in and the session-storage
+  directory the delegate was given.
+- The delegate always gets an explicit project-trust flag: `--approve` when
+  the parent's project is trusted (`ctx.isProjectTrusted()`), `--no-approve`
+  otherwise, so a permissive global `defaultProjectTrust` cannot trust a
+  project the parent does not, and an unattended window never waits on a
+  trust question.
+- The delegate always gets `--session-dir` with the parent's absolute
+  session-storage directory, which outranks `PI_CODING_AGENT_SESSION_DIR`, the
+  tmux server's environment and a project's `sessionDir` setting. The parent
+  finds the delegate's session file there by its id, even after the parent
+  resumes with another storage directory selected. A parent whose session
+  directory is not an absolute path refuses to launch, before sending the
+  task.
 - Inside a delegate (`PI_DELEGATE_PARENT` set) the extension registers only
   auto-exit's side, the `/auto-exit` command and its handlers, so a delegate
   cannot start delegates of its own.
@@ -196,7 +210,7 @@ settings file and no environment variable of its own. `PI_DELEGATE_PARENT` and `
 for the child, never read as configuration by the parent. The window starts
 with the tmux server's environment plus only these from the parent:
 `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` (when the parent has it
-set), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`, and it always gets `PI_UNATTENDED=1`.
+set; `--session-dir` outranks it), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`, and it always gets `PI_UNATTENDED=1`.
 `PI_UNATTENDED=1` is a general signal, not specific to pi-squire: no human is
 watching this session, even though it runs in a TUI. Other extensions may read
 it to skip a dialog or confirmation instead of waiting on one, and any other
@@ -253,6 +267,7 @@ nothing starts.
   name: scout-<first 8 of the id>
   state: running — the window is open and no result has arrived (last active 12 min ago)
   window: scout-<first 8 of the id> (@1)
+  cwd: <the directory its window opened in>
   auto-exit: on — the delegate closes its window after a normal completion unless the user took over there
   session: <the delegate's session file, or its id when there is none yet>
 
@@ -260,6 +275,7 @@ nothing starts.
   name: researcher-<first 8 of the id>
   state: done — result status: done; the result reaches this session as a [delegate] message on its own
   window: researcher-<first 8 of the id> (@2)
+  cwd: unknown (not recorded)
   auto-exit: off — the window stays open after the result
   session: <session file>
   envelope: <the reply's path in the parent's cur/>
@@ -279,6 +295,13 @@ nothing starts.
   arrived before its window went. For a moment before the result is claimed
   it can read closed, since the window is already gone.
 - **Auto-exit** reads off for delegations recorded before auto-exit existed.
+- **Cwd** is the directory the delegate's window opened in. A delegation
+  recorded before it was kept reads `unknown (not recorded)`, never the
+  parent's current directory.
+- **Session** is the delegate's session file, searched for in the storage
+  directory recorded at launch. Once found, its path is kept, so a later
+  status or result uses it without searching again. Before the delegate has
+  written its file, the id is shown instead of an invented file name.
 - **Closed** covers a close `delegation_close` recorded and a window that is no
   longer there. A recorded close wins over a result, and a result wins over a
   window that is gone.
@@ -407,7 +430,7 @@ The parent resolves each delegation's auto-exit from the call
 - While it is on, a run that settles as a normal completion shuts the delegate
   down (`ctx.shutdown()`) on the next event-loop turn, after the settle
   reply has been sent, so its tmux window closes. The session file stays, and
-  `pi --session <path>` reopens it.
+  `pi --session <path>` reopens it (see [Reopening a delegate's session](#reopening-a-delegates-session)).
 - A failed run, such as one ending on a usage limit or another provider
   error, exits like a normal completion; the parent still gets the failed
   reply and the session file stays. Only a run the user stopped never exits
@@ -434,6 +457,7 @@ the parent one message labelled delegate output:
 Status: done
 Task, quoted from <sent/ copy>:
 > the task
+Working directory: <the directory its window opened in>
 Envelope: <cur/ path>
 Delegate session: <session file or id>
 
@@ -476,9 +500,12 @@ Delegate session: <session file or id>
 - The task is quoted from the request copy the provider puts on the payload,
   capped at 2 KiB with the copy's `sent/` path. A request with no copy is
   named by id alone.
+- The working directory is the one recorded at launch, or
+  `unknown (not recorded)` for a delegation recorded before it was kept.
 - The envelope path is the claimed reply in the parent's `cur/`; the
-  delegate's session path is found in the session directory by the delegation
-  id, and the id alone is shown when no file exists yet.
+  delegate's session path is found by the delegation id in the session
+  directory recorded at launch (the parent's current one for older records),
+  and the id alone is shown when no file exists yet.
 - The body is cut at 32 KiB with the envelope path.
 - The message is sent as a `steer` with `triggerTurn`: a result starts a
   turn when the parent is idle, and when it is mid-turn arrives after the
@@ -510,6 +537,16 @@ delegation, with the delegate session path when one is found, sent as a
 still delivered and makes the delegation done. A resumed session polls again
 for every delegation it restores as running.
 
+### Reopening a delegate's session
+
+`delegation_status` and every result name the delegate's session file by its
+absolute path. Reopen it with that path: `pi --session /absolute/path/<file>.jsonl`.
+Pi groups sessions by working directory: the session picker and an id given
+to `--session` search the current project first, and may miss a delegate's
+session or offer to fork it rather than open it when the delegate ran in
+another directory or its file lives in another storage directory. The
+absolute path opens that file directly.
+
 ## Hooks
 
 The `js` block below is the contract's worked example, and
@@ -520,24 +557,34 @@ that block.
 
 ### `session:launch`
 
-`pi-squire` provides this hook. It emits `{ args, env, agent }` after the task
-has been sent and just before it opens the delegate's window.
+`pi-squire` provides this hook. It emits `{ args, env, agent, cwd }` after the
+task has been sent and just before it opens the delegate's window.
 
 | Field | Meaning |
 | --- | --- |
 | `args` | the child `pi`'s complete argument list, launcher first |
 | `env` | the child's environment, as `KEY`/`value` pairs |
 | `agent` | the agent's name, as in `<agent dir>/squire/agents/<name>/AGENT.md`; read it, do not change it |
+| `cwd` | the directory the window opens in; read it, do not change it |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
 and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
 emitter reads the payload the moment `emit` returns.
 
+`cwd`, the trust flag (`--approve` or `--no-approve`) and `--session-dir` are
+launch invariants that `pi-squire` chooses. The window opens in its own `cwd`,
+whatever a listener assigns to the payload. A listener must not add another
+trust flag, `--session-dir` or a working-directory change to `args`, since
+that would launch a child whose trust or session storage the parent did not
+choose and cannot find; append only unrelated settings.
+
 ```js session:launch
 // Any extension can shape a launch: append a flag and add an environment key.
+// `cwd` says where the window opens; read it, never assign it.
 pi.events.on("session:launch", (payload) => {
   payload.args.push("--auto");
   payload.env.GATE_MODE = "auto";
+  payload.env.GATE_ROOT = payload.cwd;
 });
 ```
 
@@ -604,8 +651,10 @@ version and is listed under "Breaking" in [CHANGELOG.md](CHANGELOG.md).
 
 Other extensions may rely on:
 
-- the `session:launch` payload `{ args, env, agent }`, emitted synchronously
-  after the task is sent and before the window opens (see [Hooks](#hooks));
+- the `session:launch` payload `{ args, env, agent, cwd }`, emitted
+  synchronously after the task is sent and before the window opens, with
+  `cwd`, the trust flag and `--session-dir` chosen by `pi-squire` (see
+  [Hooks](#hooks));
 - the `message:send`, `message:inbound` and `message:scan` hooks, consumed as
   their sections document;
 - the `delegate`, `delegation_status` and `delegation_close` tool names and

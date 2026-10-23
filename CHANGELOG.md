@@ -6,6 +6,31 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The `session:launch` payload gains a read-only `cwd`, the directory the
+  delegate's window opens in. The window opens there whatever a listener
+  assigns; appending args and adding env keys work as before. The README
+  example and its test read it.
+- Each delegation records its working directory and session-storage
+  directory. The `delegate` tool's structured result carries `cwd` and
+  `sessionDir`; `delegation_status`, result and closed-without-a-result
+  messages and their expanded views show the working directory, and older
+  records show it as `unknown (not recorded)`.
+
+### Changed
+
+- Every delegate is launched with an explicit `--approve` or `--no-approve`
+  from the parent's current project trust, so a global
+  `defaultProjectTrust` cannot trust a project the parent does not.
+- Every delegate is launched with `--session-dir` set to the parent's absolute
+  session-storage directory. Session lookups for running, closed and late
+  results use the directory recorded at launch, so they survive a parent that
+  resumes with another storage directory, and a found session path is kept
+  in the closed-without-a-result record. A parent whose session directory is
+  not absolute refuses to launch before sending the task. The launch argv and
+  record tests change with it.
+
 ## [0.9.5] - 2026-10-23
 
 ### Changed

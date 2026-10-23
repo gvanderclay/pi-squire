@@ -8,11 +8,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 
 import { type Mark, readMarks } from "./limits.ts";
-import { modelLabel } from "./render.ts";
+import { cwdLine, modelLabel } from "./render.ts";
 import {
 	type DelegationState,
 	deriveState,
-	findSession,
+	locateSession,
 	type Recorded,
 	type Results,
 	recordedName,
@@ -64,6 +64,10 @@ const DelegationSchema = Type.Object({
 	autoExit: Type.Boolean(),
 	windowId: Type.String(),
 	windowName: Type.String(),
+	cwd: Type.Optional(
+		Type.String({ description: "The directory its window opened in; absent for records from before it was kept." }),
+	),
+	sessionDir: Type.Optional(Type.String({ description: "The session-storage directory it was told to use." })),
 	state: Type.Union(
 		DELEGATION_STATES.map((state) => Type.Literal(state)),
 		{
@@ -181,7 +185,7 @@ function ago(ms: number): string {
 /** The view of a delegation: its state and the fields the text and details share. */
 function view(record: Recorded, windows: TmuxWindow[] | undefined, ctx: ExtensionContext): View {
 	const state = deriveState(record, windowState(windows, record));
-	const sessionPath = record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id);
+	const sessionPath = locateSession(record, ctx.sessionManager.getSessionDir());
 	let lastActive: Date | undefined;
 	if (state === "running" && sessionPath !== undefined) {
 		try {
@@ -201,6 +205,7 @@ function viewText({ record, state, name, sessionPath, lastActive }: View): strin
 		`  name: ${name}`,
 		`  state: ${stateLine(state, record)}${seen}`,
 		`  window: ${record.windowName} (${record.windowId})`,
+		`  cwd: ${cwdLine(record.cwd)}`,
 		`  auto-exit: ${autoExitLine(record)}`,
 		`  session: ${sessionPath ?? `${record.id} (no session file yet)`}`,
 	];
@@ -220,6 +225,8 @@ function viewDetails({ record, state, name, sessionPath, lastActive }: View): Re
 		autoExit: record.autoExit === true,
 		windowId: record.windowId,
 		windowName: record.windowName,
+		...(record.cwd === undefined ? {} : { cwd: record.cwd }),
+		...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
 		state,
 		closed: record.closed === true,
 		closedWithoutResult: record.gone === true && record.result === undefined && record.closed !== true,
@@ -325,7 +332,7 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Call it to check on a delegation that seems stuck or to find its files; a result arrives as a message on its own, so there is no need to call it to wait for one. Names the delegation id, agent, session name, model, thinking, window, delegate session path and result envelope path. A running delegation also shows when its session file was last written; a long gap may mean it is stuck but does not prove it. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
+			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Call it to check on a delegation that seems stuck or to find its files; a result arrives as a message on its own, so there is no need to call it to wait for one. Names the delegation id, agent, session name, model, thinking, window, working directory, delegate session path and result envelope path. A running delegation also shows when its session file was last written; a long gap may mean it is stuck but does not prove it. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
 		parameters: Type.Object({
 			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
 		}),

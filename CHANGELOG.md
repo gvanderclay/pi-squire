@@ -8,6 +8,10 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Managed worktree placement can be configured per call in
+  `<agent dir>/squire/settings.json` with a global `worktreeRoot` template and
+  canonical-main-repository `worktreeRootByRepo` overrides. Placement settings
+  affect only worktree creation; inherited and `cwd` launches never read them.
 - `/delegate --worktree <branch>` and the `delegate` tool's `worktree` input
   create a managed worktree from the source checkout's frozen committed HEAD,
   in the built-in sibling `{repo}-worktrees/{branch}` layout. Source dirty

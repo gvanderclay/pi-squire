@@ -154,7 +154,8 @@ test("ignored files created during launch prevent rollback", async () => {
 	const source = join(base, "repo");
 	mkdirSync(source);
 	git(source, "init", "-q", "-b", "main");
-	writeFileSync(join(source, ".gitignore"), "ignored-secret.txt\\n");
+	writeFileSync(join(source, ".gitignore"), "ignored-secret.txt\n");
+	git(source, "check-ignore", "--quiet", "ignored-secret.txt");
 	writeFileSync(join(source, "tracked.txt"), "committed\\n");
 	git(source, "add", ".");
 	git(source, "commit", "-q", "-m", "base");

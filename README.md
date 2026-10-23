@@ -195,8 +195,45 @@ Dirty staged, unstaged and untracked source paths are summarized in the start
 notice and recorded; none are copied. Ignored files remain in the source and
 are not transferred. No setup or submodule initialization is performed.
 The delegate starts at the created worktree root with factual branch and base
-context. The configured layout determines which ancestor instructions Pi
-finds and whether the worktree needs an ignore rule.
+context.
+
+Managed placement is selected on every creation from the optional
+`<agent dir>/squire/settings.json` file (separate from Pi's `settings.json`):
+
+```json
+{
+  "worktreeRoot": "~/worktrees/{repo}/{branch}",
+  "worktreeRootByRepo": {
+    "/Users/me/src/special-project": "../special-checkouts/{branch}"
+  }
+}
+```
+
+A matching `worktreeRootByRepo` entry wins over `worktreeRoot`, which wins
+over the built-in `{repoParent}/{repo}-worktrees/{branch}` default. Repository
+keys identify the canonical main checkout root, even when creation starts from
+a linked worktree; keys and relative templates resolve from the settings
+directory, and `~`/`~/` expands to the home directory. Templates accept
+`{repoParent}` (the main checkout's parent), `{repo}` (its directory name) and
+`{branch}` (the branch with `/` replaced by `-` for this path only). For a
+main checkout at `/Users/me/src/special-project` and branch `feature/topic`,
+the built-in path is
+`/Users/me/src/special-project-worktrees/feature-topic`. With `~` set to
+`/Users/me`, the global example resolves to
+`/Users/me/worktrees/special-project/feature-topic`; if the settings directory
+is `/Users/me/.pi/agent/squire`, the matching relative override resolves to
+`/Users/me/.pi/agent/special-checkouts/feature-topic`. The Git branch remains
+`feature/topic`.
+
+The settings file is read only for managed creation. A missing file uses the
+built-in default; malformed or inaccessible settings, invalid templates and
+duplicate canonical repository keys refuse creation rather than silently
+falling back. They do not affect inherited or `cwd` launches. Placement does
+not choose a source checkout or base commit. Pi discovers `AGENTS.md`, skills
+and other project context from the created directory and its ancestors, so the
+chosen layout determines which instructions and skills apply. For a layout
+inside another checkout, arrange any needed Git ignore rule yourself;
+pi-squire never edits `.gitignore`.
 
 A launch attempt is recorded before Git creation. If launch fails before a
 window is known to have opened, pi-squire removes only a checkout and branch

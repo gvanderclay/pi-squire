@@ -49,6 +49,7 @@ export function resetRoot(): void {
 	for (const name of ["trust.json", "trust.json.lock", "settings.json"]) {
 		rmSync(join(agentDir, name), { recursive: true, force: true });
 	}
+	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
 	delete process.env.PI_DELEGATE_FALLBACK;

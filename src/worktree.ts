@@ -20,6 +20,7 @@ import {
 	summarize,
 } from "./git.ts";
 import type { ResourceFacts } from "./results.ts";
+import { worktreeDestination } from "./worktree-placement.ts";
 
 export type WorktreeOptions = { worktree: string };
 /** What a managed launch intends, frozen before anything is created. */
@@ -149,12 +150,6 @@ function dirtyPaths(identity: GitIdentity): PathSummary {
 	return summarize([...new Set([...pending.staged, ...pending.unstaged, ...pending.untracked, ...pending.conflicted])]);
 }
 
-/** `{repoParent}/{repo}-worktrees/{branch}`, the branch's slashes mapped to `-` in the folder only. */
-function placement(identity: GitIdentity, branch: string): string {
-	const folder = `${basename(identity.mainRoot)}-worktrees`;
-	return canonical(join(dirname(identity.mainRoot), folder, branch.replaceAll("/", "-")));
-}
-
 /**
  * Plan a new branch's checkout from the parent's checkout: validate the
  * branch, source, destination and base, and freeze the source's committed
@@ -164,7 +159,7 @@ function placement(identity: GitIdentity, branch: string): string {
 export async function prepareWorktree(
 	options: WorktreeOptions,
 	ctx: ExtensionContext,
-	_agentDir: string,
+	agentDir: string,
 ): Promise<WorktreePlan> {
 	const found = inspectGit(ctx.cwd);
 	if (found.kind === "non-git") throw new Error(`worktree needs a Git checkout, and ${ctx.cwd} is not one`);
@@ -176,7 +171,7 @@ export async function prepareWorktree(
 	}
 	const { identity } = found;
 	checkBranch(identity, options.worktree);
-	const destination = placement(identity, options.worktree);
+	const destination = worktreeDestination(agentDir, identity, options.worktree);
 	checkDestination(destination, identity);
 	return {
 		sourceCwd: ctx.cwd,

@@ -626,6 +626,8 @@ test("a failed reply with no matching mark has no limit line", async (t) => {
 			"Status: failed",
 			`[delegate] The task ${requestId} has no copy in sent/; only its id is known.`,
 			`Working directory: ${root}`,
+			// The harness root is a temporary directory outside any Git checkout.
+			"Workspace: the parent's directory; not a Git checkout",
 			"Envelope: /mail/cur/reply.json",
 			`Delegate session: ${firstId(p)}`,
 			"",

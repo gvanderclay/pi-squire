@@ -171,6 +171,44 @@ test("an expanded result names the recorded cwd, and a record without one says i
 	assert.ok((render(gone, true) ?? []).includes("<dim:cwd unknown (not recorded)>"));
 });
 
+test("an expanded result names its workspace, its Git checkout or an unknown Git state", () => {
+	// A view that drops the workspace, or calls a failed inspection a non-Git directory, is what this catches.
+	const checkout = (
+		render(
+			result({
+				workspace: {
+					mode: "existing",
+					cwd: "/work/topic",
+					git: {
+						kind: "git",
+						identity: { mainRoot: "/work/main", commonDir: "/work/main/.git", checkoutRoot: "/work/topic" },
+						position: { branch: null, detached: true },
+						head: "abc123",
+						baseline: "abc123",
+					},
+				},
+			}),
+			true,
+			400,
+		) ?? []
+	).join("\n");
+	assert.ok(
+		checkout.includes(
+			"<dim:workspace existing directory; Git checkout /work/main (linked worktree /work/topic), detached HEAD, launch commit abc123>",
+		),
+		checkout,
+	);
+	const unknown = (
+		render(
+			result({ workspace: { mode: "existing", cwd: "/work/x", git: { kind: "unknown", reason: "git timed out" } } }),
+			true,
+			400,
+		) ?? []
+	).join("\n");
+	assert.ok(unknown.includes("<dim:workspace existing directory; Git state unknown (git timed out)>"), unknown);
+	assert.ok(!(render(result(), true, 400) ?? []).join("\n").includes("workspace"), "older records show no workspace");
+});
+
 test("an expanded result with no task copy shows the note", () => {
 	assert.ok((render(result({ task: { note: "no copy" } }), true) ?? []).includes("<dim:no copy>"));
 });

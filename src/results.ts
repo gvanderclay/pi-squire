@@ -10,7 +10,8 @@ import { isAbsolute, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { readMarks } from "./limits.ts";
-import { cwdLine, modelLabel, renderMessage } from "./render.ts";
+import { cwdLine, modelLabel, renderMessage, workspaceLine } from "./render.ts";
+import type { Workspace } from "./workspace.ts";
 
 /** The session entry type both delegation records and results use. */
 export const CUSTOM_TYPE = "delegate";
@@ -42,6 +43,8 @@ export type Delegation = {
 	sessionDir?: string;
 	/** The delegate's session file once found; never set at launch, when the file may not exist yet. */
 	sessionPath?: string;
+	/** How its directory was chosen and its Git checkout at launch; absent in older records. */
+	workspace?: Workspace;
 };
 
 /**
@@ -87,6 +90,7 @@ type CommonDetails = {
 	sessionPath?: string;
 	cwd?: string;
 	sessionDir?: string;
+	workspace?: Workspace;
 };
 
 /** The task as the result quotes it: its text and copy path, or why there is none. */
@@ -290,6 +294,7 @@ function resultDetails(
 		...(session === undefined ? {} : { sessionPath: session }),
 		...(delegation.cwd === undefined ? {} : { cwd: delegation.cwd }),
 		...(delegation.sessionDir === undefined ? {} : { sessionDir: delegation.sessionDir }),
+		...(delegation.workspace === undefined ? {} : { workspace: delegation.workspace }),
 		...(limit === undefined ? {} : { limit }),
 		task,
 		body,
@@ -312,6 +317,7 @@ function resultText(details: ResultDetails): string {
 		...(details.limit === undefined ? [] : [details.limit]),
 		quote,
 		`Working directory: ${cwdLine(details.cwd)}`,
+		...(details.workspace === undefined ? [] : [`Workspace: ${workspaceLine(details.workspace)}`]),
 		`Envelope: ${details.envelopePath}`,
 		`Delegate session: ${details.sessionPath ?? details.id}`,
 		"",
@@ -416,6 +422,7 @@ export function createResults(pi: ExtensionAPI): Results {
 			...(session === undefined ? {} : { sessionPath: session }),
 			...(record.cwd === undefined ? {} : { cwd: record.cwd }),
 			...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
+			...(record.workspace === undefined ? {} : { workspace: record.workspace }),
 			windowName: record.windowName,
 		};
 		pi.sendMessage(
@@ -425,6 +432,7 @@ export function createResults(pi: ExtensionAPI): Results {
 				content: [
 					`[delegate] Delegation ${record.id} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
 					`Working directory: ${cwdLine(record.cwd)}`,
+					...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
 					`Delegate session: ${session ?? record.id}`,
 					"A reply that arrives later is still delivered.",
 				].join("\n"),

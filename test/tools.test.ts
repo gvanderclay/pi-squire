@@ -371,6 +371,8 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 			autoExit: true,
 			cwd: root,
 			sessionDir,
+			// The harness root is a temporary directory outside any Git checkout.
+			workspace: { mode: "inherited", cwd: root, git: { kind: "non-git" } },
 		},
 	});
 	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-${id.slice(0, 8)}`);

@@ -145,6 +145,8 @@ test("a result message carries the details its view is drawn from", async () => 
 		sessionPath: file,
 		cwd: root,
 		sessionDir,
+		// The harness root is a temporary directory outside any Git checkout.
+		workspace: { mode: "inherited", cwd: root, git: { kind: "non-git" } },
 		task: { note: `[delegate] The task ${requestId(s)} has no copy in sent/; only its id is known.` },
 		body: "line one\nline two",
 	});

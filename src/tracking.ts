@@ -8,7 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 
 import { type Mark, readMarks } from "./limits.ts";
-import { cwdLine, modelLabel } from "./render.ts";
+import { cwdLine, modelLabel, workspaceLine } from "./render.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -20,6 +20,7 @@ import {
 } from "./results.ts";
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import type { ReadingError } from "./usage.ts";
+import { WorkspaceSchema } from "./workspace.ts";
 
 /** The hook a tick emits so the provider claims waiting replies before windows are checked. */
 const SCAN = "message:scan";
@@ -68,6 +69,7 @@ const DelegationSchema = Type.Object({
 		Type.String({ description: "The directory its window opened in; absent for records from before it was kept." }),
 	),
 	sessionDir: Type.Optional(Type.String({ description: "The session-storage directory it was told to use." })),
+	workspace: Type.Optional(WorkspaceSchema),
 	state: Type.Union(
 		DELEGATION_STATES.map((state) => Type.Literal(state)),
 		{
@@ -206,6 +208,7 @@ function viewText({ record, state, name, sessionPath, lastActive }: View): strin
 		`  state: ${stateLine(state, record)}${seen}`,
 		`  window: ${record.windowName} (${record.windowId})`,
 		`  cwd: ${cwdLine(record.cwd)}`,
+		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
 		`  auto-exit: ${autoExitLine(record)}`,
 		`  session: ${sessionPath ?? `${record.id} (no session file yet)`}`,
 	];
@@ -227,6 +230,7 @@ function viewDetails({ record, state, name, sessionPath, lastActive }: View): Re
 		windowName: record.windowName,
 		...(record.cwd === undefined ? {} : { cwd: record.cwd }),
 		...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
+		...(record.workspace === undefined ? {} : { workspace: record.workspace }),
 		state,
 		closed: record.closed === true,
 		closedWithoutResult: record.gone === true && record.result === undefined && record.closed !== true,

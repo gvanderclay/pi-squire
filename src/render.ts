@@ -19,6 +19,7 @@ import type { Static } from "typebox";
 
 import type { DelegateSchema } from "./index.ts";
 import type { MessageDetails } from "./results.ts";
+import type { Workspace } from "./workspace.ts";
 
 /** The launch model, or `launch → finished` when the delegate finished on another one. */
 export function modelLabel(model: string, finished: string | undefined): string {
@@ -28,6 +29,17 @@ export function modelLabel(model: string, finished: string | undefined): string 
 /** Where a delegation ran, or that its record, from before cwd was kept, does not say. */
 export function cwdLine(cwd: string | undefined): string {
 	return cwd ?? "unknown (not recorded)";
+}
+
+/** How a delegation's directory was chosen and its Git checkout at launch, on one line. */
+export function workspaceLine({ mode, git }: Workspace): string {
+	const how = mode === "inherited" ? "the parent's directory" : "existing directory";
+	if (git.kind === "non-git") return `${how}; not a Git checkout`;
+	if (git.kind === "unknown") return `${how}; Git state unknown (${git.reason})`;
+	const { mainRoot, checkoutRoot } = git.identity;
+	const linked = checkoutRoot === mainRoot ? "" : ` (linked worktree ${checkoutRoot})`;
+	const at = git.position.detached ? "detached HEAD" : `branch ${git.position.branch}`;
+	return `${how}; Git checkout ${mainRoot}${linked}, ${at}, launch commit ${git.baseline ?? "none (no commits yet)"}`;
 }
 
 /** Lines of a result the collapsed message previews. */
@@ -69,6 +81,7 @@ function idLines(details: MessageDetails): string[] {
 	if (details.kind === "result") lines.push(`envelope ${tilde(details.envelopePath)}`);
 	else lines.push(`window ${details.windowName}`);
 	lines.push(`cwd ${details.cwd === undefined ? cwdLine(undefined) : tilde(details.cwd)}`);
+	if (details.workspace !== undefined) lines.push(`workspace ${workspaceLine(details.workspace)}`);
 	lines.push(
 		`session ${details.sessionPath === undefined ? `${details.id} (no session file found)` : tilde(details.sessionPath)}`,
 	);
@@ -202,6 +215,10 @@ export function renderDelegateResult(
 				`window ${started.windowName} (${started.windowId})`,
 				// Results saved before cwd was recorded have none.
 				`cwd ${(started.cwd as string | undefined) === undefined ? cwdLine(undefined) : tilde(started.cwd)}`,
+				// Results saved before workspaces were recorded have none.
+				...((started.workspace as Workspace | undefined) === undefined
+					? []
+					: [`workspace ${workspaceLine(started.workspace)}`]),
 				`thinking ${started.thinking}, auto-exit ${started.autoExit ? "on" : "off"}`,
 			].map((line) => theme.fg("dim", line)),
 		);

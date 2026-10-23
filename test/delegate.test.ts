@@ -472,6 +472,8 @@ test("the delegation is recorded with no task text, and the parent gets a notice
 				autoExit: true,
 				cwd: root,
 				sessionDir,
+				// The harness root is a temporary directory outside any Git checkout.
+				workspace: { mode: "inherited", cwd: root, git: { kind: "non-git" } },
 			},
 		},
 	]);

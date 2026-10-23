@@ -18,8 +18,34 @@ follows [Semantic Versioning](https://semver.org/).
   messages and their expanded views show the working directory, and older
   records show it as `unknown (not recorded)`.
 
+- `--cwd <dir>` on `/delegate` and `cwd` on the `delegate` tool run a
+  delegate in an existing directory: relative to the parent's, `~`/`~/`
+  expanded, symlinks resolved, refused before anything starts when it is
+  missing, a file or cannot be entered. The directory's branch, index and
+  files are never touched or cleaned up. Placeholder values (`null`, `""`,
+  `"null"`, `"none"`, `"false"`, `"undefined"`) mean the parent's directory;
+  other non-string values are refused. The delegate's prompt names the
+  selected directory, and the start message names it when it differs.
+- Project trust for a `--cwd` directory is decided in the parent: the parent's
+  current trust inside its own repository (by Git common directory), else the
+  saved decision for a linked worktree's main repository or for the directory,
+  else `--no-approve` when it has no protected resources, else a parent
+  dialog with Pi's five choices. Without a UI, after a cancel, or when the
+  trust store cannot be read or written, nothing starts. Dialogs are asked
+  one at a time.
+- Each new delegation records a `workspace` (mode, cwd and Git checkout at
+  launch: identity, branch or detached, launch commit, or non-Git, or unknown
+  with a reason). The `delegate` tool's structured result, `delegation_status`,
+  result and closed-without-a-result messages and their expanded views carry
+  it; result and closed text gain a `Workspace:` line, and status text a
+  `workspace:` line. The pinned record, result-text and completion tests
+  change with it.
+
 ### Changed
 
+- `/delegate` flag values may be double-quoted, with `\"` and `\\` escapes,
+  so a path with spaces works; the task after the flags is kept byte for
+  byte. A missing closing quote is refused before anything starts.
 - Every delegate is launched with an explicit `--approve` or `--no-approve`
   from the parent's current project trust, so a global
   `defaultProjectTrust` cannot trust a project the parent does not.

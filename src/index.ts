@@ -2,11 +2,12 @@
 // window, over the `message:*` hooks.
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
-// [--label <name>] [--auto-exit | --no-auto-exit] <task…>`
+// [--label <name>] [--cwd <dir>] [--auto-exit | --no-auto-exit] <task…>`
 // reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens a window in the
-// parent's working directory running the parent's own Pi. The window and the
+// parent's working directory, or the existing directory `--cwd` selects
+// (`workspace.ts`), running the parent's own Pi. The window and the
 // session share one name: `<agent>-<label>`, or `<agent>-<first 8 of the id>`
 // without a label. Starting a delegation adds nothing to
 // the model's context. Each delegation is recorded
@@ -23,7 +24,8 @@
 // The model gets three tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
 // delegation at once, opening no dialog, so parallel calls cannot block one
-// another. `delegation_status`
+// another; the one exception is a `cwd` whose project trust is unresolved,
+// which the user answers in the parent. `delegation_status`
 // reports each delegation as running (window open, no result yet), done (with
 // its result status) or closed, with the session name, window, session and
 // envelope paths.
@@ -54,6 +56,7 @@ import { createResults, delegateName } from "./results.ts";
 import { createTmuxClient, type TmuxClient } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
+import { normalizeWorkspaceValue, prepareDirectory, type Workspace, WorkspaceSchema } from "./workspace.ts";
 
 /** The optional parent guidance file under `<agent dir>/squire/`. */
 const PARENT_PROMPT = "delegation_prompt.md";
@@ -102,7 +105,7 @@ function parentTrust(parent: string): string {
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */
-const FLAGS = ["--model", "--thinking", "--label", "--auto-exit", "--no-auto-exit"] as const;
+const FLAGS = ["--model", "--thinking", "--label", "--cwd", "--auto-exit", "--no-auto-exit"] as const;
 
 /** The `delegate` tool's structured result, which is also its details. */
 export const DelegateSchema = Type.Object({
@@ -120,17 +123,26 @@ export const DelegateSchema = Type.Object({
 	windowName: Type.String(),
 	cwd: Type.String({ description: "The directory the delegate's window opened in." }),
 	sessionDir: Type.String({ description: "The session-storage directory the delegate was told to use." }),
+	workspace: WorkspaceSchema,
 });
 
 const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
 
 const USAGE =
-	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task>";
+	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir>] [--auto-exit | --no-auto-exit] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 /** `cwd` is informational: the window opens in the launch's own value, whatever a listener assigns. */
 type LaunchPayload = { args: string[]; env: Record<string, string>; agent: string; readonly cwd: string };
-type Parsed = { agent: string; model?: string; thinking?: string; label?: string; autoExit?: boolean; task: string };
+type Parsed = {
+	agent: string;
+	model?: string;
+	thinking?: string;
+	label?: string;
+	cwd?: string;
+	autoExit?: boolean;
+	task: string;
+};
 /** A request that passed the roster, model, thinking and label checks. */
 type Start = {
 	agent: Agent;
@@ -143,6 +155,8 @@ type Start = {
 	rest: string[];
 	thinking: string;
 	label?: string;
+	/** The existing directory to run in, as given; undefined inherits the parent's. */
+	cwd?: string;
 	autoExit: boolean;
 	task: string;
 };
@@ -157,6 +171,7 @@ type Launched = {
 	requestId: string;
 	cwd: string;
 	sessionDir: string;
+	workspace: Workspace;
 };
 
 /**
@@ -217,31 +232,63 @@ function closest(value: string, candidates: readonly string[]): string[] {
 		.map(({ candidate }) => candidate);
 }
 
+/** One whitespace-separated word of `text` at or after `from`, verbatim; undefined at the end. */
+function word(text: string, from: number): { text: string; start: number; end: number } | undefined {
+	const match = /\S+/g;
+	match.lastIndex = from;
+	const found = match.exec(text);
+	return found === null ? undefined : { text: found[0], start: found.index, end: found.index + found[0].length };
+}
+
+/**
+ * A flag's value at or after `from`: a plain word, or a double-quoted string
+ * in which `\"` and `\\` stand for `"` and `\`. No shell expansion of any kind.
+ */
+function flagValue(text: string, from: number, flag: string): { value: string; end: number } | { error: string } {
+	const next = word(text, from);
+	if (next === undefined || next.text.startsWith("--")) return { error: `${flag} needs a value; ${USAGE}` };
+	if (!next.text.startsWith('"')) return { value: next.text, end: next.end };
+	let value = "";
+	let i = next.start + 1;
+	while (i < text.length && text[i] !== '"') {
+		const escaped = text[i] === "\\" && (text[i + 1] === '"' || text[i + 1] === "\\");
+		value += escaped ? text[i + 1] : text[i];
+		i += escaped ? 2 : 1;
+	}
+	if (i >= text.length) return { error: `${flag}'s value has no closing quote; ${USAGE}` };
+	if (i + 1 < text.length && !/\s/.test(text[i + 1])) {
+		return { error: `${flag}'s quoted value must be followed by a space; ${USAGE}` };
+	}
+	return { value, end: i + 1 };
+}
+
 /** `/delegate`'s arguments: an agent, optional flags, then a verbatim task. */
 function parse(text: string): { parsed: Parsed } | { error: string } {
-	const tokens = [...text.matchAll(/\S+/g)].map((match) => ({ text: match[0], start: match.index }));
-	if (tokens.length === 0) return { error: USAGE };
-	if (tokens[0].text.startsWith("-")) return { error: `the first argument is the agent name; ${USAGE}` };
-	const parsed: Parsed = { agent: tokens[0].text, task: "" };
-	let i = 1;
-	while (i < tokens.length && tokens[i].text.startsWith("-")) {
-		const flag = tokens[i].text;
+	const agent = word(text, 0);
+	if (agent === undefined) return { error: USAGE };
+	if (agent.text.startsWith("-")) return { error: `the first argument is the agent name; ${USAGE}` };
+	const parsed: Parsed = { agent: agent.text, task: "" };
+	let at = agent.end;
+	for (let next = word(text, at); next?.text.startsWith("-"); next = word(text, at)) {
+		const flag = next.text;
 		if (flag === "--auto-exit" || flag === "--no-auto-exit") {
 			parsed.autoExit = flag === "--auto-exit";
-			i += 1;
+			at = next.end;
 			continue;
 		}
-		if (flag !== "--model" && flag !== "--thinking" && flag !== "--label") {
+		if (flag !== "--model" && flag !== "--thinking" && flag !== "--label" && flag !== "--cwd") {
 			return { error: `unknown flag ${flag}; ${USAGE}` };
 		}
-		const value = tokens[i + 1]?.text;
-		if (value === undefined || value.startsWith("--")) return { error: `${flag} needs a value; ${USAGE}` };
-		if (flag === "--model") parsed.model = value;
-		else if (flag === "--thinking") parsed.thinking = value;
-		else parsed.label = value;
-		i += 2;
+		const read = flagValue(text, next.end, flag);
+		if ("error" in read) return read;
+		if (flag === "--model") parsed.model = read.value;
+		else if (flag === "--thinking") parsed.thinking = read.value;
+		else if (flag === "--label") parsed.label = read.value;
+		else parsed.cwd = read.value;
+		at = read.end;
 	}
-	parsed.task = text.slice(tokens[i]?.start ?? text.length).trim();
+	// The task is the rest of the text from its first word, untouched by flag parsing.
+	parsed.task = text.slice(word(text, at)?.start ?? text.length).trim();
 	if (parsed.task === "") return { error: `a task is required after the agent and flags; ${USAGE}` };
 	return { parsed };
 }
@@ -363,7 +410,7 @@ function delegateVisible(options: { selectedTools: string[]; hiddenTools: string
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 function toolDescription(agents: readonly Agent[]): string {
 	const intro =
-		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory and agent root and reports back later as one message. While it runs, keep working or end your turn: its result starts your next turn on its own. Do not poll delegation_status or send a blocking mail request merely to wait for the result; send a substantive follow-up only when you have something to add or ask. Use it when the work is self-contained and you would rather keep your own context for it.";
+		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory, or the cwd given, with this session's agent root, and reports back later as one message. While it runs, keep working or end your turn: its result starts your next turn on its own. Do not poll delegation_status or send a blocking mail request merely to wait for the result; send a substantive follow-up only when you have something to add or ask. Use it when the work is self-contained and you would rather keep your own context for it.";
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${join(
 			getAgentDir(),
@@ -384,6 +431,7 @@ function toolDescription(agents: readonly Agent[]): string {
 				}${agent.tools.length > 0 ? `, tools: ${agent.tools.join("/")}` : ""})`,
 		),
 		"",
+		"`cwd` runs the delegate in another existing directory, such as a checkout of another branch; it loads that directory's project instructions and settings.",
 		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",
 		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
 		"",
@@ -475,15 +523,15 @@ export default function delegate(
 			rest,
 			thinking,
 			label: request.label,
+			cwd: request.cwd,
 			autoExit: request.autoExit ?? agent.autoExit,
 			task: request.task,
 		};
 	}
 
-	/** The launch order of the spec: task, argv, env, listeners, window, record. */
+	/** The launch order of the spec: directory and trust, task, argv, env, listeners, window, record. */
 	async function launch(start: Start, ctx: ExtensionContext): Promise<Launched> {
 		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
-		const cwd = ctx.cwd;
 		// The child stores its session where the parent's lookups will search, whatever its cwd, project
 		// settings or the tmux server's environment would choose; a relative path would follow the child's cwd.
 		const sessionDir = ctx.sessionManager.getSessionDir();
@@ -492,6 +540,9 @@ export default function delegate(
 				`the parent's session directory ${JSON.stringify(sessionDir)} is not an absolute path, so the delegate's session could not be found again; start Pi with an absolute --session-dir`,
 			);
 		}
+		// Any trust question is answered before the task is sent or a window opens.
+		const { workspace, trusted } = await prepareDirectory({ cwd: start.cwd }, ctx, getAgentDir());
+		const cwd = workspace.cwd;
 
 		// The task goes on disk before the window exists: the delegate finds it
 		// at session start without a handshake, and a window that fails leaves
@@ -510,7 +561,11 @@ export default function delegate(
 
 		const parent = ctx.sessionManager.getSessionId();
 		const name = delegateName(start.agent.name, id, start.label);
-		const prompt = writePromptFile(`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}`);
+		const placed =
+			workspace.mode === "existing"
+				? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
+				: "";
+		const prompt = writePromptFile(`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}${placed}`);
 		const argv = [
 			...parentCommand(),
 			"--session-id",
@@ -518,7 +573,7 @@ export default function delegate(
 			"--name",
 			name,
 			// Always explicit, so a permissive global default cannot trust what the parent does not.
-			ctx.isProjectTrusted() ? "--approve" : "--no-approve",
+			trusted ? "--approve" : "--no-approve",
 			"--session-dir",
 			sessionDir,
 			"--model",
@@ -569,15 +624,20 @@ export default function delegate(
 				autoExit: start.autoExit,
 				cwd,
 				sessionDir,
+				workspace,
 			},
 			ctx,
 		);
 		tracking.startPolling();
-		return { id, name, windowId, windowName, requestId, cwd, sessionDir };
+		return { id, name, windowId, windowName, requestId, cwd, sessionDir, workspace };
 	}
 
+	/** Where a selected directory put the delegate, for the start text; inherited starts stay compact. */
+	const placedIn = (launched: Launched): string =>
+		launched.workspace.mode === "existing" ? ` in ${launched.cwd}` : "";
+
 	const started = (launched: Launched, start: Start): string =>
-		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
+		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${placedIn(launched)}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
 
 	async function command(input: string, ctx: ExtensionContext): Promise<void> {
 		const fail = (message: string) => ctx.ui.notify(`delegate: ${message}`, "error");
@@ -587,7 +647,8 @@ export default function delegate(
 			return;
 		}
 		try {
-			const start = await validate(outcome.parsed, rosterFor(ctx), ctx.modelRegistry);
+			const cwd = normalizeWorkspaceValue(outcome.parsed.cwd, "--cwd");
+			const start = await validate({ ...outcome.parsed, cwd }, rosterFor(ctx), ctx.modelRegistry);
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 		} catch (err) {
@@ -616,6 +677,12 @@ export default function delegate(
 					description: `A short name for this delegation (letters, digits, _ or -, at most ${LABEL_MAX}), such as roster-research. Its session and tmux window are named <agent>-<label>; without it, <agent>-<first 8 id characters>.`,
 				}),
 			),
+			cwd: Type.Optional(
+				Type.Union([Type.String(), Type.Null()], {
+					description:
+						"An existing directory to run the delegate in: absolute, relative to this session's working directory, or starting with ~/. Omit to run in this session's working directory. The directory is used as it is; nothing is created or cleaned up.",
+				}),
+			),
 			auto_exit: Type.Optional(
 				Type.Boolean({
 					description:
@@ -637,6 +704,7 @@ export default function delegate(
 				thinking?: string | null;
 				label?: string | null;
 				auto_exit?: boolean | null;
+				cwd?: unknown;
 			},
 			_signal: unknown,
 			_onUpdate: unknown,
@@ -645,12 +713,14 @@ export default function delegate(
 			if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 			// Some models fill every optional field with null or the string "null"; both mean unset.
 			const given = (value: string | null | undefined) => (value == null || value === "null" ? undefined : value);
+			const cwd = normalizeWorkspaceValue(params.cwd, "cwd");
 			const start = await validate(
 				{
 					agent: params.agent,
 					model: given(params.model),
 					thinking: given(params.thinking),
 					label: given(params.label),
+					cwd,
 					autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
 					task: params.task ?? "",
 				},
@@ -660,7 +730,7 @@ export default function delegate(
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
-				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
+				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}${placedIn(launched)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
 				{
 					outcome: "started",
 					id: launched.id,
@@ -674,6 +744,7 @@ export default function delegate(
 					windowName: launched.windowName,
 					cwd: launched.cwd,
 					sessionDir: launched.sessionDir,
+					workspace: launched.workspace,
 				},
 			);
 		},

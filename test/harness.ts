@@ -45,6 +45,10 @@ export function resetRoot(): void {
 	rmSync(legacyRosterDir, { recursive: true, force: true });
 	rmSync(delegationPromptPath, { recursive: true, force: true });
 	rmSync(sessionDir, { recursive: true, force: true });
+	// Project trust decisions and Pi's own settings, so a saved answer cannot carry into the next test.
+	for (const name of ["trust.json", "trust.json.lock", "settings.json"]) {
+		rmSync(join(agentDir, name), { recursive: true, force: true });
+	}
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
 	delete process.env.PI_DELEGATE_FALLBACK;
@@ -139,7 +143,8 @@ export type PrepareEvent = {
 
 /** The answers a scripted `ctx.ui` gives, one queue per dialog. */
 export type UiAnswers = {
-	select?: (string | undefined)[];
+	/** A promise answers when the test settles it, so a dialog can stay open while another call starts. */
+	select?: (string | undefined | Promise<string | undefined>)[];
 	editor?: (string | undefined)[];
 	custom?: unknown[];
 };
@@ -340,7 +345,7 @@ export function session(options: SessionOptions = {}) {
 			theme: { fg: (_color: string, text: string) => text },
 			select: async (title: string, options: string[]) => {
 				selects.push({ title, options });
-				return selectAnswers.shift();
+				return await selectAnswers.shift();
 			},
 			editor: async (title: string, prefill?: string) => {
 				editors.push({ title, prefill });

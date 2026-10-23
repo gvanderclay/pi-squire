@@ -1,17 +1,20 @@
-// How delegations look in the parent: the `delegate` tool's row and the
-// result or gone message that arrives later share one header and preview
-// style. Both are drawn from structured details, while their text stays what
-// the parent model reads.
+// How delegations look in the parent. A delegation reads as one tool call that
+// changes state: the `delegate` row shows ○ while its arguments arrive and ●
+// once started, and the result message that arrives later is drawn as a
+// finished tool row (✓ or ✗ on Pi's tool success or error background). The
+// style follows amosblomqvist/pi-interactive-subagents (c3e8b53,
+// pi-extension/subagents/index.ts:1891-1944 and 2353-2460). Everything is
+// drawn from structured details; the text the parent model reads is separate.
 import { homedir } from "node:os";
 
 import {
 	getMarkdownTheme,
-	keyText,
+	keyHint,
 	type MessageRenderer,
 	type MessageRenderOptions,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Box, type Component, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import type { Static } from "typebox";
 
 import type { DelegateSchema } from "./index.ts";
@@ -22,44 +25,20 @@ export function modelLabel(model: string, finished: string | undefined): string 
 	return finished === undefined || finished === model ? model : `${model} → ${finished}`;
 }
 
-/** Lines of the body the collapsed view previews. */
-const PREVIEW_LINES = 3;
+/** Lines of a result the collapsed message previews. */
+const PREVIEW_LINES = 5;
+/** Characters of the task's first line the call row shows. */
+const TASK_PREVIEW_CHARS = 100;
 
-/** The icon and theme color for each status; an unknown status gets a neutral icon. */
-const STATUS_STYLE: Record<string, { icon: string; color: "accent" | "success" | "error" | "warning" | "muted" }> = {
-	started: { icon: "◐", color: "accent" },
-	done: { icon: "✓", color: "success" },
-	failed: { icon: "✗", color: "error" },
-	stopped: { icon: "■", color: "warning" },
-	gone: { icon: "⊘", color: "warning" },
+type Color = "success" | "error" | "warning" | "muted" | "dim";
+
+/** The icon, its color and the status word for each way a delegation ends. */
+const ENDINGS: Record<string, { icon: string; color: Color; word: string; wordColor: Color }> = {
+	done: { icon: "✓", color: "success", word: "done", wordColor: "dim" },
+	failed: { icon: "✗", color: "error", word: "failed", wordColor: "error" },
+	stopped: { icon: "✗", color: "warning", word: "stopped", wordColor: "warning" },
+	gone: { icon: "✗", color: "warning", word: "closed without a result", wordColor: "warning" },
 };
-
-/** The header line: status icon, the delegate's name and the model it ran on. */
-function header(details: MessageDetails, theme: Theme): string {
-	const status = details.kind === "gone" ? "gone" : details.status;
-	const known = Object.hasOwn(STATUS_STYLE, status);
-	const style = known ? STATUS_STYLE[status] : { icon: "•", color: "muted" as const };
-	let trailer = "";
-	if (details.kind === "gone") trailer = " closed without a result";
-	else if (!known) trailer = ` ${details.status}`;
-	return headerLine(theme, style, details.name, modelLabel(details.model, details.finishedModel), trailer);
-}
-
-function headerLine(
-	theme: Theme,
-	style: { icon: string; color: "accent" | "success" | "error" | "warning" | "muted" },
-	name: string,
-	model: string,
-	trailer: string,
-): string {
-	return `${theme.fg(style.color, style.icon)} ${theme.fg("accent", name)} ${theme.fg("muted", model)}${
-		trailer === "" ? "" : theme.fg(style.color, trailer)
-	}`;
-}
-
-function expandHint(theme: Theme): Text {
-	return new Text(`${theme.fg("dim", keyText("app.tools.expand"))}${theme.fg("muted", " to expand")}`, 0, 0);
-}
 
 /** `path` with the home directory shown as `~`. */
 function tilde(path: string): string {
@@ -67,7 +46,20 @@ function tilde(path: string): string {
 	return path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
-function metadata(details: MessageDetails): string[] {
+/** Non-blank lines with heading marks, backticks and bold markers stripped, for a plain-text preview. */
+function plainLines(text: string): string[] {
+	return text
+		.split("\n")
+		.filter((line) => line.trim() !== "")
+		.map((line) =>
+			line
+				.replace(/^#+\s+/, "")
+				.replaceAll("`", "")
+				.replaceAll("**", ""),
+		);
+}
+
+function idLines(details: MessageDetails): string[] {
 	const lines = [`delegation ${details.id}`, `request ${details.requestId}`];
 	if (details.kind === "result") lines.push(`envelope ${tilde(details.envelopePath)}`);
 	else lines.push(`window ${details.windowName}`);
@@ -78,27 +70,9 @@ function metadata(details: MessageDetails): string[] {
 }
 
 /**
- * The first non-blank lines of a body, with heading marks, backticks and bold
- * markers stripped. Plain text, not Markdown, because a cut-off fragment can
- * break mid-list or mid-code-block.
- */
-function preview(body: string): string[] {
-	return body
-		.split("\n")
-		.filter((line) => line.trim() !== "")
-		.slice(0, PREVIEW_LINES)
-		.map((line) =>
-			line
-				.replace(/^#+\s+/, "")
-				.replaceAll("`", "")
-				.replaceAll("**", ""),
-		);
-}
-
-/**
- * A delegate message drawn from its details. Collapsed: a header, a short
- * preview of the result body and an expand hint. Expanded: the header, the
- * quoted task, the body as Markdown, then the ids and files. Ctrl+O toggles it
+ * A delegate result or gone message, drawn as a finished tool row: a header
+ * (icon, name, model, status), then a preview and the expand hint, or,
+ * expanded, the result as Markdown, the task and the ids. Ctrl+O toggles it
  * with tool output; the model always gets the full content.
  */
 export function renderMessage(
@@ -108,54 +82,90 @@ export function renderMessage(
 ): Component | undefined {
 	const details = message.details as MessageDetails | undefined;
 	if (details?.kind !== "result" && details?.kind !== "gone") return undefined;
-	const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
-	if (!expanded) {
-		box.addChild(new TruncatedText(header(details, theme)));
-		if (details.kind === "result") {
-			for (const line of preview(details.body)) box.addChild(new TruncatedText(theme.fg("muted", line)));
-		}
-		box.addChild(expandHint(theme));
-		return box;
-	}
-	box.addChild(new Text(header(details, theme), 0, 0));
-	const dim = metadata(details);
-	if (details.kind === "gone") dim.push("A reply that arrives later is still delivered.");
-	else if (details.limit !== undefined) dim.push(details.limit);
-	const metadataText = new Text(dim.map((line) => theme.fg("dim", line)).join("\n"), 0, 0);
-	if (details.kind === "gone") {
-		box.addChild(metadataText);
-		return box;
-	}
-	const { task } = details;
-	const quote =
-		"note" in task
-			? theme.fg("muted", task.note)
-			: `${theme.fg("muted", `Task (${tilde(task.path)}):`)}\n${task.text
-					.split("\n")
-					.map((line) => theme.fg("muted", `> ${line}`))
-					.join("\n")}`;
-	box.addChild(new Text(quote, 0, 0));
-	box.addChild(new Spacer(1));
-	box.addChild(new Text(theme.fg("dim", "Result"), 0, 0));
-	box.addChild(new Markdown(details.body, 0, 0, getMarkdownTheme()));
-	box.addChild(new Spacer(1));
-	box.addChild(metadataText);
+	const status = details.kind === "gone" ? "gone" : details.status;
+	const background = status === "done" ? "toolSuccessBg" : "toolErrorBg";
+	const box = new Box(outputPad, 1, (text) => theme.bg(background, text));
+	const header = headerLine(details, status, theme);
+	box.addChild(expanded ? new Text(header, 0, 0) : new TruncatedText(header));
+	if (details.kind === "result" && details.limit !== undefined)
+		box.addChild(new Text(theme.fg("warning", details.limit), 0, 0));
+	for (const child of expanded ? expandedLines(details, theme) : collapsedLines(details, theme)) box.addChild(child);
 	return box;
 }
 
-/** The `delegate` tool's call line: the tool, the agent and any label. Arguments may still be streaming. */
-export function renderDelegateCall(args: { agent?: unknown; label?: unknown }, theme: Theme): Component {
-	let line = theme.bold("delegate");
-	if (typeof args.agent === "string") line += ` ${theme.fg("accent", args.agent)}`;
-	if (typeof args.label === "string" && args.label !== "" && args.label !== "null")
-		line += ` ${theme.fg("muted", `· ${args.label}`)}`;
-	return new Text(line, 0, 0);
+/** The icon, the delegate's name, the model and the status word. */
+function headerLine(details: MessageDetails, status: string, theme: Theme): string {
+	const ending = Object.hasOwn(ENDINGS, status)
+		? ENDINGS[status]
+		: { icon: "•", color: "muted" as const, word: status, wordColor: "muted" as const };
+	const model = modelLabel(details.model, details.finishedModel);
+	return `${theme.fg(ending.color, ending.icon)} ${theme.fg("toolTitle", theme.bold(details.name))}${theme.fg(
+		"dim",
+		` (${model}) —`,
+	)} ${theme.fg(ending.wordColor, ending.word)}`;
+}
+
+/** A result's first lines, a count of the rest, and the expand hint. */
+function collapsedLines(details: MessageDetails, theme: Theme): Component[] {
+	const children: Component[] = [];
+	if (details.kind === "result") {
+		const lines = plainLines(details.body);
+		for (const line of lines.slice(0, PREVIEW_LINES)) children.push(new TruncatedText(theme.fg("dim", line)));
+		if (lines.length > PREVIEW_LINES)
+			children.push(new Text(theme.fg("muted", `… ${lines.length - PREVIEW_LINES} more lines`), 0, 0));
+	}
+	children.push(new Text(keyHint("app.tools.expand", "to expand"), 0, 0));
+	return children;
+}
+
+/** The result as Markdown and the quoted task, then the ids and files. */
+function expandedLines(details: MessageDetails, theme: Theme): Component[] {
+	const dim = (lines: string[]): Text => new Text(lines.map((line) => theme.fg("dim", line)).join("\n"), 0, 0);
+	const children: Component[] = [];
+	if (details.kind === "result") {
+		const { task } = details;
+		const quote = "note" in task ? [task.note] : [`Task (${tilde(task.path)}):`, ...task.text.split("\n")];
+		children.push(new Spacer(1), new Markdown(details.body, 0, 0, getMarkdownTheme()), new Spacer(1), dim(quote));
+	}
+	const tail = details.kind === "gone" ? ["A reply that arrives later is still delivered."] : [];
+	children.push(new Spacer(1), dim([...idLines(details), ...tail]));
+	return children;
+}
+
+/** The task's first non-blank line, cut at 100 characters, and its line count when it has more than one. */
+function taskLine(task: unknown, theme: Theme): string {
+	if (typeof task !== "string") return "";
+	const first = task.split("\n").find((line) => line.trim() !== "") ?? "";
+	const shown = first.length > TASK_PREVIEW_CHARS ? `${first.slice(0, TASK_PREVIEW_CHARS)}…` : first;
+	const total = task.split("\n").length;
+	return `${shown === "" ? "" : theme.fg("toolOutput", shown)}${total > 1 ? theme.fg("muted", ` (${total} lines)`) : ""}`;
 }
 
 /**
- * The `delegate` tool's result, in the result message's style: a started
- * header, then a task preview and the hint, or, expanded, the whole task and
- * the ids. A refused or blocked call has no details and keeps its plain text.
+ * The `delegate` tool's call: ○, the agent, any label and the task line,
+ * while arguments stream and the call runs. Pi redraws the call above the
+ * result, so once a launch succeeds the call draws nothing and the result's
+ * header is the row's only one; a refused call keeps it above the error.
+ */
+export function renderDelegateCall(
+	args: { agent?: unknown; label?: unknown; task?: unknown },
+	theme: Theme,
+	context: { isPartial: boolean; isError: boolean },
+): Component {
+	if (!context.isPartial && !context.isError) return new Container();
+	const agent = typeof args.agent === "string" && args.agent !== "" ? args.agent : "…";
+	let text = `○ ${theme.fg("toolTitle", theme.bold(agent))}`;
+	if (typeof args.label === "string" && args.label !== "" && args.label !== "null")
+		text += theme.fg("dim", ` [${args.label}]`);
+	const task = taskLine(args.task, theme);
+	if (task !== "") text += `\n${task}`;
+	return new Text(text, 0, 0);
+}
+
+/**
+ * The `delegate` tool's result: ●, the delegate's name, its model and
+ * "started", the task line and any skipped fallback models; expanded, the ids too. A
+ * refused or blocked call has no details and keeps its plain text.
  */
 export function renderDelegateResult(
 	result: { content: { type: string; text?: string }[]; details?: unknown },
@@ -169,29 +179,23 @@ export function renderDelegateResult(
 		return new Text(context.isError ? theme.fg("error", text) : text, 0, 0);
 	}
 	const started = details as Static<typeof DelegateSchema>;
-	const task = typeof context.args.task === "string" ? context.args.task : "";
-	const box = new Box(0, 0);
-	box.addChild(new TruncatedText(headerLine(theme, STATUS_STYLE.started, started.windowName, started.model, "")));
-	const skipped = started.skipped.map(({ model, reason }) => theme.fg("warning", `skipped ${model}: ${reason}`));
-	if (!expanded) {
-		for (const line of preview(task)) box.addChild(new TruncatedText(theme.fg("muted", line)));
-		for (const line of skipped) box.addChild(new TruncatedText(line));
-		box.addChild(expandHint(theme));
-		return box;
-	}
-	const quote = task
-		.split("\n")
-		.map((line) => theme.fg("muted", `> ${line}`))
-		.join("\n");
-	box.addChild(new Text(quote, 0, 0));
-	if (skipped.length + started.notices.length > 0)
-		box.addChild(new Text([...skipped, ...started.notices.map((line) => theme.fg("dim", line))].join("\n"), 0, 0));
-	box.addChild(new Spacer(1));
-	const ids = [
-		`delegation ${started.id}`,
-		`window ${started.windowName} (${started.windowId})`,
-		`thinking ${started.thinking}, auto-exit ${started.autoExit ? "on" : "off"}`,
+	const lines = [
+		`${theme.fg("accent", "●")} ${theme.fg("toolTitle", theme.bold(started.windowName))}${theme.fg(
+			"dim",
+			` (${started.model}) — started`,
+		)}`,
 	];
-	box.addChild(new Text(ids.map((line) => theme.fg("dim", line)).join("\n"), 0, 0));
-	return box;
+	const task = taskLine(context.args.task, theme);
+	if (task !== "") lines.push(task);
+	lines.push(...started.skipped.map(({ model, reason }) => theme.fg("warning", `[Skipped ${model}: ${reason}]`)));
+	if (expanded)
+		lines.push(
+			...[
+				...started.notices,
+				`delegation ${started.id}`,
+				`window ${started.windowName} (${started.windowId})`,
+				`thinking ${started.thinking}, auto-exit ${started.autoExit ? "on" : "off"}`,
+			].map((line) => theme.fg("dim", line)),
+		);
+	return new Text(lines.join("\n"), 0, 0);
 }

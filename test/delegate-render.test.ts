@@ -1,7 +1,7 @@
-// The `delegate` tool's row, drawn in the same style as the result message
-// that arrives later: a call line naming the agent, then a header (started
-// icon, name, model) with a task preview, or the task, fallback notes and ids
-// when expanded. A refused call keeps its plain error text.
+// The `delegate` tool's row: ○ with the agent, label and task while the call
+// is made, then ● with the delegate's name, model and "started", matching the
+// finished-tool-row look of the result message that arrives later. A refused
+// call keeps its plain error text.
 
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
@@ -27,7 +27,13 @@ type Renderers = {
 };
 
 const lines = (component: Renderable, width = 120) => component.render(width).map((line) => line.trim());
-const context = (args: unknown, expanded: boolean, isError = false) => ({ args, expanded, isError, isPartial: false });
+/** A render context; `isPartial` stays true until the tool's result arrives. */
+const context = (args: unknown, expanded: boolean, isError = false, isPartial = false) => ({
+	args,
+	expanded,
+	isError,
+	isPartial,
+});
 
 async function launched(args: Record<string, unknown>) {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
@@ -39,40 +45,61 @@ async function launched(args: Record<string, unknown>) {
 
 const TASK = "## Look\n\n- into `src/` for **it**\nthen report\nand more";
 
-test("the call line names the tool, the agent and the label", async () => {
-	const { tool } = await launched({ agent: "scout", task: TASK, label: "look" });
+test("the call row shows ○, the agent, the label, the task's first line and its line count", async () => {
 	const args = { agent: "scout", task: TASK, label: "look" };
-	assert.deepEqual(lines(tool.renderCall(args, theme, context(args, false))), [
-		"<bold:delegate> <accent:scout> <muted:· look>",
+	const { tool } = await launched(args);
+	assert.deepEqual(lines(tool.renderCall(args, theme, context(args, false, false, true))), [
+		"○ <toolTitle:<bold:scout>><dim: [look]>",
+		"<toolOutput:## Look><muted: (5 lines)>",
 	]);
-	assert.deepEqual(lines(tool.renderCall({}, theme, context({}, false))), ["<bold:delegate>"], "args still streaming");
+	assert.deepEqual(
+		lines(tool.renderCall({}, theme, context({}, false, false, true))),
+		["○ <toolTitle:<bold:…>>"],
+		"args still streaming",
+	);
 });
 
-test("a collapsed started row shows the header, a three-line task preview and the hint", async () => {
+test("once started, the call row draws nothing, so the row has one header", async () => {
+	const args = { agent: "scout", task: TASK, label: "look" };
+	const { tool } = await launched(args);
+	assert.deepEqual(lines(tool.renderCall(args, theme, context(args, false))), []);
+});
+
+test("a refused call keeps its call row above the error", async () => {
+	const args = { agent: "nobody", task: "t" };
+	const { tool } = await launched({ agent: "scout", task: "t" });
+	assert.deepEqual(lines(tool.renderCall(args, theme, context(args, false, true))), [
+		"○ <toolTitle:<bold:nobody>>",
+		"<toolOutput:t>",
+	]);
+});
+
+test("a long first task line is cut at 100 characters", async () => {
+	const args = { agent: "scout", task: "y".repeat(150) };
+	const { tool } = await launched(args);
+	assert.equal(
+		lines(tool.renderCall(args, theme, context(args, false, false, true)), 300)[1],
+		`<toolOutput:${"y".repeat(100)}…>`,
+	);
+});
+
+test("a started row shows ●, the delegate's name, its model and started, then the task line", async () => {
 	const args = { agent: "scout", task: TASK, label: "look" };
 	const { tool, result } = await launched(args);
 	assert.deepEqual(lines(tool.renderResult(result, { expanded: false }, theme, context(args, false))), [
-		"<accent:◐> <accent:scout-look> <muted:alpha/fast-model>",
-		"<muted:Look>",
-		"<muted:- into src/ for it>",
-		"<muted:then report>",
-		"<dim:><muted: to expand>",
+		"<accent:●> <toolTitle:<bold:scout-look>><dim: (alpha/fast-model) — started>",
+		"<toolOutput:## Look><muted: (5 lines)>",
 	]);
 });
 
-test("an expanded started row shows the whole task, then the ids and window", async () => {
+test("an expanded started row adds the ids, window, thinking and auto-exit", async () => {
 	const args = { agent: "scout", task: TASK, label: "look" };
 	const { tool, result } = await launched(args);
 	const id = (result.details as { id: string }).id;
-	const text = lines(tool.renderResult(result, { expanded: true }, theme, context(args, true))).join("\n");
-	const order = ["<accent:◐>", "<muted:> and more>", `<dim:delegation ${id}>`, "<dim:window scout-look"].map((part) =>
-		text.indexOf(part),
-	);
-	assert.ok(
-		order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1])),
-		`out of order: ${order}\n${text}`,
-	);
-	assert.ok(text.includes("<dim:thinking low, auto-exit on>"), text);
+	const shown = lines(tool.renderResult(result, { expanded: true }, theme, context(args, true)));
+	for (const part of [`<dim:delegation ${id}>`, "<dim:thinking low, auto-exit on>"])
+		assert.ok(shown.includes(part), `missing ${part}\n${shown.join("\n")}`);
+	assert.ok(shown.some((line) => line.startsWith("<dim:window scout-look (")));
 });
 
 test("a launch on a fallback says which model was skipped", async () => {
@@ -91,7 +118,7 @@ test("a launch on a fallback says which model was skipped", async () => {
 	const result = await s.toolCall("delegate", args);
 	const tool = s.tool("delegate") as unknown as Renderers;
 	const text = lines(tool.renderResult(result, { expanded: false }, theme, context(args, false))).join("\n");
-	assert.match(text, /<warning:skipped nowhere\/missing: [^>]+>/);
+	assert.match(text, /<warning:\[Skipped nowhere\/missing: [^\]]+\]>/);
 });
 
 test("a refused call keeps its plain error text", async () => {

@@ -450,9 +450,10 @@ Delegate session: <session file or id>
   reports the same.
 - That text is what the parent model reads. The user sees it drawn instead:
   collapsed, a header with a status icon (✓ done, ✗ failed, ■ stopped), the
-  delegate's name and the model, then the first 3 lines of the result;
-  expanded (Ctrl+O), the ids and files, the quoted task and the result as
-  Markdown. The closed-without-a-result message gets the same header with ⊘.
+  delegate's name and the model, then the first 3 non-blank lines of the
+  result with heading marks, backticks and bold stripped; expanded (Ctrl+O),
+  the quoted task, the result as Markdown, then the ids and files, with the
+  home directory shown as `~`. The closed-without-a-result message gets the same header with ⊘.
 - Stopping a delegate's run (Esc) sends no result: the provider holds the
   task, so the delegation stays running while the user steers it. The next
   run that completes sends the result, `done`, and its body opens with a note

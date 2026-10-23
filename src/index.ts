@@ -2,7 +2,7 @@
 // window, over the `message:*` hooks.
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
-// [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task…>`
+// [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task…>`
 // reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens a window in the
@@ -56,7 +56,13 @@ import { createResults, delegateName, type WorkspaceAttempt } from "./results.ts
 import { createTmuxClient, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
-import { normalizeWorkspaceValue, prepareDirectory, type Workspace, WorkspaceSchema } from "./workspace.ts";
+import {
+	normalizeWorkspaceValue,
+	prepareDirectory,
+	trustPlannedWorktree,
+	type Workspace,
+	WorkspaceSchema,
+} from "./workspace.ts";
 import {
 	createWorktree,
 	inQueue,
@@ -121,6 +127,7 @@ const FLAGS = [
 	"--cwd",
 	"--worktree",
 	"--worktree-base",
+	"--worktree-source",
 	"--auto-exit",
 	"--no-auto-exit",
 ] as const;
@@ -147,7 +154,7 @@ export const DelegateSchema = Type.Object({
 const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
 
 const USAGE =
-	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task>";
+	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 /** `cwd` is informational: the window opens in the launch's own value, whatever a listener assigns. */
@@ -160,6 +167,7 @@ type Parsed = {
 	cwd?: string;
 	worktree?: string;
 	worktree_base?: string;
+	worktree_source?: string;
 	autoExit?: boolean;
 	task: string;
 };
@@ -180,6 +188,7 @@ type Start = {
 	/** The new local branch to create a worktree for; undefined creates none. */
 	worktree?: string;
 	worktree_base?: string;
+	worktree_source?: string;
 	autoExit: boolean;
 	task: string;
 };
@@ -305,7 +314,8 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 			flag !== "--label" &&
 			flag !== "--cwd" &&
 			flag !== "--worktree" &&
-			flag !== "--worktree-base"
+			flag !== "--worktree-base" &&
+			flag !== "--worktree-source"
 		) {
 			return { error: `unknown flag ${flag}; ${USAGE}` };
 		}
@@ -316,7 +326,8 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 		else if (flag === "--label") parsed.label = read.value;
 		else if (flag === "--cwd") parsed.cwd = read.value;
 		else if (flag === "--worktree") parsed.worktree = read.value;
-		else parsed.worktree_base = read.value;
+		else if (flag === "--worktree-base") parsed.worktree_base = read.value;
+		else parsed.worktree_source = read.value;
 		at = read.end;
 	}
 	// The task is the rest of the text from its first word, untouched by flag parsing.
@@ -463,7 +474,7 @@ function toolDescription(agents: readonly Agent[]): string {
 				}${agent.tools.length > 0 ? `, tools: ${agent.tools.join("/")}` : ""})`,
 		),
 		"",
-		"`cwd` runs the delegate in another existing directory. Alternatively, `worktree` creates a new local branch and checkout from this repository's committed HEAD; source dirt is reported but not copied. The options are mutually exclusive.",
+		"`cwd` runs the delegate in another existing directory. Alternatively, `worktree` creates a new local branch and checkout from this repository's committed HEAD, or `worktree_source` selects another existing Git checkout; `worktree_base` selects a commit in that source. Source dirt is reported but not copied. `cwd` and `worktree` are mutually exclusive, and source/base require worktree.",
 		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",
 		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
 		"",
@@ -558,6 +569,7 @@ export default function delegate(
 			cwd: request.cwd,
 			worktree: request.worktree,
 			worktree_base: request.worktree_base,
+			worktree_source: request.worktree_source,
 			autoExit: request.autoExit ?? agent.autoExit,
 			task: request.task,
 		};
@@ -661,6 +673,9 @@ export default function delegate(
 		const cwdOption = normalizeWorkspaceValue(start.cwd, "cwd");
 		const worktreeOption = normalizeWorkspaceValue(start.worktree, "worktree");
 		const baseOption = normalizeWorkspaceValue(start.worktree_base, "worktree_base");
+		const sourceOption = normalizeWorkspaceValue(start.worktree_source, "worktree_source");
+		if (sourceOption !== undefined && worktreeOption === undefined)
+			throw new Error("worktree_source requires worktree");
 		if (baseOption !== undefined && worktreeOption === undefined) throw new Error("worktree_base requires worktree");
 		if (cwdOption !== undefined && worktreeOption !== undefined)
 			throw new Error("cwd and worktree are mutually exclusive; name only one");
@@ -669,11 +684,15 @@ export default function delegate(
 		let trusted: boolean;
 		if (worktreeOption !== undefined) {
 			plan = await prepareWorktree(
-				{ worktree: worktreeOption, ...(baseOption === undefined ? {} : { worktree_base: baseOption }) },
+				{
+					worktree: worktreeOption,
+					...(baseOption === undefined ? {} : { worktree_base: baseOption }),
+					...(sourceOption === undefined ? {} : { worktree_source: sourceOption }),
+				},
 				ctx,
 				getAgentDir(),
 			);
-			trusted = plan.trusted;
+			trusted = await trustPlannedWorktree(plan, ctx, getAgentDir(), signal);
 		} else {
 			const prepared = await prepareDirectory({ cwd: cwdOption, signal }, ctx, getAgentDir());
 			directory = prepared.workspace;
@@ -831,7 +850,16 @@ export default function delegate(
 		}
 		try {
 			const cwd = normalizeWorkspaceValue(outcome.parsed.cwd, "--cwd");
-			const start = await validate({ ...outcome.parsed, cwd }, rosterFor(ctx), ctx.modelRegistry);
+			const worktree_source = normalizeWorkspaceValue(outcome.parsed.worktree_source, "--worktree-source");
+			const worktree_base = normalizeWorkspaceValue(outcome.parsed.worktree_base, "--worktree-base");
+			const worktree = normalizeWorkspaceValue(outcome.parsed.worktree, "--worktree");
+			if (worktree_source !== undefined && worktree === undefined)
+				throw new Error("--worktree-source requires --worktree");
+			const start = await validate(
+				{ ...outcome.parsed, cwd, worktree, worktree_base, worktree_source },
+				rosterFor(ctx),
+				ctx.modelRegistry,
+			);
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 		} catch (err) {
@@ -872,6 +900,12 @@ export default function delegate(
 						"Create a new managed worktree and local branch with this literal branch name, from this repository's committed HEAD or explicit worktree_base. Source dirt is not copied. Mutually exclusive with cwd.",
 				}),
 			),
+			worktree_source: Type.Optional(
+				Type.Union([Type.String(), Type.Null()], {
+					description:
+						"Existing Git checkout to create from; relative to this session or starting with ~/. Requires worktree.",
+				}),
+			),
 			worktree_base: Type.Optional(
 				Type.Union([Type.String(), Type.Null()], {
 					description: "Local commit-ish to create the branch from; requires worktree. No fetch is performed.",
@@ -901,6 +935,7 @@ export default function delegate(
 				cwd?: unknown;
 				worktree?: unknown;
 				worktree_base?: unknown;
+				worktree_source?: unknown;
 			},
 			signal: AbortSignal | undefined,
 			_onUpdate: unknown,
@@ -912,6 +947,7 @@ export default function delegate(
 			const cwd = normalizeWorkspaceValue(params.cwd, "cwd");
 			const worktree = normalizeWorkspaceValue(params.worktree, "worktree");
 			const worktree_base = normalizeWorkspaceValue(params.worktree_base, "worktree_base");
+			const worktree_source = normalizeWorkspaceValue(params.worktree_source, "worktree_source");
 			const start = await validate(
 				{
 					agent: params.agent,
@@ -921,6 +957,7 @@ export default function delegate(
 					cwd,
 					worktree,
 					worktree_base,
+					worktree_source,
 					autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
 					task: params.task ?? "",
 				},

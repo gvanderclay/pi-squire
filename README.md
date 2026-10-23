@@ -75,7 +75,7 @@ closes its own window ([auto-exit](#auto-exit)).
 
 ## How a delegation works
 
-`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-base <commit-ish>]] [--auto-exit | --no-auto-exit] <task…>`
+`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>]] [--auto-exit | --no-auto-exit] <task…>`
 reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes
 the task to the delegate's inbox through `message:send`, emits
 `session:launch` so other extensions can shape the launch, then opens a
@@ -184,10 +184,15 @@ and their expanded views show them.
 ### Managed worktrees
 
 `--worktree <branch>` (or the `worktree` tool input) creates a new local branch
-and worktree from the selected source checkout's committed `HEAD`, or from `--worktree-base <commit-ish>` (the tool input `worktree_base`). The base resolves only against locally available branches, remote-tracking refs, tags, commits or commit-ish expressions; Squire does not fetch. The exact commit is frozen before creation. An explicit commit works even if source `HEAD` is unborn; without an override an unborn `HEAD` is refused. The default
+and worktree from this session's checkout, or from the existing checkout named
+by `--worktree-source <dir>` (tool input `worktree_source`). Relative sources
+resolve from this session's cwd; `~`, symlinks, linked worktrees and repository
+subdirectories are accepted. The delegate starts at the created root. Its base
+is the selected checkout's committed `HEAD`, or `--worktree-base <commit-ish>`
+(the tool input `worktree_base`). The base resolves only against locally available branches, remote-tracking refs, tags, commits or commit-ish expressions; Squire does not fetch. The exact commit is frozen before creation. An explicit commit works even if source `HEAD` is unborn; without an override an unborn `HEAD` is refused. The default
 location is a sibling directory named `{repo}-worktrees/{branch}`, with `/` in
 the folder segment replaced by `-`; the branch name itself is unchanged.
-`cwd` and `worktree` cannot be combined. Branches and destinations are never
+`worktree_source` and `worktree_base` require `worktree`; `cwd` and `worktree` cannot be combined. An unrelated source repository uses its own saved trust decision; when undecided, protected resources in the frozen base and applicable destination ancestor skills are reviewed in the parent before creation. Branches and destinations are never
 reused, reset, suffixed or force-created. Git creation uses the frozen commit,
 not a later moving `HEAD`.
 

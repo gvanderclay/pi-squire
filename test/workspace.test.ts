@@ -1175,3 +1175,28 @@ test("a repository replaced at the same location is observed against the recorde
 	assert.deepEqual(snap.committed.paths, ["after replacement.txt"]);
 	assert.equal(snap.workingState, "clean");
 });
+
+test("managed worktree can select an unrelated source checkout and its frozen base", async () => {
+	base = fresh();
+	const parent = repo(join(base, "parent"));
+	const source = repo(join(base, "other repository"));
+	protect(source);
+	git(source, "add", ".");
+	git(source, "commit", "-q", "-m", "protected base");
+	const sourceHead = git(source, "rev-parse", "HEAD");
+	const s = await started({ cwd: parent, projectTrusted: true, ui: { select: ["Do not trust (this session only)"] } });
+	const result = await s.toolCall("delegate", {
+		agent: "scout",
+		task: "inspect",
+		worktree: "source/topic",
+		worktree_source: source,
+	});
+	const data = result.structuredContent as Data;
+	assert.equal(data.workspace.sourceCwd, source);
+	assert.equal(data.workspace.source.mainRoot, source);
+	assert.equal(data.workspace.baseCommit, sourceHead);
+	assert.equal(s.selects.length, 1, "unrelated protected base asks before creation despite parent's trust");
+	assert.equal(s.tmux.opened[0].cwd, data.cwd);
+	assert.equal(git(data.cwd, "rev-parse", "HEAD"), sourceHead);
+	assert.equal(git(parent, "rev-parse", "HEAD"), git(parent, "rev-parse", "main"));
+});

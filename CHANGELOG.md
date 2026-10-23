@@ -8,6 +8,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `/delegate --worktree-source <dir>` and the `worktree_source` input select another existing Git checkout as the frozen base and trust identity for managed worktrees. Unresolved protected resources in that planned checkout require the parent's decision before creation.
+
 - `/delegate --worktree-base <commit-ish>` and the `worktree_base` tool input create managed branches from an explicitly resolved local commit. Resolution is frozen, never fetches, and supports valid explicit commits from an unborn source checkout.
 
 - Managed worktree placement can be configured per call in

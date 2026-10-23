@@ -3,6 +3,7 @@
 // window opened. Ownership is proved from Git and the disk for every
 // removal; anything uncertain is retained and described, never forced.
 import { lstatSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -22,7 +23,7 @@ import {
 import type { ResourceFacts } from "./results.ts";
 import { worktreeDestination } from "./worktree-placement.ts";
 
-export type WorktreeOptions = { worktree: string; worktree_base?: string };
+export type WorktreeOptions = { worktree: string; worktree_base?: string; worktree_source?: string };
 /** What a managed launch intends, frozen before anything is created. */
 export type WorktreePlan = {
 	sourceCwd: string;
@@ -161,8 +162,22 @@ export async function prepareWorktree(
 	ctx: ExtensionContext,
 	agentDir: string,
 ): Promise<WorktreePlan> {
-	const found = inspectGit(ctx.cwd);
-	if (found.kind === "non-git") throw new Error(`worktree needs a Git checkout, and ${ctx.cwd} is not one`);
+	let sourceCwd = ctx.cwd;
+	if (options.worktree_source !== undefined) {
+		const supplied = options.worktree_source;
+		let expanded = supplied;
+		if (supplied === "~") expanded = homedir();
+		else if (supplied.startsWith("~/")) expanded = join(homedir(), supplied.slice(2));
+		try {
+			sourceCwd = realpathSync(resolve(ctx.cwd, expanded));
+		} catch (err) {
+			throw new Error(
+				`worktree_source ${JSON.stringify(supplied)} is not an accessible checkout: ${(err as Error).message}`,
+			);
+		}
+	}
+	const found = inspectGit(sourceCwd);
+	if (found.kind === "non-git") throw new Error(`worktree needs a Git checkout, and ${sourceCwd} is not one`);
 	if (found.kind === "unknown") throw new Error(`worktree needs a usable Git checkout: ${found.reason}`);
 	const { identity } = found;
 	const requestedBase = options.worktree_base ?? "HEAD";
@@ -183,7 +198,7 @@ export async function prepareWorktree(
 	const destination = worktreeDestination(agentDir, identity, options.worktree);
 	checkDestination(destination, identity);
 	return {
-		sourceCwd: ctx.cwd,
+		sourceCwd,
 		source: identity,
 		destination,
 		branch: options.worktree,

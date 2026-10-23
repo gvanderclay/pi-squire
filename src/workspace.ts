@@ -20,7 +20,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { type GitLaunch, inspectGit, PathSummarySchema } from "./git.ts";
+import { askGit, type GitLaunch, inspectGit, PathSummarySchema } from "./git.ts";
 import type { ManagedWorkspace } from "./worktree.ts";
 
 export {
@@ -33,6 +33,8 @@ export {
 	type PathSummary,
 } from "./git.ts";
 export { type ManagedWorkspace, prepareWorktree, type WorktreeOptions, type WorktreePlan } from "./worktree.ts";
+
+import type { WorktreePlan } from "./worktree.ts";
 
 export type DirectoryWorkspace = {
 	mode: "inherited" | "existing";
@@ -268,6 +270,87 @@ async function targetTrust(
 		);
 	}
 	return oneAtATime(() => askTrust(ctx, signal, store, cwd, key), signal);
+}
+
+const PROTECTED = [
+	".pi/settings.json",
+	".pi/mcp.json",
+	".pi/extensions",
+	".pi/skills",
+	".pi/prompts",
+	".pi/themes",
+	".pi/SYSTEM.md",
+	".pi/APPEND_SYSTEM.md",
+	".agents/skills",
+];
+
+function plannedTreeHasResources(cwd: string, base: string): string | undefined {
+	const tree = askGit(cwd, ["ls-tree", "-r", "-z", "--full-tree", base]);
+	if (!tree.ok) throw new Error(`could not inspect planned worktree resources at ${base}: ${tree.message}`);
+	for (const entry of tree.out.split("\0")) {
+		if (!entry) continue;
+		const tab = entry.indexOf("\t");
+		if (tab < 0) throw new Error(`could not parse planned worktree tree at ${base}`);
+		const metadata = entry.slice(0, tab);
+		const path = entry.slice(tab + 1);
+		const protectedPath = PROTECTED.some((item) => path === item || path.startsWith(`${item}/`));
+		const possibleIndirection =
+			path === ".pi" || path.startsWith(".pi/") || path === ".agents" || path.startsWith(".agents/");
+		if (metadata.startsWith("120000 ") && possibleIndirection)
+			throw new Error(
+				`planned project resource path ${path} is a symlink; establish trust explicitly before delegating`,
+			);
+		if (protectedPath) return tree.out;
+	}
+	return undefined;
+}
+
+function destinationHasAncestorSkills(destination: string): boolean {
+	let ancestor = dirname(destination);
+	while (ancestor !== dirname(ancestor)) {
+		const skills = join(ancestor, ".agents", "skills");
+		try {
+			if (hasTrustRequiringProjectResources(skills)) return true;
+		} catch {
+			throw new Error(
+				`could not inspect destination ancestor skills at ${skills}; establish trust explicitly before delegating`,
+			);
+		}
+		ancestor = dirname(ancestor);
+	}
+	return false;
+}
+
+/** Decide trust for a not-yet-created checkout from its frozen tree and effective ancestor skills. */
+export async function trustPlannedWorktree(
+	plan: WorktreePlan,
+	ctx: ExtensionContext,
+	agentDir: string,
+	signal?: AbortSignal,
+): Promise<boolean> {
+	const parent = inspectGit(ctx.cwd);
+	if (parent.kind === "git" && parent.identity.commonDir === plan.source.commonDir) return ctx.isProjectTrusted();
+	const store = new ProjectTrustStore(agentDir);
+	const saved = savedDecision(store, plan.source.mainRoot);
+	if (saved !== null) return saved;
+	const tree = plannedTreeHasResources(plan.source.checkoutRoot, plan.baseCommit);
+	const ancestorSkills = destinationHasAncestorSkills(plan.destination);
+	if (tree === undefined && !ancestorSkills) return false;
+	if (!ctx.hasUI)
+		throw new Error(
+			`the planned worktree in ${plan.destination} exposes project resources and has no saved trust decision for ${plan.source.mainRoot}; open Pi and establish trust, then delegate again`,
+		);
+	return oneAtATime(async () => {
+		const savedAtTurn = savedDecision(store, plan.source.mainRoot);
+		if (savedAtTurn !== null) return savedAtTurn;
+		const answer = await askTrust(ctx, signal, store, plan.destination, plan.source.mainRoot);
+		if (
+			(tree !== undefined && plannedTreeHasResources(plan.source.checkoutRoot, plan.baseCommit) !== tree) ||
+			destinationHasAncestorSkills(plan.destination) !== ancestorSkills
+		)
+			throw new Error("the planned resources changed while trust was being decided; delegate again");
+		return answer;
+	}, signal);
 }
 
 /**

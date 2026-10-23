@@ -4,6 +4,8 @@
 // Markdown. A message without details is left to Pi's default rendering.
 
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { before, test } from "node:test";
 
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
@@ -62,13 +64,13 @@ const gone: MessageDetails = {
 	windowName: "scout-6ba168fc",
 };
 
-test("a collapsed result shows the header, the first three body lines dim, and the hint", () => {
+test("a collapsed result shows the header, the first three body lines, and the hint", () => {
 	assert.deepEqual(render(result(), false), [
 		"",
 		"<success:✓> <accent:scout-6ba168fc> <muted:a/one>",
-		"<dim:first>",
-		"<dim:second>",
-		"<dim:third>",
+		"<muted:first>",
+		"<muted:second>",
+		"<muted:third>",
 		HINT,
 		"",
 	]);
@@ -76,7 +78,12 @@ test("a collapsed result shows the header, the first three body lines dim, and t
 
 test("a body shorter than the preview shows only its lines", () => {
 	const lines = render(result({ body: "only" }), false) ?? [];
-	assert.deepEqual(lines.slice(2, 4), ["<dim:only>", HINT]);
+	assert.deepEqual(lines.slice(2, 4), ["<muted:only>", HINT]);
+});
+
+test("the preview skips blank lines and strips heading marks, backticks and bold, keeping list dashes", () => {
+	const lines = render(result({ body: "## Files\n\n- `a.ts` is **key**\n\n  \nlast" }), false) ?? [];
+	assert.deepEqual(lines.slice(2, 5), ["<muted:Files>", "<muted:- a.ts is key>", "<muted:last>"]);
 });
 
 test("a preview line longer than the width is cut, not wrapped", () => {
@@ -112,6 +119,29 @@ test("an expanded header wraps, so the whole model label stays visible", () => {
 
 test("a collapsed gone message shows the header and hint, with no preview", () => {
 	assert.equal(render(gone, false)?.length, 4);
+});
+
+test("an expanded result shows the task, then the labelled body, then the ids and files", () => {
+	const text = (render(result(), true) ?? []).join("\n");
+	const order = ["<muted:> look into it>", "<dim:Result>", "fourth", "<dim:delegation 6ba168fc-id>"].map((part) =>
+		text.indexOf(part),
+	);
+	assert.ok(
+		order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1])),
+		`out of order: ${order}`,
+	);
+});
+
+test("paths under the home directory show as ~", () => {
+	const home = homedir();
+	const text = (
+		render(
+			result({ sessionPath: join(home, "s.jsonl"), task: { text: "t", path: join(home, "sent", "r.json") } }),
+			true,
+		) ?? []
+	).join("\n");
+	assert.ok(text.includes("<dim:session ~/s.jsonl>"), text);
+	assert.ok(text.includes("<muted:Task (~/sent/r.json):>"), text);
 });
 
 test("an expanded result shows the ids and files, the usage-limit line, the task and the body", () => {

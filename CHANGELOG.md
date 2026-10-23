@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A collapsed delegate result previews its first 3 non-blank lines, in a
+  brighter color, with heading marks, backticks and bold stripped. Expanded,
+  the result comes right after the task under a `Result` label, and the ids
+  and files move to the end with the home directory shown as `~`. The
+  renderer tests change with it.
+
 ## [0.9.2] - 2026-10-22
 
 ### Changed

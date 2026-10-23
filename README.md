@@ -452,8 +452,10 @@ Delegate session: <session file or id>
   one tool call that changes state, in the style of
   [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents):
   - The `delegate` row shows `○` with the agent, the label, the task's first
-    line and its line count, then `⟳ <name> (<model>) — started`, with any
-    skipped fallback model. A refused call keeps its plain error text.
+    line and its line count while the call runs. Once the delegate starts,
+    that header is replaced by `⟳ <name> (<model>) — started` over the same
+    task line, with any skipped fallback model. A refused call keeps its
+    `○` header above the plain error text.
   - The result arrives drawn as a finished tool row, on Pi's tool success or
     error background: `✓ <name> (<model>) — done`, or `✗` with `failed`,
     `stopped` or `closed without a result`. Collapsed, it previews the first

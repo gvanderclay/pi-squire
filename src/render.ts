@@ -14,7 +14,7 @@ import {
 	type MessageRenderOptions,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Box, type Component, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import type { Static } from "typebox";
 
 import type { DelegateSchema } from "./index.ts";
@@ -132,38 +132,46 @@ function expandedLines(details: MessageDetails, theme: Theme): Component[] {
 	return children;
 }
 
+/** The task's first non-blank line, cut at 100 characters, and its line count when it has more than one. */
+function taskLine(task: unknown, theme: Theme): string {
+	if (typeof task !== "string") return "";
+	const first = task.split("\n").find((line) => line.trim() !== "") ?? "";
+	const shown = first.length > TASK_PREVIEW_CHARS ? `${first.slice(0, TASK_PREVIEW_CHARS)}…` : first;
+	const total = task.split("\n").length;
+	return `${shown === "" ? "" : theme.fg("toolOutput", shown)}${total > 1 ? theme.fg("muted", ` (${total} lines)`) : ""}`;
+}
+
 /**
- * The `delegate` tool's call: ○, the agent and any label, then the task's
- * first line and how many lines it has. Arguments may still be streaming.
+ * The `delegate` tool's call: ○, the agent, any label and the task line,
+ * while arguments stream and the call runs. Pi redraws the call above the
+ * result, so once a launch succeeds the call draws nothing and the result's
+ * header is the row's only one; a refused call keeps it above the error.
  */
 export function renderDelegateCall(
 	args: { agent?: unknown; label?: unknown; task?: unknown },
 	theme: Theme,
+	context: { isPartial: boolean; isError: boolean },
 ): Component {
+	if (!context.isPartial && !context.isError) return new Container();
 	const agent = typeof args.agent === "string" && args.agent !== "" ? args.agent : "…";
 	let text = `○ ${theme.fg("toolTitle", theme.bold(agent))}`;
 	if (typeof args.label === "string" && args.label !== "" && args.label !== "null")
 		text += theme.fg("dim", ` [${args.label}]`);
-	if (typeof args.task === "string") {
-		const first = args.task.split("\n").find((line) => line.trim() !== "") ?? "";
-		const shown = first.length > TASK_PREVIEW_CHARS ? `${first.slice(0, TASK_PREVIEW_CHARS)}…` : first;
-		if (shown !== "") text += `\n${theme.fg("toolOutput", shown)}`;
-		const total = args.task.split("\n").length;
-		if (total > 1) text += theme.fg("muted", ` (${total} lines)`);
-	}
+	const task = taskLine(args.task, theme);
+	if (task !== "") text += `\n${task}`;
 	return new Text(text, 0, 0);
 }
 
 /**
  * The `delegate` tool's result: ⟳, the delegate's name, its model and
- * "started", with any skipped fallback models; expanded, the ids too. A
+ * "started", the task line and any skipped fallback models; expanded, the ids too. A
  * refused or blocked call has no details and keeps its plain text.
  */
 export function renderDelegateResult(
 	result: { content: { type: string; text?: string }[]; details?: unknown },
 	{ expanded }: { expanded: boolean },
 	theme: Theme,
-	context: { isError: boolean },
+	context: { args: { task?: unknown }; isError: boolean },
 ): Component {
 	const details = result.details as Partial<Static<typeof DelegateSchema>> | undefined;
 	if (context.isError || details?.outcome !== "started") {
@@ -176,8 +184,10 @@ export function renderDelegateResult(
 			"dim",
 			` (${started.model}) — started`,
 		)}`,
-		...started.skipped.map(({ model, reason }) => theme.fg("warning", `[Skipped ${model}: ${reason}]`)),
 	];
+	const task = taskLine(context.args.task, theme);
+	if (task !== "") lines.push(task);
+	lines.push(...started.skipped.map(({ model, reason }) => theme.fg("warning", `[Skipped ${model}: ${reason}]`)));
 	if (expanded)
 		lines.push(
 			...[

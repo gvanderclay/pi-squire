@@ -27,7 +27,13 @@ type Renderers = {
 };
 
 const lines = (component: Renderable, width = 120) => component.render(width).map((line) => line.trim());
-const context = (args: unknown, expanded: boolean, isError = false) => ({ args, expanded, isError, isPartial: false });
+/** A render context; `isPartial` stays true until the tool's result arrives. */
+const context = (args: unknown, expanded: boolean, isError = false, isPartial = false) => ({
+	args,
+	expanded,
+	isError,
+	isPartial,
+});
 
 async function launched(args: Record<string, unknown>) {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
@@ -42,28 +48,47 @@ const TASK = "## Look\n\n- into `src/` for **it**\nthen report\nand more";
 test("the call row shows ○, the agent, the label, the task's first line and its line count", async () => {
 	const args = { agent: "scout", task: TASK, label: "look" };
 	const { tool } = await launched(args);
-	assert.deepEqual(lines(tool.renderCall(args, theme, context(args, false))), [
+	assert.deepEqual(lines(tool.renderCall(args, theme, context(args, false, false, true))), [
 		"○ <toolTitle:<bold:scout>><dim: [look]>",
 		"<toolOutput:## Look><muted: (5 lines)>",
 	]);
 	assert.deepEqual(
-		lines(tool.renderCall({}, theme, context({}, false))),
+		lines(tool.renderCall({}, theme, context({}, false, false, true))),
 		["○ <toolTitle:<bold:…>>"],
 		"args still streaming",
 	);
 });
 
+test("once started, the call row draws nothing, so the row has one header", async () => {
+	const args = { agent: "scout", task: TASK, label: "look" };
+	const { tool } = await launched(args);
+	assert.deepEqual(lines(tool.renderCall(args, theme, context(args, false))), []);
+});
+
+test("a refused call keeps its call row above the error", async () => {
+	const args = { agent: "nobody", task: "t" };
+	const { tool } = await launched({ agent: "scout", task: "t" });
+	assert.deepEqual(lines(tool.renderCall(args, theme, context(args, false, true))), [
+		"○ <toolTitle:<bold:nobody>>",
+		"<toolOutput:t>",
+	]);
+});
+
 test("a long first task line is cut at 100 characters", async () => {
 	const args = { agent: "scout", task: "y".repeat(150) };
 	const { tool } = await launched(args);
-	assert.equal(lines(tool.renderCall(args, theme, context(args, false)), 300)[1], `<toolOutput:${"y".repeat(100)}…>`);
+	assert.equal(
+		lines(tool.renderCall(args, theme, context(args, false, false, true)), 300)[1],
+		`<toolOutput:${"y".repeat(100)}…>`,
+	);
 });
 
-test("a started row shows ⟳, the delegate's name, its model and started", async () => {
+test("a started row shows ⟳, the delegate's name, its model and started, then the task line", async () => {
 	const args = { agent: "scout", task: TASK, label: "look" };
 	const { tool, result } = await launched(args);
 	assert.deepEqual(lines(tool.renderResult(result, { expanded: false }, theme, context(args, false))), [
 		"<accent:⟳> <toolTitle:<bold:scout-look>><dim: (alpha/fast-model) — started>",
+		"<toolOutput:## Look><muted: (5 lines)>",
 	]);
 });
 

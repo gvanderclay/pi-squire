@@ -418,10 +418,11 @@ export function session(options: SessionOptions = {}) {
 		return event;
 	};
 	let calls = 0;
-	const callTool = (name: string, params: unknown): Promise<ToolResult> => {
+	/** `abort` is the call's own signal, as Pi passes a tool; none by default. */
+	const callTool = (name: string, params: unknown, abort?: AbortSignal): Promise<ToolResult> => {
 		const tool = tools[name];
 		if (tool === undefined) return Promise.reject(new Error(`no tool named ${name} is registered`));
-		return tool.execute(`call-${++calls}`, params as never, undefined, undefined, ctx).then((result) => {
+		return tool.execute(`call-${++calls}`, params as never, abort, undefined, ctx).then((result) => {
 			checkStructured(tool, result);
 			return result;
 		});

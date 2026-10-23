@@ -194,7 +194,10 @@ before the task is sent or a window opens. The model has no trust input.
    finds it (the closest saved directory at or above the key). The key is the
    main repository root for a linked worktree of another repository, and the
    directory itself for everything else, including a subdirectory of another
-   main checkout, so a nearer saved denial there still wins.
+   main checkout or a main checkout whose Git directory lives elsewhere
+   (`--separate-git-dir`), so a nearer saved denial there still wins. A
+   linked worktree whose main checkout Git cannot name, such as one of a bare
+   repository, has an unknown Git state and is keyed by its own directory.
 3. With no saved decision and no project resources that Pi gates behind trust
    (`.pi/settings.json`, extensions, skills and the like, or an
    `.agents/skills` directory above it), the delegate starts with
@@ -207,7 +210,9 @@ before the task is sent or a window opens. The model has no trust input.
    apply to this launch alone and save nothing. "Trust parent folder" saves
    the folder and clears a decision saved for the key itself. Cancelling
    starts nothing. One question is open at a time; a question that waited
-   reads the store again, so an answer just saved is not asked twice.
+   reads the store again, so an answer just saved is not asked twice. Aborting
+   the turn or tool call stops a launch that is waiting for or answering a
+   question; nothing is saved, sent or opened.
 
 Without a UI a question cannot be asked, so the launch is refused: open Pi in
 that directory and answer its trust question first. A trust store that cannot

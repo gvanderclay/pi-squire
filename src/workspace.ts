@@ -131,15 +131,32 @@ function identify(cwd: string): { identity: GitIdentity } | { launch: GitLaunch 
 	}
 	const common = askGit(cwd, ["rev-parse", "--git-common-dir"]);
 	if (!common.ok) return { launch: { kind: "unknown", reason: `git rev-parse failed: ${common.message}` } };
+	const own = askGit(cwd, ["rev-parse", "--git-dir"]);
+	if (!own.ok) return { launch: { kind: "unknown", reason: `git rev-parse failed: ${own.message}` } };
+	let checkoutRoot: string;
+	let commonDir: string;
+	let gitDir: string;
 	try {
-		const commonDir = realpathSync(resolve(cwd, onePath(common.out)));
-		// The main worktree's root the way Git names it (worktree.c get_main_worktree): the common
-		// directory without its `/.git`, or the common directory itself for a bare repository.
-		const mainRoot = basename(commonDir) === ".git" ? realpathSync(dirname(commonDir)) : commonDir;
-		return { identity: { mainRoot, commonDir, checkoutRoot: realpathSync(onePath(top.out)) } };
+		checkoutRoot = realpathSync(onePath(top.out));
+		commonDir = realpathSync(resolve(cwd, onePath(common.out)));
+		gitDir = realpathSync(resolve(cwd, onePath(own.out)));
 	} catch (err) {
 		return { launch: { kind: "unknown", reason: `could not resolve the repository paths: ${(err as Error).message}` } };
 	}
+	// A main checkout's own Git directory is the common one, wherever it lives (`--separate-git-dir` included).
+	if (gitDir === commonDir) return { identity: { mainRoot: checkoutRoot, commonDir, checkoutRoot } };
+	// A linked worktree's main checkout is where Git keeps it: the folder holding a `.git` common directory.
+	// A linked worktree of a bare repository, or of a main checkout with a separate Git directory, has
+	// no main checkout Git can name for a trust key, so its identity stays unknown.
+	if (basename(commonDir) !== ".git") {
+		return {
+			launch: {
+				kind: "unknown",
+				reason: `the main checkout of the linked worktree ${checkoutRoot} cannot be located: its repository's Git directory ${commonDir} is not a checkout's .git`,
+			},
+		};
+	}
+	return { identity: { mainRoot: dirname(commonDir), commonDir, checkoutRoot } };
 }
 
 /** The checkout at `cwd` as it stands: identity, branch or detached, and the commit checked out. */
@@ -199,14 +216,37 @@ function savedDecision(store: ProjectTrustStore, key: string): boolean | null {
 /** The end of the trust dialog queue: one question at a time in this parent, so an answer cannot reach another target. */
 let dialogs: Promise<unknown> = Promise.resolve();
 
-function oneAtATime<T>(ask: () => Promise<T>): Promise<T> {
-	const turn = dialogs.then(ask, ask);
+/** Why an aborted launch stopped. */
+const ABORTED = "the launch was aborted; nothing was launched";
+
+/** Run `ask` once every earlier question is settled; an abort while waiting rejects at once and skips `ask`. */
+function oneAtATime<T>(ask: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+	const run = (): Promise<T> => {
+		if (signal?.aborted === true) return Promise.reject(new Error(ABORTED));
+		return ask();
+	};
+	const turn = dialogs.then(run, run);
 	dialogs = turn.catch(() => undefined);
-	return turn;
+	if (signal === undefined) return turn;
+	const aborted = new Promise<never>((_, reject) => {
+		signal.addEventListener("abort", () => reject(new Error(ABORTED)), { once: true });
+	});
+	return Promise.race([turn, aborted]);
+}
+
+/** Refuse to go on once the launch's operation is aborted. */
+function stopIfAborted(signal: AbortSignal | undefined): void {
+	if (signal?.aborted === true) throw new Error(ABORTED);
 }
 
 /** Ask the user whether the delegate trusts `cwd`'s project resources, saving only what they chose. */
-async function askTrust(ctx: ExtensionContext, store: ProjectTrustStore, cwd: string, key: string): Promise<boolean> {
+async function askTrust(
+	ctx: ExtensionContext,
+	signal: AbortSignal | undefined,
+	store: ProjectTrustStore,
+	cwd: string,
+	key: string,
+): Promise<boolean> {
 	// An answer given while this question waited may already settle it.
 	const saved = savedDecision(store, key);
 	if (saved !== null) return saved;
@@ -220,8 +260,9 @@ async function askTrust(ctx: ExtensionContext, store: ProjectTrustStore, cwd: st
 	const answer = await ctx.ui.select(
 		title,
 		options.map((option) => option.label),
-		{ signal: ctx.signal },
+		{ signal },
 	);
+	stopIfAborted(signal);
 	const choice = options.find((option) => option.label === answer);
 	if (choice === undefined) throw new Error(`the trust question for ${cwd} was cancelled; nothing was launched`);
 	if (choice.updates.length > 0) {
@@ -240,7 +281,13 @@ async function askTrust(ctx: ExtensionContext, store: ProjectTrustStore, cwd: st
  * decision for a linked worktree's main repository or for the directory
  * itself, then no trust when nothing is protected, then the user's answer.
  */
-async function targetTrust(cwd: string, git: GitLaunch, ctx: ExtensionContext, agentDir: string): Promise<boolean> {
+async function targetTrust(
+	cwd: string,
+	git: GitLaunch,
+	ctx: ExtensionContext,
+	agentDir: string,
+	signal: AbortSignal | undefined,
+): Promise<boolean> {
 	if (git.kind === "git") {
 		const parent = inspectGit(ctx.cwd);
 		if (parent.kind === "git" && parent.identity.commonDir === git.identity.commonDir) return ctx.isProjectTrusted();
@@ -257,15 +304,17 @@ async function targetTrust(cwd: string, git: GitLaunch, ctx: ExtensionContext, a
 			`cwd ${cwd} has project resources that need trust and no trust decision is saved for ${key}; open Pi in ${key}, answer its trust question, then delegate again`,
 		);
 	}
-	return oneAtATime(() => askTrust(ctx, store, cwd, key));
+	return oneAtATime(() => askTrust(ctx, signal, store, cwd, key), signal);
 }
 
 /**
  * The delegate's workspace and trust. With no `cwd`, the parent's directory
  * and current trust; with one, its real path and a trust decision for it.
+ * `signal` is the launch's operation (a tool call's own signal); the turn's
+ * `ctx.signal` aborts it too.
  */
 export async function prepareDirectory(
-	request: { cwd?: string },
+	request: { cwd?: string; signal?: AbortSignal },
 	ctx: ExtensionContext,
 	agentDir: string,
 ): Promise<{ workspace: DirectoryWorkspace; trusted: boolean }> {
@@ -275,8 +324,12 @@ export async function prepareDirectory(
 			trusted: ctx.isProjectTrusted(),
 		};
 	}
+	const signals = [request.signal, ctx.signal].filter((item): item is AbortSignal => item !== undefined);
+	const signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
+	stopIfAborted(signal);
 	const cwd = resolveDirectory(request.cwd, ctx.cwd);
 	const git = inspectGit(cwd);
-	const trusted = await targetTrust(cwd, git, ctx, agentDir);
+	const trusted = await targetTrust(cwd, git, ctx, agentDir, signal);
+	stopIfAborted(signal);
 	return { workspace: { mode: "existing", cwd, git }, trusted };
 }

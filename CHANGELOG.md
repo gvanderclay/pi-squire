@@ -30,9 +30,9 @@ follows [Semantic Versioning](https://semver.org/).
   current trust inside its own repository (by Git common directory), else the
   saved decision for a linked worktree's main repository or for the directory,
   else `--no-approve` when it has no protected resources, else a parent
-  dialog with Pi's five choices. Without a UI, after a cancel, or when the
-  trust store cannot be read or written, nothing starts. Dialogs are asked
-  one at a time.
+  dialog with Pi's five choices. Without a UI, after a cancel or an abort, or
+  when the trust store cannot be read or written, nothing starts. Dialogs are
+  asked one at a time.
 - Each new delegation records a `workspace` (mode, cwd and Git checkout at
   launch: identity, branch or detached, launch commit, or non-Git, or unknown
   with a reason). The `delegate` tool's structured result, `delegation_status`,

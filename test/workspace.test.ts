@@ -395,6 +395,50 @@ test("checkout paths containing newlines are read as data", async () => {
 	assert.equal(s.selects.length, 0);
 });
 
+test("a main checkout with a separate Git directory keeps its own trust key", async (t) => {
+	// Treating the administrative directory as the main root would let a saved true there override the checkout's denial.
+	base = fresh();
+	const admin = join(base, "admin.git");
+	const checkout = join(base, "checkout");
+	mkdirSync(checkout);
+	git(checkout, "init", "-q", "-b", "main", "--separate-git-dir", admin);
+	writeFileSync(join(checkout, "f.txt"), "x\n");
+	git(checkout, "add", ".");
+	git(checkout, "commit", "-q", "-m", "first");
+	const real = realpathSync(checkout);
+	protect(real);
+	await t.test("a saved denial at the checkout wins over an approval at its Git directory", async () => {
+		const store = new ProjectTrustStore(agentDir);
+		store.setMany([
+			{ path: real, decision: false },
+			{ path: realpathSync(admin), decision: true },
+		]);
+		const s = await started();
+		await call(s, real);
+		assert.deepEqual(flags(s.tmux.opened[0].argv), ["--no-approve"]);
+		assert.equal(s.selects.length, 0);
+		assert.deepEqual(startRecord(s)?.workspace.git.identity, {
+			mainRoot: real,
+			commonDir: realpathSync(admin),
+			checkoutRoot: real,
+		});
+	});
+	await t.test("its linked worktree is unknown rather than keyed by the Git directory", async () => {
+		const linked = join(base, "linked");
+		git(real, "worktree", "add", "-q", "-b", "topic", linked);
+		protect(linked);
+		const store = new ProjectTrustStore(agentDir);
+		store.setMany([
+			{ path: realpathSync(linked), decision: false },
+			{ path: realpathSync(admin), decision: true },
+		]);
+		const s = await started();
+		await call(s, linked);
+		assert.deepEqual(flags(s.tmux.opened[0].argv), ["--no-approve"]);
+		assert.equal(startRecord(s)?.workspace.git.kind, "unknown");
+	});
+});
+
 test("ordinary main-checkout subdirectory preserves nearer denial and saved scope", async (t) => {
 	base = fresh();
 	// Keying an ordinary checkout's subdirectory by its repository root would replace a nearer denial with the root's approval.
@@ -559,6 +603,59 @@ test("unresolved no UI store errors and serialized dialogs fail closed", async (
 			assert.ok(s.selects[1].title.includes(second), s.selects[1].title);
 		});
 	}
+	await t.test("an aborted queued launch starts nothing when another answer settles its target", async () => {
+		// A queued call skipping the dialog because an answer arrived would otherwise launch after its abort.
+		let settle: (value: string | undefined) => void = () => {};
+		const first = new Promise<string | undefined>((resolve) => {
+			settle = resolve;
+		});
+		const s = await started({ ui: { select: [first] } });
+		const firstCall = call(s, target);
+		const controller = new AbortController();
+		const secondCall = s.toolCall("delegate", { agent: "scout", task: "inspect", cwd: target }, controller.signal);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		controller.abort();
+		// It is released at once, not after the open question is answered.
+		const stillWaiting = new Promise((_, reject) => setTimeout(() => reject(new Error("still queued")), 500));
+		await assert.rejects(Promise.race([secondCall, stillWaiting]), /abort/i);
+		settle("Trust");
+		await secondCall.catch(() => undefined);
+		await firstCall;
+		assert.equal(s.sendCalls.length, 1);
+		assert.equal(s.tmux.opened.length, 1);
+		assert.equal(s.selects.length, 1);
+	});
+	await t.test("an answer that arrives after the abort saves and starts nothing", async () => {
+		// A dialog that still returns an answer after the operation was aborted must not persist it or launch.
+		let settle: (value: string | undefined) => void = () => {};
+		const answer = new Promise<string | undefined>((resolve) => {
+			settle = resolve;
+		});
+		const s = await started({ ui: { select: [answer] } });
+		const controller = new AbortController();
+		const launching = s.toolCall("delegate", { agent: "scout", task: "inspect", cwd: target }, controller.signal);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(s.selects.length, 1);
+		controller.abort();
+		settle("Trust");
+		await assert.rejects(launching, /abort/i);
+		assert.deepEqual(s.sendCalls, []);
+		assert.deepEqual(s.tmux.opened, []);
+		assert.equal(new ProjectTrustStore(agentDir).get(target), null);
+	});
+	await t.test("an aborted launch asks nothing and starts nothing", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const s = await started({ ui: { select: ["Trust"] } });
+		await assert.rejects(
+			s.toolCall("delegate", { agent: "scout", task: "inspect", cwd: target }, controller.signal),
+			/abort/i,
+		);
+		assert.equal(s.selects.length, 0);
+		assert.deepEqual(s.sendCalls, []);
+		assert.deepEqual(s.tmux.opened, []);
+		assert.equal(new ProjectTrustStore(agentDir).get(target), null);
+	});
 	await t.test("a queued question rereads the answer saved before it", async () => {
 		let settle: (value: string | undefined) => void = () => {};
 		const first = new Promise<string | undefined>((resolve) => {

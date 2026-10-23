@@ -530,7 +530,7 @@ export default function delegate(
 	}
 
 	/** The launch order of the spec: directory and trust, task, argv, env, listeners, window, record. */
-	async function launch(start: Start, ctx: ExtensionContext): Promise<Launched> {
+	async function launch(start: Start, ctx: ExtensionContext, signal?: AbortSignal): Promise<Launched> {
 		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 		// The child stores its session where the parent's lookups will search, whatever its cwd, project
 		// settings or the tmux server's environment would choose; a relative path would follow the child's cwd.
@@ -541,7 +541,7 @@ export default function delegate(
 			);
 		}
 		// Any trust question is answered before the task is sent or a window opens.
-		const { workspace, trusted } = await prepareDirectory({ cwd: start.cwd }, ctx, getAgentDir());
+		const { workspace, trusted } = await prepareDirectory({ cwd: start.cwd, signal }, ctx, getAgentDir());
 		const cwd = workspace.cwd;
 
 		// The task goes on disk before the window exists: the delegate finds it
@@ -706,7 +706,7 @@ export default function delegate(
 				auto_exit?: boolean | null;
 				cwd?: unknown;
 			},
-			_signal: unknown,
+			signal: AbortSignal | undefined,
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		) {
@@ -727,7 +727,7 @@ export default function delegate(
 				rosterFor(ctx),
 				ctx.modelRegistry,
 			);
-			const launched = await launch(start, ctx);
+			const launched = await launch(start, ctx, signal);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
 				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}${placedIn(launched)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,

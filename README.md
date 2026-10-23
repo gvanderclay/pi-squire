@@ -443,6 +443,16 @@ Delegate session: <session file or id>
 - The header carries the agent, the model, the delegation id and the request
   id; the status is the envelope's (`done`, `failed` or
   `stopped`).
+- The model is the one the delegation was launched on. When the delegate's
+  session file shows it finished on another (a fallback after a usage limit,
+  or `/model` in its window), it reads `launched → finished`, for example
+  `(anthropic/claude-haiku-5-5 → openai/gpt-6-luna)`. `delegation_status`
+  reports the same.
+- That text is what the parent model reads. The user sees it drawn instead:
+  collapsed, a header with a status icon (✓ done, ✗ failed, ■ stopped), the
+  delegate's name and the model, then the first 3 lines of the result;
+  expanded (Ctrl+O), the ids and files, the quoted task and the result as
+  Markdown. The closed-without-a-result message gets the same header with ⊘.
 - Stopping a delegate's run (Esc) sends no result: the provider holds the
   task, so the delegation stays running while the user steers it. The next
   run that completes sends the result, `done`, and its body opens with a note

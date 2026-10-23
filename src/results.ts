@@ -4,18 +4,13 @@
 // the message over, shows the parent one delegate result and records the
 // result. The records are the one source of truth for a delegation's state,
 // for the footer, `delegation_status` and `delegation_close`.
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-	type ExtensionAPI,
-	type ExtensionContext,
-	keyText,
-	type MessageRenderer,
-} from "@earendil-works/pi-coding-agent";
-import { Box, Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { readMarks } from "./limits.ts";
+import { modelLabel, renderMessage } from "./render.ts";
 
 /** The session entry type both delegation records and results use. */
 export const CUSTOM_TYPE = "delegate";
@@ -70,7 +65,40 @@ export type Result = {
 	envelopePath: string;
 	/** The delegate's session file, when it could be found. */
 	sessionPath?: string;
+	/** The `provider/model` of the delegate's last assistant message, when its session file holds one. */
+	finishedModel?: string;
 };
+
+/** What both delegate messages carry for their view, beside the text the model reads. */
+type CommonDetails = {
+	name: string;
+	agent: string;
+	/** The model the delegation was launched on. */
+	model: string;
+	finishedModel?: string;
+	id: string;
+	requestId: string;
+	sessionPath?: string;
+};
+
+/** The task as the result quotes it: its text and copy path, or why there is none. */
+export type TaskQuote = { text: string; path: string } | { note: string };
+
+/** The details of a delegate message; the renderer draws from these. */
+export type MessageDetails =
+	| (CommonDetails & {
+			kind: "result";
+			/** The envelope's status: `done`, `failed` or `stopped`. */
+			status: string;
+			envelopePath: string;
+			limit?: string;
+			task: TaskQuote;
+			/** The reply body, capped. */
+			body: string;
+	  })
+	| (CommonDetails & { kind: "gone"; windowName: string });
+
+type ResultDetails = Extract<MessageDetails, { kind: "result" }>;
 
 /** One delegation as it stands: what was recorded at its start, plus what came after. */
 export type Recorded = Delegation & {
@@ -165,6 +193,34 @@ export function findSession(dir: string | undefined, id: string): string | undef
 	return name === undefined ? undefined : join(dir, name);
 }
 
+/**
+ * The `provider/model` of the last assistant message in a delegate's session
+ * file: the model that actually answered, after any fallback or `/model`.
+ * Undefined when the file is missing or holds no assistant message.
+ */
+export function finishedModel(sessionPath: string | undefined): string | undefined {
+	if (sessionPath === undefined) return undefined;
+	let lines: string[];
+	try {
+		lines = readFileSync(sessionPath, "utf8").split("\n");
+	} catch {
+		return undefined;
+	}
+	for (let i = lines.length - 1; i >= 0; i--) {
+		let entry: { type?: unknown; message?: { role?: unknown; provider?: unknown; model?: unknown } };
+		try {
+			entry = JSON.parse(lines[i]);
+		} catch {
+			continue; // a line still being written, or a blank one
+		}
+		const message = entry?.message;
+		if (entry?.type !== "message" || message?.role !== "assistant") continue;
+		if (typeof message.provider === "string" && typeof message.model === "string")
+			return `${message.provider}/${message.model}`;
+	}
+	return undefined;
+}
+
 /** The line naming a usage-limit mark this delegation recorded, if any; a `done` delegation finished on a fallback. */
 function limitLine(id: string, status: string): string | undefined {
 	const now = Date.now();
@@ -177,53 +233,66 @@ function limitLine(id: string, status: string): string | undefined {
 	}${status === "done" ? " It finished on a fallback model; its session names which." : ""}`;
 }
 
-/** The one message the parent sees for a settled delegation. */
-function resultText(delegation: Delegation, payload: Inbound, session: string | undefined): string {
+/** The details of a settled delegation's result message. */
+function resultDetails(
+	delegation: Delegation,
+	payload: Inbound,
+	session: string | undefined,
+	finished: string | undefined,
+): ResultDetails {
 	const reply = payload.envelope;
 	const copy = payload.requests.find((request) => request.envelope?.id === delegation.requestId);
-	let quote: string;
+	let task: TaskQuote;
 	if (copy === undefined) {
-		quote = `[delegate] The task ${delegation.requestId} has no copy in sent/; only its id is known.`;
+		task = { note: `[delegate] The task ${delegation.requestId} has no copy in sent/; only its id is known.` };
 	} else {
 		const cut = cap(copy.envelope.body, TASK_CAP);
-		const lines =
+		const text =
 			cut === undefined ? copy.envelope.body : `${cut}\n[delegate] Task cut at 2 KiB; the full copy is ${copy.path}`;
-		quote = `Task, quoted from ${copy.path}:\n${lines
-			.split("\n")
-			.map((line) => `> ${line}`)
-			.join("\n")}`;
+		task = { text, path: copy.path };
 	}
 	const cut = cap(reply.body, BODY_CAP);
-	const result =
+	const body =
 		cut === undefined ? reply.body : `${cut}\n[delegate] Body cut at 32 KiB; the full envelope is ${payload.path}`;
 	const limit = reply.status === "stopped" ? undefined : limitLine(delegation.id, reply.status);
-	return [
-		`[delegate] Result from ${delegation.agent} (${delegation.model}), delegation ${delegation.id}, request ${delegation.requestId}.`,
-		`Status: ${reply.status}`,
-		...(limit === undefined ? [] : [limit]),
-		quote,
-		`Envelope: ${payload.path}`,
-		`Delegate session: ${session ?? delegation.id}`,
-		"",
-		result,
-	].join("\n");
+	return {
+		kind: "result",
+		status: reply.status,
+		name: recordedName(delegation),
+		agent: delegation.agent,
+		model: delegation.model,
+		...(finished === undefined ? {} : { finishedModel: finished }),
+		id: delegation.id,
+		requestId: delegation.requestId,
+		envelopePath: payload.path,
+		...(session === undefined ? {} : { sessionPath: session }),
+		...(limit === undefined ? {} : { limit }),
+		task,
+		body,
+	};
 }
 
-/**
- * Collapsed, a delegate message shows its first two lines (who answered and the
- * status) and a hint; expanded, Pi's default rendering of the whole message.
- * The model always gets the full content. Ctrl+O toggles it with tool output.
- */
-export const renderMessage: MessageRenderer = (message, { expanded, outputPad }, theme) => {
-	if (expanded || typeof message.content !== "string") return undefined;
-	const lines = message.content.split("\n");
-	const shown = lines.slice(0, 2).join("\n");
-	const hint =
-		lines.length > 2 ? `\n${theme.fg("dim", keyText("app.tools.expand"))}${theme.fg("muted", " to expand")}` : "";
-	const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
-	box.addChild(new Text(`${theme.fg("customMessageText", shown)}${hint}`, 0, 0));
-	return box;
-};
+/** The one message the parent model reads for a settled delegation. */
+function resultText(details: ResultDetails): string {
+	const { task } = details;
+	const quote =
+		"note" in task
+			? task.note
+			: `Task, quoted from ${task.path}:\n${task.text
+					.split("\n")
+					.map((line) => `> ${line}`)
+					.join("\n")}`;
+	return [
+		`[delegate] Result from ${details.agent} (${modelLabel(details.model, details.finishedModel)}), delegation ${details.id}, request ${details.requestId}.`,
+		`Status: ${details.status}`,
+		...(details.limit === undefined ? [] : [details.limit]),
+		quote,
+		`Envelope: ${details.envelopePath}`,
+		`Delegate session: ${details.sessionPath ?? details.id}`,
+		"",
+		details.body,
+	].join("\n");
+}
 
 export function createResults(pi: ExtensionAPI): Results {
 	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
@@ -306,13 +375,26 @@ export function createResults(pi: ExtensionAPI): Results {
 		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true)
 			return false;
 		const session = findSession(ctx?.sessionManager.getSessionDir(), record.id);
+		const finished = finishedModel(session);
 		pi.appendEntry(CUSTOM_TYPE, { id, gone: true });
 		record.gone = true;
+		const details: MessageDetails = {
+			kind: "gone",
+			name: recordedName(record),
+			agent: record.agent,
+			model: record.model,
+			...(finished === undefined ? {} : { finishedModel: finished }),
+			id: record.id,
+			requestId: record.requestId,
+			...(session === undefined ? {} : { sessionPath: session }),
+			windowName: record.windowName,
+		};
 		pi.sendMessage(
 			{
 				customType: CUSTOM_TYPE,
+				details,
 				content: [
-					`[delegate] Delegation ${record.id} (${record.agent}, ${record.model}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+					`[delegate] Delegation ${record.id} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
 					`Delegate session: ${session ?? record.id}`,
 					"A reply that arrives later is still delivered.",
 				].join("\n"),
@@ -336,9 +418,11 @@ export function createResults(pi: ExtensionAPI): Results {
 		const delegation = byRequest.get(requestId) as Recorded;
 		shown.add(reply.id);
 		const session = findSession(ctx?.sessionManager.getSessionDir(), delegation.id);
+		const finished = finishedModel(session);
+		const details = resultDetails(delegation, payload, session, finished);
 		// Steer, not follow-up: a busy parent gets the result before its next model call, not after it has answered.
 		pi.sendMessage(
-			{ customType: CUSTOM_TYPE, content: resultText(delegation, payload, session), display: true },
+			{ customType: CUSTOM_TYPE, content: resultText(details), details, display: true },
 			{ triggerTurn: true, deliverAs: "steer" },
 		);
 		const result: Result = {
@@ -346,6 +430,7 @@ export function createResults(pi: ExtensionAPI): Results {
 			replyId: reply.id,
 			envelopePath: payload.path,
 			...(session === undefined ? {} : { sessionPath: session }),
+			...(finished === undefined ? {} : { finishedModel: finished }),
 		};
 		pi.appendEntry(CUSTOM_TYPE, { id: delegation.id, result });
 		delegation.result = result;

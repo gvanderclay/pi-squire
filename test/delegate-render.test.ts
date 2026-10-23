@@ -129,3 +129,13 @@ test("a refused call keeps its plain error text", async () => {
 		"<error:unknown agent nobody>",
 	]);
 });
+
+test("an expanded started row saved before cwd was recorded says its cwd is unknown", async () => {
+	const args = { agent: "scout", task: TASK, label: "look" };
+	const { tool, result } = await launched(args);
+	const { cwd: _cwd, sessionDir: _sessionDir, ...legacy } = result.details as Record<string, unknown>;
+	const saved = { ...result, details: legacy };
+	const shown = lines(tool.renderResult(saved, { expanded: true }, theme, context(args, true)));
+	assert.ok(shown.includes("<dim:cwd unknown (not recorded)>"), shown.join("\n"));
+	assert.ok(!shown.some((line) => line.includes(process.cwd())), shown.join("\n"));
+});

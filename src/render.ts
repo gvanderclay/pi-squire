@@ -200,7 +200,8 @@ export function renderDelegateResult(
 				...started.notices,
 				`delegation ${started.id}`,
 				`window ${started.windowName} (${started.windowId})`,
-				`cwd ${tilde(started.cwd)}`,
+				// Results saved before cwd was recorded have none.
+				`cwd ${(started.cwd as string | undefined) === undefined ? cwdLine(undefined) : tilde(started.cwd)}`,
 				`thinking ${started.thinking}, auto-exit ${started.autoExit ? "on" : "off"}`,
 			].map((line) => theme.fg("dim", line)),
 		);

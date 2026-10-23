@@ -8,6 +8,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `/delegate --worktree-base <commit-ish>` and the `worktree_base` tool input create managed branches from an explicitly resolved local commit. Resolution is frozen, never fetches, and supports valid explicit commits from an unborn source checkout.
+
 - Managed worktree placement can be configured per call in
   `<agent dir>/squire/settings.json` with a global `worktreeRoot` template and
   canonical-main-repository `worktreeRootByRepo` overrides. Placement settings

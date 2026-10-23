@@ -2,7 +2,7 @@
 // window, over the `message:*` hooks.
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
-// [--label <name>] [--cwd <dir> | --worktree <branch>] [--auto-exit | --no-auto-exit] <task…>`
+// [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task…>`
 // reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens a window in the
@@ -114,7 +114,16 @@ function parentTrust(parent: string): string {
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */
-const FLAGS = ["--model", "--thinking", "--label", "--cwd", "--worktree", "--auto-exit", "--no-auto-exit"] as const;
+const FLAGS = [
+	"--model",
+	"--thinking",
+	"--label",
+	"--cwd",
+	"--worktree",
+	"--worktree-base",
+	"--auto-exit",
+	"--no-auto-exit",
+] as const;
 
 /** The `delegate` tool's structured result, which is also its details. */
 export const DelegateSchema = Type.Object({
@@ -138,7 +147,7 @@ export const DelegateSchema = Type.Object({
 const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
 
 const USAGE =
-	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch>] [--auto-exit | --no-auto-exit] <task>";
+	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task>";
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 /** `cwd` is informational: the window opens in the launch's own value, whatever a listener assigns. */
@@ -150,6 +159,7 @@ type Parsed = {
 	label?: string;
 	cwd?: string;
 	worktree?: string;
+	worktree_base?: string;
 	autoExit?: boolean;
 	task: string;
 };
@@ -169,6 +179,7 @@ type Start = {
 	cwd?: string;
 	/** The new local branch to create a worktree for; undefined creates none. */
 	worktree?: string;
+	worktree_base?: string;
 	autoExit: boolean;
 	task: string;
 };
@@ -293,7 +304,8 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 			flag !== "--thinking" &&
 			flag !== "--label" &&
 			flag !== "--cwd" &&
-			flag !== "--worktree"
+			flag !== "--worktree" &&
+			flag !== "--worktree-base"
 		) {
 			return { error: `unknown flag ${flag}; ${USAGE}` };
 		}
@@ -303,7 +315,8 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 		else if (flag === "--thinking") parsed.thinking = read.value;
 		else if (flag === "--label") parsed.label = read.value;
 		else if (flag === "--cwd") parsed.cwd = read.value;
-		else parsed.worktree = read.value;
+		else if (flag === "--worktree") parsed.worktree = read.value;
+		else parsed.worktree_base = read.value;
 		at = read.end;
 	}
 	// The task is the rest of the text from its first word, untouched by flag parsing.
@@ -544,6 +557,7 @@ export default function delegate(
 			label: request.label,
 			cwd: request.cwd,
 			worktree: request.worktree,
+			worktree_base: request.worktree_base,
 			autoExit: request.autoExit ?? agent.autoExit,
 			task: request.task,
 		};
@@ -646,13 +660,19 @@ export default function delegate(
 			);
 		const cwdOption = normalizeWorkspaceValue(start.cwd, "cwd");
 		const worktreeOption = normalizeWorkspaceValue(start.worktree, "worktree");
+		const baseOption = normalizeWorkspaceValue(start.worktree_base, "worktree_base");
+		if (baseOption !== undefined && worktreeOption === undefined) throw new Error("worktree_base requires worktree");
 		if (cwdOption !== undefined && worktreeOption !== undefined)
 			throw new Error("cwd and worktree are mutually exclusive; name only one");
 		let plan: WorktreePlan | undefined;
 		let directory: Workspace | undefined;
 		let trusted: boolean;
 		if (worktreeOption !== undefined) {
-			plan = await prepareWorktree({ worktree: worktreeOption }, ctx, getAgentDir());
+			plan = await prepareWorktree(
+				{ worktree: worktreeOption, ...(baseOption === undefined ? {} : { worktree_base: baseOption }) },
+				ctx,
+				getAgentDir(),
+			);
 			trusted = plan.trusted;
 		} else {
 			const prepared = await prepareDirectory({ cwd: cwdOption, signal }, ctx, getAgentDir());
@@ -849,7 +869,12 @@ export default function delegate(
 			worktree: Type.Optional(
 				Type.Union([Type.String(), Type.Null()], {
 					description:
-						"Create a new managed worktree and local branch with this literal branch name, from this repository's committed HEAD. Source dirt is not copied. Mutually exclusive with cwd.",
+						"Create a new managed worktree and local branch with this literal branch name, from this repository's committed HEAD or explicit worktree_base. Source dirt is not copied. Mutually exclusive with cwd.",
+				}),
+			),
+			worktree_base: Type.Optional(
+				Type.Union([Type.String(), Type.Null()], {
+					description: "Local commit-ish to create the branch from; requires worktree. No fetch is performed.",
 				}),
 			),
 			auto_exit: Type.Optional(
@@ -875,6 +900,7 @@ export default function delegate(
 				auto_exit?: boolean | null;
 				cwd?: unknown;
 				worktree?: unknown;
+				worktree_base?: unknown;
 			},
 			signal: AbortSignal | undefined,
 			_onUpdate: unknown,
@@ -885,6 +911,7 @@ export default function delegate(
 			const given = (value: string | null | undefined) => (value == null || value === "null" ? undefined : value);
 			const cwd = normalizeWorkspaceValue(params.cwd, "cwd");
 			const worktree = normalizeWorkspaceValue(params.worktree, "worktree");
+			const worktree_base = normalizeWorkspaceValue(params.worktree_base, "worktree_base");
 			const start = await validate(
 				{
 					agent: params.agent,
@@ -893,6 +920,7 @@ export default function delegate(
 					label: given(params.label),
 					cwd,
 					worktree,
+					worktree_base,
 					autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
 					task: params.task ?? "",
 				},

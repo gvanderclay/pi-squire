@@ -22,7 +22,7 @@ import {
 import type { ResourceFacts } from "./results.ts";
 import { worktreeDestination } from "./worktree-placement.ts";
 
-export type WorktreeOptions = { worktree: string };
+export type WorktreeOptions = { worktree: string; worktree_base?: string };
 /** What a managed launch intends, frozen before anything is created. */
 export type WorktreePlan = {
 	sourceCwd: string;
@@ -164,12 +164,21 @@ export async function prepareWorktree(
 	const found = inspectGit(ctx.cwd);
 	if (found.kind === "non-git") throw new Error(`worktree needs a Git checkout, and ${ctx.cwd} is not one`);
 	if (found.kind === "unknown") throw new Error(`worktree needs a usable Git checkout: ${found.reason}`);
-	if (found.head === null) {
+	const { identity } = found;
+	const requestedBase = options.worktree_base ?? "HEAD";
+	const base = askGit(identity.checkoutRoot, [
+		"rev-parse",
+		"--verify",
+		"--end-of-options",
+		`${requestedBase}^{commit}`,
+	]);
+	if (!base.ok) {
 		throw new Error(
-			`the checkout ${found.identity.checkoutRoot} has no commit yet, so there is no HEAD to branch from`,
+			`worktree_base ${JSON.stringify(requestedBase)} does not resolve to a commit in ${identity.checkoutRoot}: ${base.message}`,
 		);
 	}
-	const { identity } = found;
+	const baseCommit = onePath(base.out);
+	if (baseCommit === "") throw new Error(`worktree_base ${JSON.stringify(requestedBase)} did not resolve to a commit`);
 	checkBranch(identity, options.worktree);
 	const destination = worktreeDestination(agentDir, identity, options.worktree);
 	checkDestination(destination, identity);
@@ -178,8 +187,8 @@ export async function prepareWorktree(
 		source: identity,
 		destination,
 		branch: options.worktree,
-		requestedBase: "HEAD",
-		baseCommit: found.head,
+		requestedBase,
+		baseCommit,
 		sourceDirty: dirtyPaths(identity),
 		trusted: ctx.isProjectTrusted(),
 	};

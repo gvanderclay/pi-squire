@@ -3,7 +3,7 @@
 // resolves that directory, observes its Git checkout read-only, and decides
 // the explicit Pi trust flag in the parent, asking the user only when no
 // saved or current decision applies and the target has protected resources.
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -97,9 +97,16 @@ function resolveDirectory(value: string, base: string): string {
 /** How long one Git question may take before the answer is unknown. */
 const GIT_TIMEOUT_MS = 5000;
 
-export type GitAnswer = { ok: true; out: string } | { ok: false; status: number | null; message: string };
+/** A Git answer, with `bytes` the stdout and stderr it captured, so a caller can budget them together. */
+export type GitAnswer =
+	| { ok: true; out: string; bytes: number }
+	| { ok: false; status: number | null; message: string; bytes: number };
 
-/** Ask Git read-only in `cwd`; never throws. A call past `timeout` or `maxBuffer` fails naming the limit. */
+/**
+ * Ask Git read-only in `cwd`; never throws. A call past `timeout` is killed
+ * with SIGKILL, which it cannot ignore, and one printing more than
+ * `maxBuffer` on either stream fails; each failure names its limit.
+ */
 export function askGit(
 	cwd: string,
 	args: string[],
@@ -108,27 +115,27 @@ export function askGit(
 	const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0" };
 	// The parent's own repository variables would answer for the wrong directory.
 	for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"]) delete env[name];
-	try {
-		const out = execFileSync("git", args, {
-			cwd,
-			env,
-			encoding: "utf8",
-			timeout: limits.timeout,
-			...(limits.maxBuffer === undefined ? {} : { maxBuffer: limits.maxBuffer }),
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		return { ok: true, out };
-	} catch (err) {
-		const failure = err as { code?: string; status?: number | null; stderr?: string; message: string };
-		if (failure.code === "ETIMEDOUT") {
-			return { ok: false, status: null, message: `timed out after the ${limits.timeout / 1000} s time limit` };
-		}
-		if (failure.code === "ENOBUFS") {
-			return { ok: false, status: null, message: `printed more than the ${limits.maxBuffer} byte capture limit` };
-		}
-		const stderr = typeof failure.stderr === "string" ? failure.stderr.trim() : "";
-		return { ok: false, status: failure.status ?? null, message: stderr === "" ? failure.message : stderr };
+	const run = spawnSync("git", args, {
+		cwd,
+		env,
+		timeout: limits.timeout,
+		killSignal: "SIGKILL",
+		...(limits.maxBuffer === undefined ? {} : { maxBuffer: limits.maxBuffer }),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const bytes = (run.stdout?.length ?? 0) + (run.stderr?.length ?? 0);
+	const code = (run.error as { code?: string } | undefined)?.code;
+	if (code === "ETIMEDOUT") {
+		return { ok: false, status: null, message: `timed out after the ${limits.timeout / 1000} s time limit`, bytes };
 	}
+	if (code === "ENOBUFS") {
+		return { ok: false, status: null, message: `printed more than the ${limits.maxBuffer} byte capture limit`, bytes };
+	}
+	if (run.error !== undefined) return { ok: false, status: null, message: run.error.message, bytes };
+	if (run.status === 0) return { ok: true, out: run.stdout.toString("utf8"), bytes };
+	const stderr = run.stderr.toString("utf8").trim();
+	const how = run.status === null ? `was killed by ${run.signal}` : `exited with status ${run.status}`;
+	return { ok: false, status: run.status, message: stderr === "" ? `git ${args[0]} ${how}` : stderr, bytes };
 }
 
 /** One path Git printed alone on its output: only the final newline is dropped, since a path may hold others. */

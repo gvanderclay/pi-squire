@@ -1010,11 +1010,15 @@ test("inspection failure cannot lose duplicate or late replies or other status",
 	t.mock.timers.tick(5000);
 	for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(s.sent.filter((x) => /closed without a result/.test(String(x.message.content))).length, 1);
-	scriptGit(late, "exec sleep 10", ["status"]);
+	// It ignores SIGTERM, so only a kill that cannot be refused ends it within the limit.
+	scriptGit(late, "trap '' TERM; exec sleep 10", ["status"]);
 	const lateReply = replyTo(s, lateRecord, "late-reply");
 	const before = Date.now();
 	s.events.emit("message:inbound", lateReply);
-	assert.ok(Date.now() - before < 8000, "a hung Git command is cut off");
+	assert.ok(
+		Date.now() - before < 4500,
+		`a hung Git command is cut off at its 2 s limit, took ${Date.now() - before} ms`,
+	);
 	assert.equal(lateReply.handled, true);
 	const lateMessage = delegateMessages(s).at(-1)?.message as unknown as { content: string; details: Data };
 	assert.match(lateMessage.content, /^\[delegate\] Result from/);
@@ -1061,9 +1065,10 @@ test("Git paths remain filename safe bounded and index read only", async () => {
 	const timedOut = repo(join(base, "timed out"));
 	const flooded = repo(join(base, "flooded"));
 	const slow = repo(join(base, "slow"));
+	const noisy = repo(join(base, "noisy"));
 	const s = await started();
-	for (const dir of [main, many, wide, timedOut, flooded, slow]) await call(s, dir);
-	const [mainRecord, manyRecord, wideRecord, timedOutRecord, floodedRecord, slowRecord] = records(s);
+	for (const dir of [main, many, wide, timedOut, flooded, slow, noisy]) await call(s, dir);
+	const [mainRecord, manyRecord, wideRecord, timedOutRecord, floodedRecord, slowRecord, noisyRecord] = records(s);
 
 	git(main, "mv", "old name.txt", "renamed\nfile.txt");
 	git(main, "commit", "-q", "-m", "renamed");
@@ -1076,8 +1081,13 @@ test("Git paths remain filename safe bounded and index read only", async () => {
 	utimesSync(join(main, "sentinel.txt"), later, later);
 	const indexPath = join(main, ".git", "index");
 	const indexBeforeInspection = readFileSync(indexPath);
-	scriptGit(timedOut, "exec sleep 10", ["status"]);
+	scriptGit(timedOut, "trap '' TERM; exec sleep 10", ["status"]);
+	const hungStart = Date.now();
 	const { items: hungItems } = await statusOf(s);
+	const hungTook = Date.now() - hungStart;
+	// 600,000 bytes of stderr before every command: no single stream is over 4 MiB, but together they are.
+	scriptGit(noisy, "head -c 600000 /dev/zero >&2");
+	const { items: noisyItems } = await statusOf(s);
 	scriptGit(flooded, "exec head -c 5000000 /dev/zero", ["status"]);
 	const { items: floodedItems } = await statusOf(s);
 	scriptGit(slow, "sleep 1.5");
@@ -1107,6 +1117,10 @@ test("Git paths remain filename safe bounded and index read only", async () => {
 	const timedOutItem = itemFor(hungItems, timedOutRecord);
 	assert.equal(timedOutItem.workspaceSnapshot.kind, "unknown");
 	assert.match(timedOutItem.workspaceSnapshot.reason, /time|bound|limit/i);
+	assert.ok(hungTook < 4500, `a Git that ignores SIGTERM is still stopped at 2 s, took ${hungTook} ms`);
+	const noisyItem = itemFor(noisyItems, noisyRecord);
+	assert.equal(noisyItem.workspaceSnapshot.kind, "unknown", "stderr counts toward the 4 MiB capture limit");
+	assert.match(noisyItem.workspaceSnapshot.reason, /limit/i);
 	assert.equal(itemFor(hungItems, mainRecord).workspaceSnapshot.kind, "git", "one hung checkout fails only itself");
 	const floodedItem = itemFor(floodedItems, floodedRecord);
 	assert.equal(floodedItem.workspaceSnapshot.kind, "unknown");
@@ -1115,4 +1129,26 @@ test("Git paths remain filename safe bounded and index read only", async () => {
 	assert.equal(slowItem.workspaceSnapshot.kind, "unknown");
 	assert.match(slowItem.workspaceSnapshot.reason, /time|limit/i);
 	assert.ok(slowTook < 8000, `the whole inspection of one checkout is bounded, took ${slowTook} ms`);
+});
+
+test("committed paths ignore diff.relative and stay repository-relative from a subdirectory", async () => {
+	base = fresh();
+	// A user's diff.relative hiding commits outside the launch subdirectory, or rooting paths unlike status.
+	const main = repo(join(base, "main"));
+	const sub = join(main, "sub");
+	mkdirSync(sub);
+	const s = await started();
+	await call(s, sub);
+	const [record] = records(s);
+	writeFileSync(join(main, "outside.txt"), "x\n");
+	writeFileSync(join(sub, "inside.txt"), "x\n");
+	git(main, "add", ".");
+	git(main, "commit", "-q", "-m", "both");
+	git(main, "config", "diff.relative", "true");
+	writeFileSync(join(main, "pending-outside.txt"), "x\n");
+	const snap = itemFor((await statusOf(s)).items, record).workspaceSnapshot;
+	assert.equal(snap.kind, "git");
+	assert.deepEqual([...snap.committed.paths].sort(), ["outside.txt", "sub/inside.txt"]);
+	assert.equal(snap.committed.total, 2);
+	assert.ok(snap.pending.untracked.paths.includes("pending-outside.txt"));
 });

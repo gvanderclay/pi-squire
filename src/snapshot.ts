@@ -135,12 +135,16 @@ function budgetedGit(cwd: string): { run(args: string[]): GitAnswer; ask(args: s
 			timeout: Math.min(SNAPSHOT_COMMAND_MS, left),
 			maxBuffer: SNAPSHOT_CAPTURE_BYTES - captured,
 		});
-		if (answer.ok) captured += Buffer.byteLength(answer.out, "utf8");
+		// Both streams, failed commands included, share one budget.
+		captured += answer.bytes;
+		if (captured > SNAPSHOT_CAPTURE_BYTES) {
+			throw new Unknown(`Git printed more than the ${SNAPSHOT_CAPTURE_BYTES} byte capture limit for one inspection`);
+		}
 		return answer;
 	};
 	const ask = (args: string[]): string => {
 		const answer = run(args);
-		if (!answer.ok) throw new Unknown(`git ${args[0]} failed: ${answer.message}`);
+		if (!answer.ok) throw new Unknown(`git ${args[args[0] === "-c" ? 2 : 0]} failed: ${answer.message}`);
 		return answer.out;
 	};
 	return { run, ask };
@@ -189,7 +193,22 @@ function inspectCheckout(cwd: string, launch: Extract<GitLaunch, { kind: "git" }
 	onePath(ask(["rev-parse", "--verify", `${baseline}^{commit}`]));
 	const ahead = Number.parseInt(ask(["rev-list", "--count", head, "--not", baseline]), 10);
 	if (!Number.isSafeInteger(ahead)) throw new Unknown("git rev-list printed no commit count");
-	const committed = fields(ask(["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", baseline, head, "--"]));
+	// A configured diff.relative would drop paths outside a subdirectory cwd and reroot the rest; `-c` rather
+	// than `--no-relative`, which needs Git 2.28, while older Git ignores the unknown key.
+	const committed = fields(
+		ask([
+			"-c",
+			"diff.relative=false",
+			"diff",
+			"--name-only",
+			"-z",
+			"--no-renames",
+			"--no-ext-diff",
+			baseline,
+			head,
+			"--",
+		]),
+	);
 	const pending = pendingPaths(ask(["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]));
 	const dirty = Object.values(pending).some((paths) => paths.length > 0);
 	return {

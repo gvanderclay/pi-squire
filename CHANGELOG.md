@@ -41,6 +41,19 @@ follows [Semantic Versioning](https://semver.org/).
   `workspace:` line. The pinned record, result-text and completion tests
   change with it.
 
+- Results and `delegation_status` report a snapshot of the delegation's
+  checkout (`workspaceSnapshot`): branch or detached HEAD, head, launch
+  commit, commits since launch, committed paths since launch, and staged,
+  unstaged, untracked and conflicted paths, or non-Git, or unknown with a
+  reason. A result keeps the snapshot taken when its reply arrived; status
+  takes a fresh one each call. Lists are capped at 100 paths and 16 KiB with
+  totals; Git gets 2 s per command, 5 s and 4 MiB per checkout, runs without
+  optional index writes, and is asked only about the recorded checkout. A
+  snapshot is an observation, not attribution or merge advice. Result text
+  gains `Checkout when the result arrived:` lines and status text
+  `checkout now:` lines; the pinned result entry, details and result-text
+  tests change with it.
+
 ### Changed
 
 - `/delegate` flag values may be double-quoted, with `\"` and `\\` escapes,

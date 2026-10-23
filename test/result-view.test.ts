@@ -149,6 +149,7 @@ test("a result message carries the details its view is drawn from", async () => 
 		workspace: { mode: "inherited", cwd: root, git: { kind: "non-git" } },
 		task: { note: `[delegate] The task ${requestId(s)} has no copy in sent/; only its id is known.` },
 		body: "line one\nline two",
+		workspaceSnapshot: { kind: "non-git" },
 	});
 });
 

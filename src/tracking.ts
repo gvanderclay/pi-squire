@@ -8,7 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 
 import { type Mark, readMarks } from "./limits.ts";
-import { cwdLine, modelLabel, workspaceLine } from "./render.ts";
+import { cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -18,6 +18,7 @@ import {
 	recordedName,
 	type WindowState,
 } from "./results.ts";
+import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import type { ReadingError } from "./usage.ts";
 import { WorkspaceSchema } from "./workspace.ts";
@@ -70,6 +71,7 @@ const DelegationSchema = Type.Object({
 	),
 	sessionDir: Type.Optional(Type.String({ description: "The session-storage directory it was told to use." })),
 	workspace: Type.Optional(WorkspaceSchema),
+	workspaceSnapshot: WorkspaceSnapshotSchema,
 	state: Type.Union(
 		DELEGATION_STATES.map((state) => Type.Literal(state)),
 		{
@@ -174,6 +176,8 @@ type View = {
 	sessionPath: string | undefined;
 	/** When the session file was last written; set only for a running delegation with a file. */
 	lastActive: Date | undefined;
+	/** The checkout observed for this status call; the recorded result keeps its own. */
+	snapshot: WorkspaceSnapshot;
 };
 
 /** How long ago, worded for the `state:` line: `just now`, `N min ago` or `N h M min ago`. */
@@ -196,11 +200,13 @@ function view(record: Recorded, windows: TmuxWindow[] | undefined, ctx: Extensio
 			// a failed stat counts as no file
 		}
 	}
-	return { record, state, name: recordedName(record), sessionPath, lastActive };
+	const snapshot = inspectWorkspace(record.workspace?.cwd, record.workspace?.git);
+	return { record, state, name: recordedName(record), sessionPath, lastActive, snapshot };
 }
 
 /** The text block for one delegation. */
-function viewText({ record, state, name, sessionPath, lastActive }: View): string {
+function viewText({ record, state, name, sessionPath, lastActive, snapshot }: View): string {
+	const [checkout, ...categories] = snapshotLines(snapshot);
 	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
 	const lines = [
 		`${record.id} ${record.agent} (${modelLabel(record.model, record.result?.finishedModel)}, thinking ${record.thinking})`,
@@ -209,6 +215,8 @@ function viewText({ record, state, name, sessionPath, lastActive }: View): strin
 		`  window: ${record.windowName} (${record.windowId})`,
 		`  cwd: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
+		`  checkout now: ${checkout}`,
+		...categories.map((line) => `    ${line}`),
 		`  auto-exit: ${autoExitLine(record)}`,
 		`  session: ${sessionPath ?? `${record.id} (no session file yet)`}`,
 	];
@@ -217,7 +225,7 @@ function viewText({ record, state, name, sessionPath, lastActive }: View): strin
 }
 
 /** The structured details for one delegation. */
-function viewDetails({ record, state, name, sessionPath, lastActive }: View): Record<string, unknown> {
+function viewDetails({ record, state, name, sessionPath, lastActive, snapshot }: View): Record<string, unknown> {
 	return {
 		id: record.id,
 		name,
@@ -231,6 +239,7 @@ function viewDetails({ record, state, name, sessionPath, lastActive }: View): Re
 		...(record.cwd === undefined ? {} : { cwd: record.cwd }),
 		...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
 		...(record.workspace === undefined ? {} : { workspace: record.workspace }),
+		workspaceSnapshot: snapshot,
 		state,
 		closed: record.closed === true,
 		closedWithoutResult: record.gone === true && record.result === undefined && record.closed !== true,

@@ -10,7 +10,8 @@ import { isAbsolute, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { readMarks } from "./limits.ts";
-import { cwdLine, modelLabel, renderMessage, workspaceLine } from "./render.ts";
+import { cwdLine, modelLabel, renderMessage, snapshotLines, workspaceLine } from "./render.ts";
+import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
 import type { Workspace } from "./workspace.ts";
 
 /** The session entry type both delegation records and results use. */
@@ -76,6 +77,8 @@ export type Result = {
 	sessionPath?: string;
 	/** The `provider/model` of the delegate's last assistant message, when its session file holds one. */
 	finishedModel?: string;
+	/** The checkout as observed when the result arrived; absent in results from before it was kept. */
+	workspaceSnapshot?: WorkspaceSnapshot;
 };
 
 /** What both delegate messages carry for their view, beside the text the model reads. */
@@ -107,6 +110,8 @@ export type MessageDetails =
 			task: TaskQuote;
 			/** The reply body, capped. */
 			body: string;
+			/** The checkout when the result arrived, the same value as the recorded result's; absent in older messages. */
+			workspaceSnapshot?: WorkspaceSnapshot;
 	  })
 	| (CommonDetails & { kind: "gone"; windowName: string });
 
@@ -265,6 +270,7 @@ function resultDetails(
 	payload: Inbound,
 	session: string | undefined,
 	finished: string | undefined,
+	snapshot: WorkspaceSnapshot,
 ): ResultDetails {
 	const reply = payload.envelope;
 	const copy = payload.requests.find((request) => request.envelope?.id === delegation.requestId);
@@ -298,7 +304,14 @@ function resultDetails(
 		...(limit === undefined ? {} : { limit }),
 		task,
 		body,
+		workspaceSnapshot: snapshot,
 	};
+}
+
+/** The snapshot lines of the result text: a heading line, then its path lists indented. */
+function checkoutText(snapshot: WorkspaceSnapshot): string[] {
+	const [first, ...rest] = snapshotLines(snapshot);
+	return [`Checkout when the result arrived: ${first}`, ...rest.map((line) => `  ${line}`)];
 }
 
 /** The one message the parent model reads for a settled delegation. */
@@ -318,6 +331,7 @@ function resultText(details: ResultDetails): string {
 		quote,
 		`Working directory: ${cwdLine(details.cwd)}`,
 		...(details.workspace === undefined ? [] : [`Workspace: ${workspaceLine(details.workspace)}`]),
+		...(details.workspaceSnapshot === undefined ? [] : checkoutText(details.workspaceSnapshot)),
 		`Envelope: ${details.envelopePath}`,
 		`Delegate session: ${details.sessionPath ?? details.id}`,
 		"",
@@ -457,7 +471,9 @@ export function createResults(pi: ExtensionAPI): Results {
 		shown.add(reply.id);
 		const session = locateSession(delegation, ctx?.sessionManager.getSessionDir());
 		const finished = finishedModel(session);
-		const details = resultDetails(delegation, payload, session, finished);
+		// After the claim above, so a slow or failing inspection cannot let the provider or a duplicate deliver it too.
+		const snapshot = inspectWorkspace(delegation.workspace?.cwd, delegation.workspace?.git);
+		const details = resultDetails(delegation, payload, session, finished, snapshot);
 		// Steer, not follow-up: a busy parent gets the result before its next model call, not after it has answered.
 		pi.sendMessage(
 			{ customType: CUSTOM_TYPE, content: resultText(details), details, display: true },
@@ -469,6 +485,7 @@ export function createResults(pi: ExtensionAPI): Results {
 			envelopePath: payload.path,
 			...(session === undefined ? {} : { sessionPath: session }),
 			...(finished === undefined ? {} : { finishedModel: finished }),
+			workspaceSnapshot: snapshot,
 		};
 		pi.appendEntry(CUSTOM_TYPE, { id: delegation.id, result });
 		delegation.result = result;

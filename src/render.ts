@@ -19,7 +19,8 @@ import type { Static } from "typebox";
 
 import type { DelegateSchema } from "./index.ts";
 import type { MessageDetails } from "./results.ts";
-import type { Workspace } from "./workspace.ts";
+import type { WorkspaceSnapshot } from "./snapshot.ts";
+import type { PathSummary, Workspace } from "./workspace.ts";
 
 /** The launch model, or `launch → finished` when the delegate finished on another one. */
 export function modelLabel(model: string, finished: string | undefined): string {
@@ -40,6 +41,33 @@ export function workspaceLine({ mode, git }: Workspace): string {
 	const linked = checkoutRoot === mainRoot ? "" : ` (linked worktree ${checkoutRoot})`;
 	const at = git.position.detached ? "detached HEAD" : `branch ${git.position.branch}`;
 	return `${how}; Git checkout ${mainRoot}${linked}, ${at}, launch commit ${git.baseline ?? "none (no commits yet)"}`;
+}
+
+/** A path list as data: each name JSON-quoted, so spaces, quotes and newlines stay inside one line. */
+function pathList({ paths, total }: PathSummary): string {
+	if (total === 0) return "none";
+	const more = total > paths.length ? `, and ${total - paths.length} more not listed` : "";
+	return `${total} path${total === 1 ? "" : "s"}: ${paths.map((path) => JSON.stringify(path)).join(", ")}${more}`;
+}
+
+/**
+ * A checkout observation: a summary line, then for Git one line per path
+ * category. Committed changes are counted from the launch commit; pending
+ * ones are the index and working tree now.
+ */
+export function snapshotLines(snapshot: WorkspaceSnapshot): string[] {
+	if (snapshot.kind === "non-git") return ["not a Git checkout"];
+	if (snapshot.kind === "unknown") return [`Git state unknown (${snapshot.reason})`];
+	const { position, head, baseline, ahead, workingState, committed, pending } = snapshot;
+	const at = position.detached ? "detached HEAD" : `branch ${position.branch}`;
+	return [
+		`${at}, head ${head}, launch commit ${baseline}, ${ahead} commit${ahead === 1 ? "" : "s"} since launch, working tree ${workingState}`,
+		`committed since launch: ${pathList(committed)}`,
+		`staged: ${pathList(pending.staged)}`,
+		`unstaged: ${pathList(pending.unstaged)}`,
+		`untracked: ${pathList(pending.untracked)}`,
+		`conflicted: ${pathList(pending.conflicted)}`,
+	];
 }
 
 /** Lines of a result the collapsed message previews. */
@@ -82,6 +110,10 @@ function idLines(details: MessageDetails): string[] {
 	else lines.push(`window ${details.windowName}`);
 	lines.push(`cwd ${details.cwd === undefined ? cwdLine(undefined) : tilde(details.cwd)}`);
 	if (details.workspace !== undefined) lines.push(`workspace ${workspaceLine(details.workspace)}`);
+	if (details.kind === "result" && details.workspaceSnapshot !== undefined) {
+		const [first, ...rest] = snapshotLines(details.workspaceSnapshot);
+		lines.push(`checkout when the result arrived: ${first}`, ...rest.map((line) => `  ${line}`));
+	}
 	lines.push(
 		`session ${details.sessionPath === undefined ? `${details.id} (no session file found)` : tilde(details.sessionPath)}`,
 	);

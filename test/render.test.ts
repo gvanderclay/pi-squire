@@ -209,6 +209,45 @@ test("an expanded result names its workspace, its Git checkout or an unknown Git
 	assert.ok(!(render(result(), true, 400) ?? []).join("\n").includes("workspace"), "older records show no workspace");
 });
 
+test("an expanded result shows its checkout snapshot as data, and the collapsed row does not", () => {
+	// A view that splits a filename across lines, hides a truncation, or calls a failed inspection non-Git.
+	const summary = (paths: string[], total = paths.length) => ({ paths, total, truncated: total > paths.length });
+	const details = result({
+		workspaceSnapshot: {
+			kind: "git",
+			position: { branch: "topic", detached: false },
+			head: "h".repeat(40),
+			baseline: "b".repeat(40),
+			ahead: 2,
+			workingState: "dirty",
+			committed: summary(["renamed\nfile.txt"]),
+			pending: {
+				staged: summary([]),
+				unstaged: summary(["a b.txt"]),
+				untracked: summary(["x.txt"], 101),
+				conflicted: summary(["conflict.txt"]),
+			},
+		},
+	});
+	const lines = render(details, true, 400) ?? [];
+	const text = lines.join("\n");
+	assert.ok(text.includes("h".repeat(40)) && text.includes("b".repeat(40)), text);
+	assert.ok(text.includes('"renamed\\nfile.txt"'), "a newline in a name stays inside its quoted line");
+	assert.ok(!lines.some((line) => line.endsWith("file.txt") && !line.includes("renamed")), text);
+	assert.ok(text.includes('"a b.txt"'), text);
+	assert.ok(text.includes("100 more"), "the paths left out are counted");
+	assert.ok(text.includes('"conflict.txt"'), text);
+	assert.equal((render(details, false) ?? []).join("\n").includes("conflict.txt"), false, "collapsed stays compact");
+	const unknown = (
+		render(result({ workspaceSnapshot: { kind: "unknown", reason: "git status timed out" } }), true, 400) ?? []
+	).join("\n");
+	assert.ok(unknown.includes("unknown (git status timed out)"), unknown);
+	assert.ok(
+		!(render(result(), true, 400) ?? []).join("\n").includes("checkout when"),
+		"older messages show no snapshot",
+	);
+});
+
 test("an expanded result with no task copy shows the note", () => {
 	assert.ok((render(result({ task: { note: "no copy" } }), true) ?? []).includes("<dim:no copy>"));
 });

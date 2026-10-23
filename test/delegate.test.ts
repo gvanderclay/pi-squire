@@ -742,7 +742,13 @@ test("a result is recorded once and the same reply is never shown twice", async 
 		customType: "delegate",
 		data: {
 			id: delegation.id,
-			result: { status: "done", replyId: "reply-1", envelopePath: payload.path },
+			// The harness root is outside any Git checkout.
+			result: {
+				status: "done",
+				replyId: "reply-1",
+				envelopePath: payload.path,
+				workspaceSnapshot: { kind: "non-git" },
+			},
 		},
 	});
 

@@ -31,6 +31,11 @@ export type DirectoryWorkspace = {
 	git: GitLaunch;
 };
 export type Workspace = DirectoryWorkspace;
+/** `GitPosition` as a schema. */
+export const PositionSchema = Type.Union([
+	Type.Object({ branch: Type.String(), detached: Type.Literal(false) }),
+	Type.Object({ branch: Type.Null(), detached: Type.Literal(true) }),
+]);
 
 /** `Workspace` as a schema, for the tools' structured outputs. */
 export const WorkspaceSchema = Type.Object({
@@ -41,10 +46,7 @@ export const WorkspaceSchema = Type.Object({
 			Type.Object({
 				kind: Type.Literal("git"),
 				identity: Type.Object({ mainRoot: Type.String(), commonDir: Type.String(), checkoutRoot: Type.String() }),
-				position: Type.Union([
-					Type.Object({ branch: Type.String(), detached: Type.Literal(false) }),
-					Type.Object({ branch: Type.Null(), detached: Type.Literal(true) }),
-				]),
+				position: PositionSchema,
 				head: Type.Union([Type.String(), Type.Null()]),
 				baseline: Type.Union([Type.String(), Type.Null()], {
 					description: "The commit checked out at launch; null when the checkout had no commit yet.",
@@ -95,10 +97,14 @@ function resolveDirectory(value: string, base: string): string {
 /** How long one Git question may take before the answer is unknown. */
 const GIT_TIMEOUT_MS = 5000;
 
-type GitAnswer = { ok: true; out: string } | { ok: false; status: number | null; message: string };
+export type GitAnswer = { ok: true; out: string } | { ok: false; status: number | null; message: string };
 
-/** Ask Git read-only in `cwd`; never throws. */
-function askGit(cwd: string, args: string[]): GitAnswer {
+/** Ask Git read-only in `cwd`; never throws. A call past `timeout` or `maxBuffer` fails naming the limit. */
+export function askGit(
+	cwd: string,
+	args: string[],
+	limits: { timeout: number; maxBuffer?: number } = { timeout: GIT_TIMEOUT_MS },
+): GitAnswer {
 	const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0" };
 	// The parent's own repository variables would answer for the wrong directory.
 	for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"]) delete env[name];
@@ -107,19 +113,26 @@ function askGit(cwd: string, args: string[]): GitAnswer {
 			cwd,
 			env,
 			encoding: "utf8",
-			timeout: GIT_TIMEOUT_MS,
+			timeout: limits.timeout,
+			...(limits.maxBuffer === undefined ? {} : { maxBuffer: limits.maxBuffer }),
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		return { ok: true, out };
 	} catch (err) {
-		const failure = err as { status?: number | null; stderr?: string; message: string };
+		const failure = err as { code?: string; status?: number | null; stderr?: string; message: string };
+		if (failure.code === "ETIMEDOUT") {
+			return { ok: false, status: null, message: `timed out after the ${limits.timeout / 1000} s time limit` };
+		}
+		if (failure.code === "ENOBUFS") {
+			return { ok: false, status: null, message: `printed more than the ${limits.maxBuffer} byte capture limit` };
+		}
 		const stderr = typeof failure.stderr === "string" ? failure.stderr.trim() : "";
 		return { ok: false, status: failure.status ?? null, message: stderr === "" ? failure.message : stderr };
 	}
 }
 
 /** One path Git printed alone on its output: only the final newline is dropped, since a path may hold others. */
-const onePath = (out: string): string => (out.endsWith("\n") ? out.slice(0, -1) : out);
+export const onePath = (out: string): string => (out.endsWith("\n") ? out.slice(0, -1) : out);
 
 /** The repository and checkout `cwd` belongs to, or why not. */
 function identify(cwd: string): { identity: GitIdentity } | { launch: GitLaunch } {

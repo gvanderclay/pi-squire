@@ -181,6 +181,40 @@ names the directory when it differs from the parent's; the tool's
 structured result always carries `cwd` and `workspace`, and status, results
 and their expanded views show them.
 
+### Checkout snapshots
+
+A result records one snapshot of the delegation's checkout, taken when the
+reply arrives, and `delegation_status` takes a fresh one on every call. The
+result's snapshot is history: a later status never changes it. Both are a
+`workspaceSnapshot`, one of:
+
+- `{ kind: "git", position, head, baseline, ahead, workingState, committed, pending }`:
+  the current branch or detached HEAD, the head commit, the launch commit
+  (`baseline`), how many commits are reachable from head but not from the
+  baseline, `clean` or `dirty`, the paths changed between baseline and head
+  (`committed`), and the `pending` paths, split into `staged`, `unstaged`,
+  `untracked` and `conflicted`. A clean working tree can still have commits
+  and committed paths since launch;
+- `{ kind: "non-git" }` for a directory launched outside Git that still exists;
+- `{ kind: "unknown", reason }` when the directory is gone, is no longer the
+  checkout recorded at launch, its launch commit is missing, Git is missing,
+  fails or passes a limit, its Git state at launch was unknown, or the record
+  predates workspaces. Only the recorded checkout is inspected, never the
+  parent's.
+
+Each path list is `{ paths, total, truncated }`: at most 100 whole paths and
+16 KiB of names per list, with `total` counting all of them. Paths come from
+NUL-separated Git output and are shown JSON-quoted, so spaces and newlines in
+a name stay data; a rename lists both its old and new path. An inspection
+gives each Git command 2 seconds, the whole checkout 5 seconds and 4 MiB of
+output; past any of those the snapshot is unknown, never a partial count. Git
+runs read-only, without optional index writes.
+
+A snapshot is an observation of the checkout, not proof that the delegate made
+those changes, that the task succeeded, or that the branch is safe to merge.
+It does not say whether the branch is merged anywhere, prints no cleanup
+command, and nothing acts on it.
+
 ### Project trust
 
 The delegate's trust flag for a `--cwd` directory is decided in the parent,
@@ -361,6 +395,12 @@ nothing starts.
   window: scout-<first 8 of the id> (@1)
   cwd: <the directory its window opened in>
   workspace: existing directory; Git checkout <main root> (linked worktree <checkout>), branch <name>, launch commit <sha>
+  checkout now: branch <name>, head <sha>, launch commit <sha>, 1 commit since launch, working tree dirty
+    committed since launch: 1 path: "src/a.ts"
+    staged: none
+    unstaged: 1 path: "README.md"
+    untracked: none
+    conflicted: none
   auto-exit: on — the delegate closes its window after a normal completion unless the user took over there
   session: <the delegate's session file, or its id when there is none yet>
 
@@ -369,6 +409,7 @@ nothing starts.
   state: done — result status: done; the result reaches this session as a [delegate] message on its own
   window: researcher-<first 8 of the id> (@2)
   cwd: unknown (not recorded)
+  checkout now: Git state unknown (this delegation was recorded before its launch checkout was kept)
   auto-exit: off — the window stays open after the result
   session: <session file>
   envelope: <the reply's path in the parent's cur/>
@@ -394,6 +435,9 @@ nothing starts.
 - **Workspace** says how the directory was chosen and its Git checkout at
   launch (see [Working directory](#working-directory)); older records have
   none.
+- **Checkout now** is a fresh [snapshot](#checkout-snapshots) of that
+  checkout, taken by this call; the details carry it as `workspaceSnapshot`.
+  A failure is unknown for that delegation alone.
 - **Session** is the delegate's session file, searched for in the storage
   directory recorded at launch. Once found, its path is kept, so a later
   status or result uses it without searching again. Before the delegate has
@@ -555,6 +599,12 @@ Task, quoted from <sent/ copy>:
 > the task
 Working directory: <the directory its window opened in>
 Workspace: <how the directory was chosen and its Git checkout at launch>
+Checkout when the result arrived: <branch, head, launch commit, commits since launch, clean or dirty>
+  committed since launch: <paths>
+  staged: <paths>
+  unstaged: <paths>
+  untracked: <paths>
+  conflicted: <paths>
 Envelope: <cur/ path>
 Delegate session: <session file or id>
 
@@ -602,6 +652,11 @@ Delegate session: <session file or id>
   `Workspace:` line repeats the recorded [workspace](#working-directory), and
   is left out for records from before it was kept; the closed-without-a-result
   message carries the same two lines.
+- `Checkout when the result arrived:` is the [snapshot](#checkout-snapshots)
+  taken as the reply was claimed, also recorded with the result and in the
+  message details and expanded view. The reply is claimed first, so a slow or
+  failing Git cannot lose or duplicate it; the snapshot is then unknown. A
+  non-Git directory reads `not a Git checkout`.
 - The envelope path is the claimed reply in the parent's `cur/`; the
   delegate's session path is found by the delegation id in the session
   directory recorded at launch (the parent's current one for older records),
@@ -747,7 +802,8 @@ that the runtime emits it.
 Working-directory and trust tests use real temporary Git repositories and
 Pi's real trust store under a temporary agent directory, but a fake tmux: that
 a real delegate loads the selected checkout's instructions and settings is
-checked by hand, not by the suite.
+checked by hand, not by the suite. Snapshot tests use real repositories and,
+for hung, failing or flooding Git, a scripted `git` on `PATH`.
 
 ## Compatibility
 
@@ -763,7 +819,8 @@ Other extensions may rely on:
 - the `message:send`, `message:inbound` and `message:scan` hooks, consumed as
   their sections document;
 - the `delegate`, `delegation_status` and `delegation_close` tool names,
-  parameters and the recorded `workspace` shape;
+  parameters, the recorded `workspace` shape and the `workspaceSnapshot`
+  shape in results and status;
 - the `/delegate` syntax and flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,

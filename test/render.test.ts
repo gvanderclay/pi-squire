@@ -198,14 +198,13 @@ test("an expanded result names its workspace, its Git checkout or an unknown Git
 		),
 		checkout,
 	);
+	const reason = "git timed out\nextra line";
 	const unknown = (
-		render(
-			result({ workspace: { mode: "existing", cwd: "/work/x", git: { kind: "unknown", reason: "git timed out" } } }),
-			true,
-			400,
-		) ?? []
+		render(result({ workspace: { mode: "existing", cwd: "/work/x", git: { kind: "unknown", reason } } }), true, 400) ??
+		[]
 	).join("\n");
-	assert.ok(unknown.includes("<dim:workspace existing directory; Git state unknown (git timed out)>"), unknown);
+	assert.ok(unknown.includes("Git state unknown (git timed out\\nextra line)"), unknown);
+	assert.equal(reason, "git timed out\nextra line", "rendering does not mutate the structured reason");
 	assert.ok(!(render(result(), true, 400) ?? []).join("\n").includes("workspace"), "older records show no workspace");
 });
 

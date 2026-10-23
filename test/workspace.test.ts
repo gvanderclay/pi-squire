@@ -30,7 +30,9 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 
+import { inspectGit } from "../src/git.ts";
 import { renderMessage } from "../src/render.ts";
+import { trustPlannedWorktree, type WorktreePlan } from "../src/workspace.ts";
 
 import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
 
@@ -1176,6 +1178,160 @@ test("a repository replaced at the same location is observed against the recorde
 	assert.equal(snap.workingState, "clean");
 });
 
+test("same-repository trust change while queued refuses before second mail or creation", async () => {
+	base = fresh();
+	const options = { cwd: repo(join(base, "main")), projectTrusted: true };
+	const s = await started(options);
+	let entered!: () => void;
+	let release!: () => void;
+	const atOpen = new Promise<void>((resolve) => (entered = resolve));
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	const open = s.tmux.openWindow.bind(s.tmux);
+	let first = true;
+	s.tmux.openWindow = async (spec) => {
+		if (first) {
+			first = false;
+			entered();
+			await gate;
+		}
+		return open(spec);
+	};
+	const params = (branch: string) => ({ agent: "scout", task: "inspect", worktree: branch });
+	const firstLaunch = s.toolCall("delegate", params("queue/first"));
+	await atOpen;
+	const secondLaunch = s.toolCall("delegate", params("queue/second"));
+	await new Promise((resolve) => setImmediate(resolve));
+	s.context.isProjectTrusted = () => false;
+	release();
+	const [firstResult, secondResult] = await Promise.allSettled([firstLaunch, secondLaunch]);
+	assert.equal(firstResult.status, "fulfilled", "the in-flight first launch remains valid");
+	assert.equal(secondResult.status, "rejected", "the changed queued preflight refuses");
+	assert.equal(s.sendCalls.length, 1, "the refused queued attempt sends no task");
+	assert.equal(s.tmux.opened.length, 1, "the refused queued attempt creates no window");
+	assert.equal(git(options.cwd, "worktree", "list", "--porcelain").includes("queue/second"), false);
+});
+
+test("a saved unrelated-source denial appearing while queued refuses before mail", async () => {
+	base = fresh();
+	const parent = repo(join(base, "parent"));
+	const source = repo(join(base, "source"));
+	const store = new ProjectTrustStore(agentDir);
+	store.set(source, true);
+	const s = await started({ cwd: parent, projectTrusted: true });
+	let entered!: () => void;
+	let release!: () => void;
+	const atOpen = new Promise<void>((resolve) => (entered = resolve));
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	const open = s.tmux.openWindow.bind(s.tmux);
+	let first = true;
+	s.tmux.openWindow = async (spec) => {
+		if (first) {
+			first = false;
+			entered();
+			await gate;
+		}
+		return open(spec);
+	};
+	const params = (branch: string) => ({ agent: "scout", task: "inspect", worktree: branch, worktree_source: source });
+	const firstLaunch = s.toolCall("delegate", params("saved/first"));
+	await atOpen;
+	const secondLaunch = s.toolCall("delegate", params("saved/second"));
+	await new Promise((resolve) => setImmediate(resolve));
+	store.set(source, false);
+	release();
+	const [firstResult, secondResult] = await Promise.allSettled([firstLaunch, secondLaunch]);
+	assert.equal(firstResult.status, "fulfilled");
+	assert.equal(secondResult.status, "rejected");
+	assert.equal(s.sendCalls.length, 1);
+	assert.equal(s.tmux.opened.length, 1);
+});
+
+test("parent-context abort during managed trust selection cannot save or launch after Trust", async () => {
+	base = fresh();
+	const parent = repo(join(base, "parent"));
+	const source = repo(join(base, "source"));
+	protect(source);
+	git(source, "add", ".");
+	git(source, "commit", "-q", "-m", "protected base");
+	let answer!: (value: string) => void;
+	const selection = new Promise<string>((resolve) => (answer = resolve));
+	const s = await started({ cwd: parent, ui: { select: [selection] } });
+	const controller = new AbortController();
+	Object.defineProperty(s.context, "signal", { get: () => controller.signal });
+	const launch = s.toolCall("delegate", {
+		agent: "scout",
+		task: "inspect",
+		worktree: "cancel/topic",
+		worktree_source: source,
+	});
+	for (let i = 0; i < 20 && s.selects.length === 0; i++) await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(s.selects.length, 1);
+	controller.abort();
+	answer("Trust");
+	await assert.rejects(launch, /abort|cancel/i);
+	assert.equal(new ProjectTrustStore(agentDir).get(source), null);
+	assert.equal(s.sendCalls.length, 0);
+	assert.equal(s.tmux.opened.length, 0);
+	assert.equal(git(source, "worktree", "list", "--porcelain").includes("cancel/topic"), false);
+});
+
+test("planned trust follows Pi's cwd resource rules for symlinked, global, and ancestor resources", async () => {
+	base = fresh();
+	const parent = repo(join(base, "parent"));
+	const source = repo(join(base, "source"));
+	const identity = inspectGit(source);
+	assert.equal(identity.kind, "git");
+	if (identity.kind !== "git") throw new Error("fixture must be a Git repository");
+	const s = await started({ cwd: parent, hasUI: false });
+	const plan = (destination: string): WorktreePlan => ({
+		sourceCwd: source,
+		source: identity.identity,
+		destination,
+		branch: "planned/topic",
+		requestedBase: "HEAD",
+		baseCommit: git(source, "rev-parse", "HEAD"),
+		sourceDirty: { paths: [], total: 0, truncated: false },
+		trusted: false,
+	});
+	const externalSkills = join(base, "outside skills");
+	mkdirSync(externalSkills);
+	writeFileSync(join(externalSkills, "AGENTS.md"), "external skill\n");
+	const linkedParent = join(base, "linked-project");
+	mkdirSync(join(linkedParent, ".agents"), { recursive: true });
+	symlinkSync(externalSkills, join(linkedParent, ".agents", "skills"));
+	await assert.rejects(
+		trustPlannedWorktree(plan(join(linkedParent, "managed")), s.context as never, agentDir),
+		/exposes project resources/,
+	);
+	const globalProject = home;
+	rmSync(join(home, ".pi"), { recursive: true, force: true });
+	mkdirSync(join(home, ".agents", "skills"), { recursive: true });
+	assert.equal(hasTrustRequiringProjectResources(globalProject), false, "global skills are excluded by Pi");
+	await assert.doesNotReject(trustPlannedWorktree(plan(globalProject), s.context as never, agentDir));
+	const piOnly = join(base, "pi-only");
+	mkdirSync(join(piOnly, ".pi"), { recursive: true });
+	writeFileSync(join(piOnly, ".pi", "settings.json"), "{}\n");
+	await assert.doesNotReject(trustPlannedWorktree(plan(join(piOnly, "managed")), s.context as never, agentDir));
+
+	const protectedSource = repo(join(base, "protected-source"));
+	protect(protectedSource);
+	git(protectedSource, "add", ".");
+	git(protectedSource, "commit", "-q", "-m", "protected");
+	const protectedIdentity = inspectGit(protectedSource);
+	assert.equal(protectedIdentity.kind, "git");
+	if (protectedIdentity.kind !== "git") throw new Error("fixture must be a Git repository");
+	const chooser = await started({ cwd: parent, ui: { select: ["Trust (this session only)"] } });
+	const exposurePlan = {
+		...plan(join(base, "exposure", "managed")),
+		sourceCwd: protectedSource,
+		source: protectedIdentity.identity,
+		baseCommit: git(protectedSource, "rev-parse", "HEAD"),
+	};
+	const preflight = await trustPlannedWorktree(exposurePlan, chooser.context as never, agentDir);
+	mkdirSync(join(base, "exposure", ".agents", "skills"), { recursive: true });
+	assert.throws(preflight.revalidate, /resources changed while waiting/);
+});
+
 test("managed worktree can select an unrelated source checkout and its frozen base", async () => {
 	base = fresh();
 	const parent = repo(join(base, "parent"));
@@ -1195,6 +1351,8 @@ test("managed worktree can select an unrelated source checkout and its frozen ba
 	assert.equal(data.workspace.sourceCwd, source);
 	assert.equal(data.workspace.source.mainRoot, source);
 	assert.equal(data.workspace.baseCommit, sourceHead);
+	const planned = s.entries.find((entry) => entry.data.kind === "workspace-attempt")?.data as Data | undefined;
+	assert.equal(planned?.plan.trusted, false, "the journal records the resolved launch trust decision");
 	assert.equal(s.selects.length, 1, "unrelated protected base asks before creation despite parent's trust");
 	assert.equal(s.tmux.opened[0].cwd, data.cwd);
 	assert.equal(git(data.cwd, "rev-parse", "HEAD"), sourceHead);

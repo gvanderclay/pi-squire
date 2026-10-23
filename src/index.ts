@@ -684,6 +684,7 @@ export default function delegate(
 		let plan: WorktreePlan | undefined;
 		let directory: Workspace | undefined;
 		let trusted: boolean;
+		let revalidateTrust: (() => void) | undefined;
 		if (worktreeOption !== undefined) {
 			plan = await prepareWorktree(
 				{
@@ -695,8 +696,10 @@ export default function delegate(
 				getAgentDir(),
 			);
 			if (combined?.aborted) throw new Error("the launch was aborted");
-			trusted = await trustPlannedWorktree(plan, ctx, getAgentDir(), combined);
+			const trust = await trustPlannedWorktree(plan, ctx, getAgentDir(), combined);
 			if (combined?.aborted) throw new Error("the launch was aborted");
+			trusted = trust.trusted;
+			revalidateTrust = trust.revalidate;
 			plan.trusted = trusted;
 		} else {
 			const prepared = await prepareDirectory({ cwd: cwdOption, signal }, ctx, getAgentDir());
@@ -711,6 +714,7 @@ export default function delegate(
 		const run = async (): Promise<Launched> => {
 			if (plan !== undefined) {
 				revalidate(plan);
+				revalidateTrust?.();
 				attempt = {
 					kind: "workspace-attempt",
 					id,
@@ -736,7 +740,7 @@ export default function delegate(
 					};
 					results.recordAttempt(attempt, ctx);
 					throw new Error(
-						`worktree launch ${id} from ${plan.sourceCwd} failed at ${plan.destination} (${plan.branch}): ${created.cause}; ${resourceLine(created.resources)}${recovery.length ? `; recovery: ${recovery.join("; ")}` : ""}`,
+						`worktree launch ${id} from ${plan.sourceCwd} failed at ${plan.destination} (${plan.branch}): ${created.cause}; ${resourceLine(created.resources)}${recovery.length ? `; recovery: ${recovery.join("; ")}` : created.resources.kind === "worktree" ? "; inspect and preserve its contents before any cleanup" : ""}`,
 					);
 				}
 				managed = created.workspace;
@@ -824,7 +828,13 @@ export default function delegate(
 					results.recordAttempt(attempt, ctx);
 					const state = attempt.attempt;
 					const recovery =
-						state.phase === "retained" && state.recovery.length > 0 ? `; recovery: ${state.recovery.join("; ")}` : "";
+						state.phase !== "retained"
+							? ""
+							: state.recovery.length > 0
+								? `; recovery: ${state.recovery.join("; ")}`
+								: state.resources.kind === "worktree"
+									? "; inspect and preserve its contents before any cleanup"
+									: "";
 					throw new Error(
 						`worktree launch ${id} from ${managed.sourceCwd} at ${managed.cwd} (${managed.createdBranch}) failed: ${cause}; outcome ${state.phase}${recovery}`,
 						{ cause: error },

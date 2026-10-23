@@ -168,10 +168,12 @@ test("ignored files created during launch prevent rollback", async () => {
 		s.tmux.failOpen = "known pre-window failure";
 		return open(spec);
 	};
-	await assert.rejects(
-		s.toolCall("delegate", { agent: "scout", task: "inspect", worktree: "ignored/topic" }),
-		/known pre-window failure/,
+	const failure = await s.toolCall("delegate", { agent: "scout", task: "inspect", worktree: "ignored/topic" }).then(
+		() => assert.fail("launch should retain ignored data"),
+		(error: Error) => error,
 	);
+	assert.match(failure.message, /known pre-window failure.*inspect and preserve its contents before any cleanup/);
+	assert.doesNotMatch(failure.message, /worktree remove|git branch -d/);
 	assert.equal(readFileSync(join(destination, "ignored-secret.txt"), "utf8"), "keep this\\n");
 	const retained = s.entries.filter((entry) => entry.data.kind === "workspace-attempt").at(-1)?.data as
 		| Data

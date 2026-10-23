@@ -306,51 +306,90 @@ function plannedTreeHasResources(cwd: string, base: string): string | undefined 
 }
 
 function destinationHasAncestorSkills(destination: string): boolean {
-	let ancestor = dirname(destination);
-	while (ancestor !== dirname(ancestor)) {
-		const skills = join(ancestor, ".agents", "skills");
-		try {
-			if (hasTrustRequiringProjectResources(ancestor)) return true;
-		} catch {
-			throw new Error(
-				`could not inspect destination ancestor skills at ${skills}; establish trust explicitly before delegating`,
-			);
-		}
-		ancestor = dirname(ancestor);
+	try {
+		return hasTrustRequiringProjectResources(destination);
+	} catch {
+		throw new Error(
+			`could not inspect destination ancestor skills at ${join(dirname(destination), ".agents", "skills")}; establish trust explicitly before delegating`,
+		);
 	}
-	return false;
 }
 
-/** Decide trust for a not-yet-created checkout from its frozen tree and effective ancestor skills. */
-export async function trustPlannedWorktree(
+/** Trust plus the scoped facts that must remain true until the queued launch mutates anything. */
+export type PlannedTrust = { trusted: boolean; revalidate(): void };
+
+async function askPlannedResourceTrust(
 	plan: WorktreePlan,
 	ctx: ExtensionContext,
-	agentDir: string,
+	store: ProjectTrustStore,
 	signal?: AbortSignal,
-): Promise<boolean> {
-	const parent = inspectGit(ctx.cwd);
-	if (parent.kind === "git" && parent.identity.commonDir === plan.source.commonDir) return ctx.isProjectTrusted();
-	const store = new ProjectTrustStore(agentDir);
-	const saved = savedDecision(store, plan.source.mainRoot);
-	if (saved !== null) return saved;
+): Promise<{ trusted: boolean; exposure?: { tree: string | undefined; ancestors: boolean } }> {
 	const tree = plannedTreeHasResources(plan.source.checkoutRoot, plan.baseCommit);
-	const ancestorSkills = destinationHasAncestorSkills(plan.destination);
-	if (tree === undefined && !ancestorSkills) return false;
+	const ancestors = destinationHasAncestorSkills(plan.destination);
+	const exposure = { tree, ancestors };
+	if (tree === undefined && !ancestors) return { trusted: false, exposure };
 	if (!ctx.hasUI)
 		throw new Error(
 			`the planned worktree in ${plan.destination} exposes project resources and has no saved trust decision for ${plan.source.mainRoot}; open Pi and establish trust, then delegate again`,
 		);
-	return oneAtATime(async () => {
+	const trusted = await oneAtATime(async () => {
 		const savedAtTurn = savedDecision(store, plan.source.mainRoot);
 		if (savedAtTurn !== null) return savedAtTurn;
 		const answer = await askTrust(ctx, signal, store, plan.destination, plan.source.mainRoot);
 		if (
 			(tree !== undefined && plannedTreeHasResources(plan.source.checkoutRoot, plan.baseCommit) !== tree) ||
-			destinationHasAncestorSkills(plan.destination) !== ancestorSkills
+			destinationHasAncestorSkills(plan.destination) !== ancestors
 		)
 			throw new Error("the planned resources changed while trust was being decided; delegate again");
 		return answer;
 	}, signal);
+	return { trusted, exposure };
+}
+
+/** Decide trust for a not-yet-created checkout and retain a small synchronous queue-time check. */
+export async function trustPlannedWorktree(
+	plan: WorktreePlan,
+	ctx: ExtensionContext,
+	agentDir: string,
+	signal?: AbortSignal,
+): Promise<PlannedTrust> {
+	const parent = inspectGit(ctx.cwd);
+	const sameRepository = parent.kind === "git" && parent.identity.commonDir === plan.source.commonDir;
+	const store = new ProjectTrustStore(agentDir);
+	let trusted: boolean;
+	let exposure: { tree: string | undefined; ancestors: boolean } | undefined;
+	if (sameRepository) {
+		trusted = ctx.isProjectTrusted();
+	} else {
+		const saved = savedDecision(store, plan.source.mainRoot);
+		if (saved !== null) trusted = saved;
+		else {
+			const answer = await askPlannedResourceTrust(plan, ctx, store, signal);
+			trusted = answer.trusted;
+			exposure = answer.exposure;
+		}
+	}
+	const savedEntry = sameRepository ? undefined : store.getEntry(plan.source.mainRoot);
+	return {
+		trusted,
+		revalidate: () => {
+			const currentParent = inspectGit(ctx.cwd);
+			const stillSame = currentParent.kind === "git" && currentParent.identity.commonDir === plan.source.commonDir;
+			if (sameRepository) {
+				if (!stillSame || ctx.isProjectTrusted() !== trusted)
+					throw new Error("the parent trust or repository changed while waiting; delegate again");
+				return;
+			}
+			if (stillSame || JSON.stringify(store.getEntry(plan.source.mainRoot)) !== JSON.stringify(savedEntry))
+				throw new Error("the scoped project trust changed while waiting; delegate again");
+			if (
+				exposure !== undefined &&
+				(plannedTreeHasResources(plan.source.checkoutRoot, plan.baseCommit) !== exposure.tree ||
+					destinationHasAncestorSkills(plan.destination) !== exposure.ancestors)
+			)
+				throw new Error("the planned resources changed while waiting; delegate again");
+		},
+	};
 }
 
 /**

@@ -27,9 +27,9 @@ export function modelLabel(model: string, finished: string | undefined): string 
 	return finished === undefined || finished === model ? model : `${model} → ${finished}`;
 }
 
-/** Where a delegation ran, or that its record, from before cwd was kept, does not say. */
 const displayReason = (reason: string): string => JSON.stringify(reason).slice(1, -1);
 
+/** Where a delegation ran, or that its record, from before cwd was kept, does not say. */
 export function cwdLine(cwd: string | undefined): string {
 	return cwd ?? "unknown (not recorded)";
 }

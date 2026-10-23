@@ -430,6 +430,7 @@ export function session(options: SessionOptions = {}) {
 	};
 	return {
 		parent,
+		context: ctx,
 		tmux,
 		usage,
 		events,

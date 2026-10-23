@@ -11,6 +11,19 @@ follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - A delegate's footer shows its agent name in the theme's accent color.
+- Delegate results and closed-without-a-result messages are drawn with a
+  header (status icon, delegate name, model) and, collapsed, the first 3
+  lines of the result; expanded, the ids and files, the quoted task and the
+  result as Markdown. The text the parent model reads is unchanged apart from
+  the model. Messages from before this change show as plain text. The
+  renderer tests change with it.
+
+### Fixed
+
+- A delegate that finished on a different model than it launched on (a
+  fallback, or `/model` in its window) is now shown as `launched → finished`
+  in the result, the closed-without-a-result message and `delegation_status`,
+  read from the delegate's session file. It used to name the launch model.
 
 ## [0.9.1] - 2026-10-22
 

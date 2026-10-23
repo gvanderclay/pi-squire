@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 
 import { type Mark, readMarks } from "./limits.ts";
+import { modelLabel } from "./render.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -55,7 +56,10 @@ const DelegationSchema = Type.Object({
 	id: Type.String(),
 	name: Type.String(),
 	agent: Type.String(),
-	model: Type.String(),
+	model: Type.String({ description: "The model it was launched on." }),
+	finishedModel: Type.Optional(
+		Type.String({ description: "The model its result came from, read from its session file; done only." }),
+	),
 	thinking: Type.String(),
 	autoExit: Type.Boolean(),
 	windowId: Type.String(),
@@ -193,7 +197,7 @@ function view(record: Recorded, windows: TmuxWindow[] | undefined, ctx: Extensio
 function viewText({ record, state, name, sessionPath, lastActive }: View): string {
 	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
 	const lines = [
-		`${record.id} ${record.agent} (${record.model}, thinking ${record.thinking})`,
+		`${record.id} ${record.agent} (${modelLabel(record.model, record.result?.finishedModel)}, thinking ${record.thinking})`,
 		`  name: ${name}`,
 		`  state: ${stateLine(state, record)}${seen}`,
 		`  window: ${record.windowName} (${record.windowId})`,
@@ -211,6 +215,7 @@ function viewDetails({ record, state, name, sessionPath, lastActive }: View): Re
 		name,
 		agent: record.agent,
 		model: record.model,
+		...(record.result?.finishedModel === undefined ? {} : { finishedModel: record.result.finishedModel }),
 		thinking: record.thinking,
 		autoExit: record.autoExit === true,
 		windowId: record.windowId,

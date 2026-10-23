@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The `delegate` tool's row is drawn in the same style as the result message:
+  a call line naming the agent and label, then a ◐ header with the delegate's
+  name and model, a task preview and any skipped fallback models; expanded,
+  the whole task and the delegation id, window, thinking and auto-exit. The
+  text the model reads is unchanged.
+
 ## [0.9.3] - 2026-10-23
 
 ### Changed

@@ -8,7 +8,7 @@ import { after, beforeEach, test } from "node:test";
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
-import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -97,7 +97,13 @@ test("an expanded started row adds the ids, window, thinking and auto-exit", asy
 	const { tool, result } = await launched(args);
 	const id = (result.details as { id: string }).id;
 	const shown = lines(tool.renderResult(result, { expanded: true }, theme, context(args, true)));
-	for (const part of [`<dim:delegation ${id}>`, "<dim:thinking low, auto-exit on>"])
+	for (const part of [
+		`<dim:delegation ${id}>`,
+		"<dim:thinking low, auto-exit on>",
+		`<dim:cwd ${root}>`,
+		// The harness root is a temporary directory outside any Git checkout.
+		"<dim:workspace the parent's directory; not a Git checkout>",
+	])
 		assert.ok(shown.includes(part), `missing ${part}\n${shown.join("\n")}`);
 	assert.ok(shown.some((line) => line.startsWith("<dim:window scout-look (")));
 });
@@ -128,4 +134,19 @@ test("a refused call keeps its plain error text", async () => {
 	assert.deepEqual(lines(tool.renderResult(refused, { expanded: false }, theme, context(args, false, true))), [
 		"<error:unknown agent nobody>",
 	]);
+});
+
+test("an expanded started row saved before cwd was recorded says its cwd is unknown", async () => {
+	const args = { agent: "scout", task: TASK, label: "look" };
+	const { tool, result } = await launched(args);
+	const {
+		cwd: _cwd,
+		sessionDir: _sessionDir,
+		workspace: _workspace,
+		...legacy
+	} = result.details as Record<string, unknown>;
+	const saved = { ...result, details: legacy };
+	const shown = lines(tool.renderResult(saved, { expanded: true }, theme, context(args, true)));
+	assert.ok(shown.includes("<dim:cwd unknown (not recorded)>"), shown.join("\n"));
+	assert.ok(!shown.some((line) => line.includes(process.cwd())), shown.join("\n"));
 });

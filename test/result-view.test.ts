@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, session, sessionDir, writeAgent } from "./harness.ts";
+import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -143,8 +143,13 @@ test("a result message carries the details its view is drawn from", async () => 
 		requestId: requestId(s),
 		envelopePath: "/mail/cur/reply.json",
 		sessionPath: file,
+		cwd: root,
+		sessionDir,
+		// The harness root is a temporary directory outside any Git checkout.
+		workspace: { mode: "inherited", cwd: root, git: { kind: "non-git" } },
 		task: { note: `[delegate] The task ${requestId(s)} has no copy in sent/; only its id is known.` },
 		body: "line one\nline two",
+		workspaceSnapshot: { kind: "non-git" },
 	});
 });
 
@@ -164,4 +169,28 @@ test("a gone message carries details of kind gone with the finishing model", asy
 	assert.equal(message.details?.kind, "gone");
 	assert.equal(message.details?.finishedModel, "beta/slow-model");
 	assert.equal(message.details?.name, `scout-${delegationId(s).slice(0, 8)}`);
+});
+
+test("result and gone messages name the recorded cwd, and a legacy record's cwd as unknown", async (t: TestContext) => {
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	const s = await started();
+	deliver(s);
+	assert.ok(resultMessage(s).content.includes(`Working directory: ${root}`), resultMessage(s).content);
+	assert.equal(resultMessage(s).details?.cwd, root);
+
+	const legacy = structuredClone(s.entries.slice(0, 1));
+	delete legacy[0].data.cwd;
+	delete legacy[0].data.sessionDir;
+	const resumed = await started(legacy);
+	resumed.tmux.windows.clear();
+	for (let j = 0; j < 4; j++) {
+		t.mock.timers.tick(5000);
+		for (let k = 0; k < 3; k++) await new Promise((resolve) => setImmediate(resolve));
+	}
+	const gone = resumed.sent.find((m) => /closed without a result/.test(String(m.message.content)));
+	assert.ok(gone);
+	const message = gone.message as { content: string; details?: Record<string, unknown> };
+	assert.match(message.content, /Working directory: unknown \(not recorded\)/);
+	assert.ok(!message.content.includes(`Working directory: ${root}`), message.content);
+	assert.equal(message.details?.cwd, undefined);
 });

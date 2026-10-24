@@ -7,10 +7,12 @@
 // when a fence has no runner.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -49,6 +51,7 @@ test("the README's session:launch example adds its flag and env key to the launc
 	assert.equal(opened.argv.at(-1), "--auto");
 	assert.equal(opened.argv[opened.argv.indexOf("--thinking") + 1], "low", "the emitter's own args stay");
 	assert.equal(opened.env.GATE_MODE, "auto");
+	assert.equal(opened.env.GATE_ROOT, opened.cwd, "the example reads the cwd the window opens in");
 	assert.equal(opened.env.PI_DELEGATE_PARENT, s.parent, "the emitter's own env stays");
 });
 
@@ -61,6 +64,27 @@ test("the payload a session:launch listener sees names the agent", async () => {
 	});
 	await s.delegate("scout do the thing");
 	assert.equal(seen?.agent, "scout");
+});
+
+test("launch hook cwd cannot redirect and append add contract survives", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const parentCwd = join(root, "parent-checkout");
+	mkdirSync(parentCwd, { recursive: true });
+	const s = session({ cwd: parentCwd });
+	let seenCwd: unknown;
+	s.events.on("session:launch", (data) => {
+		const payload = data as { cwd: unknown; args: string[]; env: Record<string, string> };
+		seenCwd = payload.cwd;
+		payload.cwd = tmpdir();
+		payload.args.push("--verbose");
+		payload.env.CONTRIBUTOR_MARKER = "yes";
+	});
+	await s.delegate("scout do the thing");
+	assert.equal(seenCwd, parentCwd);
+	assert.equal(s.tmux.opened[0].cwd, parentCwd);
+	assert.ok(s.tmux.opened[0].argv.includes("--verbose"));
+	assert.equal(s.tmux.opened[0].env.CONTRIBUTOR_MARKER, "yes");
+	assert.equal(s.entries[0].data.cwd, parentCwd);
 });
 
 test("while a delegation runs, each tick emits message:scan with a payload the provider marks scanned", async (t) => {

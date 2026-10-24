@@ -75,12 +75,13 @@ closes its own window ([auto-exit](#auto-exit)).
 
 ## How a delegation works
 
-`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--auto-exit | --no-auto-exit] <task…>`
+`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>]] [--auto-exit | --no-auto-exit] <task…>`
 reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes
 the task to the delegate's inbox through `message:send`, emits
 `session:launch` so other extensions can shape the launch, then opens a
-detached window running the parent's own Pi in the parent's working directory
-and agent root. The agent's
+detached window running the parent's own Pi in the parent's working directory,
+or the directory `--cwd` selects or the new `--worktree` checkout creates (see [Working directory](#working-directory)),
+with the parent's agent root. The agent's
 prompt reaches the child as a path to a private file under the system
 temporary folder, not as text on the command line.
 
@@ -103,14 +104,229 @@ temporary folder, not as text on the command line.
   shown to the parent as one result message that quotes the task. By default
   the delegate then closes its own window ([auto-exit](#auto-exit)). With
   auto-exit off the window stays open so you can read it or keep working in it.
-- Delegations are recorded in the parent session without the task text.
+- Delegations are recorded in the parent session without the task text. Each
+  record keeps the directory the window opened in and the session-storage
+  directory the delegate was given.
+- The delegate always gets an explicit project-trust flag, `--approve` or
+  `--no-approve`, so a permissive global `defaultProjectTrust` cannot trust a
+  project the parent does not, and an unattended window never waits on a
+  trust question. In the parent's own directory it is the parent's current
+  trust (`ctx.isProjectTrusted()`); for a `--cwd` directory see
+  [Project trust](#project-trust).
+- The delegate always gets `--session-dir` with the parent's absolute
+  session-storage directory, which outranks `PI_CODING_AGENT_SESSION_DIR`, the
+  tmux server's environment and a project's `sessionDir` setting. The parent
+  finds the delegate's session file there by its id, even after the parent
+  resumes with another storage directory selected. A parent whose session
+  directory is not an absolute path refuses to launch, before sending the
+  task.
 - Inside a delegate (`PI_DELEGATE_PARENT` set) the extension registers only
   auto-exit's side, the `/auto-exit` command and its handlers, so a delegate
   cannot start delegates of its own.
-- Without a UI the command and the `delegate` tool still work. They need tmux
+- Without a UI the command and the `delegate` tool still work, except a
+  `--cwd` launch whose project trust needs a question (see
+  [Project trust](#project-trust)). They need tmux
   and a provider of `message:*`, and refuse with a message when either is
   missing. In print mode (`pi -p`) Pi does not show the refusal notices, so
   the refusal is silent there.
+
+## Working directory
+
+`--cwd <dir>` (the `delegate` tool's `cwd`) runs the delegate in an existing
+directory instead of the parent's: another checkout, a linked worktree, a
+subdirectory or a directory outside Git.
+
+- A relative path resolves against the parent's working directory. A leading
+  `~` or `~/` means your home directory. Nothing else is expanded: no
+  environment variables, globs or `~user`.
+- The directory must exist and be readable. Its real path, with symlinks
+  resolved, is where the window opens and what is recorded. A missing path,
+  a file or a directory that cannot be entered is refused before the task is
+  sent or a window opens; nothing is created.
+- The directory is used as it is. Its branch, index, uncommitted and
+  untracked files are not touched when the delegate starts, fails to start or
+  is closed, and pi-squire never cleans it up.
+- The delegate's Pi finds context files (`AGENTS.md`), project settings,
+  skills and extensions from that directory and its ancestors, as Pi always
+  does. Context files load even without project trust, so trust is not an
+  instruction-safety boundary.
+- The delegate's appended prompt names the selected directory. A delegate in
+  the parent's own directory is not told its cwd again.
+- The model may leave `cwd` out, or send `null`, `""`, `"null"`, `"none"`,
+  `"false"` or `"undefined"`; each means the parent's directory. A boolean,
+  number, array or object is refused. `/delegate --cwd` treats those same
+  strings the same way.
+- Write a value with spaces in double quotes:
+  `/delegate scout --cwd "~/work/my repo" Read the README`. Inside the quotes
+  `\"` is a quote and `\\` a backslash; there is no other escaping or shell
+  expansion. The task after the flags is kept exactly as typed, quotes and
+  backslashes included. A missing closing quote or a missing value is refused
+  before anything starts.
+
+Each new delegation records a `workspace`: its `mode` (`inherited` for the
+parent's directory, `existing` for `--cwd`), its `cwd` and the Git checkout at
+launch. `git` is one of:
+
+- `{ kind: "git", identity: { mainRoot, commonDir, checkoutRoot }, position, head, baseline }`,
+  where `position` is `{ branch, detached: false }` or
+  `{ branch: null, detached: true }` and `baseline` is the commit checked out
+  at launch (`null` in a repository with no commits yet);
+- `{ kind: "non-git" }` when Git says the directory is not in a checkout;
+- `{ kind: "unknown", reason }` when Git is missing, times out (5 seconds per
+  question) or fails. That never blocks a launch and is not a claim that the
+  directory is outside Git.
+
+Git is asked read-only, without optional index locks. The start message
+names the directory when it differs from the parent's; the tool's
+structured result always carries `cwd` and `workspace`, and status, results
+and their expanded views show them.
+
+### Managed worktrees
+
+`--worktree <branch>` (or the `worktree` tool input) creates a new local branch
+and worktree from this session's checkout, or from the existing checkout named
+by `--worktree-source <dir>` (tool input `worktree_source`). Relative sources
+resolve from this session's cwd; `~`, symlinks, linked worktrees and repository
+subdirectories are accepted. The delegate starts at the created root. Its base
+is the selected checkout's committed `HEAD`, or `--worktree-base <commit-ish>`
+(the tool input `worktree_base`). The base resolves only against locally available branches, remote-tracking refs, tags, commits or commit-ish expressions; Squire does not fetch. The exact commit is frozen before creation. An explicit commit works even if source `HEAD` is unborn; without an override an unborn `HEAD` is refused. The default
+location is a sibling directory named `{repo}-worktrees/{branch}`, with `/` in
+the folder segment replaced by `-`; the branch name itself is unchanged.
+`worktree_source` and `worktree_base` require `worktree`; `cwd` and `worktree` cannot be combined. An unrelated source repository uses its own saved trust decision; when undecided, protected resources in the frozen base and applicable destination ancestor skills are reviewed in the parent before creation. Branches and destinations are never
+reused, reset, suffixed or force-created. Git creation uses the frozen commit,
+not a later moving `HEAD`.
+
+Dirty staged, unstaged and untracked source paths are summarized in the start
+notice and recorded; none are copied. Ignored files remain in the source and
+are not transferred. No setup or submodule initialization is performed.
+The delegate starts at the created worktree root with factual branch and base
+context.
+
+Managed placement is selected on every creation from the optional
+`<agent dir>/squire/settings.json` file (separate from Pi's `settings.json`):
+
+```json
+{
+  "worktreeRoot": "~/worktrees/{repo}/{branch}",
+  "worktreeRootByRepo": {
+    "/Users/me/src/special-project": "../special-checkouts/{branch}"
+  }
+}
+```
+
+A matching `worktreeRootByRepo` entry wins over `worktreeRoot`, which wins
+over the built-in `{repoParent}/{repo}-worktrees/{branch}` default. Repository
+keys identify the canonical main checkout root, even when creation starts from
+a linked worktree; keys and relative templates resolve from the settings
+directory, and `~`/`~/` expands to the home directory. Templates accept
+`{repoParent}` (the main checkout's parent), `{repo}` (its directory name) and
+`{branch}` (the branch with `/` replaced by `-` for this path only). For a
+main checkout at `/Users/me/src/special-project` and branch `feature/topic`,
+the built-in path is
+`/Users/me/src/special-project-worktrees/feature-topic`. With `~` set to
+`/Users/me`, the global example resolves to
+`/Users/me/worktrees/special-project/feature-topic`; if the settings directory
+is `/Users/me/.pi/agent/squire`, the matching relative override resolves to
+`/Users/me/.pi/agent/special-checkouts/feature-topic`. The Git branch remains
+`feature/topic`.
+
+The settings file is read only for managed creation. A missing file uses the
+built-in default; malformed or inaccessible settings, invalid templates and
+duplicate canonical repository keys refuse creation rather than silently
+falling back. They do not affect inherited or `cwd` launches. Placement does
+not choose a source checkout or base commit. Pi discovers `AGENTS.md`, skills
+and other project context from the created directory and its ancestors, so the
+chosen layout determines which instructions and skills apply. For a layout
+inside another checkout, arrange any needed Git ignore rule yourself;
+pi-squire never edits `.gitignore`.
+
+A launch attempt is recorded before Git creation. If launch fails before a
+window is known to have opened, pi-squire removes only a checkout and branch
+it can prove it created and that remain pristine; it never uses force. Changed,
+ignored, untracked or uncertain resources are retained and reported with
+recovery facts. A timeout or other ambiguous tmux failure retains the worktree.
+Once tmux returns a window id, the worktree and branch are kept through later
+failure, completion and close; remove them manually when no longer needed.
+Worktrees isolate checkouts, not delegate permissions or filesystem access.
+
+### Checkout snapshots
+
+A result records one snapshot of the delegation's checkout, taken when the
+reply arrives, and `delegation_status` takes a fresh one on every call. The
+result's snapshot is history: a later status never changes it. Both are a
+`workspaceSnapshot`, one of:
+
+- `{ kind: "git", position, head, baseline, ahead, workingState, committed, pending }`:
+  the current branch or detached HEAD, the head commit, the launch commit
+  (`baseline`), how many commits are reachable from head but not from the
+  baseline, `clean` or `dirty`, the paths changed between baseline and head
+  (`committed`), and the `pending` paths, split into `staged`, `unstaged`,
+  `untracked` and `conflicted`. A clean working tree can still have commits
+  and committed paths since launch;
+- `{ kind: "non-git" }` for a directory launched outside Git that still exists;
+- `{ kind: "unknown", reason }` when the directory is gone, its checkout root
+  or Git common directory is no longer at the location recorded at launch, its
+  launch commit is missing, Git is missing,
+  fails or passes a limit, its Git state at launch was unknown, or the record
+  predates workspaces. Only the recorded checkout is inspected, never the
+  parent's.
+
+Each path list is `{ paths, total, truncated }`: at most 100 whole paths and
+16 KiB of names per list, with `total` counting all of them. Paths come from
+NUL-separated Git output and are shown JSON-quoted, so spaces and newlines in
+a name stay data; a rename lists both its old and new path. An inspection
+gives each Git command 2 seconds, the whole checkout 5 seconds and 4 MiB of
+output; a command still running at its limit is killed. Past any of those
+limits the snapshot is unknown, never a partial count, and stdout and stderr
+count together toward the 4 MiB. Committed paths are relative to the
+repository root whatever `diff.relative` says. Git runs read-only, without
+optional index writes.
+
+A snapshot observes the Git state at the recorded location, not that it is the
+same repository on disk: a repository replaced there, for example by a fresh
+clone, that still has the launch commit is reported normally against that
+commit. It is not proof that the delegate made those changes, that the task
+succeeded, or that the branch is safe to merge.
+It does not say whether the branch is merged anywhere, prints no cleanup
+command, and nothing acts on it.
+
+### Project trust
+
+The delegate's trust flag for a `--cwd` directory is decided in the parent,
+before the task is sent or a window opens. A same-repository managed worktree
+uses the parent's current trust for that repository. The model has no trust input.
+
+1. A directory in the parent's own repository, by Git's common directory, so
+   including its linked worktrees, gets the parent's current trust, even a
+   decision the user made for this session only. It never carries to another
+   repository or to a directory outside Git.
+2. Otherwise a saved decision in Pi's trust store applies, found the way Pi
+   finds it (the closest saved directory at or above the key). The key is the
+   main repository root for a linked worktree of another repository, and the
+   directory itself for everything else, including a subdirectory of another
+   main checkout or a main checkout whose Git directory lives elsewhere
+   (`--separate-git-dir`), so a nearer saved denial there still wins. A
+   linked worktree whose main checkout Git cannot name, such as one of a bare
+   repository, has an unknown Git state and is keyed by its own directory.
+3. With no saved decision and no project resources that Pi gates behind trust
+   (`.pi/settings.json`, extensions, skills and the like, or an
+   `.agents/skills` directory above it), the delegate starts with
+   `--no-approve` and no question.
+4. Otherwise the parent asks, naming the directory, the main repository when
+   it is the key, and what each answer saves:
+   `Trust`, `Trust parent folder (<folder>)` (left out at the filesystem
+   root), `Trust (this session only)`, `Do not trust` and
+   `Do not trust (this session only)`. The two "this session only" answers
+   apply to this launch alone and save nothing. "Trust parent folder" saves
+   the folder and clears a decision saved for the key itself. Cancelling
+   starts nothing. One question is open at a time; a question that waited
+   reads the store again, so an answer just saved is not asked twice. Aborting
+   the turn or tool call stops a launch that is waiting for or answering a
+   question; nothing is saved, sent or opened.
+
+Without a UI a question cannot be asked, so the launch is refused: open Pi in
+that directory and answer its trust question first. A trust store that cannot
+be read or written also refuses the launch; nothing is granted by default.
 
 ## Agents
 
@@ -196,7 +412,7 @@ settings file and no environment variable of its own. `PI_DELEGATE_PARENT` and `
 for the child, never read as configuration by the parent. The window starts
 with the tmux server's environment plus only these from the parent:
 `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` (when the parent has it
-set), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`, and it always gets `PI_UNATTENDED=1`.
+set; `--session-dir` outranks it), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`, and it always gets `PI_UNATTENDED=1`.
 `PI_UNATTENDED=1` is a general signal, not specific to pi-squire: no human is
 watching this session, even though it runs in a TUI. Other extensions may read
 it to skip a dialog or confirmation instead of waiting on one, and any other
@@ -217,7 +433,7 @@ session's delegation records. None of them is registered inside a delegate.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `delegate` | `agent`, `task`, optional `model`, `thinking`, `label` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog, and returns the delegation id at once without waiting for a result. |
+| `delegate` | `agent`, `task`, optional `model`, `thinking`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
 
@@ -253,6 +469,14 @@ nothing starts.
   name: scout-<first 8 of the id>
   state: running — the window is open and no result has arrived (last active 12 min ago)
   window: scout-<first 8 of the id> (@1)
+  cwd: <the directory its window opened in>
+  workspace: existing directory; Git checkout <main root> (linked worktree <checkout>), branch <name>, launch commit <sha>
+  checkout now: branch <name>, head <sha>, launch commit <sha>, 1 commit since launch, working tree dirty
+    committed since launch: 1 path: "src/a.ts"
+    staged: none
+    unstaged: 1 path: "README.md"
+    untracked: none
+    conflicted: none
   auto-exit: on — the delegate closes its window after a normal completion unless the user took over there
   session: <the delegate's session file, or its id when there is none yet>
 
@@ -260,6 +484,8 @@ nothing starts.
   name: researcher-<first 8 of the id>
   state: done — result status: done; the result reaches this session as a [delegate] message on its own
   window: researcher-<first 8 of the id> (@2)
+  cwd: unknown (not recorded)
+  checkout now: Git state unknown (this delegation was recorded before its launch checkout was kept)
   auto-exit: off — the window stays open after the result
   session: <session file>
   envelope: <the reply's path in the parent's cur/>
@@ -279,6 +505,19 @@ nothing starts.
   arrived before its window went. For a moment before the result is claimed
   it can read closed, since the window is already gone.
 - **Auto-exit** reads off for delegations recorded before auto-exit existed.
+- **Cwd** is the directory the delegate's window opened in. A delegation
+  recorded before it was kept reads `unknown (not recorded)`, never the
+  parent's current directory.
+- **Workspace** says how the directory was chosen and its Git checkout at
+  launch (see [Working directory](#working-directory)); older records have
+  none.
+- **Checkout now** is a fresh [snapshot](#checkout-snapshots) of that
+  checkout, taken by this call; the details carry it as `workspaceSnapshot`.
+  A failure is unknown for that delegation alone.
+- **Session** is the delegate's session file, searched for in the storage
+  directory recorded at launch. Once found, its path is kept, so a later
+  status or result uses it without searching again. Before the delegate has
+  written its file, the id is shown instead of an invented file name.
 - **Closed** covers a close `delegation_close` recorded and a window that is no
   longer there. A recorded close wins over a result, and a result wins over a
   window that is gone.
@@ -407,7 +646,7 @@ The parent resolves each delegation's auto-exit from the call
 - While it is on, a run that settles as a normal completion shuts the delegate
   down (`ctx.shutdown()`) on the next event-loop turn, after the settle
   reply has been sent, so its tmux window closes. The session file stays, and
-  `pi --session <path>` reopens it.
+  `pi --session <path>` reopens it (see [Reopening a delegate's session](#reopening-a-delegates-session)).
 - A failed run, such as one ending on a usage limit or another provider
   error, exits like a normal completion; the parent still gets the failed
   reply and the session file stays. Only a run the user stopped never exits
@@ -434,6 +673,14 @@ the parent one message labelled delegate output:
 Status: done
 Task, quoted from <sent/ copy>:
 > the task
+Working directory: <the directory its window opened in>
+Workspace: <how the directory was chosen and its Git checkout at launch>
+Checkout when the result arrived: <branch, head, launch commit, commits since launch, clean or dirty>
+  committed since launch: <paths>
+  staged: <paths>
+  unstaged: <paths>
+  untracked: <paths>
+  conflicted: <paths>
 Envelope: <cur/ path>
 Delegate session: <session file or id>
 
@@ -476,9 +723,20 @@ Delegate session: <session file or id>
 - The task is quoted from the request copy the provider puts on the payload,
   capped at 2 KiB with the copy's `sent/` path. A request with no copy is
   named by id alone.
+- The working directory is the one recorded at launch, or
+  `unknown (not recorded)` for a delegation recorded before it was kept. The
+  `Workspace:` line repeats the recorded [workspace](#working-directory), and
+  is left out for records from before it was kept; the closed-without-a-result
+  message carries the same two lines.
+- `Checkout when the result arrived:` is the [snapshot](#checkout-snapshots)
+  taken as the reply was claimed, also recorded with the result and in the
+  message details and expanded view. The reply is claimed first, so a slow or
+  failing Git cannot lose or duplicate it; the snapshot is then unknown. A
+  non-Git directory reads `not a Git checkout`.
 - The envelope path is the claimed reply in the parent's `cur/`; the
-  delegate's session path is found in the session directory by the delegation
-  id, and the id alone is shown when no file exists yet.
+  delegate's session path is found by the delegation id in the session
+  directory recorded at launch (the parent's current one for older records),
+  and the id alone is shown when no file exists yet.
 - The body is cut at 32 KiB with the envelope path.
 - The message is sent as a `steer` with `triggerTurn`: a result starts a
   turn when the parent is idle, and when it is mid-turn arrives after the
@@ -510,6 +768,16 @@ delegation, with the delegate session path when one is found, sent as a
 still delivered and makes the delegation done. A resumed session polls again
 for every delegation it restores as running.
 
+### Reopening a delegate's session
+
+`delegation_status` and every result name the delegate's session file by its
+absolute path. Reopen it with that path: `pi --session /absolute/path/<file>.jsonl`.
+Pi groups sessions by working directory: the session picker and an id given
+to `--session` search the current project first, and may miss a delegate's
+session or offer to fork it rather than open it when the delegate ran in
+another directory or its file lives in another storage directory. The
+absolute path opens that file directly.
+
 ## Hooks
 
 The `js` block below is the contract's worked example, and
@@ -520,24 +788,34 @@ that block.
 
 ### `session:launch`
 
-`pi-squire` provides this hook. It emits `{ args, env, agent }` after the task
-has been sent and just before it opens the delegate's window.
+`pi-squire` provides this hook. It emits `{ args, env, agent, cwd }` after the
+task has been sent and just before it opens the delegate's window.
 
 | Field | Meaning |
 | --- | --- |
 | `args` | the child `pi`'s complete argument list, launcher first |
 | `env` | the child's environment, as `KEY`/`value` pairs |
 | `agent` | the agent's name, as in `<agent dir>/squire/agents/<name>/AGENT.md`; read it, do not change it |
+| `cwd` | the directory the window opens in, the parent's or the resolved `--cwd`; read it, do not change it |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
 and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
 emitter reads the payload the moment `emit` returns.
 
+`cwd`, the trust flag (`--approve` or `--no-approve`) and `--session-dir` are
+launch invariants that `pi-squire` chooses. The window opens in its own `cwd`,
+whatever a listener assigns to the payload. A listener must not add another
+trust flag, `--session-dir` or a working-directory change to `args`, since
+that would launch a child whose trust or session storage the parent did not
+choose and cannot find; append only unrelated settings.
+
 ```js session:launch
 // Any extension can shape a launch: append a flag and add an environment key.
+// `cwd` says where the window opens; read it, never assign it.
 pi.events.on("session:launch", (payload) => {
   payload.args.push("--auto");
   payload.env.GATE_MODE = "auto";
+  payload.env.GATE_ROOT = payload.cwd;
 });
 ```
 
@@ -597,6 +875,14 @@ requests, compaction, cache behavior, or model obedience. The idle-result wake
 is simulated by dispatching the next preparation; the suite does not assert
 that the runtime emits it.
 
+Working-directory and trust tests use real temporary Git repositories and
+Pi's real trust store under a temporary agent directory, but a fake tmux. The
+existing-directory/inherited launch evidence does not verify startup for a
+managed worktree or prove that a real delegate loads the selected checkout's
+instructions and settings; actual Pi/tmux startup and resource loading remain
+unverified. Snapshot tests use real repositories and,
+for hung, failing or flooding Git, a scripted `git` on `PATH`.
+
 ## Compatibility
 
 While pi-squire is below 1.0, breaking any contract below bumps the minor
@@ -604,12 +890,15 @@ version and is listed under "Breaking" in [CHANGELOG.md](CHANGELOG.md).
 
 Other extensions may rely on:
 
-- the `session:launch` payload `{ args, env, agent }`, emitted synchronously
-  after the task is sent and before the window opens (see [Hooks](#hooks));
+- the `session:launch` payload `{ args, env, agent, cwd }`, emitted
+  synchronously after the task is sent and before the window opens, with
+  `cwd`, the trust flag and `--session-dir` chosen by `pi-squire` (see
+  [Hooks](#hooks));
 - the `message:send`, `message:inbound` and `message:scan` hooks, consumed as
   their sections document;
-- the `delegate`, `delegation_status` and `delegation_close` tool names and
-  parameters;
+- the `delegate`, `delegation_status` and `delegation_close` tool names,
+  parameters, the recorded `workspace` shape and the `workspaceSnapshot`
+  shape in results and status;
 - the `/delegate` syntax and flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,

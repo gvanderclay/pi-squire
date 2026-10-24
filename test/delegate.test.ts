@@ -258,6 +258,9 @@ test("the argv runs the parent's own script pi with the task's flags", async () 
 		id,
 		"--name",
 		`scout-${id.slice(0, 8)}`,
+		"--no-approve",
+		"--session-dir",
+		sessionDir,
 		"--model",
 		"alpha/fast-model",
 		"--thinking",
@@ -404,6 +407,51 @@ test("the child's env names the parent's root and address, and the session dir w
 	assert.equal(second.tmux.opened[0].env.PI_CODING_AGENT_SESSION_DIR, "/tmp/other-sessions");
 });
 
+// ---------------------------------------------------------------------------
+// Working directory, project trust and session storage
+
+test("inherited command and tool pin cwd trust and session storage", async (t) => {
+	const parentCwd = join(root, "parent checkout");
+	const recordedDir = join(root, "recorded sessions");
+	mkdirSync(parentCwd, { recursive: true });
+	for (const entry of ["command", "tool"] as const) {
+		for (const projectTrusted of [false, true]) {
+			await t.test(`${entry}, project trusted ${projectTrusted}`, async () => {
+				// Neither the tmux server's nor the parent's storage variable may pick the child's storage.
+				writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+				process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/environment-sessions";
+				const s = session({ cwd: parentCwd, projectTrusted, sessionDir: recordedDir });
+				await s.start();
+				const result =
+					entry === "tool"
+						? await s.toolCall("delegate", { agent: "scout", task: "inspect" })
+						: (await s.delegate("scout inspect"), undefined);
+				delete process.env.PI_CODING_AGENT_SESSION_DIR;
+				const { argv } = s.tmux.opened[0];
+				const d = s.entries.find((item) => typeof item.data.windowId === "string")?.data;
+				assert.ok(d, "a successful start record");
+				assert.equal(s.tmux.opened[0].cwd, parentCwd);
+				assert.deepEqual(
+					argv.filter((x) => x === "--approve" || x === "--no-approve"),
+					projectTrusted ? ["--approve"] : ["--no-approve"],
+				);
+				assert.equal(argv.filter((x) => x === "--session-dir").length, 1);
+				assert.equal(argv[argv.indexOf("--session-dir") + 1], recordedDir);
+				assert.equal(d.cwd, parentCwd);
+				assert.equal(d.sessionDir, recordedDir);
+				assert.equal("sessionPath" in d, false, "no session path is fabricated at launch");
+				if (result !== undefined) {
+					const structured = result.structuredContent as { cwd: string; sessionDir: string };
+					assert.equal(structured.cwd, parentCwd);
+					assert.equal(structured.sessionDir, recordedDir);
+					assert.deepEqual(result.details, result.structuredContent);
+					assert.ok(!result.content[0].text.includes(parentCwd), "inherited start text stays compact");
+				}
+			});
+		}
+	}
+});
+
 test("the delegation is recorded with no task text, and the parent gets a notice", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();
@@ -422,6 +470,10 @@ test("the delegation is recorded with no task text, and the parent gets a notice
 				windowName: `scout-${id.slice(0, 8)}`,
 				requestId: (s.sendCalls[0].envelope as { id: string }).id,
 				autoExit: true,
+				cwd: root,
+				sessionDir,
+				// The harness root is a temporary directory outside any Git checkout.
+				workspace: { mode: "inherited", cwd: root, git: { kind: "non-git" } },
 			},
 		},
 	]);
@@ -690,7 +742,13 @@ test("a result is recorded once and the same reply is never shown twice", async 
 		customType: "delegate",
 		data: {
 			id: delegation.id,
-			result: { status: "done", replyId: "reply-1", envelopePath: payload.path },
+			// The harness root is outside any Git checkout.
+			result: {
+				status: "done",
+				replyId: "reply-1",
+				envelopePath: payload.path,
+				workspaceSnapshot: { kind: "non-git" },
+			},
 		},
 	});
 

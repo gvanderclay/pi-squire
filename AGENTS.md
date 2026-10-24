@@ -11,8 +11,12 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   loads; `child.ts` is what a delegate itself registers, `agents.ts` reads
   the roster, `results.ts` handles replies and works out a delegation's
   state, `render.ts` draws the delegate messages, `tracking.ts` holds the
-  poll and the status and close tools, and
-  `tmux.ts` talks to tmux.
+  poll and the status and close tools, `workspace.ts` resolves a
+  delegate's directory, its Git checkout at launch and its project trust,
+  `snapshot.ts` observes that checkout read-only for results and status,
+  `git.ts` contains read-only Git identity and path parsing, `worktree.ts`
+  plans/creates/rolls back managed worktrees, `worktree-placement.ts` resolves
+  call-time placement settings, and `tmux.ts` talks to tmux.
 - Tests and their helpers (`harness.ts`, `fake-tmux.ts`) are in `test/`.
   Nothing under `test/` is published; `scripts/check-pack.mjs` enforces that.
 

@@ -4,13 +4,25 @@
 // the message over, shows the parent one delegate result and records the
 // result. The records are the one source of truth for a delegation's state,
 // for the footer, `delegation_status` and `delegation_close`.
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { readMarks } from "./limits.ts";
-import { modelLabel, renderMessage } from "./render.ts";
+import { cwdLine, modelLabel, renderMessage, snapshotLines, workspaceLine } from "./render.ts";
+import { finishedModel, locateSession } from "./result-sessions.ts";
+import {
+	type AttemptState,
+	isStarted,
+	type Recorded,
+	type StartedRecorded,
+	type WorkspaceAttempt,
+} from "./result-types.ts";
+import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
+import type { Workspace } from "./workspace.ts";
+
+export { findSession, finishedModel } from "./result-sessions.ts";
+export type { AttemptState, Recorded, ResourceFacts, StartedRecorded, WorkspaceAttempt } from "./result-types.ts";
+export { isStarted, locateSession };
 
 /** The session entry type both delegation records and results use. */
 export const CUSTOM_TYPE = "delegate";
@@ -36,6 +48,14 @@ export type Delegation = {
 	requestId: string;
 	/** Whether the delegate closes its own window after a normal completion; absent in records from before auto-exit. */
 	autoExit?: boolean;
+	/** The directory its window opened in; absent in records from before it was recorded, where it is unknown. */
+	cwd?: string;
+	/** The session-storage directory passed as `--session-dir`; absent in older records. */
+	sessionDir?: string;
+	/** The delegate's session file once found; never set at launch, when the file may not exist yet. */
+	sessionPath?: string;
+	/** How its directory was chosen and its Git checkout at launch; absent in older records. */
+	workspace?: Workspace;
 };
 
 /**
@@ -67,6 +87,8 @@ export type Result = {
 	sessionPath?: string;
 	/** The `provider/model` of the delegate's last assistant message, when its session file holds one. */
 	finishedModel?: string;
+	/** The checkout as observed when the result arrived; absent in results from before it was kept. */
+	workspaceSnapshot?: WorkspaceSnapshot;
 };
 
 /** What both delegate messages carry for their view, beside the text the model reads. */
@@ -79,6 +101,9 @@ type CommonDetails = {
 	id: string;
 	requestId: string;
 	sessionPath?: string;
+	cwd?: string;
+	sessionDir?: string;
+	workspace?: Workspace;
 };
 
 /** The task as the result quotes it: its text and copy path, or why there is none. */
@@ -95,20 +120,12 @@ export type MessageDetails =
 			task: TaskQuote;
 			/** The reply body, capped. */
 			body: string;
+			/** The checkout when the result arrived, the same value as the recorded result's; absent in older messages. */
+			workspaceSnapshot?: WorkspaceSnapshot;
 	  })
 	| (CommonDetails & { kind: "gone"; windowName: string });
 
 type ResultDetails = Extract<MessageDetails, { kind: "result" }>;
-
-/** One delegation as it stands: what was recorded at its start, plus what came after. */
-export type Recorded = Delegation & {
-	/** Set when a result arrived. */
-	result?: Result;
-	/** Set when `delegation_close` recorded a close. */
-	closed?: boolean;
-	/** Set when the poll found the window gone with no result; a result outranks it. */
-	gone?: boolean;
-};
 
 /** The provider's payload on `message:inbound`. */
 export type Inbound = {
@@ -121,12 +138,14 @@ export type Inbound = {
 export type Results = {
 	/** Rebuild the records from the session's custom entries, as on a resume. */
 	restore(ctx: ExtensionContext): void;
-	/** Record a delegation and show it as running. */
+	/** Record a delegation and show it as running; it supersedes an attempt with the same id. */
 	recordStart(delegation: Delegation, ctx: ExtensionContext): void;
+	/** Record a workspace attempt, or its next state; never counted as running. */
+	recordAttempt(attempt: WorkspaceAttempt, ctx: ExtensionContext): void;
 	/** Record a close; does nothing when there is no such delegation or it is already closed. */
 	recordClose(id: string): void;
 	/** Delegations with no result, no recorded close and no gone-window record. */
-	running(): Recorded[];
+	running(): StartedRecorded[];
 	/** Record that the window is gone with no result, and tell the parent once. False when it no longer applies. */
 	recordGone(id: string): boolean;
 	/** Every delegation, in the order it was recorded. */
@@ -143,7 +162,14 @@ export type WindowState = "open" | "gone" | "unknown";
  * closed without a result (the poll found the window missing); `window-closed`
  * is a window tmux no longer lists, seen when asked directly.
  */
-export type DelegationState = "closed" | "done" | "gone" | "running" | "window-closed" | "unknown";
+export type DelegationState =
+	| "closed"
+	| "done"
+	| "gone"
+	| "running"
+	| "window-closed"
+	| "unknown"
+	| AttemptState["phase"];
 
 /** How much of a delegation id a delegate's session name carries. */
 const SHORT_ID = 8;
@@ -163,6 +189,7 @@ export function recordedName(record: Recorded): string {
 
 /** A delegation's state: a recorded close, then a result, then a gone record, then the window. */
 export function deriveState(record: Recorded, window: WindowState): DelegationState {
+	if (!isStarted(record)) return record.attempt.phase;
 	if (record.closed === true) return "closed";
 	if (record.result !== undefined) return "done";
 	if (record.gone === true) return "gone";
@@ -180,47 +207,6 @@ function cap(text: string, max: number): string | undefined {
 	return bytes.subarray(0, end).toString("utf8");
 }
 
-/** The delegate's session file in `dir`, found by its `_<id>.jsonl` suffix. */
-export function findSession(dir: string | undefined, id: string): string | undefined {
-	if (dir === undefined) return undefined;
-	let names: string[];
-	try {
-		names = readdirSync(dir);
-	} catch {
-		return undefined;
-	}
-	const name = names.find((candidate) => candidate.endsWith(`_${id}.jsonl`));
-	return name === undefined ? undefined : join(dir, name);
-}
-
-/**
- * The `provider/model` of the last assistant message in a delegate's session
- * file: the model that actually answered, after any fallback or `/model`.
- * Undefined when the file is missing or holds no assistant message.
- */
-export function finishedModel(sessionPath: string | undefined): string | undefined {
-	if (sessionPath === undefined) return undefined;
-	let lines: string[];
-	try {
-		lines = readFileSync(sessionPath, "utf8").split("\n");
-	} catch {
-		return undefined;
-	}
-	for (let i = lines.length - 1; i >= 0; i--) {
-		let entry: { type?: unknown; message?: { role?: unknown; provider?: unknown; model?: unknown } };
-		try {
-			entry = JSON.parse(lines[i]);
-		} catch {
-			continue; // a line still being written, or a blank one
-		}
-		const message = entry?.message;
-		if (entry?.type !== "message" || message?.role !== "assistant") continue;
-		if (typeof message.provider === "string" && typeof message.model === "string")
-			return `${message.provider}/${message.model}`;
-	}
-	return undefined;
-}
-
 /** The line naming a usage-limit mark this delegation recorded, if any; a `done` delegation finished on a fallback. */
 function limitLine(id: string, status: string): string | undefined {
 	const now = Date.now();
@@ -235,10 +221,11 @@ function limitLine(id: string, status: string): string | undefined {
 
 /** The details of a settled delegation's result message. */
 function resultDetails(
-	delegation: Delegation,
+	delegation: StartedRecorded,
 	payload: Inbound,
 	session: string | undefined,
 	finished: string | undefined,
+	snapshot: WorkspaceSnapshot,
 ): ResultDetails {
 	const reply = payload.envelope;
 	const copy = payload.requests.find((request) => request.envelope?.id === delegation.requestId);
@@ -266,10 +253,20 @@ function resultDetails(
 		requestId: delegation.requestId,
 		envelopePath: payload.path,
 		...(session === undefined ? {} : { sessionPath: session }),
+		...(delegation.cwd === undefined ? {} : { cwd: delegation.cwd }),
+		...(delegation.sessionDir === undefined ? {} : { sessionDir: delegation.sessionDir }),
+		...(delegation.workspace === undefined ? {} : { workspace: delegation.workspace }),
 		...(limit === undefined ? {} : { limit }),
 		task,
 		body,
+		workspaceSnapshot: snapshot,
 	};
+}
+
+/** The snapshot lines of the result text: a heading line, then its path lists indented. */
+function checkoutText(snapshot: WorkspaceSnapshot): string[] {
+	const [first, ...rest] = snapshotLines(snapshot);
+	return [`Checkout when the result arrived: ${first}`, ...rest.map((line) => `  ${line}`)];
 }
 
 /** The one message the parent model reads for a settled delegation. */
@@ -287,6 +284,9 @@ function resultText(details: ResultDetails): string {
 		`Status: ${details.status}`,
 		...(details.limit === undefined ? [] : [details.limit]),
 		quote,
+		`Working directory: ${cwdLine(details.cwd)}`,
+		...(details.workspace === undefined ? [] : [`Workspace: ${workspaceLine(details.workspace)}`]),
+		...(details.workspaceSnapshot === undefined ? [] : checkoutText(details.workspaceSnapshot)),
 		`Envelope: ${details.envelopePath}`,
 		`Delegate session: ${details.sessionPath ?? details.id}`,
 		"",
@@ -298,8 +298,8 @@ export function createResults(pi: ExtensionAPI): Results {
 	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
 	/** Every recorded delegation by its id, in the order recorded. */
 	const byId = new Map<string, Recorded>();
-	/** The same records by their request's envelope id, for matching replies. */
-	const byRequest = new Map<string, Recorded>();
+	/** Started records by their request's envelope id, for matching replies; attempts never match a reply. */
+	const byRequest = new Map<string, StartedRecorded>();
 	/** Reply envelope ids a result message has already been sent for. */
 	const shown = new Set<string>();
 	/** The latest session context, for the footer and the session directory. */
@@ -309,10 +309,17 @@ export function createResults(pi: ExtensionAPI): Results {
 	const icon = Math.random() < 0.5 ? "👨" : "👩";
 
 	/** A delegation still going: no result and no recorded close. */
-	const running = (): Recorded[] =>
+	const running = (): StartedRecorded[] =>
 		[...byId.values()].filter(
-			(record) => record.result === undefined && record.closed !== true && record.gone !== true,
+			(record): record is StartedRecorded =>
+				isStarted(record) && record.result === undefined && record.closed !== true && record.gone !== true,
 		);
+
+	/** The started record for `id`, if it is one. */
+	const startedById = (id: unknown): StartedRecorded | undefined => {
+		const record = typeof id === "string" ? byId.get(id) : undefined;
+		return record !== undefined && isStarted(record) ? record : undefined;
+	};
 
 	/** The footer counts the running delegations, and hides itself at zero. */
 	function updateFooter(): void {
@@ -332,22 +339,45 @@ export function createResults(pi: ExtensionAPI): Results {
 		shown.clear();
 		for (const entry of context.sessionManager.getEntries()) {
 			if (entry.type !== "custom" || entry.customType !== CUSTOM_TYPE) continue;
-			const data = entry.data as Partial<Delegation & { result: Result; closed: boolean; gone: boolean }> | undefined;
+			const data = entry.data as
+				| Partial<Delegation & { kind: string; result: Result; closed: boolean; gone: boolean }>
+				| undefined;
 			if (data === undefined || typeof data.id !== "string") continue;
-			if (typeof data.requestId === "string") {
-				const record: Recorded = { ...(data as Delegation) };
+			// An attempt may carry a real request id; it is checked before the legacy start rule below.
+			if (data.kind === "workspace-attempt") {
+				const existing = byId.get(data.id);
+				if (existing === undefined || !isStarted(existing)) {
+					byId.set(data.id, { ...(data as unknown as WorkspaceAttempt) });
+				}
+			} else if (typeof data.requestId === "string") {
+				const record: StartedRecorded = { ...(data as Delegation) };
 				byId.set(record.id, record);
 				byRequest.set(record.requestId, record);
 			} else if (typeof data.result?.replyId === "string") {
 				shown.add(data.result.replyId);
-				const record = byId.get(data.id);
+				const record = startedById(data.id);
 				if (record !== undefined) record.result = data.result;
 			} else if (data.closed === true) {
-				const record = byId.get(data.id);
+				const record = startedById(data.id);
 				if (record !== undefined) record.closed = true;
 			} else if (data.gone === true) {
-				const record = byId.get(data.id);
-				if (record !== undefined) record.gone = true;
+				const record = startedById(data.id);
+				if (record === undefined) continue;
+				record.gone = true;
+				if (typeof data.sessionPath === "string") record.sessionPath = data.sessionPath;
+			}
+		}
+		// A parent that stopped mid-launch cannot say how far it got; nothing is cleaned up or relaunched.
+		for (const record of byId.values()) {
+			if (isStarted(record)) continue;
+			const { phase, resources } = record.attempt;
+			if (phase === "planned" || phase === "created") {
+				record.attempt = {
+					phase: "interrupted",
+					resources,
+					lastPhase: phase,
+					reason: `the parent session ended while the launch was ${phase}; whether anything was created is unknown`,
+				};
 			}
 		}
 		updateFooter();
@@ -356,14 +386,20 @@ export function createResults(pi: ExtensionAPI): Results {
 	function recordStart(delegation: Delegation, context: ExtensionContext): void {
 		ctx = context;
 		pi.appendEntry(CUSTOM_TYPE, delegation);
-		const record: Recorded = { ...delegation };
+		const record: StartedRecorded = { ...delegation };
 		byId.set(record.id, record);
 		byRequest.set(record.requestId, record);
 		updateFooter();
 	}
 
+	function recordAttempt(attempt: WorkspaceAttempt, context: ExtensionContext): void {
+		ctx = context;
+		pi.appendEntry(CUSTOM_TYPE, attempt);
+		byId.set(attempt.id, { ...attempt });
+	}
+
 	function recordClose(id: string): void {
-		const record = byId.get(id);
+		const record = startedById(id);
 		if (record === undefined || record.closed === true) return;
 		pi.appendEntry(CUSTOM_TYPE, { id, closed: true });
 		record.closed = true;
@@ -371,12 +407,12 @@ export function createResults(pi: ExtensionAPI): Results {
 	}
 
 	function recordGone(id: string): boolean {
-		const record = byId.get(id);
+		const record = startedById(id);
 		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true)
 			return false;
-		const session = findSession(ctx?.sessionManager.getSessionDir(), record.id);
+		const session = locateSession(record, ctx?.sessionManager.getSessionDir());
 		const finished = finishedModel(session);
-		pi.appendEntry(CUSTOM_TYPE, { id, gone: true });
+		pi.appendEntry(CUSTOM_TYPE, { id, gone: true, ...(session === undefined ? {} : { sessionPath: session }) });
 		record.gone = true;
 		const details: MessageDetails = {
 			kind: "gone",
@@ -387,6 +423,9 @@ export function createResults(pi: ExtensionAPI): Results {
 			id: record.id,
 			requestId: record.requestId,
 			...(session === undefined ? {} : { sessionPath: session }),
+			...(record.cwd === undefined ? {} : { cwd: record.cwd }),
+			...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
+			...(record.workspace === undefined ? {} : { workspace: record.workspace }),
 			windowName: record.windowName,
 		};
 		pi.sendMessage(
@@ -395,6 +434,8 @@ export function createResults(pi: ExtensionAPI): Results {
 				details,
 				content: [
 					`[delegate] Delegation ${record.id} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+					`Working directory: ${cwdLine(record.cwd)}`,
+					...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
 					`Delegate session: ${session ?? record.id}`,
 					"A reply that arrives later is still delivered.",
 				].join("\n"),
@@ -415,11 +456,13 @@ export function createResults(pi: ExtensionAPI): Results {
 		if (requestId === undefined) return;
 		payload.handled = true;
 		if (shown.has(reply.id)) return;
-		const delegation = byRequest.get(requestId) as Recorded;
+		const delegation = byRequest.get(requestId) as StartedRecorded;
 		shown.add(reply.id);
-		const session = findSession(ctx?.sessionManager.getSessionDir(), delegation.id);
+		const session = locateSession(delegation, ctx?.sessionManager.getSessionDir());
 		const finished = finishedModel(session);
-		const details = resultDetails(delegation, payload, session, finished);
+		// After the claim above, so a slow or failing inspection cannot let the provider or a duplicate deliver it too.
+		const snapshot = inspectWorkspace(delegation.workspace?.cwd, delegation.workspace?.git);
+		const details = resultDetails(delegation, payload, session, finished, snapshot);
 		// Steer, not follow-up: a busy parent gets the result before its next model call, not after it has answered.
 		pi.sendMessage(
 			{ customType: CUSTOM_TYPE, content: resultText(details), details, display: true },
@@ -431,6 +474,7 @@ export function createResults(pi: ExtensionAPI): Results {
 			envelopePath: payload.path,
 			...(session === undefined ? {} : { sessionPath: session }),
 			...(finished === undefined ? {} : { finishedModel: finished }),
+			workspaceSnapshot: snapshot,
 		};
 		pi.appendEntry(CUSTOM_TYPE, { id: delegation.id, result });
 		delegation.result = result;
@@ -442,6 +486,7 @@ export function createResults(pi: ExtensionAPI): Results {
 	return {
 		restore,
 		recordStart,
+		recordAttempt,
 		recordClose,
 		running,
 		recordGone,

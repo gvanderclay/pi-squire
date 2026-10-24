@@ -56,7 +56,7 @@ test("an auto-exit that is not true or false leaves the agent out with a warning
 	);
 });
 
-test("the tool describes auto_exit, and completions offer both flags", async () => {
+test("the tool describes auto_exit, and completions offer launch flags", async () => {
 	writeAgent("scout", agentFile(SCOUT));
 	const s = session();
 	await s.start();
@@ -64,7 +64,17 @@ test("the tool describes auto_exit, and completions offer both flags", async () 
 	assert.match(s.tool("delegate").description, /auto_exit/);
 	assert.deepEqual(
 		(await s.completions("scout --"))?.map((item) => item.label),
-		["--model", "--thinking", "--label", "--auto-exit", "--no-auto-exit"],
+		[
+			"--model",
+			"--thinking",
+			"--label",
+			"--cwd",
+			"--worktree",
+			"--worktree-base",
+			"--worktree-source",
+			"--auto-exit",
+			"--no-auto-exit",
+		],
 	);
 });
 

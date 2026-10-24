@@ -9,7 +9,7 @@ import { after, beforeEach, type TestContext, test } from "node:test";
 
 import type { ClaudeReading } from "../src/usage.ts";
 import { FakeUsage, win } from "./fake-usage.ts";
-import { agentDir, agentFile, cleanup, type RunFailure, resetRoot, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, type RunFailure, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 const FILE = join(agentDir, "pi-squire-limits.json");
 const START = Date.parse("2026-10-03T12:00:00.000Z");
@@ -625,6 +625,10 @@ test("a failed reply with no matching mark has no limit line", async (t) => {
 			`[delegate] Result from plain (alpha/fast-model), delegation ${firstId(p)}, request ${requestId}.`,
 			"Status: failed",
 			`[delegate] The task ${requestId} has no copy in sent/; only its id is known.`,
+			`Working directory: ${root}`,
+			// The harness root is a temporary directory outside any Git checkout.
+			"Workspace: the parent's directory; not a Git checkout",
+			"Checkout when the result arrived: not a Git checkout",
 			"Envelope: /mail/cur/reply.json",
 			`Delegate session: ${firstId(p)}`,
 			"",

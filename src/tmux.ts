@@ -13,6 +13,20 @@ export type WindowSpec = {
 /** One window as tmux lists it: its id, its name, and whether the program in its pane has exited. */
 export type TmuxWindow = { id: string; name: string; exited: boolean };
 
+/**
+ * Why a window could not be opened, and whether one may exist anyway:
+ * `not-opened` only when nothing was dispatched to tmux that could create it.
+ * Anything else, a timeout or a malformed answer included, is `unknown`.
+ */
+export class WindowOpenError extends Error {
+	readonly certainty: "not-opened" | "unknown";
+	constructor(message: string, certainty: "not-opened" | "unknown") {
+		super(message);
+		this.name = "WindowOpenError";
+		this.certainty = certainty;
+	}
+}
+
 export interface TmuxClient {
 	/** Whether this process runs in a tmux pane. */
 	insideTmux(): boolean;
@@ -65,11 +79,24 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 		async openWindow(spec) {
 			const args = ["new-window", "-d", "-P", "-F", "#{window_id}", "-n", spec.name, "-c", spec.cwd];
 			for (const [key, value] of Object.entries(spec.env)) args.push("-e", `${key}=${value}`);
-			const session = await targetSession();
+			let session: string | undefined;
+			try {
+				session = await targetSession();
+			} catch (err) {
+				// The lookup only reads; no window can exist yet.
+				throw new WindowOpenError((err as Error).message, "not-opened");
+			}
 			if (session !== undefined) args.push("-t", session);
 			args.push("--", ...spec.argv);
-			const windowId = (await run(args)).trim();
-			if (windowId === "") throw new Error("tmux reported no window id");
+			let out: string;
+			try {
+				out = await run(args);
+			} catch (err) {
+				// After dispatch even an error or timeout may have left a window.
+				throw new WindowOpenError((err as Error).message, "unknown");
+			}
+			const windowId = out.trim();
+			if (!/^@[0-9]+$/.test(windowId)) throw new WindowOpenError("tmux reported an invalid window id", "unknown");
 			return windowId;
 		},
 

@@ -55,6 +55,8 @@ const result = (overrides: Partial<MessageDetails & { kind: "result" }> = {}): M
 	requestId: "req-id",
 	envelopePath: "/mail/cur/reply.json",
 	sessionPath: "/sessions/s.jsonl",
+	cwd: "/work/checkout",
+	sessionDir: "/sessions",
 	task: { text: "look into it", path: "/mail/sent/req.json" },
 	body: "first\nsecond\nthird\nfourth",
 	...overrides,
@@ -158,6 +160,91 @@ test("an expanded result shows the body as Markdown, then the task, then the ids
 	);
 	for (const part of ["<dim:request req-id>", "<dim:envelope /mail/cur/reply.json>", "<dim:session /sessions/s.jsonl>"])
 		assert.ok(text.includes(part), `missing ${part}`);
+});
+
+test("an expanded result names the recorded cwd, and a record without one says it is unknown", () => {
+	const recorded = (render(result(), true) ?? []).join("\n");
+	assert.ok(recorded.includes("<dim:cwd /work/checkout>"), recorded);
+	const legacy = (render(result({ cwd: undefined }), true) ?? []).join("\n");
+	assert.ok(legacy.includes("<dim:cwd unknown (not recorded)>"), legacy);
+	assert.ok(!legacy.includes(process.cwd()), legacy);
+	assert.ok((render(gone, true) ?? []).includes("<dim:cwd unknown (not recorded)>"));
+});
+
+test("an expanded result names its workspace, its Git checkout or an unknown Git state", () => {
+	// A view that drops the workspace, or calls a failed inspection a non-Git directory, is what this catches.
+	const checkout = (
+		render(
+			result({
+				workspace: {
+					mode: "existing",
+					cwd: "/work/topic",
+					git: {
+						kind: "git",
+						identity: { mainRoot: "/work/main", commonDir: "/work/main/.git", checkoutRoot: "/work/topic" },
+						position: { branch: null, detached: true },
+						head: "abc123",
+						baseline: "abc123",
+					},
+				},
+			}),
+			true,
+			400,
+		) ?? []
+	).join("\n");
+	assert.ok(
+		checkout.includes(
+			"<dim:workspace existing directory; Git checkout /work/main (linked worktree /work/topic), detached HEAD, launch commit abc123>",
+		),
+		checkout,
+	);
+	const reason = "git timed out\nextra line";
+	const unknown = (
+		render(result({ workspace: { mode: "existing", cwd: "/work/x", git: { kind: "unknown", reason } } }), true, 400) ??
+		[]
+	).join("\n");
+	assert.ok(unknown.includes("Git state unknown (git timed out\\nextra line)"), unknown);
+	assert.equal(reason, "git timed out\nextra line", "rendering does not mutate the structured reason");
+	assert.ok(!(render(result(), true, 400) ?? []).join("\n").includes("workspace"), "older records show no workspace");
+});
+
+test("an expanded result shows its checkout snapshot as data, and the collapsed row does not", () => {
+	// A view that splits a filename across lines, hides a truncation, or calls a failed inspection non-Git.
+	const summary = (paths: string[], total = paths.length) => ({ paths, total, truncated: total > paths.length });
+	const details = result({
+		workspaceSnapshot: {
+			kind: "git",
+			position: { branch: "topic", detached: false },
+			head: "h".repeat(40),
+			baseline: "b".repeat(40),
+			ahead: 2,
+			workingState: "dirty",
+			committed: summary(["renamed\nfile.txt"]),
+			pending: {
+				staged: summary([]),
+				unstaged: summary(["a b.txt"]),
+				untracked: summary(["x.txt"], 101),
+				conflicted: summary(["conflict.txt"]),
+			},
+		},
+	});
+	const lines = render(details, true, 400) ?? [];
+	const text = lines.join("\n");
+	assert.ok(text.includes("h".repeat(40)) && text.includes("b".repeat(40)), text);
+	assert.ok(text.includes('"renamed\\nfile.txt"'), "a newline in a name stays inside its quoted line");
+	assert.ok(!lines.some((line) => line.endsWith("file.txt") && !line.includes("renamed")), text);
+	assert.ok(text.includes('"a b.txt"'), text);
+	assert.ok(text.includes("100 more"), "the paths left out are counted");
+	assert.ok(text.includes('"conflict.txt"'), text);
+	assert.equal((render(details, false) ?? []).join("\n").includes("conflict.txt"), false, "collapsed stays compact");
+	const unknown = (
+		render(result({ workspaceSnapshot: { kind: "unknown", reason: "git status timed out" } }), true, 400) ?? []
+	).join("\n");
+	assert.ok(unknown.includes("unknown (git status timed out)"), unknown);
+	assert.ok(
+		!(render(result(), true, 400) ?? []).join("\n").includes("checkout when"),
+		"older messages show no snapshot",
+	);
 });
 
 test("an expanded result with no task copy shows the note", () => {

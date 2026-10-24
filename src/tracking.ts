@@ -8,18 +8,24 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 
 import { type Mark, readMarks } from "./limits.ts";
-import { modelLabel } from "./render.ts";
+import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
 	type DelegationState,
 	deriveState,
-	findSession,
+	isStarted,
+	locateSession,
 	type Recorded,
 	type Results,
 	recordedName,
+	type StartedRecorded,
 	type WindowState,
+	type WorkspaceAttempt,
 } from "./results.ts";
+import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
+import { AttemptSchema } from "./tracking-attempt.ts";
 import type { ReadingError } from "./usage.ts";
+import { WorkspaceSchema } from "./workspace.ts";
 
 /** The hook a tick emits so the provider claims waiting replies before windows are checked. */
 const SCAN = "message:scan";
@@ -49,10 +55,11 @@ export function toolResult(
 /** Every tool here touches only local state: tmux, the session's entries and files under the agent directory. */
 const CLOSED_WORLD = { openWorldHint: false } as const;
 
-const DELEGATION_STATES: readonly DelegationState[] = ["closed", "done", "gone", "running", "window-closed", "unknown"];
+const STARTED_STATES = ["closed", "done", "gone", "running", "window-closed", "unknown"] as const;
 
-/** One delegation in `delegation_status`'s structured result; `viewDetails` builds it. */
-const DelegationSchema = Type.Object({
+/** One started delegation in `delegation_status`'s structured result; `viewDetails` builds it. */
+const StartedSchema = Type.Object({
+	kind: Type.Literal("started"),
 	id: Type.String(),
 	name: Type.String(),
 	agent: Type.String(),
@@ -64,8 +71,14 @@ const DelegationSchema = Type.Object({
 	autoExit: Type.Boolean(),
 	windowId: Type.String(),
 	windowName: Type.String(),
+	cwd: Type.Optional(
+		Type.String({ description: "The directory its window opened in; absent for records from before it was kept." }),
+	),
+	sessionDir: Type.Optional(Type.String({ description: "The session-storage directory it was told to use." })),
+	workspace: Type.Optional(WorkspaceSchema),
+	workspaceSnapshot: WorkspaceSnapshotSchema,
 	state: Type.Union(
-		DELEGATION_STATES.map((state) => Type.Literal(state)),
+		STARTED_STATES.map((state) => Type.Literal(state)),
 		{
 			description:
 				"running: window open, no result. done: a result arrived (see status, envelopePath). gone: the window went with no result; a late reply makes it done. closed: delegation_close recorded it. window-closed: the window is gone. unknown: tmux could not be asked. done and closed are final; gone and window-closed turn done if a late reply arrives.",
@@ -80,6 +93,8 @@ const DelegationSchema = Type.Object({
 		Type.String({ description: "ISO time the session file was last written; running only." }),
 	),
 });
+
+const DelegationSchema = Type.Union([StartedSchema, AttemptSchema]);
 
 export const StatusSchema = Type.Object({
 	delegations: Type.Array(DelegationSchema),
@@ -124,26 +139,26 @@ async function listWindows(tmux: TmuxClient): Promise<TmuxWindow[] | undefined> 
 }
 
 /** The window a delegation owns: one with both its recorded id and its recorded name, since ids restart with every tmux server. */
-function ownWindow(windows: TmuxWindow[], record: Recorded): TmuxWindow | undefined {
+function ownWindow(windows: TmuxWindow[], record: StartedRecorded): TmuxWindow | undefined {
 	return windows.find((window) => window.id === record.windowId && window.name === record.windowName);
 }
 
 /** What the listing says about a delegation's window; a matching window whose program exited counts as gone. */
-function windowState(windows: TmuxWindow[] | undefined, record: Recorded): WindowState {
+function windowState(windows: TmuxWindow[] | undefined, record: StartedRecorded): WindowState {
 	if (windows === undefined) return "unknown";
 	const own = ownWindow(windows, record);
 	return own !== undefined && !own.exited ? "open" : "gone";
 }
 
 /** Records from before auto-exit existed kept their windows open, so they read off. */
-function autoExitLine(record: Recorded): string {
+function autoExitLine(record: StartedRecorded): string {
 	return record.autoExit === true
 		? "on — the delegate closes its window after a normal completion unless the user took over there"
 		: "off — the window stays open after the result";
 }
 
 /** The state, worded for the `state:` line. */
-function stateLine(state: DelegationState, record: Recorded): string {
+function stateLine(state: DelegationState, record: StartedRecorded): string {
 	switch (state) {
 		case "running":
 			return "running — the window is open and no result has arrived";
@@ -157,17 +172,25 @@ function stateLine(state: DelegationState, record: Recorded): string {
 			return "closed — the window is gone";
 		case "unknown":
 			return "unknown — tmux could not be asked whether the window is open";
+		case "planned":
+		case "created":
+		case "rolled-back":
+		case "retained":
+		case "interrupted":
+			return `${state} — no window id/start was recorded; a window may still exist`;
 	}
 }
 
 /** One delegation as `delegation_status` reports it; its text and details both read from this. */
 type View = {
-	record: Recorded;
+	record: StartedRecorded;
 	state: DelegationState;
 	name: string;
 	sessionPath: string | undefined;
 	/** When the session file was last written; set only for a running delegation with a file. */
 	lastActive: Date | undefined;
+	/** The checkout observed for this status call; the recorded result keeps its own. */
+	snapshot: WorkspaceSnapshot;
 };
 
 /** How long ago, worded for the `state:` line: `just now`, `N min ago` or `N h M min ago`. */
@@ -179,9 +202,9 @@ function ago(ms: number): string {
 }
 
 /** The view of a delegation: its state and the fields the text and details share. */
-function view(record: Recorded, windows: TmuxWindow[] | undefined, ctx: ExtensionContext): View {
+function view(record: StartedRecorded, windows: TmuxWindow[] | undefined, ctx: ExtensionContext): View {
 	const state = deriveState(record, windowState(windows, record));
-	const sessionPath = record.result?.sessionPath ?? findSession(ctx.sessionManager.getSessionDir(), record.id);
+	const sessionPath = locateSession(record, ctx.sessionManager.getSessionDir());
 	let lastActive: Date | undefined;
 	if (state === "running" && sessionPath !== undefined) {
 		try {
@@ -190,17 +213,23 @@ function view(record: Recorded, windows: TmuxWindow[] | undefined, ctx: Extensio
 			// a failed stat counts as no file
 		}
 	}
-	return { record, state, name: recordedName(record), sessionPath, lastActive };
+	const snapshot = inspectWorkspace(record.workspace?.cwd, record.workspace?.git);
+	return { record, state, name: recordedName(record), sessionPath, lastActive, snapshot };
 }
 
 /** The text block for one delegation. */
-function viewText({ record, state, name, sessionPath, lastActive }: View): string {
+function viewText({ record, state, name, sessionPath, lastActive, snapshot }: View): string {
+	const [checkout, ...categories] = snapshotLines(snapshot);
 	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
 	const lines = [
 		`${record.id} ${record.agent} (${modelLabel(record.model, record.result?.finishedModel)}, thinking ${record.thinking})`,
 		`  name: ${name}`,
 		`  state: ${stateLine(state, record)}${seen}`,
 		`  window: ${record.windowName} (${record.windowId})`,
+		`  cwd: ${cwdLine(record.cwd)}`,
+		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
+		`  checkout now: ${checkout}`,
+		...categories.map((line) => `    ${line}`),
 		`  auto-exit: ${autoExitLine(record)}`,
 		`  session: ${sessionPath ?? `${record.id} (no session file yet)`}`,
 	];
@@ -209,8 +238,9 @@ function viewText({ record, state, name, sessionPath, lastActive }: View): strin
 }
 
 /** The structured details for one delegation. */
-function viewDetails({ record, state, name, sessionPath, lastActive }: View): Record<string, unknown> {
+function viewDetails({ record, state, name, sessionPath, lastActive, snapshot }: View): Record<string, unknown> {
 	return {
+		kind: "started",
 		id: record.id,
 		name,
 		agent: record.agent,
@@ -220,6 +250,10 @@ function viewDetails({ record, state, name, sessionPath, lastActive }: View): Re
 		autoExit: record.autoExit === true,
 		windowId: record.windowId,
 		windowName: record.windowName,
+		...(record.cwd === undefined ? {} : { cwd: record.cwd }),
+		...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
+		...(record.workspace === undefined ? {} : { workspace: record.workspace }),
+		workspaceSnapshot: snapshot,
 		state,
 		closed: record.closed === true,
 		closedWithoutResult: record.gone === true && record.result === undefined && record.closed !== true,
@@ -228,6 +262,16 @@ function viewDetails({ record, state, name, sessionPath, lastActive }: View): Re
 		sessionPath,
 		...(lastActive === undefined ? {} : { lastActiveAt: lastActive.toISOString() }),
 	};
+}
+
+/** One unstarted attempt as the status text words it. */
+function attemptText(record: WorkspaceAttempt): string {
+	return [
+		`${record.id} ${record.agent} (${modelLabel(record.model, undefined)}, thinking ${record.thinking})`,
+		`  name: ${recordedName(record)}`,
+		`  state: ${record.attempt.phase} — no window id/start was recorded; a window may still exist (close requires a verified window id)`,
+		...attemptLines(record).map((line) => `  ${line}`),
+	].join("\n");
 }
 
 /** The usage-limit marks in force now, as `delegation_status` reports them. */
@@ -325,7 +369,7 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Call it to check on a delegation that seems stuck or to find its files; a result arrives as a message on its own, so there is no need to call it to wait for one. Names the delegation id, agent, session name, model, thinking, window, delegate session path and result envelope path. A running delegation also shows when its session file was last written; a long gap may mean it is stuck but does not prove it. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
+			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Call it to check on a delegation that seems stuck or to find its files; a result arrives as a message on its own, so there is no need to call it to wait for one. Names the delegation id, agent, session name, model, thinking, window, working directory, delegate session path and result envelope path. A running delegation also shows when its session file was last written; a long gap may mean it is stuck but does not prove it. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
 		parameters: Type.Object({
 			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
 		}),
@@ -340,10 +384,16 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 		): Promise<ReturnType<typeof toolResult>> {
 			const records = selectRecords(results, params.id);
 			const windows = await listWindows(tmux);
-			const views = records.map((record) => view(record, windows, ctx));
+			const views = records.map((record) => (isStarted(record) ? view(record, windows, ctx) : record));
 			const marks = activeMarks();
 			const errors = readingErrors();
-			const details = { delegations: views.map(viewDetails), marks, readingErrors: errors };
+			const details = {
+				delegations: views.map((item) =>
+					"record" in item ? viewDetails(item) : { ...item, state: item.attempt.phase },
+				),
+				marks,
+				readingErrors: errors,
+			};
 			const block =
 				marks.length === 0 && errors.length === 0
 					? []
@@ -358,7 +408,10 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 			const parts =
 				views.length === 0
 					? ["No delegations are recorded in this session.", ...block]
-					: [`${heading}\n\n${views.map(viewText).join("\n\n")}`, ...block];
+					: [
+							`${heading}\n\n${views.map((item) => ("record" in item ? viewText(item) : attemptText(item))).join("\n\n")}`,
+							...block,
+						];
 			return toolResult(parts.join("\n\n"), details);
 		},
 	};
@@ -385,6 +438,11 @@ function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 			_ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
 			const [record] = selectRecords(results, params.id);
+			if (!isStarted(record)) {
+				throw new Error(
+					`delegation ${record.id} is a workspace attempt (${record.attempt.phase}): no verified window id was recorded; a window may still exist, so close is unavailable`,
+				);
+			}
 			const closed = (alreadyClosed: boolean, killed: boolean) => ({
 				id: record.id,
 				windowId: record.windowId,

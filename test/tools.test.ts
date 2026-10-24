@@ -15,6 +15,7 @@ import {
 	DEFAULT_TOOLS,
 	delegationPromptPath,
 	resetRoot,
+	root,
 	rosterDir,
 	session,
 	sessionDir,
@@ -368,6 +369,10 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 			windowName: `scout-${id.slice(0, 8)}`,
 			requestId: (s.sendCalls[0].envelope as { id: string }).id,
 			autoExit: true,
+			cwd: root,
+			sessionDir,
+			// The harness root is a temporary directory outside any Git checkout.
+			workspace: { mode: "inherited", cwd: root, git: { kind: "non-git" } },
 		},
 	});
 	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-${id.slice(0, 8)}`);
@@ -586,7 +591,7 @@ test("the tools declare all four annotations and stay direct", async () => {
 	const closedWorld = { openWorldHint: false };
 	assert.deepEqual(hints("delegate"), {
 		readOnlyHint: false,
-		destructiveHint: false,
+		destructiveHint: true,
 		idempotentHint: false,
 		openWorldHint: true,
 	});
@@ -638,6 +643,56 @@ test("structured results carry each delegation's state and one close shape", asy
 		killed: false,
 	});
 	assert.deepEqual(await states(), ["closed"]);
+});
+
+test("legacy cwd is unknown and unopened sessions have no fabricated filename", async () => {
+	const id = "0b5e1c2a-legacy-record";
+	const s = session({
+		entries: [
+			{
+				customType: "delegate",
+				data: {
+					id,
+					agent: "scout",
+					model: "alpha/fast-model",
+					thinking: "low",
+					windowId: "@7",
+					windowName: "scout-0b5e1c2a",
+					requestId: "legacy-request",
+				},
+			},
+		],
+	});
+	await s.start();
+	const status = await s.toolCall("delegation_status", { id });
+	const item = (status.structuredContent as { delegations: Record<string, unknown>[] }).delegations[0];
+	assert.equal(item.id, id);
+	assert.equal(item.cwd, undefined);
+	assert.match(status.content[0].text, /cwd:.*(?:unknown|not recorded)/i);
+	assert.ok(!status.content[0].text.includes(`cwd: ${process.cwd()}`), status.content[0].text);
+	assert.equal(item.sessionPath, undefined);
+});
+
+test("a recorded cwd is shown in delegation_status text and details", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	await s.toolCall("delegate", { agent: "scout", task: "do it" });
+	const status = await s.toolCall("delegation_status", {});
+	const item = (status.structuredContent as { delegations: Record<string, unknown>[] }).delegations[0];
+	assert.equal(item.cwd, root);
+	assert.equal(item.sessionDir, sessionDir);
+	assert.ok(status.content[0].text.includes(`cwd: ${root}`), status.content[0].text);
+});
+
+test("nonabsolute session storage fails before mail and window", async () => {
+	writeAgent("scout", SCOUT);
+	const s = session({ sessionDir: "relative/sessions" });
+	await s.start();
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "inspect" }), /session.*absolute/i);
+	assert.deepEqual(s.sendCalls, []);
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.entries, []);
 });
 
 test("delegation_status refuses an unknown id with the ones that exist", async () => {

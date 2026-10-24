@@ -5,10 +5,12 @@
 // the mailbox are the harness's fakes.
 
 import assert from "node:assert/strict";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -207,6 +209,81 @@ test("each tick lists the windows once, however many delegations run", async (t)
 	const before = s.tmux.listCalls;
 	await tick(t, 2);
 	assert.equal(s.tmux.listCalls - before, 2);
+});
+
+test("recorded session directory survives parent resume and gone late reply", async (t) => {
+	const recordedDir = join(root, "recorded-sessions");
+	const laterDir = join(root, "later-sessions");
+	mkdirSync(recordedDir, { recursive: true });
+	mkdirSync(laterDir, { recursive: true });
+	const first = await started(t, { sessionDir: recordedDir });
+	const d = first.entries.find((entry) => typeof entry.data.windowId === "string")?.data as {
+		id: string;
+		requestId: string;
+		windowId: string;
+		windowName: string;
+	};
+	const childSessionPath = join(recordedDir, `20260929T000000_${d.id}.jsonl`);
+	writeFileSync(childSessionPath, "");
+
+	// The parent resumes with another selected session directory.
+	const s = session({ parent: first.parent, entries: structuredClone(first.entries), sessionDir: laterDir });
+	s.tmux.addWindow(d.windowId, d.windowName);
+	await s.start();
+	type Item = { id: string; state: string; sessionPath?: string };
+	const item = async (from: Session = s) =>
+		((await from.toolCall("delegation_status", { id: d.id })).structuredContent as { delegations: Item[] })
+			.delegations[0];
+	const runningItem = await item();
+	assert.equal(runningItem.state, "running");
+	assert.equal(runningItem.sessionPath, childSessionPath);
+
+	s.tmux.windows.clear();
+	await tick(t);
+	const [goneMessage] = closedMessages(s).map((m) => m.message as unknown as { details: { sessionPath?: string } });
+	assert.equal(goneMessage.details.sessionPath, childSessionPath);
+	const goneEntry = s.entries.find((entry) => entry.data.gone === true);
+	assert.ok(goneEntry);
+	assert.equal(goneEntry.data.sessionPath, childSessionPath);
+	const afterGone = structuredClone(s.entries);
+
+	const requestPath = join(agentDir, "mailbox", s.parent, "sent", `000000000000001-${d.requestId}.json`);
+	const requestEnvelope = {
+		id: d.requestId,
+		from: s.parent,
+		to: d.id,
+		in_reply_to: [],
+		status: "",
+		ts: "2026-09-29T00:00:00.000Z",
+		body: "look into it",
+	};
+	s.events.emit("message:inbound", {
+		envelope: {
+			id: "late-reply",
+			from: d.id,
+			to: s.parent,
+			in_reply_to: [d.requestId],
+			status: "done",
+			ts: "2026-09-29T00:01:00.000Z",
+			body: "late answer",
+		},
+		path: join(agentDir, "mailbox", s.parent, "cur", "000000000000002-late-reply.json"),
+		requests: [{ envelope: requestEnvelope, path: requestPath }],
+		handled: false,
+	});
+	const [resultMessage] = resultMessages(s).map((m) => m.message as unknown as { details: { sessionPath?: string } });
+	assert.equal(resultMessage.details.sessionPath, childSessionPath);
+	const done = await item();
+	assert.equal(done.state, "done");
+	assert.equal(done.sessionPath, childSessionPath);
+
+	// A later resume reads the path the gone record kept, without finding the file again.
+	rmSync(childSessionPath);
+	const restored = session({ parent: s.parent, entries: afterGone, sessionDir: laterDir });
+	await restored.start();
+	const restoredAfterGoneItem = await item(restored);
+	assert.equal(restoredAfterGoneItem.state, "gone");
+	assert.equal(restoredAfterGoneItem.sessionPath, childSessionPath);
 });
 
 test("session_shutdown stops the poll", async (t) => {

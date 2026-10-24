@@ -18,11 +18,104 @@ import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText }
 import type { Static } from "typebox";
 
 import type { DelegateSchema } from "./index.ts";
-import type { MessageDetails } from "./results.ts";
+import type { MessageDetails, ResourceFacts, WorkspaceAttempt } from "./results.ts";
+import type { WorkspaceSnapshot } from "./snapshot.ts";
+import type { PathSummary, Workspace } from "./workspace.ts";
 
 /** The launch model, or `launch → finished` when the delegate finished on another one. */
 export function modelLabel(model: string, finished: string | undefined): string {
 	return finished === undefined || finished === model ? model : `${model} → ${finished}`;
+}
+
+const displayReason = (reason: string): string => JSON.stringify(reason).slice(1, -1);
+
+/** Where a delegation ran, or that its record, from before cwd was kept, does not say. */
+export function cwdLine(cwd: string | undefined): string {
+	return cwd ?? "unknown (not recorded)";
+}
+
+/** How a delegation's directory was chosen and its Git checkout at launch, on one line. */
+export function workspaceLine(workspace: Workspace): string {
+	if (workspace.mode === "managed") {
+		const { createdBranch, requestedBase, baseCommit, source, cwd } = workspace;
+		return `managed worktree ${cwd}, new branch ${createdBranch} created from ${requestedBase} (${baseCommit}) of ${source.checkoutRoot}; ${dirtyNotice(workspace.sourceDirty)}`;
+	}
+	const { mode, git } = workspace;
+	const how = mode === "inherited" ? "the parent's directory" : "existing directory";
+	if (git.kind === "non-git") return `${how}; not a Git checkout`;
+	if (git.kind === "unknown") return `${how}; Git state unknown (${displayReason(git.reason)})`;
+	const { mainRoot, checkoutRoot } = git.identity;
+	const linked = checkoutRoot === mainRoot ? "" : ` (linked worktree ${checkoutRoot})`;
+	const at = git.position.detached ? "detached HEAD" : `branch ${git.position.branch}`;
+	return `${how}; Git checkout ${mainRoot}${linked}, ${at}, launch commit ${git.baseline ?? "none (no commits yet)"}`;
+}
+
+/** The source's uncommitted paths a worktree does not carry, bounded to a few names. */
+export function dirtyNotice({ paths, total }: PathSummary): string {
+	if (total === 0) return "the source had no uncommitted files";
+	const shown = paths.slice(0, 5).map((path) => JSON.stringify(path));
+	const rest = total > shown.length ? `, and ${total - shown.length} more` : "";
+	return `${total} uncommitted source path${total === 1 ? " is" : "s are"} not copied into it (${shown.join(", ")}${rest})`;
+}
+
+/** What is known to exist for an attempt, in words. */
+export function resourceLine(resources: ResourceFacts): string {
+	switch (resources.kind) {
+		case "none":
+			return "nothing created by this attempt remains";
+		case "branch":
+			return `the branch ${resources.branch} remains at ${resources.head}; its worktree is gone`;
+		case "worktree":
+			return `the worktree ${resources.cwd} and its branch ${resources.branch} (at ${resources.head}) remain`;
+		case "unknown":
+			return `unknown: ${displayReason(resources.reason)}; observed paths ${JSON.stringify(resources.observedPaths)}, refs ${JSON.stringify(resources.observedRefs)}`;
+	}
+}
+
+/** The lines that describe an attempt without a window: its plan, what exists, why it stopped and recovery. */
+export function attemptLines({ plan, attempt, requestId }: WorkspaceAttempt): string[] {
+	let why: string[] = [];
+	if ("cause" in attempt) why = [`cause: ${attempt.cause}`];
+	else if ("reason" in attempt) why = [`reason: ${attempt.reason}`];
+	return [
+		`source: ${plan.sourceCwd} (repository ${plan.source.mainRoot})`,
+		`worktree: ${plan.destination} on new branch ${plan.branch} from ${plan.requestedBase} (${plan.baseCommit})`,
+		`resources: ${resourceLine(attempt.resources)}`,
+		...why,
+		...(attempt.phase === "retained" && attempt.recovery.length > 0
+			? ["recovery (non-forced; check each command's result):", ...attempt.recovery.map((line) => `  ${line}`)]
+			: []),
+		...(requestId === undefined
+			? []
+			: [`request: ${requestId} (the task was mailed; no window id/start was recorded and a window may still exist)`]),
+	];
+}
+
+/** A path list as data: each name JSON-quoted, so spaces, quotes and newlines stay inside one line. */
+function pathList({ paths, total }: PathSummary): string {
+	if (total === 0) return "none";
+	const more = total > paths.length ? `, and ${total - paths.length} more not listed` : "";
+	return `${total} path${total === 1 ? "" : "s"}: ${paths.map((path) => JSON.stringify(path)).join(", ")}${more}`;
+}
+
+/**
+ * A checkout observation: a summary line, then for Git one line per path
+ * category. Committed changes are counted from the launch commit; pending
+ * ones are the index and working tree now.
+ */
+export function snapshotLines(snapshot: WorkspaceSnapshot): string[] {
+	if (snapshot.kind === "non-git") return ["not a Git checkout"];
+	if (snapshot.kind === "unknown") return [`Git state unknown (${displayReason(snapshot.reason)})`];
+	const { position, head, baseline, ahead, workingState, committed, pending } = snapshot;
+	const at = position.detached ? "detached HEAD" : `branch ${position.branch}`;
+	return [
+		`${at}, head ${head}, launch commit ${baseline}, ${ahead} commit${ahead === 1 ? "" : "s"} since launch, working tree ${workingState}`,
+		`committed since launch: ${pathList(committed)}`,
+		`staged: ${pathList(pending.staged)}`,
+		`unstaged: ${pathList(pending.unstaged)}`,
+		`untracked: ${pathList(pending.untracked)}`,
+		`conflicted: ${pathList(pending.conflicted)}`,
+	];
 }
 
 /** Lines of a result the collapsed message previews. */
@@ -63,6 +156,12 @@ function idLines(details: MessageDetails): string[] {
 	const lines = [`delegation ${details.id}`, `request ${details.requestId}`];
 	if (details.kind === "result") lines.push(`envelope ${tilde(details.envelopePath)}`);
 	else lines.push(`window ${details.windowName}`);
+	lines.push(`cwd ${details.cwd === undefined ? cwdLine(undefined) : tilde(details.cwd)}`);
+	if (details.workspace !== undefined) lines.push(`workspace ${workspaceLine(details.workspace)}`);
+	if (details.kind === "result" && details.workspaceSnapshot !== undefined) {
+		const [first, ...rest] = snapshotLines(details.workspaceSnapshot);
+		lines.push(`checkout when the result arrived: ${first}`, ...rest.map((line) => `  ${line}`));
+	}
 	lines.push(
 		`session ${details.sessionPath === undefined ? `${details.id} (no session file found)` : tilde(details.sessionPath)}`,
 	);
@@ -194,6 +293,12 @@ export function renderDelegateResult(
 				...started.notices,
 				`delegation ${started.id}`,
 				`window ${started.windowName} (${started.windowId})`,
+				// Results saved before cwd was recorded have none.
+				`cwd ${(started.cwd as string | undefined) === undefined ? cwdLine(undefined) : tilde(started.cwd)}`,
+				// Results saved before workspaces were recorded have none.
+				...((started.workspace as Workspace | undefined) === undefined
+					? []
+					: [`workspace ${workspaceLine(started.workspace)}`]),
 				`thinking ${started.thinking}, auto-exit ${started.autoExit ? "on" : "off"}`,
 			].map((line) => theme.fg("dim", line)),
 		);

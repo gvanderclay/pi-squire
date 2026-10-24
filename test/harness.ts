@@ -45,6 +45,11 @@ export function resetRoot(): void {
 	rmSync(legacyRosterDir, { recursive: true, force: true });
 	rmSync(delegationPromptPath, { recursive: true, force: true });
 	rmSync(sessionDir, { recursive: true, force: true });
+	// Project trust decisions and Pi's own settings, so a saved answer cannot carry into the next test.
+	for (const name of ["trust.json", "trust.json.lock", "settings.json"]) {
+		rmSync(join(agentDir, name), { recursive: true, force: true });
+	}
+	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
 	delete process.env.PI_DELEGATE_FALLBACK;
@@ -139,7 +144,8 @@ export type PrepareEvent = {
 
 /** The answers a scripted `ctx.ui` gives, one queue per dialog. */
 export type UiAnswers = {
-	select?: (string | undefined)[];
+	/** A promise answers when the test settles it, so a dialog can stay open while another call starts. */
+	select?: (string | undefined | Promise<string | undefined>)[];
 	editor?: (string | undefined)[];
 	custom?: unknown[];
 };
@@ -152,6 +158,12 @@ export type Entry = { customType: string; data: Record<string, unknown> };
 export type SessionOptions = {
 	/** Whether `ctx.hasUI` is true. */
 	hasUI?: boolean;
+	/** The parent's working directory, `ctx.cwd`; default `root`. */
+	cwd?: string;
+	/** What `ctx.isProjectTrusted()` answers; default false. */
+	projectTrusted?: boolean;
+	/** What `ctx.sessionManager.getSessionDir()` reports; default the exported `sessionDir`. */
+	sessionDir?: string;
 	/** This session's id, the parent address. */
 	parent?: string;
 	/** What the `message:send` provider stub answers. */
@@ -300,8 +312,9 @@ export function session(options: SessionOptions = {}) {
 		},
 	};
 	const ctx = {
-		cwd: root,
+		cwd: options.cwd ?? root,
 		hasUI: options.hasUI ?? true,
+		isProjectTrusted: () => options.projectTrusted ?? false,
 		modelRegistry: registry,
 		get signal() {
 			return signal;
@@ -311,7 +324,7 @@ export function session(options: SessionOptions = {}) {
 		},
 		sessionManager: {
 			getSessionId: () => parent,
-			getSessionDir: () => sessionDir,
+			getSessionDir: () => options.sessionDir ?? sessionDir,
 			getEntries: () =>
 				entries.map((entry, index) => ({
 					type: "custom",
@@ -333,7 +346,7 @@ export function session(options: SessionOptions = {}) {
 			theme: { fg: (_color: string, text: string) => text },
 			select: async (title: string, options: string[]) => {
 				selects.push({ title, options });
-				return selectAnswers.shift();
+				return await selectAnswers.shift();
 			},
 			editor: async (title: string, prefill?: string) => {
 				editors.push({ title, prefill });
@@ -406,16 +419,18 @@ export function session(options: SessionOptions = {}) {
 		return event;
 	};
 	let calls = 0;
-	const callTool = (name: string, params: unknown): Promise<ToolResult> => {
+	/** `abort` is the call's own signal, as Pi passes a tool; none by default. */
+	const callTool = (name: string, params: unknown, abort?: AbortSignal): Promise<ToolResult> => {
 		const tool = tools[name];
 		if (tool === undefined) return Promise.reject(new Error(`no tool named ${name} is registered`));
-		return tool.execute(`call-${++calls}`, params as never, undefined, undefined, ctx).then((result) => {
+		return tool.execute(`call-${++calls}`, params as never, abort, undefined, ctx).then((result) => {
 			checkStructured(tool, result);
 			return result;
 		});
 	};
 	return {
 		parent,
+		context: ctx,
 		tmux,
 		usage,
 		events,

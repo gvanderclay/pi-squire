@@ -6,6 +6,87 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `/delegate --worktree-source <dir>` and the `worktree_source` input select another existing Git checkout as the frozen base and trust identity for managed worktrees. Unresolved protected resources in that planned checkout require the parent's decision before creation.
+
+- `/delegate --worktree-base <commit-ish>` and the `worktree_base` tool input create managed branches from an explicitly resolved local commit. Resolution is frozen, never fetches, and supports valid explicit commits from an unborn source checkout.
+
+- Managed worktree placement can be configured per call in
+  `<agent dir>/squire/settings.json` with a global `worktreeRoot` template and
+  canonical-main-repository `worktreeRootByRepo` overrides. Placement settings
+  affect only worktree creation; inherited and `cwd` launches never read them.
+- `/delegate --worktree <branch>` and the `delegate` tool's `worktree` input
+  create a managed worktree from the source checkout's frozen committed HEAD,
+  in the built-in sibling `{repo}-worktrees/{branch}` layout. Source dirty
+  paths are summarized but never copied. Launch attempts are journaled before
+  creation; known pre-window failures roll back only a proven pristine checkout
+  and branch, while uncertain or changed resources are retained with recovery
+  facts. Once a window opens, the workspace is retained. Managed workspace
+  facts appear in results, status and expanded rendering.
+- The `session:launch` payload gains a read-only `cwd`, the directory the
+  delegate's window opens in. The window opens there whatever a listener
+  assigns; appending args and adding env keys work as before. The README
+  example and its test read it.
+- Each delegation records its working directory and session-storage
+  directory. The `delegate` tool's structured result carries `cwd` and
+  `sessionDir`; `delegation_status`, result and closed-without-a-result
+  messages and their expanded views show the working directory, and older
+  records show it as `unknown (not recorded)`.
+
+- `--cwd <dir>` on `/delegate` and `cwd` on the `delegate` tool run a
+  delegate in an existing directory: relative to the parent's, `~`/`~/`
+  expanded, symlinks resolved, refused before anything starts when it is
+  missing, a file or cannot be entered. The directory's branch, index and
+  files are never touched or cleaned up. Placeholder values (`null`, `""`,
+  `"null"`, `"none"`, `"false"`, `"undefined"`) mean the parent's directory;
+  other non-string values are refused. The delegate's prompt names the
+  selected directory, and the start message names it when it differs.
+- Project trust for a `--cwd` directory is decided in the parent: the parent's
+  current trust inside its own repository (by Git common directory), else the
+  saved decision for a linked worktree's main repository or for the directory,
+  else `--no-approve` when it has no protected resources, else a parent
+  dialog with Pi's five choices. Without a UI, after a cancel or an abort, or
+  when the trust store cannot be read or written, nothing starts. Dialogs are
+  asked one at a time.
+- Each new delegation records a `workspace` (mode, cwd and Git checkout at
+  launch: identity, branch or detached, launch commit, or non-Git, or unknown
+  with a reason). The `delegate` tool's structured result, `delegation_status`,
+  result and closed-without-a-result messages and their expanded views carry
+  it; result and closed text gain a `Workspace:` line, and status text a
+  `workspace:` line. The pinned record, result-text and completion tests
+  change with it.
+
+- Results and `delegation_status` report a snapshot of the delegation's
+  checkout (`workspaceSnapshot`): branch or detached HEAD, head, launch
+  commit, commits since launch, committed paths since launch, and staged,
+  unstaged, untracked and conflicted paths, or non-Git, or unknown with a
+  reason. A result keeps the snapshot taken when its reply arrived; status
+  takes a fresh one each call. Lists are capped at 100 paths and 16 KiB with
+  totals; Git gets 2 s per command, 5 s and 4 MiB per checkout, runs without
+  optional index writes, and is asked only about the recorded checkout. A
+  snapshot is an observation of the Git state at the recorded location, not
+  proof of the same repository on disk, attribution or merge advice. Result text
+  gains `Checkout when the result arrived:` lines and status text
+  `checkout now:` lines; the pinned result entry, details and result-text
+  tests change with it.
+
+### Changed
+
+- `/delegate` flag values may be double-quoted, with `\"` and `\\` escapes,
+  so a path with spaces works; the task after the flags is kept byte for
+  byte. A missing closing quote is refused before anything starts.
+- Every delegate is launched with an explicit `--approve` or `--no-approve`
+  from the parent's current project trust, so a global
+  `defaultProjectTrust` cannot trust a project the parent does not.
+- Every delegate is launched with `--session-dir` set to the parent's absolute
+  session-storage directory. Session lookups for running, closed and late
+  results use the directory recorded at launch, so they survive a parent that
+  resumes with another storage directory, and a found session path is kept
+  in the closed-without-a-result record. A parent whose session directory is
+  not absolute refuses to launch before sending the task. The launch argv and
+  record tests change with it.
+
 ## [0.9.5] - 2026-10-23
 
 ### Changed

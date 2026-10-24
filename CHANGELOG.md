@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-24
+
 ### Added
 
 - `/delegate --worktree-source <dir>` and the `worktree_source` input select another existing Git checkout as the frozen base and trust identity for managed worktrees. Unresolved protected resources in that planned checkout require the parent's decision before creation.
@@ -456,7 +458,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/gvanderclay/pi-squire/compare/v0.9.5...v0.10.0
 [0.9.5]: https://github.com/gvanderclay/pi-squire/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/gvanderclay/pi-squire/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/gvanderclay/pi-squire/compare/v0.9.2...v0.9.3

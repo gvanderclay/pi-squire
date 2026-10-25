@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The `session:launch` payload gains a read-only `toolCallId`, the ID of the
+  `delegate` tool call that started the launch, so a listener can tie a
+  delegate's window to that call. It is `undefined` for a launch from the
+  `/delegate` command.
+
 ## [0.10.0] - 2026-10-24
 
 ### Added

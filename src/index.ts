@@ -158,7 +158,13 @@ const USAGE =
 
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 /** `cwd` is informational: the window opens in the launch's own value, whatever a listener assigns. */
-type LaunchPayload = { args: string[]; env: Record<string, string>; agent: string; readonly cwd: string };
+type LaunchPayload = {
+	args: string[];
+	env: Record<string, string>;
+	agent: string;
+	readonly cwd: string;
+	readonly toolCallId: string | undefined;
+};
 type Parsed = {
 	agent: string;
 	model?: string;
@@ -583,10 +589,11 @@ export default function delegate(
 		cwd: string;
 		sessionDir: string;
 		start: Start;
+		toolCallId: string | undefined;
 		ctx: ExtensionContext;
 		onWindowOpened: () => void;
 	}): Promise<Launched> {
-		const { id, requestId, workspace, trusted, cwd, sessionDir, start, ctx, onWindowOpened } = input;
+		const { id, requestId, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, onWindowOpened } = input;
 		const parent = ctx.sessionManager.getSessionId();
 		const name = delegateName(start.agent.name, id, start.label);
 		const managedContext =
@@ -629,7 +636,7 @@ export default function delegate(
 		const envSessionDir = process.env[SESSION_DIR_ENV];
 		if (envSessionDir !== undefined && envSessionDir !== "") env[SESSION_DIR_ENV] = envSessionDir;
 		// Listeners may only append to `args` and add to `env`; there is no veto.
-		const payload: LaunchPayload = { args: argv, env, agent: start.agent.name, cwd };
+		const payload: LaunchPayload = { args: argv, env, agent: start.agent.name, cwd, toolCallId };
 		pi.events.emit(LAUNCH, payload);
 		let windowId: string;
 		try {
@@ -663,7 +670,12 @@ export default function delegate(
 		return { id, name, windowId, windowName: name, requestId, cwd, sessionDir, workspace };
 	}
 
-	async function launch(start: Start, ctx: ExtensionContext, signal?: AbortSignal): Promise<Launched> {
+	async function launch(
+		start: Start,
+		ctx: ExtensionContext,
+		signal?: AbortSignal,
+		toolCallId?: string,
+	): Promise<Launched> {
 		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 		const sessionDir = ctx.sessionManager.getSessionDir();
 		if (!isAbsolute(sessionDir))
@@ -781,6 +793,7 @@ export default function delegate(
 				cwd: workspace.cwd,
 				sessionDir,
 				start,
+				toolCallId,
 				ctx,
 				onWindowOpened: () => {
 					windowOpened = true;
@@ -937,7 +950,7 @@ export default function delegate(
 		// Opens a new window each call and removes nothing. Open world: the delegate calls a remote model and runs its agent's tools unattended.
 		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 		async execute(
-			_toolCallId: string,
+			toolCallId: string,
 			params: {
 				agent: string;
 				task: string;
@@ -977,7 +990,7 @@ export default function delegate(
 				rosterFor(ctx),
 				ctx.modelRegistry,
 			);
-			const launched = await launch(start, ctx, signal);
+			const launched = await launch(start, ctx, signal, toolCallId);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
 				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}${placedIn(launched)}.${launched.workspace.mode === "managed" ? ` Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""} It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,

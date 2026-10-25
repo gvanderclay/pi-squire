@@ -788,8 +788,8 @@ that block.
 
 ### `session:launch`
 
-`pi-squire` provides this hook. It emits `{ args, env, agent, cwd }` after the
-task has been sent and just before it opens the delegate's window.
+`pi-squire` provides this hook. It emits `{ args, env, agent, cwd, toolCallId }`
+after the task has been sent and just before it opens the delegate's window.
 
 | Field | Meaning |
 | --- | --- |
@@ -797,6 +797,7 @@ task has been sent and just before it opens the delegate's window.
 | `env` | the child's environment, as `KEY`/`value` pairs |
 | `agent` | the agent's name, as in `<agent dir>/squire/agents/<name>/AGENT.md`; read it, do not change it |
 | `cwd` | the directory the window opens in, the parent's or the resolved `--cwd`; read it, do not change it |
+| `toolCallId` | the ID of the `delegate` tool call that started the launch; absent when started from the `/delegate` command; read it, do not change it |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
 and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
@@ -890,7 +891,7 @@ version and is listed under "Breaking" in [CHANGELOG.md](CHANGELOG.md).
 
 Other extensions may rely on:
 
-- the `session:launch` payload `{ args, env, agent, cwd }`, emitted
+- the `session:launch` payload `{ args, env, agent, cwd, toolCallId }`, emitted
   synchronously after the task is sent and before the window opens, with
   `cwd`, the trust flag and `--session-dir` chosen by `pi-squire` (see
   [Hooks](#hooks));

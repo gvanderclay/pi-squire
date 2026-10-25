@@ -66,6 +66,29 @@ test("the payload a session:launch listener sees names the agent", async () => {
 	assert.equal(seen?.agent, "scout");
 });
 
+test("the session:launch payload carries the delegate tool call's ID", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const s = session();
+	let seen: { toolCallId?: unknown } | undefined;
+	s.events.on("session:launch", (payload) => {
+		seen = payload as { toolCallId?: unknown };
+	});
+	await s.toolCall("delegate", { agent: "scout", task: "do the thing" });
+	assert.equal(seen?.toolCallId, "call-1");
+});
+
+test("a launch from the /delegate command carries no tool call ID", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const s = session();
+	let seen: { toolCallId?: unknown } | undefined;
+	s.events.on("session:launch", (payload) => {
+		seen = payload as { toolCallId?: unknown };
+	});
+	await s.delegate("scout do the thing");
+	assert.ok(seen, "the command launched a window");
+	assert.equal(seen.toolCallId, undefined);
+});
+
 test("launch hook cwd cannot redirect and append add contract survives", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const parentCwd = join(root, "parent-checkout");

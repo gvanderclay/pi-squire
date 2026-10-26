@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-26
+
 ### Changed
 
 - Delegates open in a companion tmux session, `<your session>-squire`, instead
@@ -489,7 +491,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/gvanderclay/pi-squire/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/gvanderclay/pi-squire/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/gvanderclay/pi-squire/compare/v0.9.5...v0.10.0
 [0.9.5]: https://github.com/gvanderclay/pi-squire/compare/v0.9.4...v0.9.5

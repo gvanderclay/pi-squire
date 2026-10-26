@@ -252,6 +252,7 @@ async function withNavigationStub(body: (log: () => string[]) => Promise<void>, 
 			'case "$1" in',
 			"list-clients) printf '100\\told\\n900\\tnew\\n500\\tmid\\n';;",
 			"display-message) echo '$7';;",
+			"show-options) echo 'C-a';;",
 			"capture-pane) echo 'pane text';;",
 			`display-popup) case "$2" in -C) ;; *) [ ${popupExit} -ne 0 ] || sleep 1; exit ${popupExit};; esac;;`,
 			"esac",
@@ -289,10 +290,11 @@ test("popup returns while display-popup still runs, and attaches by session id",
 		const started = Date.now();
 		await createTmuxClient().popup("c1", { id: "@4", name: "scout one" }, () => {});
 		assert.ok(Date.now() - started < 900, "display-popup blocks for a second; popup did not wait for it");
-		const [, popup] = log();
+		const [, prefix, popup] = log();
+		assert.equal(prefix, "show-options -gv prefix");
 		assert.equal(
 			popup,
-			"display-popup -c c1 -E -w 90% -h 90% -T scout one tmux select-window -t '@4' \\; attach-session -t '$7'",
+			"display-popup -c c1 -E -w 90% -h 90% -T scout one \u00b7 C-a d to close tmux select-window -t '@4' \\; attach-session -t '$7'",
 		);
 	});
 });

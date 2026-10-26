@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A delegate's popup title names the key that closes it, with your tmux prefix,
+  for example `scout-first · C-b d to close`.
+
 ## [0.13.0] - 2026-10-26
 
 ### Added

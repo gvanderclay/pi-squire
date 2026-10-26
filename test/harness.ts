@@ -142,12 +142,60 @@ export type PrepareEvent = {
 	};
 };
 
+/** The raw input each named key sends; any other key is typed as is. */
+const KEY_DATA: Record<string, string> = { up: "\x1b[A", down: "\x1b[B", enter: "\r", escape: "\x1b" };
+
+/**
+ * A key-driven `ctx.ui.custom` answer: the harness builds the component the
+ * factory returns, renders it, feeds it `keys` through `handleInput` and
+ * returns what it passed to `done`. `frames` collects the rendered text after
+ * the factory and after each key; `result` is the `done` value.
+ */
+export type KeyScript = { keys: string[]; frames: string[]; result?: unknown; width?: number };
+
+/** A `KeyScript` for the `ui.custom` queue. */
+export const keyScript = (keys: string[], width = 100): KeyScript => ({ keys, frames: [], width });
+
+const isKeyScript = (value: unknown): value is KeyScript =>
+	typeof value === "object" && value !== null && Array.isArray((value as KeyScript).keys);
+
+const settle = async () => {
+	for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+};
+
+type Component = { render(width: number): string[]; handleInput?(data: string): void; dispose?(): void };
+
+/** Build, render and drive one component the way Pi's `custom` does. */
+async function runKeyScript(factory: unknown, script: KeyScript): Promise<unknown> {
+	let finished = false;
+	const done = (value: unknown) => {
+		finished = true;
+		script.result = value;
+	};
+	const tui = { requestRender: () => {}, terminal: { columns: script.width ?? 100, rows: 30 } };
+	const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+	const component = await (factory as (...args: unknown[]) => Component | Promise<Component>)(tui, theme, {}, done);
+	const frame = () => script.frames.push(component.render(script.width ?? 100).join("\n"));
+	frame();
+	for (const key of script.keys) {
+		if (finished) break;
+		component.handleInput?.(KEY_DATA[key] ?? key);
+		await settle();
+		frame();
+	}
+	component.dispose?.();
+	if (!finished) throw new Error(`the key script ended before the component called done: ${script.keys.join(" ")}`);
+	return script.result;
+}
+
 /** The answers a scripted `ctx.ui` gives, one queue per dialog. */
 export type UiAnswers = {
 	/** A promise answers when the test settles it, so a dialog can stay open while another call starts. */
 	select?: (string | undefined | Promise<string | undefined>)[];
 	editor?: (string | undefined)[];
+	/** A `KeyScript` drives the component; anything else is the answer itself. */
 	custom?: unknown[];
+	confirm?: boolean[];
 };
 
 let counter = 0;
@@ -254,6 +302,11 @@ export function session(options: SessionOptions = {}) {
 	const selectAnswers = [...(options.ui?.select ?? [])];
 	const editorAnswers = [...(options.ui?.editor ?? [])];
 	const customAnswers = [...(options.ui?.custom ?? [])];
+	const confirmAnswers = [...(options.ui?.confirm ?? [])];
+	/** Every `ctx.ui.confirm` call, with its title and message. */
+	const confirms: { title: string; message: string }[] = [];
+	/** Every `pi.registerShortcut` handler, by key. */
+	const shortcuts: Record<string, (ctx: unknown) => unknown> = {};
 	const events: EventBus = createEventBus();
 	const models = [...FAKE_MODELS, ...(options.extraModels ?? [])];
 	const registry = {
@@ -299,6 +352,9 @@ export function session(options: SessionOptions = {}) {
 			tools[tool.name] = tool;
 		},
 		registerMessageRenderer: () => {},
+		registerShortcut: (key: string, shortcut: { handler: (ctx: unknown) => unknown }) => {
+			shortcuts[key] = shortcut.handler;
+		},
 		appendEntry: (customType: string, data: unknown) =>
 			entries.push({ customType, data: data as Record<string, unknown> }),
 		sendMessage: (message: { customType: string; content: unknown; display?: boolean }, opts: unknown) =>
@@ -352,9 +408,14 @@ export function session(options: SessionOptions = {}) {
 				editors.push({ title, prefill });
 				return editorAnswers.shift();
 			},
+			confirm: async (title: string, message: string) => {
+				confirms.push({ title, message });
+				return confirmAnswers.shift() ?? false;
+			},
 			custom: async (factory: unknown) => {
 				customs.push(factory);
-				return customAnswers.shift();
+				const answer = customAnswers.shift();
+				return isKeyScript(answer) ? runKeyScript(factory, answer) : answer;
 			},
 		},
 	};
@@ -447,6 +508,13 @@ export function session(options: SessionOptions = {}) {
 		selects,
 		editors,
 		customs,
+		confirms,
+		/** Queue one more answer for `ctx.ui.custom`, such as a `keyScript`. */
+		queueCustom: (answer: unknown) => customAnswers.push(answer),
+		/** Press a registered shortcut as Pi does, with this session's context. */
+		shortcut: (key: string) => shortcuts[key]?.(ctx),
+		/** The keys the extension registered shortcuts for. */
+		shortcuts: () => Object.keys(shortcuts),
 		/** The commands the extension registered, if any. */
 		commands: () => Object.keys(commands),
 		/** The tools the extension registered, if any. */

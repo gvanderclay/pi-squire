@@ -11,8 +11,9 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   loads; `child.ts` is what a delegate itself registers, `agents.ts` reads
   the roster, `results.ts` handles replies and works out a delegation's
   state (`result-message.ts` words the result), `render.ts` draws the
-  delegate messages, `tracking.ts` holds the poll and the status and close
-  tools, `resume.ts` the eligibility checks and the `delegation_resume` tool, `workspace.ts` resolves a
+  delegate messages, `tracking.ts` holds the status and close
+  tools, `poll.ts` the poll (with `popups.ts` and `windows.ts`), `navigator.ts`
+  the `/delegates` panel and `/delegate-open`, `resume.ts` the eligibility checks and the `delegation_resume` tool, `workspace.ts` resolves a
   delegate's directory, its Git checkout at launch and its project trust,
   `snapshot.ts` observes that checkout read-only for results and status,
   `git.ts` contains read-only Git identity and path parsing, `worktree.ts`

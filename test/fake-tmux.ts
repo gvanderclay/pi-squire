@@ -9,6 +9,8 @@
 import {
 	companionName,
 	type OpenedWindow,
+	type OwnSession,
+	type PopupWindow,
 	parseTmuxVersion,
 	type TmuxClient,
 	type TmuxVersion,
@@ -57,6 +59,22 @@ export class FakeTmux implements TmuxClient {
 	failAfterDispatch: string | undefined;
 	/** When set with `raceNewSession`, the race winner's session is gone again by the retry. */
 	raceWinnerGone = false;
+	/** Attached clients, by name: the session each is attached to and its last activity. */
+	readonly clients: { name: string; session: string; activity: number }[] = [];
+	/** Every popup opened, in order; `open` until `closePopup` runs on its client. */
+	readonly popups: { client: string; windowId: string; name: string; open: boolean }[] = [];
+	/** Every `closePopup` client, in order. */
+	readonly closedPopups: string[] = [];
+	/** Every `switchTo` call, in order. */
+	readonly switches: { client: string; windowId: string }[] = [];
+	/** Every `capture` window id, in order. */
+	readonly captures: string[] = [];
+	/** What `capture` returns, by window id; a missing window has nothing to capture. */
+	readonly screens = new Map<string, string>();
+	/** Every `clientFor` session, in order. */
+	readonly clientLookups: string[] = [];
+	/** When set, the matching navigation call rejects with this message. */
+	fail: { clientFor?: string; switchTo?: string; popup?: string; closePopup?: string; capture?: string } = {};
 	private next = 0;
 
 	insideTmux(): boolean {
@@ -141,6 +159,45 @@ export class FakeTmux implements TmuxClient {
 	moveWindow(windowId: string, session: string): void {
 		const window = this.windows.get(windowId);
 		if (window !== undefined) window.session = session;
+	}
+
+	/** Attach a client to a session. */
+	attachClient(name: string, activity: number, session = this.parentSession): void {
+		this.clients.push({ name, session, activity });
+	}
+
+	async ownSession(): Promise<OwnSession | undefined> {
+		return { id: "$1", name: this.parentSession };
+	}
+
+	async clientFor(session: string): Promise<string | undefined> {
+		this.clientLookups.push(session);
+		if (this.fail.clientFor !== undefined) throw new Error(this.fail.clientFor);
+		const here = this.clients.filter((client) => client.session === session);
+		return here.sort((a, b) => b.activity - a.activity)[0]?.name;
+	}
+
+	async switchTo(client: string, windowId: string): Promise<void> {
+		if (this.fail.switchTo !== undefined) throw new Error(this.fail.switchTo);
+		this.switches.push({ client, windowId });
+	}
+
+	/** Resolves as soon as the popup is up; it stays open until `closePopup`, as the real one does. */
+	async popup(client: string, window: PopupWindow): Promise<void> {
+		if (this.fail.popup !== undefined) throw new Error(this.fail.popup);
+		this.popups.push({ client, windowId: window.id, name: window.name, open: true });
+	}
+
+	async closePopup(client: string): Promise<void> {
+		if (this.fail.closePopup !== undefined) throw new Error(this.fail.closePopup);
+		this.closedPopups.push(client);
+		for (const popup of this.popups) if (popup.client === client) popup.open = false;
+	}
+
+	async capture(windowId: string): Promise<string> {
+		if (this.fail.capture !== undefined) throw new Error(this.fail.capture);
+		this.captures.push(windowId);
+		return this.screens.get(windowId) ?? "";
 	}
 
 	async kill(windowId: string): Promise<void> {

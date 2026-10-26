@@ -165,6 +165,32 @@ The values are `companion` (the default when the setting is absent) and
 `current`. The file is read at each launch. Any other value refuses the launch
 with an error naming the file, before the task is sent or a window opens.
 
+## Reaching delegates
+
+Delegate windows sit out of your way, so reach them from the parent. `/delegates`
+(or `alt+shift+d`) opens a panel of the delegations whose window is open: running,
+or done with auto-exit off, newest first. The model has no tool for any of this.
+
+| Key | Does |
+|---|---|
+| `↑` / `↓` | select a delegation; `esc` leaves the panel |
+| `enter` | open: a popup over your terminal, or a switch when the window is in the parent's own session |
+| `p` | peek: a snapshot of the window's pane (`capture-pane`); `r` refreshes, `enter` opens, `esc` returns |
+| `s` | switch your tmux client to the window; `prefix L` returns you (tmux's last-session key) |
+| `x` | close the delegation as `delegation_close` does; asks first only while it is running |
+| `n` | new delegate |
+
+Popup and switch act on the most recently active tmux client attached to the
+parent's session. With none attached they refuse with a notice; peek and close
+still work. The popup attaches to the window's session at that window, and
+detaching in it (`prefix d`) closes it. When the delegate's window goes, the parent
+closes the popup within one poll (up to 5 s). No tmux key bindings or options are
+added.
+
+`/delegate-open <id> [--popup|--switch|--peek]` does one of these on one
+delegation without the panel: with no flag, what `enter` does. Ids complete from the
+open delegations.
+
 ## Working directory
 
 `--cwd <dir>` (the `delegate` tool's `cwd`) runs the delegate in an existing
@@ -994,6 +1020,8 @@ Other extensions may rely on:
   parameters, the recorded `workspace` shape and the `workspaceSnapshot`
   shape in results and status;
 - the `/delegate` and `/delegate-resume` syntax and flags;
+- the `/delegates` command and its `alt+shift+d` shortcut, and `/delegate-open <id>` with its
+  `--popup`, `--switch` and `--peek` flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,
   `<agent dir>/squire/agents/<name>/AGENT.md`;

@@ -239,3 +239,65 @@ test("tmux versions parse, and only those below 3.2 are refused", async () => {
 		else await assert.rejects(check, new RegExp(`tmux 3\\.2 or later; this is ${text.replace(".", "\\.")}`));
 	}
 });
+
+/** Run `body` with a stub `tmux` first on PATH that logs each call and answers the navigation commands. */
+async function withNavigationStub(body: (log: () => string[]) => Promise<void>, popupExit = 0): Promise<void> {
+	const dir = mkdtempSync(join(tmpdir(), "squire-tmux-nav-"));
+	const oldPath = process.env.PATH;
+	try {
+		const script = [
+			"#!/bin/sh",
+			`printf '%s\\n' "$*" >> '${dir}/log'`,
+			'case "$1" in',
+			"list-clients) printf '100\\told\\n900\\tnew\\n500\\tmid\\n';;",
+			"display-message) echo '$7';;",
+			"capture-pane) echo 'pane text';;",
+			`display-popup) case "$2" in -C) ;; *) [ ${popupExit} -ne 0 ] || sleep 1; exit ${popupExit};; esac;;`,
+			"esac",
+			"",
+		].join("\n");
+		writeFileSync(join(dir, "tmux"), script);
+		chmodSync(join(dir, "tmux"), 0o755);
+		process.env.PATH = `${dir}:${oldPath}`;
+		await body(() => readFileSync(join(dir, "log"), "utf8").split("\n").filter(Boolean));
+	} finally {
+		process.env.PATH = oldPath;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+test("clientFor asks for the exact session's clients and picks the most recently active", async () => {
+	await withNavigationStub(async (log) => {
+		assert.equal(await createTmuxClient().clientFor("work"), "new");
+		assert.deepEqual(log(), ["list-clients -t =work: -F #{client_activity}\t#{client_name}"]);
+	});
+});
+
+test("switchTo, capture and closePopup run their tmux commands", async () => {
+	await withNavigationStub(async (log) => {
+		const tmux = createTmuxClient();
+		await tmux.switchTo("c1", "@4");
+		assert.equal(await tmux.capture("@4"), "pane text\n");
+		await tmux.closePopup("c1");
+		assert.deepEqual(log(), ["switch-client -c c1 -t @4", "capture-pane -p -t @4", "display-popup -C -c c1"]);
+	});
+});
+
+test("popup returns while display-popup still runs, and attaches by session id", async () => {
+	await withNavigationStub(async (log) => {
+		const started = Date.now();
+		await createTmuxClient().popup("c1", { id: "@4", name: "scout one" });
+		assert.ok(Date.now() - started < 900, "display-popup blocks for a second; popup did not wait for it");
+		const [, popup] = log();
+		assert.equal(
+			popup,
+			"display-popup -c c1 -E -w 90% -h 90% -T scout one tmux select-window -t '@4' \\; attach-session -t '$7'",
+		);
+	});
+});
+
+test("a popup that fails at once rejects", async () => {
+	await withNavigationStub(async () => {
+		await assert.rejects(createTmuxClient().popup("c1", { id: "@4", name: "x" }), /display-popup exited with 3/);
+	}, 3);
+});

@@ -53,6 +53,7 @@ import { Type } from "typebox";
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
+import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
 import { createResults, delegateName, type WorkspaceAttempt } from "./results.ts";
 import { createResume, type ResumeRequest, resumableIds, startedLine } from "./resume.ts";
@@ -1241,6 +1242,30 @@ export default function delegate(
 		description: `Reopen an exited delegate's session in a new window with a follow-up task: ${RESUME_USAGE}`,
 		getArgumentCompletions: resumeCompletions,
 		handler: resumeCommand,
+	});
+
+	// The new-delegate flow is wired here when it exists; the panel's `n` calls it.
+	const startNew = async (_ctx: ExtensionContext): Promise<void> => {};
+	const navigator = createNavigator(results, tmux, tracking, startNew);
+
+	pi.registerCommand("delegates", {
+		description: "Open the panel of delegates whose window is open: popup, peek, switch, close",
+		handler: async (_args: string, ctx: ExtensionContext) => navigator.panel(ctx),
+	});
+
+	pi.registerShortcut("alt+shift+d", {
+		description: "Open the delegates panel",
+		handler: (ctx: ExtensionContext) => navigator.panel(ctx),
+	});
+
+	pi.registerCommand("delegate-open", {
+		description: `Reach one open delegate: ${OPEN_USAGE}`,
+		getArgumentCompletions: async (prefix: string) => openCompletions(prefix, await navigator.openIds()),
+		handler: async (args: string, ctx: ExtensionContext) => {
+			const parsed = parseOpen(args);
+			if ("error" in parsed) return ctx.ui.notify(`delegate: ${parsed.error}`, "error");
+			await navigator.openDelegate(ctx, parsed.id, parsed.mode);
+		},
 	});
 
 	pi.registerCommand("delegate-clear", {

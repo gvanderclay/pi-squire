@@ -255,6 +255,22 @@ async function planResume(
 }
 
 /** Mail the task, open the window on the session file and record the new delegation. */
+/**
+ * Mail the task to a window already open. Unlike a launch, a resume mails
+ * after the window opens: the session's inbox outlives a failed attempt, so
+ * mail sent for a window that never opened would reach the next resume as a
+ * second task. The reopened session's provider still delivers mail that
+ * arrives after it starts. A failed send kills the window, which has no task.
+ */
+async function mailTask(deps: ResumeDeps, windowId: string, sessionId: string, task: string): Promise<string> {
+	try {
+		return deps.sendTask(sessionId, task);
+	} catch (err) {
+		await deps.tmux.kill(windowId).catch(() => {});
+		throw err;
+	}
+}
+
 async function startResume(
 	deps: ResumeDeps,
 	input: { record: StartedRecorded; session: SessionFile; plan: Plan; task: string; toolCallId: string | undefined },
@@ -265,7 +281,6 @@ async function startResume(
 	const id = randomUUID();
 	const sessionId = sessionIdOf(record);
 	const name = recordedName(record);
-	const requestId = deps.sendTask(sessionId, task);
 	const windowId = await deps.open({
 		id,
 		name,
@@ -278,6 +293,7 @@ async function startResume(
 		toolCallId,
 		ctx,
 	});
+	const requestId = await mailTask(deps, windowId, sessionId, task);
 	deps.results.recordStart(
 		{
 			id,

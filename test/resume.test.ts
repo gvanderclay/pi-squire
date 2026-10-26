@@ -162,6 +162,35 @@ test("the new record has its own id, the old session id, and resumedFrom; mail g
 	assert.notEqual(record.requestId, d.requestId);
 });
 
+test("the resume mails the task only after its window opened, and a failed send kills that window", async () => {
+	const d = await exitedDelegate();
+	const openAtSend: number[] = [];
+	d.s.events.on("message:send", (data) => {
+		openAtSend.push(d.s.tmux.opened.length);
+		(data as { error?: string }).error = "mailbox: refused";
+	});
+	const error = await resumeError(d.s, { id: d.id, task: "now the second part" });
+	assert.match(error, /could not send the task to .*mailbox: refused/);
+	assert.deepEqual(openAtSend, [2], "the resumed window was open when the task was sent");
+	const [, window] = d.s.tmux.opened;
+	assert.ok(d.s.tmux.killed.includes(window.windowId), "the window with no task is killed");
+	assert.equal(starts(d.s).length, 1, "no resumed delegation is recorded");
+});
+
+test("a resumed delegation the poll had not yet seen go is never reported closed without a result", async (t: TestContext) => {
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	// The window is gone but no tick has run, so the old record is still counted as running.
+	const d = await exitedDelegate();
+	await resume(d.s, { id: d.id, task: "carry on" });
+	t.mock.timers.tick(5000);
+	for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+	const gone = d.s.sent.filter((m) => /closed without a result/.test(String(m.message.content)));
+	assert.deepEqual(gone, []);
+	// A late reply to the old request still reaches the parent.
+	d.s.events.emit("message:inbound", reply(d.s, d.id, d.requestId));
+	assert.equal(resultMessages(d.s).length, 1);
+});
+
 test("the resumed run's reply, from the old session id, makes the new record done and not the old one", async () => {
 	const d = await exitedDelegate();
 	await resume(d.s, { id: d.id, task: "again" });

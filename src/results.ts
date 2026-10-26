@@ -214,12 +214,23 @@ export function createResults(pi: ExtensionAPI): Results {
 	let footerShown = false;
 	const icon = Math.random() < 0.5 ? "👨" : "👩";
 
-	/** A delegation still going: no result and no recorded close. */
-	const running = (): StartedRecorded[] =>
-		[...byId.values()].filter(
+	/**
+	 * A delegation still going: no result, no recorded close, and not resumed.
+	 * A resumed one's process is gone (resuming proved it), so the poll must not
+	 * report it closed without a result; a late reply to it is still delivered.
+	 */
+	const running = (): StartedRecorded[] => {
+		const records = [...byId.values()];
+		const resumed = new Set(records.flatMap((record) => (isStarted(record) ? (record.resumedFrom ?? []) : [])));
+		return records.filter(
 			(record): record is StartedRecorded =>
-				isStarted(record) && record.result === undefined && record.closed !== true && record.gone !== true,
+				isStarted(record) &&
+				record.result === undefined &&
+				record.closed !== true &&
+				record.gone !== true &&
+				!resumed.has(record.id),
 		);
+	};
 
 	/** The started record for `id`, if it is one. */
 	const startedById = (id: unknown): StartedRecorded | undefined => {

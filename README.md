@@ -800,7 +800,13 @@ plus `resumedFrom`. The command completes the ids that can still be resumed.
   address, and its result arrives as a `[delegate]` message that names
   `resumed from <id>`. Status shows `resumed from <id>` on the new delegation and
   `resumed as <id>` on the old one. A late reply to the old request still
-  settles the old delegation only.
+  settles the old delegation only, and a resumed delegation is never reported
+  closed without a result.
+- Unlike a launch, the task is mailed after the window opens: the session's
+  inbox outlives a failed attempt, so a task sent for a window that never
+  opened would reach the next resume as a second task. The reopened delegate
+  receives it once its mailbox starts. If the send fails, the new window is
+  killed and nothing is recorded.
 - A chain resumes from its newest delegation; resuming an older one is refused,
   naming the newest.
 - It is refused, before anything is sent or opened, unless: the delegation is a
@@ -837,7 +843,9 @@ that block.
 ### `session:launch`
 
 `pi-squire` provides this hook. It emits `{ args, env, agent, cwd, toolCallId }`
-after the task has been sent and just before it opens the delegate's window.
+just before it opens the delegate's window: for a launch, after the task has
+been sent; for a resume, before it is sent, since a resume mails the task once
+the window is open (see [Resuming a delegation](#resuming-a-delegation)).
 
 | Field | Meaning |
 | --- | --- |
@@ -941,7 +949,8 @@ version and is listed under "Breaking" in [CHANGELOG.md](CHANGELOG.md).
 Other extensions may rely on:
 
 - the `session:launch` payload `{ args, env, agent, cwd, toolCallId }`, emitted
-  synchronously after the task is sent and before the window opens, with
+  synchronously before the window opens (after the task is sent for a launch,
+  before it is sent for a resume), with
   `cwd`, the trust flag and `--session-dir` chosen by `pi-squire` (see
   [Hooks](#hooks));
 - the `message:send`, `message:inbound` and `message:scan` hooks, consumed as

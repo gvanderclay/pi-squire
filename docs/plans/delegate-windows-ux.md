@@ -1,6 +1,6 @@
 # Plan: delegate windows out of the way, and a way to reach them
 
-Status: planned, not implemented. Research: [`docs/research/delegate-windows-ux.md`](../research/delegate-windows-ux.md).
+Status: implemented (PR 1 in v0.12.0; PR 2 after it). Research: [`docs/research/delegate-windows-ux.md`](../research/delegate-windows-ux.md).
 
 ## Decision
 
@@ -268,6 +268,19 @@ and form may need key-driven `custom` scripting added to it.
 
 ## Open in the implementation
 
-- That `select-window -t @N \; attach-session -t $N` in the popup shows
-  `@N`, and what it does to other clients of the companion session.
-- `switch-client` with several clients attached (only one was probed).
+Settled by live tests on tmux 3.7b (a private server, with nested clients):
+
+- **The popup lands on `@N`.** It runs `select-window -t '@N' \; attach-session
+  -t '$N'` and shows `@N` through a second, nested client attached to the
+  companion session. The parent's client stays on its own window. The popup
+  closes when the delegate auto-exits or its window is killed.
+- **Other clients of the companion session.** `select-window` changes the
+  companion session's current window. A client already viewing
+  `<session>-squire` is moved to the delegate being popped up; it was moved
+  from `@3` to `@4` in the test. This is accepted for now: the companion
+  session is pi-squire's own, and anyone viewing it is browsing delegates. A
+  per-popup grouped session (`new-session -t`) would avoid it, at the cost of
+  extra sessions.
+- **`switch-client` with several clients attached.** With two clients on the
+  parent's session, only the most recently active one (the one typing) moved.
+  The other stayed where it was, and `prefix L` returned the switched one.

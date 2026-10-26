@@ -16,9 +16,11 @@ You need:
   options the parent guidance uses, and the extension APIs the package relies
   on. Pi supplies the peer dependencies `@earendil-works/pi-coding-agent` and
   `typebox`.
-- tmux 3.0 or later, with the Pi session running in a tmux pane. That is the
-  first version with `new-window -e`. A window is opened in the pane's
-  session, so a client attached elsewhere does not matter.
+- tmux 3.2 or later, with the Pi session running in a tmux pane. That is the
+  first version with `new-session -e` and `display-popup`. Windows are placed
+  relative to the pane's session (see [Where delegate windows
+  open](#where-delegate-windows-open)), so a client attached elsewhere does
+  not matter.
 - A provider of `message:*`;
   [pi-session-mail](https://github.com/gvanderclay/pi-session-mail) is one
   example. Without a provider there is no way to send the task or get an
@@ -129,6 +131,39 @@ temporary folder, not as text on the command line.
   and a provider of `message:*`, and refuse with a message when either is
   missing. In print mode (`pi -p`) Pi does not show the refusal notices, so
   the refusal is silent there.
+
+## Where delegate windows open
+
+By default a delegate's window opens in a **companion session** named after
+yours with `-squire` added: from the session `work`, delegates go to
+`work-squire`. Your own session stays as it is, even when its name already
+ends in `-squire`: a session called `pi-squire` gets `pi-squire-squire`.
+pi-squire marks each companion session it creates with the tmux session
+option `@squire-companion`; a parent that runs in a marked session uses it, so
+a delegate that delegates does not make `work-squire-squire`.
+
+- The session is created on demand, by the launch that needs it, and tmux
+  removes it with its last window, so it does not outlive its delegates.
+- `detach-on-destroy` is set to `off` (and the mark set) on that session only: if you are
+  looking at it when its last delegate exits, tmux moves you to your most
+  recent other session instead of detaching you. Your sessions and tmux's
+  global options are never changed.
+- The start message, the delegate card and the `delegate` and
+  `delegation_resume` results show the session the window opened in, as the
+  optional `windowSession`; they keep that name. `delegation_status` looks it
+  up each time, so it follows a window you move to another session, which is
+  still found, closed and resumed.
+
+To open windows in your own session, as before, set `windowPlacement` in
+`<agent dir>/squire/settings.json`, beside `worktreeRoot`:
+
+```json
+{ "windowPlacement": "current" }
+```
+
+The values are `companion` (the default when the setting is absent) and
+`current`. The file is read at each launch. Any other value refuses the launch
+with an error naming the file, before the task is sent or a window opens.
 
 ## Working directory
 

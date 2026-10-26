@@ -282,7 +282,7 @@ export function renderDelegateResult(
 	const lines = [
 		`${theme.fg("accent", "●")} ${theme.fg("toolTitle", theme.bold(started.windowName))}${theme.fg(
 			"dim",
-			` (${started.model}) — started`,
+			`${started.windowSession === undefined ? "" : ` in session ${started.windowSession}`} (${started.model}) — started`,
 		)}`,
 	];
 	const task = taskLine(context.args.task, theme);
@@ -293,7 +293,7 @@ export function renderDelegateResult(
 			...[
 				...started.notices,
 				`delegation ${started.id}`,
-				`window ${started.windowName} (${started.windowId})`,
+				`window ${started.windowName} (${started.windowId})${started.windowSession === undefined ? "" : ` in session ${started.windowSession}`}`,
 				// Results saved before cwd was recorded have none.
 				`cwd ${(started.cwd as string | undefined) === undefined ? cwdLine(undefined) : tilde(started.cwd)}`,
 				// Results saved before workspaces were recorded have none.

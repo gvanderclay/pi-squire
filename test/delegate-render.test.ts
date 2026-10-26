@@ -87,9 +87,20 @@ test("a started row shows ●, the delegate's name, its model and started, then 
 	const args = { agent: "scout", task: TASK, label: "look" };
 	const { tool, result } = await launched(args);
 	assert.deepEqual(lines(tool.renderResult(result, { expanded: false }, theme, context(args, false))), [
-		"<accent:●> <toolTitle:<bold:scout-look>><dim: (alpha/fast-model) — started>",
+		"<accent:●> <toolTitle:<bold:scout-look>><dim: in session work-squire (alpha/fast-model) — started>",
 		"<toolOutput:## Look><muted: (5 lines)>",
 	]);
+});
+
+test("a started row saved without a session keeps the header it had", async () => {
+	const args = { agent: "scout", task: TASK, label: "look" };
+	const { tool, result } = await launched(args);
+	const { windowSession: _windowSession, ...legacy } = result.details as Record<string, unknown>;
+	const saved = { ...result, details: legacy };
+	assert.equal(
+		lines(tool.renderResult(saved, { expanded: false }, theme, context(args, false)))[0],
+		"<accent:●> <toolTitle:<bold:scout-look>><dim: (alpha/fast-model) — started>",
+	);
 });
 
 test("an expanded started row adds the ids, window, thinking and auto-exit", async () => {
@@ -105,7 +116,9 @@ test("an expanded started row adds the ids, window, thinking and auto-exit", asy
 		"<dim:workspace the parent's directory; not a Git checkout>",
 	])
 		assert.ok(shown.includes(part), `missing ${part}\n${shown.join("\n")}`);
-	assert.ok(shown.some((line) => line.startsWith("<dim:window scout-look (")));
+	assert.ok(
+		shown.some((line) => line.startsWith("<dim:window scout-look (") && line.endsWith(" in session work-squire>")),
+	);
 });
 
 test("a launch on a fallback says which model was skipped", async () => {

@@ -74,6 +74,9 @@ const StartedSchema = Type.Object({
 	resumedFrom: Type.Optional(Type.String({ description: "The delegation whose session this one reopened." })),
 	windowId: Type.String(),
 	windowName: Type.String(),
+	windowSession: Type.Optional(
+		Type.String({ description: "The tmux session its window is in now; absent when the window is gone." }),
+	),
 	cwd: Type.Optional(
 		Type.String({ description: "The directory its window opened in; absent for records from before it was kept." }),
 	),
@@ -165,6 +168,8 @@ type View = {
 	snapshot: WorkspaceSnapshot;
 	/** The delegation that resumed this one, if any. */
 	resumedAs: string | undefined;
+	/** The session its window is in now, looked up; undefined when the window is gone or unknown. */
+	windowSession: string | undefined;
 };
 
 /** The view of a delegation: its state and the fields the text and details share. */
@@ -185,11 +190,12 @@ function view(
 		}
 	}
 	const snapshot = inspectWorkspace(record.workspace?.cwd, record.workspace?.git);
-	return { record, state, name: recordedName(record), sessionPath, lastActive, snapshot, resumedAs };
+	const windowSession = windows === undefined ? undefined : ownWindow(windows, record)?.session;
+	return { record, state, name: recordedName(record), sessionPath, lastActive, snapshot, resumedAs, windowSession };
 }
 
 /** The text block for one delegation. */
-function viewText({ record, state, name, sessionPath, lastActive, snapshot, resumedAs }: View): string {
+function viewText({ record, state, name, sessionPath, lastActive, snapshot, resumedAs, windowSession }: View): string {
 	const [checkout, ...categories] = snapshotLines(snapshot);
 	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
 	const lines = [
@@ -198,7 +204,7 @@ function viewText({ record, state, name, sessionPath, lastActive, snapshot, resu
 		...(record.resumedFrom === undefined ? [] : [`  resumed from ${record.resumedFrom}`]),
 		...(resumedAs === undefined ? [] : [`  resumed as ${resumedAs}`]),
 		`  state: ${stateLine(state, record)}${seen}`,
-		`  window: ${record.windowName} (${record.windowId})`,
+		`  window: ${record.windowName} (${record.windowId})${windowSession === undefined || windowSession === "" ? "" : ` in session ${windowSession}`}`,
 		`  cwd: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
 		`  checkout now: ${checkout}`,
@@ -211,7 +217,15 @@ function viewText({ record, state, name, sessionPath, lastActive, snapshot, resu
 }
 
 /** The structured details for one delegation. */
-function viewDetails({ record, state, name, sessionPath, lastActive, snapshot }: View): Record<string, unknown> {
+function viewDetails({
+	record,
+	state,
+	name,
+	sessionPath,
+	lastActive,
+	snapshot,
+	windowSession,
+}: View): Record<string, unknown> {
 	return {
 		kind: "started",
 		id: record.id,
@@ -224,6 +238,7 @@ function viewDetails({ record, state, name, sessionPath, lastActive, snapshot }:
 		...(record.resumedFrom === undefined ? {} : { resumedFrom: record.resumedFrom }),
 		windowId: record.windowId,
 		windowName: record.windowName,
+		...(windowSession === undefined || windowSession === "" ? {} : { windowSession }),
 		...(record.cwd === undefined ? {} : { cwd: record.cwd }),
 		...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
 		...(record.workspace === undefined ? {} : { workspace: record.workspace }),

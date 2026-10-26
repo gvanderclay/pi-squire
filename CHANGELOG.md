@@ -14,7 +14,11 @@ follows [Semantic Versioning](https://semver.org/).
   `/delegate` command.
 - `delegation_resume` and `/delegate-resume <id> [--model …] [--thinking …] [--auto-exit|--no-auto-exit] <task>` reopen an exited delegate's own session (`pi --session <path>`) in a new window with a follow-up task. The resume is recorded as a new delegation with `resumedFrom`; mail, replies and usage-limit marks use the delegation's session id, so records from before resuming read as before. A delegate whose working directory is gone, one still running, one whose window is open and an older delegation of a resumed chain are refused. `delegation_status` shows `resumed from` and `resumed as`, results and closed-without-a-result messages name `resumedFrom`, and the latter point to `delegation_resume`. The `delegate` tool's description mentions it, and `--session` joins the launch invariants listed for `session:launch`. A resume emits `session:launch`
   too, with `toolCallId` set to the `delegation_resume` call, or `undefined`
-  from `/delegate-resume`.
+  from `/delegate-resume`; unlike a launch's, it comes before the task is sent,
+  because a resume mails the task only once its window is open (mail for a
+  window that never opened would otherwise reach the next resume as a second
+  task; a failed send kills the new window). A resumed delegation is never
+  reported closed without a result.
 
 ## [0.10.0] - 2026-10-24
 

@@ -21,7 +21,7 @@
 // session has no tool for leaves the agent out of the roster. Its `tools` goes
 // as `--tools` and each of its `extensions` as `-e`, both for the child alone.
 //
-// The model gets three tools. `delegate` takes agent, task and optional model
+// The model gets four tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
 // delegation at once, opening no dialog, so parallel calls cannot block one
 // another; the one exception is a `cwd` whose project trust is unresolved,
@@ -29,7 +29,9 @@
 // reports each delegation as running (window open, no result yet), done (with
 // its result status) or closed, with the session name, window, session and
 // envelope paths.
-// `delegation_close` kills the window and records the close. Inside a delegate
+// `delegation_close` kills the window and records the close. `delegation_resume`
+// (`resume.ts`) reopens an exited delegate's session in a new window with a
+// follow-up task, recorded as a new delegation. Inside a delegate
 // (`PI_DELEGATE_PARENT` set) the extension registers only `child.ts`'s
 // `/auto-exit` and handlers, so a delegate cannot delegate.
 //
@@ -53,6 +55,7 @@ import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.t
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
 import { createResults, delegateName, type WorkspaceAttempt } from "./results.ts";
+import { createResume, type ResumeRequest, resumableIds, startedLine } from "./resume.ts";
 import { createTmuxClient, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
@@ -156,6 +159,11 @@ const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to
 const USAGE =
 	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task>";
 
+/** The flags `/delegate-resume` takes before the task. */
+const RESUME_FLAGS = ["--model", "--thinking", "--auto-exit", "--no-auto-exit"] as const;
+const RESUME_USAGE =
+	"usage: /delegate-resume <id> [--model <provider/id>] [--thinking <level>] [--auto-exit | --no-auto-exit] <task>";
+
 type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
 /** `cwd` is informational: the window opens in the launch's own value, whatever a listener assigns. */
 type LaunchPayload = {
@@ -200,6 +208,8 @@ type Start = {
 };
 /** A candidate model passed over: `why` finishes "<model> is …", `reason` is the long form for a refusal. */
 type Skipped = { model: string; why: string; reason: string };
+/** What opening a delegate's window reads from a request: a `Start`, or the parts of one a resume decides. */
+type ChildStart = Pick<Start, "agent" | "model" | "rest" | "thinking" | "autoExit">;
 /** A delegation that is open in a tmux window. */
 type Launched = {
 	id: string;
@@ -282,9 +292,14 @@ function word(text: string, from: number): { text: string; start: number; end: n
  * A flag's value at or after `from`: a plain word, or a double-quoted string
  * in which `\"` and `\\` stand for `"` and `\`. No shell expansion of any kind.
  */
-function flagValue(text: string, from: number, flag: string): { value: string; end: number } | { error: string } {
+function flagValue(
+	text: string,
+	from: number,
+	flag: string,
+	usage: string = USAGE,
+): { value: string; end: number } | { error: string } {
 	const next = word(text, from);
-	if (next === undefined || next.text.startsWith("--")) return { error: `${flag} needs a value; ${USAGE}` };
+	if (next === undefined || next.text.startsWith("--")) return { error: `${flag} needs a value; ${usage}` };
 	if (!next.text.startsWith('"')) return { value: next.text, end: next.end };
 	let value = "";
 	let i = next.start + 1;
@@ -293,9 +308,9 @@ function flagValue(text: string, from: number, flag: string): { value: string; e
 		value += escaped ? text[i + 1] : text[i];
 		i += escaped ? 2 : 1;
 	}
-	if (i >= text.length) return { error: `${flag}'s value has no closing quote; ${USAGE}` };
+	if (i >= text.length) return { error: `${flag}'s value has no closing quote; ${usage}` };
 	if (i + 1 < text.length && !/\s/.test(text[i + 1])) {
-		return { error: `${flag}'s quoted value must be followed by a space; ${USAGE}` };
+		return { error: `${flag}'s quoted value must be followed by a space; ${usage}` };
 	}
 	return { value, end: i + 1 };
 }
@@ -342,6 +357,32 @@ function parse(text: string): { parsed: Parsed } | { error: string } {
 	return { parsed };
 }
 
+/** `/delegate-resume`'s arguments: a delegation id, optional flags, then a verbatim task. */
+function parseResume(text: string): { request: ResumeRequest } | { error: string } {
+	const id = word(text, 0);
+	if (id === undefined) return { error: RESUME_USAGE };
+	if (id.text.startsWith("-")) return { error: `the first argument is the delegation id; ${RESUME_USAGE}` };
+	const request: ResumeRequest = { id: id.text, task: "" };
+	let at = id.end;
+	for (let next = word(text, at); next?.text.startsWith("-"); next = word(text, at)) {
+		const flag = next.text;
+		if (flag === "--auto-exit" || flag === "--no-auto-exit") {
+			request.autoExit = flag === "--auto-exit";
+			at = next.end;
+			continue;
+		}
+		if (flag !== "--model" && flag !== "--thinking") return { error: `unknown flag ${flag}; ${RESUME_USAGE}` };
+		const read = flagValue(text, next.end, flag, RESUME_USAGE);
+		if ("error" in read) return read;
+		if (flag === "--model") request.model = read.value;
+		else request.thinking = read.value;
+		at = read.end;
+	}
+	request.task = text.slice(word(text, at)?.start ?? text.length).trim();
+	if (request.task === "") return { error: `a task is required after the id and flags; ${RESUME_USAGE}` };
+	return { request };
+}
+
 /** Why `value` is not a usable model, or undefined when it is. */
 function modelProblem(value: string, registry: ModelRegistry): string | undefined {
 	const slash = value.indexOf("/");
@@ -362,15 +403,17 @@ function modelProblem(value: string, registry: ModelRegistry): string | undefine
  * `modelProblem` and has no active mark wins; the rest are returned as skipped.
  * A paid candidate on a provider with a quota check is read first, and
  * skipped when its quota is used up. Refuses, listing every candidate, when
- * none is left.
+ * none is left. `preferred` replaces the agent's own list when there is no
+ * explicit model, as a resume does.
  */
 async function chooseModel(
 	explicit: string | undefined,
 	agent: Agent,
 	models: ModelRegistry,
 	proactive: Proactive,
+	preferred: readonly string[] = [agent.model, ...agent.fallback],
 ): Promise<{ model: string; skipped: Skipped[]; notices: string[]; rest: string[] }> {
-	const candidates = explicit !== undefined ? [explicit] : [agent.model, ...agent.fallback];
+	const candidates = explicit !== undefined ? [explicit] : [...preferred];
 	const skipped: Skipped[] = [];
 	const notices: string[] = [];
 	for (const model of candidates) {
@@ -481,7 +524,7 @@ function toolDescription(agents: readonly Agent[]): string {
 		),
 		"",
 		"`cwd` runs the delegate in another existing directory. Alternatively, `worktree` creates a new local branch and checkout from this repository's committed HEAD, or `worktree_source` selects another existing Git checkout; `worktree_base` selects a commit in that source. Source dirt is reported but not copied. `cwd` and `worktree` are mutually exclusive, and source/base require worktree.",
-		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one.",
+		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one. `delegation_resume` continues an exited delegate in its own session with a follow-up task, for work that needs the context it already built.",
 		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
 		"",
 		"Writing the task: the delegate sees nothing of this session, so the task must stand alone. State the question, the decision its answer feeds, what is already known or ruled out, and the files or paths to start from. When the work produces a report, name the path to write it to and ask for the conclusion back, not the contents.",
@@ -581,21 +624,42 @@ export default function delegate(
 		};
 	}
 
-	async function launchWindow(input: {
+	/** Write the task to the delegate's inbox and return its request id; the delegate finds it at session start. */
+	function sendTask(to: string, task: string): string {
+		const sent: SendPayload = { to, body: task };
+		pi.events.emit(SEND, sent);
+		if (typeof sent.error === "string") throw new Error(`could not send the task to ${to}: ${sent.error}`);
+		if (sent.envelope === undefined)
+			throw new Error(
+				"needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)",
+			);
+		const requestId = sent.envelope.id;
+		if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${to}`);
+		return requestId;
+	}
+
+	/**
+	 * Build the delegate's command line and environment, emit `session:launch`
+	 * and open its window; returns the window id. A launch and a resume share
+	 * it and differ only in `session`, the arguments that choose the session:
+	 * `--session-id <id> --name <name>` for a new one, `--session <path>` to reopen.
+	 */
+	async function openChild(input: {
 		id: string;
-		requestId: string;
+		name: string;
+		session: string[];
 		workspace: Workspace;
 		trusted: boolean;
 		cwd: string;
 		sessionDir: string;
-		start: Start;
+		start: ChildStart;
+		/** The tool call that started this launch or resume; undefined from a command. */
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
-		onWindowOpened: () => void;
-	}): Promise<Launched> {
-		const { id, requestId, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, onWindowOpened } = input;
+		onWindowOpened?: () => void;
+	}): Promise<string> {
+		const { id, name, session, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, onWindowOpened } = input;
 		const parent = ctx.sessionManager.getSessionId();
-		const name = delegateName(start.agent.name, id, start.label);
 		const managedContext =
 			workspace.mode === "managed"
 				? `\n\nYour managed worktree is ${workspace.cwd}, branch ${workspace.createdBranch}, based on commit ${workspace.baseCommit}.`
@@ -605,10 +669,7 @@ export default function delegate(
 		const prompt = writePromptFile(`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}${managedContext}`);
 		const argv = [
 			...parentCommand(),
-			"--session-id",
-			id,
-			"--name",
-			name,
+			...session,
 			// Always explicit, so a permissive global default cannot trust what the parent does not.
 			trusted ? "--approve" : "--no-approve",
 			"--session-dir",
@@ -641,13 +702,43 @@ export default function delegate(
 		let windowId: string;
 		try {
 			windowId = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env });
-			onWindowOpened();
+			onWindowOpened?.();
 		} catch (err) {
 			if (err instanceof WindowOpenError) {
 				throw new WindowOpenError(`could not open window ${name} for ${id}: ${err.message}`, err.certainty);
 			}
 			throw new WindowOpenError(`could not open window ${name} for ${id}: ${(err as Error).message}`, "unknown");
 		}
+		return windowId;
+	}
+
+	async function launchWindow(input: {
+		id: string;
+		requestId: string;
+		workspace: Workspace;
+		trusted: boolean;
+		cwd: string;
+		sessionDir: string;
+		start: Start;
+		toolCallId: string | undefined;
+		ctx: ExtensionContext;
+		onWindowOpened: () => void;
+	}): Promise<Launched> {
+		const { id, requestId, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, onWindowOpened } = input;
+		const name = delegateName(start.agent.name, id, start.label);
+		const windowId = await openChild({
+			id,
+			name,
+			session: ["--session-id", id, "--name", name],
+			workspace,
+			trusted,
+			cwd,
+			sessionDir,
+			start,
+			toolCallId,
+			ctx,
+			onWindowOpened,
+		});
 		// No task text in the record: the request copy in `sent/` has it.
 		results.recordStart(
 			{
@@ -772,15 +863,7 @@ export default function delegate(
 			// The task goes on disk before the window exists: the delegate finds it
 			// at session start without a handshake, and a window that fails leaves
 			// mail that is reported rather than cleaned up.
-			const sent: SendPayload = { to: id, body: start.task };
-			pi.events.emit(SEND, sent);
-			if (typeof sent.error === "string") throw new Error(`could not send the task to ${id}: ${sent.error}`);
-			if (sent.envelope === undefined)
-				throw new Error(
-					"needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)",
-				);
-			const requestId = sent.envelope.id;
-			if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${id}`);
+			const requestId = sendTask(id, start.task);
 			if (attempt !== undefined) {
 				attempt = { ...attempt, requestId };
 				results.recordAttempt(attempt, ctx);
@@ -860,6 +943,32 @@ export default function delegate(
 		return inQueue(plan.source.commonDir, combined, runWithRollback);
 	}
 
+	const resumer = createResume({
+		results,
+		tmux,
+		delegateSchema: DelegateSchema,
+		notInTmux: NOT_IN_TMUX,
+		startPolling: tracking.startPolling,
+		roster: rosterFor,
+		chooseModel: (explicit, agent, models, preferred) => chooseModel(explicit, agent, models, proactive, preferred),
+		thinkingProblem,
+		prepareDirectory: (cwd, ctx, signal) => prepareDirectory({ cwd, signal }, ctx, getAgentDir()),
+		sendTask,
+		open: ({ id, name, sessionPath, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx }) =>
+			openChild({
+				id,
+				name,
+				session: ["--session", sessionPath],
+				workspace,
+				trusted,
+				cwd,
+				sessionDir,
+				start,
+				toolCallId,
+				ctx,
+			}),
+	});
+
 	/** Where a selected directory put the delegate, for the start text; inherited starts stay compact. */
 	const placedIn = (launched: Launched): string =>
 		launched.workspace.mode !== "inherited" ? ` in ${launched.cwd}` : "";
@@ -890,6 +999,19 @@ export default function delegate(
 			ctx.ui.notify(started(launched, start), "info");
 		} catch (err) {
 			fail((err as Error).message);
+		}
+	}
+
+	async function resumeCommand(input: string, ctx: ExtensionContext): Promise<void> {
+		const outcome = parseResume(input);
+		if ("error" in outcome) {
+			ctx.ui.notify(`delegate: ${outcome.error}`, "error");
+			return;
+		}
+		try {
+			ctx.ui.notify(startedLine(await resumer.resume(outcome.request, ctx)), "info");
+		} catch (err) {
+			ctx.ui.notify(`delegate: ${(err as Error).message}`, "error");
 		}
 	}
 
@@ -1067,6 +1189,26 @@ export default function delegate(
 		handler: command,
 	});
 
+	/** Delegation ids, flags, model ids and thinking levels, at the cursor's token. */
+	function resumeCompletions(prefix: string): { value: string; label: string }[] | null {
+		const partial = /(?:^|\s)(\S*)$/.exec(prefix)?.[1] ?? "";
+		const head = prefix.slice(0, prefix.length - partial.length);
+		const tokens = head.trim() === "" ? [] : head.trim().split(/\s+/);
+		const previous = tokens[tokens.length - 1];
+		let values: readonly string[] = RESUME_FLAGS;
+		if (tokens.length === 0) values = resumableIds(results);
+		else if (previous === "--model") values = modelIds(registry);
+		else if (previous === "--thinking") values = THINKING_LEVELS;
+		const hits = values.filter((value) => value.startsWith(partial));
+		return hits.length > 0 ? hits.map((value) => ({ value: head + value, label: value })) : null;
+	}
+
+	pi.registerCommand("delegate-resume", {
+		description: `Reopen an exited delegate's session in a new window with a follow-up task: ${RESUME_USAGE}`,
+		getArgumentCompletions: resumeCompletions,
+		handler: resumeCommand,
+	});
+
 	pi.registerCommand("delegate-clear", {
 		description: "Clear usage-limit marks: all, a provider, or a provider/model",
 		getArgumentCompletions: (prefix: string) => {
@@ -1097,4 +1239,5 @@ export default function delegate(
 
 	registerDelegate(toolDescription(currentRoster().agents));
 	tracking.registerTools();
+	pi.registerTool(resumer.tool() as never);
 }

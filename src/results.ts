@@ -7,9 +7,9 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { readMarks } from "./limits.ts";
-import { cwdLine, modelLabel, renderMessage, snapshotLines, workspaceLine } from "./render.ts";
-import { finishedModel, locateSession } from "./result-sessions.ts";
+import { cwdLine, modelLabel, renderMessage, workspaceLine } from "./render.ts";
+import { resultDetails, resultText, resumeDetails } from "./result-message.ts";
+import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
 import {
 	type AttemptState,
 	isStarted,
@@ -20,7 +20,7 @@ import {
 import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
 import type { Workspace } from "./workspace.ts";
 
-export { findSession, finishedModel } from "./result-sessions.ts";
+export { findSession, finishedModel, sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
 export type { AttemptState, Recorded, ResourceFacts, StartedRecorded, WorkspaceAttempt } from "./result-types.ts";
 export { isStarted, locateSession };
 
@@ -28,10 +28,6 @@ export { isStarted, locateSession };
 export const CUSTOM_TYPE = "delegate";
 /** The footer entry that counts delegations whose result has not arrived. */
 export const STATUS_KEY = "delegate";
-/** A task quoted into the result header is cut at this many UTF-8 bytes. */
-const TASK_CAP = 2 * 1024;
-/** A result body is cut at this many UTF-8 bytes. */
-const BODY_CAP = 32 * 1024;
 /** The `pi.events` channel a provider emits claimed envelopes on. */
 const INBOUND = "message:inbound";
 
@@ -56,6 +52,10 @@ export type Delegation = {
 	sessionPath?: string;
 	/** How its directory was chosen and its Git checkout at launch; absent in older records. */
 	workspace?: Workspace;
+	/** The delegation this one resumed, when it reopened that delegation's session. */
+	resumedFrom?: string;
+	/** The Pi session id; absent means `id`. A resumed delegation holds the session id of the one it resumed. */
+	sessionId?: string;
 };
 
 /**
@@ -99,6 +99,10 @@ type CommonDetails = {
 	model: string;
 	finishedModel?: string;
 	id: string;
+	/** The delegation this one resumed. */
+	resumedFrom?: string;
+	/** The Pi session id when it is not `id`: a resumed delegation's. */
+	sessionId?: string;
 	requestId: string;
 	sessionPath?: string;
 	cwd?: string;
@@ -124,8 +128,6 @@ export type MessageDetails =
 			workspaceSnapshot?: WorkspaceSnapshot;
 	  })
 	| (CommonDetails & { kind: "gone"; windowName: string });
-
-type ResultDetails = Extract<MessageDetails, { kind: "result" }>;
 
 /** The provider's payload on `message:inbound`. */
 export type Inbound = {
@@ -196,102 +198,6 @@ export function deriveState(record: Recorded, window: WindowState): DelegationSt
 	if (window === "open") return "running";
 	if (window === "gone") return "window-closed";
 	return "unknown";
-}
-
-/** Cut `text` to at most `max` UTF-8 bytes on a character boundary; undefined when it already fits. */
-function cap(text: string, max: number): string | undefined {
-	const bytes = Buffer.from(text, "utf8");
-	if (bytes.length <= max) return undefined;
-	let end = max;
-	while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--; // back off a split character
-	return bytes.subarray(0, end).toString("utf8");
-}
-
-/** The line naming a usage-limit mark this delegation recorded, if any; a `done` delegation finished on a fallback. */
-function limitLine(id: string, status: string): string | undefined {
-	const now = Date.now();
-	const mark = readMarks(now).find((item) => item.delegations.includes(id));
-	if (mark === undefined) return undefined;
-	const scope = mark.scope.includes("/") ? `model ${mark.scope}` : `provider ${mark.scope}`;
-	const until = new Date(mark.clearsAt).toISOString();
-	return `Usage limit: the delegate hit a usage limit on ${scope}; ${
-		mark.clearsAt > now ? `it is marked until ${until} and later delegations skip it.` : `it was marked until ${until}.`
-	}${status === "done" ? " It finished on a fallback model; its session names which." : ""}`;
-}
-
-/** The details of a settled delegation's result message. */
-function resultDetails(
-	delegation: StartedRecorded,
-	payload: Inbound,
-	session: string | undefined,
-	finished: string | undefined,
-	snapshot: WorkspaceSnapshot,
-): ResultDetails {
-	const reply = payload.envelope;
-	const copy = payload.requests.find((request) => request.envelope?.id === delegation.requestId);
-	let task: TaskQuote;
-	if (copy === undefined) {
-		task = { note: `[delegate] The task ${delegation.requestId} has no copy in sent/; only its id is known.` };
-	} else {
-		const cut = cap(copy.envelope.body, TASK_CAP);
-		const text =
-			cut === undefined ? copy.envelope.body : `${cut}\n[delegate] Task cut at 2 KiB; the full copy is ${copy.path}`;
-		task = { text, path: copy.path };
-	}
-	const cut = cap(reply.body, BODY_CAP);
-	const body =
-		cut === undefined ? reply.body : `${cut}\n[delegate] Body cut at 32 KiB; the full envelope is ${payload.path}`;
-	const limit = reply.status === "stopped" ? undefined : limitLine(delegation.id, reply.status);
-	return {
-		kind: "result",
-		status: reply.status,
-		name: recordedName(delegation),
-		agent: delegation.agent,
-		model: delegation.model,
-		...(finished === undefined ? {} : { finishedModel: finished }),
-		id: delegation.id,
-		requestId: delegation.requestId,
-		envelopePath: payload.path,
-		...(session === undefined ? {} : { sessionPath: session }),
-		...(delegation.cwd === undefined ? {} : { cwd: delegation.cwd }),
-		...(delegation.sessionDir === undefined ? {} : { sessionDir: delegation.sessionDir }),
-		...(delegation.workspace === undefined ? {} : { workspace: delegation.workspace }),
-		...(limit === undefined ? {} : { limit }),
-		task,
-		body,
-		workspaceSnapshot: snapshot,
-	};
-}
-
-/** The snapshot lines of the result text: a heading line, then its path lists indented. */
-function checkoutText(snapshot: WorkspaceSnapshot): string[] {
-	const [first, ...rest] = snapshotLines(snapshot);
-	return [`Checkout when the result arrived: ${first}`, ...rest.map((line) => `  ${line}`)];
-}
-
-/** The one message the parent model reads for a settled delegation. */
-function resultText(details: ResultDetails): string {
-	const { task } = details;
-	const quote =
-		"note" in task
-			? task.note
-			: `Task, quoted from ${task.path}:\n${task.text
-					.split("\n")
-					.map((line) => `> ${line}`)
-					.join("\n")}`;
-	return [
-		`[delegate] Result from ${details.agent} (${modelLabel(details.model, details.finishedModel)}), delegation ${details.id}, request ${details.requestId}.`,
-		`Status: ${details.status}`,
-		...(details.limit === undefined ? [] : [details.limit]),
-		quote,
-		`Working directory: ${cwdLine(details.cwd)}`,
-		...(details.workspace === undefined ? [] : [`Workspace: ${workspaceLine(details.workspace)}`]),
-		...(details.workspaceSnapshot === undefined ? [] : checkoutText(details.workspaceSnapshot)),
-		`Envelope: ${details.envelopePath}`,
-		`Delegate session: ${details.sessionPath ?? details.id}`,
-		"",
-		details.body,
-	].join("\n");
 }
 
 export function createResults(pi: ExtensionAPI): Results {
@@ -421,6 +327,7 @@ export function createResults(pi: ExtensionAPI): Results {
 			model: record.model,
 			...(finished === undefined ? {} : { finishedModel: finished }),
 			id: record.id,
+			...resumeDetails(record),
 			requestId: record.requestId,
 			...(session === undefined ? {} : { sessionPath: session }),
 			...(record.cwd === undefined ? {} : { cwd: record.cwd }),
@@ -433,11 +340,11 @@ export function createResults(pi: ExtensionAPI): Results {
 				customType: CUSTOM_TYPE,
 				details,
 				content: [
-					`[delegate] Delegation ${record.id} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+					`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
 					`Working directory: ${cwdLine(record.cwd)}`,
 					...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
-					`Delegate session: ${session ?? record.id}`,
-					"A reply that arrives later is still delivered.",
+					`Delegate session: ${session ?? sessionIdOf(record)}`,
+					"A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
 				].join("\n"),
 				display: true,
 			},
@@ -451,8 +358,11 @@ export function createResults(pi: ExtensionAPI): Results {
 		if (payload?.handled === true) return;
 		const reply = payload?.envelope;
 		if (reply === undefined || !Array.isArray(reply.in_reply_to) || reply.in_reply_to.length === 0) return;
-		// Only the delegate's own reply counts: `from` must be the delegation's id.
-		const requestId = reply.in_reply_to.find((id) => byRequest.get(id)?.id === reply.from);
+		// Only the delegate's own reply counts: `from` must be the delegation's session id.
+		const requestId = reply.in_reply_to.find((id) => {
+			const record = byRequest.get(id);
+			return record !== undefined && sessionIdOf(record) === reply.from;
+		});
 		if (requestId === undefined) return;
 		payload.handled = true;
 		if (shown.has(reply.id)) return;
@@ -462,7 +372,7 @@ export function createResults(pi: ExtensionAPI): Results {
 		const finished = finishedModel(session);
 		// After the claim above, so a slow or failing inspection cannot let the provider or a duplicate deliver it too.
 		const snapshot = inspectWorkspace(delegation.workspace?.cwd, delegation.workspace?.git);
-		const details = resultDetails(delegation, payload, session, finished, snapshot);
+		const details = resultDetails(delegation, recordedName(delegation), payload, session, finished, snapshot);
 		// Steer, not follow-up: a busy parent gets the result before its next model call, not after it has answered.
 		pi.sendMessage(
 			{ customType: CUSTOM_TYPE, content: resultText(details), details, display: true },

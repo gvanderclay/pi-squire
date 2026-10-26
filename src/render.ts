@@ -154,6 +154,7 @@ function plainLines(text: string): string[] {
 
 function idLines(details: MessageDetails): string[] {
 	const lines = [`delegation ${details.id}`, `request ${details.requestId}`];
+	if (details.resumedFrom !== undefined) lines.splice(1, 0, `resumed from ${details.resumedFrom}`);
 	if (details.kind === "result") lines.push(`envelope ${tilde(details.envelopePath)}`);
 	else lines.push(`window ${details.windowName}`);
 	lines.push(`cwd ${details.cwd === undefined ? cwdLine(undefined) : tilde(details.cwd)}`);
@@ -163,7 +164,7 @@ function idLines(details: MessageDetails): string[] {
 		lines.push(`checkout when the result arrived: ${first}`, ...rest.map((line) => `  ${line}`));
 	}
 	lines.push(
-		`session ${details.sessionPath === undefined ? `${details.id} (no session file found)` : tilde(details.sessionPath)}`,
+		`session ${details.sessionPath === undefined ? `${details.sessionId ?? details.id} (no session file found)` : tilde(details.sessionPath)}`,
 	);
 	return lines;
 }

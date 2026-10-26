@@ -10,8 +10,9 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
 - The extension is the `.ts` files in `src/`. `src/index.ts` is the entry Pi
   loads; `child.ts` is what a delegate itself registers, `agents.ts` reads
   the roster, `results.ts` handles replies and works out a delegation's
-  state, `render.ts` draws the delegate messages, `tracking.ts` holds the
-  poll and the status and close tools, `workspace.ts` resolves a
+  state (`result-message.ts` words the result), `render.ts` draws the
+  delegate messages, `tracking.ts` holds the poll and the status and close
+  tools, `resume.ts` the eligibility checks and the `delegation_resume` tool, `workspace.ts` resolves a
   delegate's directory, its Git checkout at launch and its project trust,
   `snapshot.ts` observes that checkout read-only for results and status,
   `git.ts` contains read-only Git identity and path parsing, `worktree.ts`

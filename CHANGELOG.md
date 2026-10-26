@@ -12,6 +12,9 @@ follows [Semantic Versioning](https://semver.org/).
   `delegate` tool call that started the launch, so a listener can tie a
   delegate's window to that call. It is `undefined` for a launch from the
   `/delegate` command.
+- `delegation_resume` and `/delegate-resume <id> [--model …] [--thinking …] [--auto-exit|--no-auto-exit] <task>` reopen an exited delegate's own session (`pi --session <path>`) in a new window with a follow-up task. The resume is recorded as a new delegation with `resumedFrom`; mail, replies and usage-limit marks use the delegation's session id, so records from before resuming read as before. A delegate whose working directory is gone, one still running, one whose window is open and an older delegation of a resumed chain are refused. `delegation_status` shows `resumed from` and `resumed as`, results and closed-without-a-result messages name `resumedFrom`, and the latter point to `delegation_resume`. The `delegate` tool's description mentions it, and `--session` joins the launch invariants listed for `session:launch`. A resume emits `session:launch`
+  too, with `toolCallId` set to the `delegation_resume` call, or `undefined`
+  from `/delegate-resume`.
 
 ## [0.10.0] - 2026-10-24
 

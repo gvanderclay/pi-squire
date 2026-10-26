@@ -428,7 +428,7 @@ agent's `auto-exit`.
 
 ## Tools
 
-The model gets three tools. They share the command's launch path and the
+The model gets four tools. They share the command's launch path and the
 session's delegation records. None of them is registered inside a delegate.
 
 | Tool | Parameters | What it does |
@@ -436,6 +436,7 @@ session's delegation records. None of them is registered inside a delegate.
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
+| `delegation_resume` | `id`, `task`, optional `model`, `thinking` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
 
 The `delegate` tool's description lists the current roster, one line per agent:
 its name, description, default model and thinking, auto-exit when it is off,
@@ -778,6 +779,53 @@ session or offer to fork it rather than open it when the delegate ran in
 another directory or its file lives in another storage directory. The
 absolute path opens that file directly.
 
+## Resuming a delegation
+
+An exited delegate can continue its own session with a follow-up task:
+
+```text
+/delegate-resume <id> [--model <provider/id>] [--thinking <level>] [--auto-exit | --no-auto-exit] <task…>
+```
+
+The model does the same with `delegation_resume` (`id` and `task`, optionally
+`model`, `thinking` and `auto_exit`), which returns the `delegate` tool's result
+plus `resumedFrom`. The command completes the ids that can still be resumed.
+
+- The delegate's own session file is reopened with `pi --session <absolute path>`
+  and the recorded `--session-dir`, in a new window named like the first. The
+  delegate keeps everything it read and decided; Pi appends to the same file.
+  Opening it yourself is `pi --session <path>`, outside this tool.
+- The resume is recorded as a **new delegation** with its own id and a
+  `resumedFrom` naming the old one. Its task goes to the old session's mail
+  address, and its result arrives as a `[delegate]` message that names
+  `resumed from <id>`. Status shows `resumed from <id>` on the new delegation and
+  `resumed as <id>` on the old one. A late reply to the old request still
+  settles the old delegation only.
+- A chain resumes from its newest delegation; resuming an older one is refused,
+  naming the newest.
+- It is refused, before anything is sent or opened, unless: the delegation is a
+  started one (not a workspace attempt); it is not `running` (mail a running
+  delegate instead) and tmux can be asked; no window with its id and name still
+  runs a program (an exited one is killed first; a window that merely shares the
+  name is ignored); its session file is found and the working directory in the
+  file's header still exists; its agent is still in the roster; and no other
+  resume of it is under way. A delegate whose window was killed mid-turn can be
+  resumed.
+- A removed working directory, a removed managed worktree included, makes a
+  delegation not resumable: Pi runs a reopened session in its stored directory.
+  The window opens in that directory, with project trust decided again for it as
+  for `cwd` (see [Project trust](#project-trust)); there is no `cwd` or
+  `worktree` for a resume, and no worktree is created.
+- Without `model` it continues on the model the delegate finished on, moving to
+  its agent's fallbacks when that one is unavailable or marked (see
+  [Usage limits](#usage-limits)). An explicit `model` is used alone and refused
+  rather than substituted. `thinking` and `auto_exit` default to the
+  delegation's own. The agent's prompt, tools and extensions are those of the
+  roster now.
+- `session:launch` is emitted as for any launch, with the same payload.
+- Not detected: a Pi process you opened yourself on the same session outside
+  pi-squire's window. Close it before resuming.
+
 ## Hooks
 
 The `js` block below is the contract's worked example, and
@@ -797,16 +845,17 @@ after the task has been sent and just before it opens the delegate's window.
 | `env` | the child's environment, as `KEY`/`value` pairs |
 | `agent` | the agent's name, as in `<agent dir>/squire/agents/<name>/AGENT.md`; read it, do not change it |
 | `cwd` | the directory the window opens in, the parent's or the resolved `--cwd`; read it, do not change it |
-| `toolCallId` | the ID of the `delegate` tool call that started the launch; absent when started from the `/delegate` command; read it, do not change it |
+| `toolCallId` | the ID of the `delegate` or `delegation_resume` tool call that started the launch; absent when started from the `/delegate` or `/delegate-resume` command; read it, do not change it |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
 and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
 emitter reads the payload the moment `emit` returns.
 
-`cwd`, the trust flag (`--approve` or `--no-approve`) and `--session-dir` are
-launch invariants that `pi-squire` chooses. The window opens in its own `cwd`,
+`cwd`, the trust flag (`--approve` or `--no-approve`), `--session-dir` and the
+session choice (`--session-id` for a new delegate, `--session` for a [resumed](#resuming-a-delegation)
+one) are launch invariants that `pi-squire` chooses. The window opens in its own `cwd`,
 whatever a listener assigns to the payload. A listener must not add another
-trust flag, `--session-dir` or a working-directory change to `args`, since
+trust flag, `--session-dir`, `--session` or `--session-id`, or a working-directory change to `args`, since
 that would launch a child whose trust or session storage the parent did not
 choose and cannot find; append only unrelated settings.
 
@@ -897,10 +946,10 @@ Other extensions may rely on:
   [Hooks](#hooks));
 - the `message:send`, `message:inbound` and `message:scan` hooks, consumed as
   their sections document;
-- the `delegate`, `delegation_status` and `delegation_close` tool names,
+- the `delegate`, `delegation_status`, `delegation_close` and `delegation_resume` tool names,
   parameters, the recorded `workspace` shape and the `workspaceSnapshot`
   shape in results and status;
-- the `/delegate` syntax and flags;
+- the `/delegate` and `/delegate-resume` syntax and flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,
   `<agent dir>/squire/agents/<name>/AGENT.md`;

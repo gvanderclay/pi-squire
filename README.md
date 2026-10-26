@@ -80,8 +80,8 @@ task in the multi-line editor, give it an optional label (empty for the
 default name), then a settings screen. Its first row, Start, launches; the rows
 below it all begin at the agent's defaults: Model (a filterable list of the
 models your Pi has credentials for), Thinking (only the levels the selected
-model supports; changing the model moves an unsupported level to the nearest
-supported one and says so), Auto-exit, Working directory (your own, to change)
+model supports; a level the model does not support, whether from the agent's
+default or after changing the model, moves to the nearest supported one and says so), Auto-exit, Working directory (your own, to change)
 and Worktree (a new branch name, empty for none). A worktree and a changed
 working directory exclude each other; the base, source and fallbacks stay
 command-only. The form starts the delegate through the same path as the
@@ -189,7 +189,7 @@ or done with auto-exit off, newest first. The model has no tool for any of this.
 |---|---|
 | `↑` / `↓` | select a delegation; `esc` leaves the panel |
 | `enter` | open: a popup over your terminal, or a switch when the window is in the parent's own session |
-| `p` | peek: a snapshot of the window's pane (`capture-pane`); `r` refreshes, `enter` opens, `esc` returns |
+| `p` | peek: a snapshot of the window's pane (`capture-pane`) in an overlay; `r` refreshes, `enter` opens, `esc` returns to the list |
 | `s` | switch your tmux client to the window; `prefix L` returns you (tmux's last-session key) |
 | `x` | close the delegation as `delegation_close` does; asks first only while it is running |
 | `n` | new delegate: the same form `/delegate` opens with no arguments (see [First use](#first-use)) |
@@ -202,7 +202,9 @@ closes the popup within one poll (up to 5 s). No tmux key bindings or options ar
 added.
 
 `/delegate-open <id> [--popup|--switch|--peek]` does one of these on one
-delegation without the panel: with no flag, what `enter` does. Ids complete from the
+delegation without the panel: with no flag or with `--popup`, what `enter` does (a popup, or a
+switch for a window in the parent's own session, since a popup of one's own session would show it
+inside itself); `--switch` always switches; `--peek` opens the peek overlay. Ids complete from the
 open delegations.
 
 ## Working directory
@@ -868,8 +870,12 @@ plus `resumedFrom`. The command completes the ids that can still be resumed.
 
 `/delegate-resume` with no arguments opens a picker instead: the delegations
 that pass every check below (newest first, from one look at tmux), then the
-multi-line editor for the follow-up. The model, thinking level and auto-exit
-are the delegation's own, and it resumes as the command does.
+multi-line editor for the follow-up. The checks change nothing: it refuses as the
+command does when tmux is older than 3.2 or `windowPlacement` is invalid, and leaves out a
+delegation whose recorded thinking level is invalid or whose model and fallbacks cannot be used
+(credentials, usage limits). An exited window is left for the resume to close, and trust is
+asked only when you resume. The model, thinking level and auto-exit are the delegation's own,
+and it resumes as the command does.
 
 - The delegate's own session file is reopened with `pi --session <absolute path>`
   and the recorded `--session-dir`, in a new window named like the first. The

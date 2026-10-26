@@ -39,8 +39,8 @@ export type Tracking = {
 	registerTools(): void;
 	/** Start the poll when something is running or a popup is open. */
 	startPolling(): void;
-	/** Remember a popup the parent opened; the poll closes it once its window is gone. */
-	trackPopup(popup: Popup): void;
+	/** Remember a popup the parent opened; the poll closes it once its window is gone. Returns the call that forgets it when its process ends. */
+	trackPopup(popup: Popup): () => void;
 	/** Close one delegation as `delegation_close` does; throws as the tool does. */
 	close(id: string): Promise<CloseResult>;
 	/** On `session_start`: rebuild the records and restart the poll. */

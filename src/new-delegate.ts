@@ -211,6 +211,7 @@ export class SettingsForm implements Component {
 		this.thinking = agent.thinking;
 		this.autoExit = agent.autoExit;
 		this.cwd = options.cwd;
+		this.clampInitialThinking();
 		const modelItems: SelectItem[] = [...new Set([agent.model, ...this.byId.keys()])].map((value) => ({
 			value,
 			label: value,
@@ -265,6 +266,15 @@ export class SettingsForm implements Component {
 			(id: string, value: string): void => this.changed(id, value),
 			(): void => options.done(undefined),
 		);
+	}
+
+	/** The agent's default level, when its default model does not support it: clamped, visibly, and so submitted as an override. */
+	private clampInitialThinking(): void {
+		const model = this.byId.get(this.model);
+		if (model === undefined || !isThinking(this.thinking) || this.levels().includes(this.thinking)) return;
+		const clamped = clampThinkingLevel(model, this.thinking as ModelThinkingLevel);
+		this.status = `thinking ${this.thinking} is not supported by ${this.model}; now ${clamped}`;
+		this.thinking = clamped;
 	}
 
 	/** The levels the selected model supports; every level when the model is not in the registry. */

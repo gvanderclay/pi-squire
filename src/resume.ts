@@ -5,25 +5,24 @@
 // `index.ts` supplies the pieces it shares with a launch: model choice, trust,
 // the task mail and the window.
 import { randomUUID } from "node:crypto";
-import { statSync } from "node:fs";
-import { isAbsolute } from "node:path";
 
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { type TObject, Type } from "typebox";
 
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
-import { sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
+import { sessionIdOf } from "./result-sessions.ts";
+import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
-	deriveState,
-	finishedModel,
-	isStarted,
-	locateSession,
-	type Results,
-	recordedName,
-	type StartedRecorded,
-} from "./results.ts";
-import { type OpenedWindow, requireTmuxVersion, type TmuxClient } from "./tmux.ts";
-import { listWindows, ownWindow, type ToolDef, toolResult, windowState } from "./tracking.ts";
+	inFlight,
+	passes,
+	preflight,
+	recordCheck,
+	type SessionFile,
+	settleModel,
+	windowCheck,
+} from "./resume-checks.ts";
+import type { OpenedWindow, TmuxClient } from "./tmux.ts";
+import { listWindows, type ToolDef, toolResult } from "./tracking.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -142,28 +141,10 @@ function newestStarted(results: Results, id: string): StartedRecorded {
 	return record;
 }
 
-/**
- * Steps 3 and 4: no process of this delegate is left. A running delegate is
- * mailed instead; tmux that cannot be asked proves nothing; a window with the
- * record's id and name that still runs its program is refused, and one whose
- * program exited is killed first.
- */
+/** Steps 3 and 4, then the kill of an exited window; `windowCheck` is the part the picker shares. */
 async function ensureExited(record: StartedRecorded, tmux: TmuxClient): Promise<void> {
-	const windows = await listWindows(tmux);
-	const state = deriveState(record, windowState(windows, record));
-	if (state === "running") {
-		throw new Error(`delegation ${record.id} is running; send it a message instead of resuming it`);
-	}
-	if (windows === undefined || state === "unknown") {
-		throw new Error(`could not ask tmux whether delegation ${record.id}'s window is open, so it is not resumed`);
-	}
-	const own = ownWindow(windows, record);
+	const own = windowCheck(record, await listWindows(tmux));
 	if (own === undefined) return;
-	if (!own.exited) {
-		throw new Error(
-			`delegation ${record.id}'s window ${record.windowName} (${record.windowId}) is still open; its Pi may still be running, so it is not resumed. Close it with delegation_close, or send it a message`,
-		);
-	}
 	try {
 		await tmux.kill(own.id);
 	} catch (err) {
@@ -171,52 +152,6 @@ async function ensureExited(record: StartedRecorded, tmux: TmuxClient): Promise<
 			`could not kill the exited window ${record.windowName} (${record.windowId}): ${(err as Error).message}`,
 		);
 	}
-}
-
-/** Whether `path` is an existing directory. */
-function isDirectory(path: string): boolean {
-	try {
-		return statSync(path).isDirectory();
-	} catch {
-		return false;
-	}
-}
-
-/** A delegate's session file, the directory its header says Pi runs it in, and the session directory to pass. */
-type SessionFile = { path: string; cwd: string; dir: string };
-
-/** Step 5: the session file, and the directory its header says Pi will run it in. */
-function sessionFor(record: StartedRecorded, ctx: ExtensionContext): SessionFile {
-	const dir = record.sessionDir ?? ctx.sessionManager.getSessionDir();
-	const path = locateSession(record, ctx.sessionManager.getSessionDir());
-	if (path === undefined) {
-		throw new Error(
-			`no session file for session ${sessionIdOf(record)} was found in ${dir}, so delegation ${record.id} is not resumable`,
-		);
-	}
-	if (!isAbsolute(path) || !isAbsolute(dir)) {
-		throw new Error(
-			`the session file ${path} or its directory ${dir} is not an absolute path, so delegation ${record.id} is not resumable`,
-		);
-	}
-	const cwd = sessionHeaderCwd(path);
-	if (cwd === undefined) {
-		throw new Error(
-			`could not read a working directory from the header of ${path}, so delegation ${record.id} is not resumable`,
-		);
-	}
-	if (!isDirectory(cwd)) {
-		throw new Error(
-			`delegation ${record.id}'s session runs in ${cwd}, which no longer exists, so it is not resumable (a removed worktree cannot be resumed)`,
-		);
-	}
-	return { path, cwd, dir };
-}
-
-/** The model choices: an explicit model alone, else where the delegate ended, then the agent's fallbacks. */
-function preferredModels(record: StartedRecorded, agent: Agent, sessionPath: string): string[] {
-	const ended = finishedModel(sessionPath) ?? record.result?.finishedModel ?? record.model;
-	return [...new Set([ended, ...agent.fallback])];
 }
 
 /** The tool's result: the `delegate` tool's plus the delegation it resumed. */
@@ -243,11 +178,7 @@ async function planResume(
 	signal: AbortSignal | undefined,
 ): Promise<Plan> {
 	const { record, agent, session, request } = input;
-	const thinking = request.thinking ?? record.thinking;
-	const badThinking = deps.thinkingProblem(thinking);
-	if (badThinking !== undefined) throw new Error(badThinking);
-	const preferred = preferredModels(record, agent, session.path);
-	const chosen = await deps.chooseModel(request.model, agent, ctx.modelRegistry, preferred);
+	const { thinking, chosen } = await settleModel(deps, input, ctx);
 	const autoExit = request.autoExit ?? record.autoExit === true;
 	const prepared = await deps.prepareDirectory(session.cwd, ctx, signal);
 	// A managed worktree keeps its launch facts while the session still runs in it.
@@ -350,9 +281,6 @@ async function startResume(
 	};
 }
 
-/** The delegation ids with a resume under way in this process. */
-const inFlight = new Set<string>();
-
 /** Resume `request.id`: every eligibility check in order, then the launch. */
 async function resume(
 	deps: ResumeDeps,
@@ -360,20 +288,11 @@ async function resume(
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 ): Promise<Resumed> {
-	if (!deps.tmux.insideTmux()) throw new Error(deps.notInTmux);
-	await requireTmuxVersion(deps.tmux);
-	const placement = deps.placement(); // read once, before the exited window is killed or anything is mailed
+	const placement = await preflight(deps); // read once, before the exited window is killed or anything is mailed
 	if (request.task.trim() === "") throw new Error("a task is required");
 	const record = newestStarted(deps.results, request.id);
 	await ensureExited(record, deps.tmux);
-	const session = sessionFor(record, ctx);
-	const agent = deps.roster(ctx).agents.find((item) => item.name === record.agent);
-	if (agent === undefined) {
-		throw new Error(
-			`agent ${JSON.stringify(record.agent)} is no longer in the roster, so delegation ${record.id} is not resumed`,
-		);
-	}
-	if (inFlight.has(record.id)) throw new Error(`delegation ${record.id} is already being resumed`);
+	const { session, agent } = recordCheck(deps, record, ctx);
 	inFlight.add(record.id);
 	try {
 		const plan = await planResume(deps, { record, agent, session, request }, ctx, signal);
@@ -390,26 +309,18 @@ async function resume(
 /**
  * The delegations that pass every check `resume` makes, newest first, read
  * with one `listWindows` and changing nothing: an exited window is left for
- * the resume itself to kill.
+ * the resume itself to kill and trust is left for its prompt. The call-wide
+ * prerequisites are checked once and refuse as `resume` does.
  */
 async function eligible(deps: ResumeDeps, ctx: ExtensionContext): Promise<StartedRecorded[]> {
+	await preflight(deps);
 	const windows = await listWindows(deps.tmux);
 	if (windows === undefined) return [];
-	const agents = deps.roster(ctx).agents;
 	const ids = new Set(resumableIds(deps.results));
+	const models = new Map<string, boolean>();
 	const found: StartedRecorded[] = [];
 	for (const record of startedRecords(deps.results)) {
-		if (!ids.has(record.id) || inFlight.has(record.id)) continue;
-		if (deriveState(record, windowState(windows, record)) === "running") continue;
-		const own = ownWindow(windows, record);
-		if (own !== undefined && !own.exited) continue;
-		if (!agents.some((agent) => agent.name === record.agent)) continue;
-		try {
-			sessionFor(record, ctx);
-		} catch {
-			continue;
-		}
-		found.push(record);
+		if (ids.has(record.id) && (await passes(deps, record, windows, ctx, models))) found.push(record);
 	}
 	return found.reverse();
 }

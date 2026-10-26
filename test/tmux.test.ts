@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -286,7 +287,7 @@ test("switchTo, capture and closePopup run their tmux commands", async () => {
 test("popup returns while display-popup still runs, and attaches by session id", async () => {
 	await withNavigationStub(async (log) => {
 		const started = Date.now();
-		await createTmuxClient().popup("c1", { id: "@4", name: "scout one" });
+		await createTmuxClient().popup("c1", { id: "@4", name: "scout one" }, () => {});
 		assert.ok(Date.now() - started < 900, "display-popup blocks for a second; popup did not wait for it");
 		const [, popup] = log();
 		assert.equal(
@@ -298,6 +299,86 @@ test("popup returns while display-popup still runs, and attaches by session id",
 
 test("a popup that fails at once rejects", async () => {
 	await withNavigationStub(async () => {
-		await assert.rejects(createTmuxClient().popup("c1", { id: "@4", name: "x" }), /display-popup exited with 3/);
+		await assert.rejects(
+			createTmuxClient().popup("c1", { id: "@4", name: "x" }, () => {}),
+			/display-popup exited with 3/,
+		);
 	}, 3);
+});
+
+/** A stub `tmux` whose popup records its pid and lives `seconds`; `vanish` makes the binary disappear once display-message ran. */
+async function withPopupStub(
+	options: { seconds: number; vanish?: boolean },
+	body: (dir: string) => Promise<void>,
+): Promise<void> {
+	const dir = mkdtempSync(join(tmpdir(), "squire-tmux-popup-"));
+	const oldPath = process.env.PATH;
+	try {
+		const script = [
+			"#!/bin/sh",
+			'case "$1" in',
+			`display-message) echo '$7'; ${options.vanish === true ? '/bin/rm "$0"' : ":"};;`,
+			`display-popup) echo $$ > '${dir}/pid'; exec sleep ${options.seconds};;`,
+			"esac",
+			"",
+		].join("\n");
+		writeFileSync(join(dir, "tmux"), script);
+		chmodSync(join(dir, "tmux"), 0o755);
+		// A vanishing stub leaves no tmux on PATH at all, not even a real one.
+		process.env.PATH = options.vanish === true ? dir : `${dir}:${oldPath}`;
+		await body(dir);
+	} finally {
+		process.env.PATH = oldPath;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+test("an open popup does not keep the parent process alive, and the popup lives on", async () => {
+	await withPopupStub({ seconds: 4 }, async (dir) => {
+		const started = Date.now();
+		const out = await new Promise<string>((resolve, reject) => {
+			const child = spawn(process.execPath, [join(import.meta.dirname, "popup-parent.ts")], {
+				env: process.env,
+				stdio: ["ignore", "pipe", "inherit"],
+			});
+			let text = "";
+			child.stdout.on("data", (chunk: Buffer) => {
+				text += chunk.toString();
+			});
+			child.on("error", reject);
+			child.on("close", () => resolve(text));
+		});
+		const took = Date.now() - started;
+		assert.match(out, /popup returned/);
+		assert.ok(took < 2500, `the parent exited after ${took} ms; the popup lasts 4 s`);
+		const pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+		assert.doesNotThrow(() => process.kill(pid, 0), "the popup process is still running");
+		process.kill(pid);
+	});
+});
+
+test("the exit callback runs when the popup's process ends, after popup() returned", async () => {
+	await withPopupStub({ seconds: 1 }, async () => {
+		let exited: () => void = () => {};
+		const ended = new Promise<void>((resolve) => {
+			exited = resolve;
+		});
+		let early = false;
+		await createTmuxClient().popup("c1", { id: "@4", name: "x" }, () => exited());
+		void ended.then(() => {
+			early = true;
+		});
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		assert.equal(early, false, "the popup is still open when popup() returns");
+		await ended;
+	});
+});
+
+test("a popup whose tmux cannot be started rejects with the spawn error", async () => {
+	await withPopupStub({ seconds: 1, vanish: true }, async () => {
+		await assert.rejects(
+			createTmuxClient().popup("c1", { id: "@4", name: "x" }, () => {}),
+			/ENOENT|spawn/,
+		);
+	});
 });

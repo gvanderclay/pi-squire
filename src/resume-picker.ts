@@ -25,7 +25,13 @@ export async function pickResume(ctx: ExtensionContext, deps: ResumePickerDeps):
 		ctx.ui.notify(`delegate: ${unavailable}`, "error");
 		return;
 	}
-	const records = await deps.eligible(ctx);
+	let records: StartedRecorded[];
+	try {
+		records = await deps.eligible(ctx);
+	} catch (err) {
+		ctx.ui.notify(`delegate: ${(err as Error).message}`, "error");
+		return;
+	}
 	if (records.length === 0) {
 		ctx.ui.notify("delegate: no delegation can be resumed now", "info");
 		return;

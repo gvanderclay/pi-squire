@@ -65,6 +65,7 @@ export class FakeTmux implements TmuxClient {
 	readonly popups: { client: string; windowId: string; name: string; open: boolean }[] = [];
 	/** Every `closePopup` client, in order. */
 	readonly closedPopups: string[] = [];
+	private readonly exits = new Map<number, () => void>();
 	/** Every `switchTo` call, in order. */
 	readonly switches: { client: string; windowId: string }[] = [];
 	/** Every `capture` window id, in order. */
@@ -183,15 +184,25 @@ export class FakeTmux implements TmuxClient {
 	}
 
 	/** Resolves as soon as the popup is up; it stays open until `closePopup`, as the real one does. */
-	async popup(client: string, window: PopupWindow): Promise<void> {
+	async popup(client: string, window: PopupWindow, onExit: () => void): Promise<void> {
 		if (this.fail.popup !== undefined) throw new Error(this.fail.popup);
 		this.popups.push({ client, windowId: window.id, name: window.name, open: true });
+		this.exits.set(this.popups.length - 1, onExit);
+	}
+
+	/** The user dismisses the popup on a client by hand: its process ends, so its exit callback runs. */
+	dismissPopup(client: string): void {
+		this.popups.forEach((popup, index) => {
+			if (popup.client !== client || !popup.open) return;
+			popup.open = false;
+			this.exits.get(index)?.();
+		});
 	}
 
 	async closePopup(client: string): Promise<void> {
 		if (this.fail.closePopup !== undefined) throw new Error(this.fail.closePopup);
 		this.closedPopups.push(client);
-		for (const popup of this.popups) if (popup.client === client) popup.open = false;
+		this.dismissPopup(client);
 	}
 
 	async capture(windowId: string): Promise<string> {

@@ -52,7 +52,7 @@ export function createPoll(
 	pi: ExtensionAPI,
 	results: Results,
 	tmux: TmuxClient,
-): { start(): void; stop(): void; arm(): void; track(popup: Popup): void } {
+): { start(): void; stop(): void; arm(): void; track(popup: Popup): () => void } {
 	/** The poll timer; set only while something is running or a popup is open. */
 	let poll: ReturnType<typeof setInterval> | undefined;
 	let ticking = false;
@@ -89,9 +89,13 @@ export function createPoll(
 
 	return {
 		start: startPolling,
-		track(popup: Popup): void {
-			popups.track(popup);
+		track(popup: Popup): () => void {
+			const forget = popups.track(popup);
 			startPolling();
+			return (): void => {
+				forget();
+				if (!busy()) stopPolling();
+			};
 		},
 		stop(): void {
 			live = false;

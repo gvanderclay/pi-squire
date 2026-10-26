@@ -303,6 +303,8 @@ export function session(options: SessionOptions = {}) {
 	const inputs: { title: string; placeholder: string | undefined }[] = [];
 	/** Every `ctx.ui.custom` factory, as passed. */
 	const customs: unknown[] = [];
+	/** The options each `ctx.ui.custom` call passed, in order (undefined when none). */
+	const customOptions: unknown[] = [];
 	const selectAnswers = [...(options.ui?.select ?? [])];
 	const editorAnswers = [...(options.ui?.editor ?? [])];
 	const inputAnswers = [...(options.ui?.input ?? [])];
@@ -421,8 +423,9 @@ export function session(options: SessionOptions = {}) {
 				inputs.push({ title, placeholder });
 				return inputAnswers.shift();
 			},
-			custom: async (factory: unknown) => {
+			custom: async (factory: unknown, uiOptions?: unknown) => {
 				customs.push(factory);
+				customOptions.push(uiOptions);
 				const answer = customAnswers.shift();
 				return isKeyScript(answer) ? runKeyScript(factory, answer) : answer;
 			},
@@ -518,6 +521,7 @@ export function session(options: SessionOptions = {}) {
 		editors,
 		inputs,
 		customs,
+		customOptions,
 		confirms,
 		/** Queue one more answer for `ctx.ui.custom`, such as a `keyScript`. */
 		queueCustom: (answer: unknown) => customAnswers.push(answer),

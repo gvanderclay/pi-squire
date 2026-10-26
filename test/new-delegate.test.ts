@@ -321,8 +321,10 @@ test("the settings screen is the factory ui.custom receives, built from the regi
 		result = value;
 	});
 	assert.match(screen.render(100).join("\n"), /Model\s+alpha\/fast-model/);
+	// The agent's low is not supported by its non-reasoning default model: shown as off and submitted so.
+	assert.match(screen.render(100).join("\n"), /Thinking\s+off/);
 	screen.handleInput(ENTER);
-	assert.deepEqual(result, {});
+	assert.deepEqual(result, { thinking: "off" });
 });
 
 test("/delegate with no arguments outside tmux and with an empty roster says why", async () => {
@@ -419,4 +421,21 @@ test("/delegate-resume with arguments is unchanged and opens no picker", async (
 	assert.equal(s.selects.length, 0);
 	assert.equal(s.editors.length, 0);
 	assert.equal(s.tmux.opened.length, 5);
+});
+
+test("an agent default the default model does not support is clamped visibly and submitted as an override", () => {
+	const f = form({ model: "alpha/fast-model", thinking: "high" });
+	assert.deepEqual(f.screen.levels(), ["off"]);
+	assert.match(f.text(), /Thinking\s+off/);
+	assert.doesNotMatch(f.text(), /Thinking\s+high/);
+	assert.match(f.text(), /thinking high is not supported by alpha\/fast-model; now off/);
+	f.keys(ENTER); // Start
+	assert.deepEqual(f.result(), { thinking: "off" });
+});
+
+test("a supported agent default shows no notice and submits no override", () => {
+	const f = form({ model: "gamma/thinker", thinking: "high" });
+	assert.doesNotMatch(f.text(), /not supported/);
+	f.keys(ENTER);
+	assert.deepEqual(f.result(), {});
 });

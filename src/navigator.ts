@@ -26,88 +26,56 @@ type OpenDelegate = {
 };
 
 /** What the panel hands back: the action the user chose on one delegation, or none. */
-type PanelResult = { action: "open" | "switch" | "close"; id: string } | { action: "new" } | undefined;
+type PanelResult = { action: "open" | "switch" | "close" | "peek"; id: string } | { action: "new" } | undefined;
+
+/** What the peek hands back: open the delegate, or nothing. */
+type PeekResult = { action: "open" } | undefined;
 
 const HINT = "↑↓ select · enter open · p peek · s switch · x close · n new · esc leave";
 const EMPTY = "No open delegates · n new · esc close";
 const PEEK_HINT = "r refresh · enter open · esc back";
 
+/** Where a peek shows: over the panel or the editor, not in its place. */
+const PEEK_OPTIONS = { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } } as const;
+
 type PanelTheme = { fg(color: string, text: string): string; bold(text: string): string };
 
-type Peek = { id: string; text: string; error: string | undefined; loading: boolean };
+type Capture = { text: string; error: string | undefined; loading: boolean };
 
 /** The lines a peek shows: the captured pane's last rows, or why there is none. */
-function peekBody(peek: Peek, rows: number): string[] {
+function peekBody(peek: Capture, rows: number): string[] {
 	if (peek.loading) return ["Capturing…"];
 	if (peek.error !== undefined) return [`Could not capture the pane: ${peek.error}`];
 	return peek.text
 		.replace(/\s+$/, "")
 		.split("\n")
-		.slice(-Math.max(5, rows - 6));
+		.slice(-Math.max(5, rows - 8));
 }
 
-/** The panel as a pi-tui component: a list, and a peek view over it. */
+/** The panel's list of open delegates, as a pi-tui component. */
 class Panel implements Component {
 	private selected = 0;
-	private peek: Peek | undefined;
-
 	private readonly items: readonly OpenDelegate[];
 	private readonly theme: PanelTheme;
-	private readonly capture: (windowId: string) => Promise<string>;
 	private readonly done: (result: PanelResult) => void;
 	private readonly redraw: () => void;
-	private readonly rows: () => number;
-	/** True when the panel was opened on one delegate's peek: leaving the peek leaves the panel. */
-	private readonly peekOnly: boolean;
 
 	constructor(parts: {
 		items: readonly OpenDelegate[];
 		theme: PanelTheme;
-		capture: (windowId: string) => Promise<string>;
 		done: (result: PanelResult) => void;
 		redraw: () => void;
-		rows: () => number;
-		peekOnly: boolean;
 	}) {
 		this.items = parts.items;
 		this.theme = parts.theme;
-		this.capture = parts.capture;
 		this.done = parts.done;
 		this.redraw = parts.redraw;
-		this.rows = parts.rows;
-		this.peekOnly = parts.peekOnly;
-		if (this.peekOnly && this.items.length > 0) this.startPeek(this.items[0]);
 	}
 
 	invalidate(): void {}
 
-	private current(): OpenDelegate | undefined {
-		return this.items[this.selected];
-	}
-
-	private startPeek(item: OpenDelegate): void {
-		this.peek = { id: item.id, text: "", error: undefined, loading: true };
-		void this.capture(item.window.id).then(
-			(text) => {
-				if (this.peek?.id === item.id) this.peek = { id: item.id, text, error: undefined, loading: false };
-				this.redraw();
-			},
-			(err: unknown) => {
-				if (this.peek?.id === item.id) {
-					this.peek = { id: item.id, text: "", error: (err as Error).message, loading: false };
-				}
-				this.redraw();
-			},
-		);
-	}
-
 	handleInput(data: string): void {
-		if (this.peek !== undefined) this.handlePeek(data);
-		else this.handleList(data);
-	}
-
-	private handleList(data: string): void {
-		const item = this.current();
+		const item = this.items[this.selected];
 		const count = this.items.length;
 		if (matchesKey(data, "escape")) this.done(undefined);
 		else if (matchesKey(data, "n")) this.done({ action: "new" });
@@ -115,30 +83,14 @@ class Panel implements Component {
 		else if (matchesKey(data, "up")) this.selected = (this.selected + count - 1) % count;
 		else if (matchesKey(data, "down")) this.selected = (this.selected + 1) % count;
 		else if (matchesKey(data, "enter")) this.done({ action: "open", id: item.id });
-		else if (matchesKey(data, "p")) this.startPeek(item);
+		else if (matchesKey(data, "p")) this.done({ action: "peek", id: item.id });
 		else if (matchesKey(data, "s")) this.done({ action: "switch", id: item.id });
 		else if (matchesKey(data, "x")) this.done({ action: "close", id: item.id });
 		this.redraw();
 	}
 
-	private handlePeek(data: string): void {
-		const item = this.items.find((candidate) => candidate.id === this.peek?.id);
-		if (item === undefined || matchesKey(data, "escape")) {
-			if (this.peekOnly) this.done(undefined);
-			else this.peek = undefined;
-		} else if (matchesKey(data, "r")) this.startPeek(item);
-		else if (matchesKey(data, "enter")) this.done({ action: "open", id: item.id });
-		this.redraw();
-	}
-
 	render(width: number): string[] {
 		const fit = (text: string): string => truncateToWidth(text, Math.max(1, width));
-		if (this.peek !== undefined) {
-			const item = this.items.find((candidate) => candidate.id === this.peek?.id);
-			const head = this.theme.bold(`Peek: ${item?.name ?? this.peek.id} (${item?.window.id ?? "?"})`);
-			const body = peekBody(this.peek, this.rows());
-			return [head, "", ...body, "", this.theme.fg("dim", PEEK_HINT)].map(fit);
-		}
 		if (this.items.length === 0) return [this.theme.bold("Delegates"), "", EMPTY].map(fit);
 		const lines = this.items.map((item, index) => {
 			const where = item.window.session === "" ? item.window.id : `${item.window.id} in ${item.window.session}`;
@@ -146,6 +98,64 @@ class Panel implements Component {
 			return index === this.selected ? this.theme.fg("accent", `▸ ${row}`) : `  ${row}`;
 		});
 		return [this.theme.bold("Delegates"), "", ...lines, "", this.theme.fg("dim", HINT)].map(fit);
+	}
+}
+
+/** A snapshot of one delegate's pane, shown as an overlay: `r` refreshes, enter opens, esc returns. */
+class PeekView implements Component {
+	private capture: Capture = { text: "", error: undefined, loading: true };
+	private readonly item: OpenDelegate;
+	private readonly theme: PanelTheme;
+	private readonly read: (windowId: string) => Promise<string>;
+	private readonly done: (result: PeekResult) => void;
+	private readonly redraw: () => void;
+	private readonly rows: () => number;
+
+	constructor(parts: {
+		item: OpenDelegate;
+		theme: PanelTheme;
+		read: (windowId: string) => Promise<string>;
+		done: (result: PeekResult) => void;
+		redraw: () => void;
+		rows: () => number;
+	}) {
+		this.item = parts.item;
+		this.theme = parts.theme;
+		this.read = parts.read;
+		this.done = parts.done;
+		this.redraw = parts.redraw;
+		this.rows = parts.rows;
+		this.refresh();
+	}
+
+	invalidate(): void {}
+
+	private refresh(): void {
+		this.capture = { text: "", error: undefined, loading: true };
+		void this.read(this.item.window.id).then(
+			(text) => {
+				this.capture = { text, error: undefined, loading: false };
+				this.redraw();
+			},
+			(err: unknown) => {
+				this.capture = { text: "", error: (err as Error).message, loading: false };
+				this.redraw();
+			},
+		);
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "escape")) this.done(undefined);
+		else if (matchesKey(data, "r")) this.refresh();
+		else if (matchesKey(data, "enter")) this.done({ action: "open" });
+		this.redraw();
+	}
+
+	render(width: number): string[] {
+		const fit = (text: string): string => truncateToWidth(text, Math.max(1, width));
+		const head = this.theme.bold(`Peek: ${this.item.name} (${this.item.window.id})`);
+		const body = peekBody(this.capture, this.rows());
+		return [head, "", ...body, "", this.theme.fg("dim", PEEK_HINT)].map(fit);
 	}
 }
 
@@ -226,13 +236,19 @@ async function clientOf(tmux: TmuxClient): Promise<{ client: string } | { refusa
 async function popup(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
 	const found = await clientOf(env.tmux);
 	if ("refusal" in found) return ctx.ui.notify(`delegate: cannot open a popup: ${found.refusal}`, "warning");
+	// Tracked before it launches, so a popup that closes at once is forgotten too.
+	const forget = env.tracking.trackPopup({
+		windowId: item.window.id,
+		windowName: item.window.name,
+		client: found.client,
+	});
 	try {
-		// Resolves once the popup is up, not when it closes.
-		await env.tmux.popup(found.client, { id: item.window.id, name: item.window.name });
+		// Resolves once the popup is up, not when it closes; `forget` runs when it closes.
+		await env.tmux.popup(found.client, { id: item.window.id, name: item.window.name }, forget);
 	} catch (err) {
+		forget();
 		return ctx.ui.notify(`delegate: could not open a popup: ${(err as Error).message}`, "error");
 	}
-	env.tracking.trackPopup({ windowId: item.window.id, windowName: item.window.name, client: found.client });
 }
 
 async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
@@ -265,25 +281,34 @@ async function close(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promi
 	}
 }
 
-/** Show the panel, or just one delegate's peek; resolves with what the user chose. */
-function show(
-	env: Env,
-	ctx: ExtensionContext,
-	items: readonly OpenDelegate[],
-	peekOnly: boolean,
-): Promise<PanelResult> {
+/** Show the panel; resolves with what the user chose. */
+function show(ctx: ExtensionContext, items: readonly OpenDelegate[]): Promise<PanelResult> {
 	return ctx.ui.custom<PanelResult>(
 		(tui, theme, _keybindings, done): Panel =>
 			new Panel({
 				items,
 				theme: theme as unknown as PanelTheme,
-				capture: (windowId: string): Promise<string> => env.tmux.capture(windowId),
+				done,
+				redraw: (): void => tui.requestRender(),
+			}),
+	);
+}
+
+/** Peek at a delegate's pane in an overlay; true when the user chose to open it. */
+async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<boolean> {
+	const result = await ctx.ui.custom<PeekResult>(
+		(tui, theme, _keybindings, done): PeekView =>
+			new PeekView({
+				item,
+				theme: theme as unknown as PanelTheme,
+				read: (windowId: string): Promise<string> => env.tmux.capture(windowId),
 				done,
 				redraw: (): void => tui.requestRender(),
 				rows: (): number => tui.terminal.rows,
-				peekOnly,
 			}),
+		PEEK_OPTIONS,
 	);
+	return result?.action === "open";
 }
 
 const noUi = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: this needs an interactive session", "error");
@@ -308,6 +333,11 @@ async function act(
 		await close(env, ctx, item);
 		return true;
 	}
+	if (result.action === "peek") {
+		if (!(await peek(env, ctx, item))) return true; // back to the panel
+		await open(env, ctx, item);
+		return false;
+	}
 	await (result.action === "switch" ? switchTo(env, ctx, item) : open(env, ctx, item));
 	return false;
 }
@@ -321,11 +351,10 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 		const known = items.map((candidate) => candidate.id).join(", ") || "none";
 		return ctx.ui.notify(`delegate: no open delegate ${JSON.stringify(id)}; open: ${known}`, "error");
 	}
-	if (mode === "popup") return popup(env, ctx, item);
 	if (mode === "switch") return switchTo(env, ctx, item);
-	if (mode === "auto") return open(env, ctx, item);
+	if (mode !== "peek") return open(env, ctx, item); // --popup follows enter's rule too
 	if (!ctx.hasUI) return noUi(ctx);
-	if ((await show(env, ctx, [item], true))?.action === "open") await open(env, ctx, item);
+	if (await peek(env, ctx, item)) await open(env, ctx, item);
 }
 
 /** The navigator over the records, tmux and tracking. `startNew` is the new-delegate flow, wired by the entry. */
@@ -342,7 +371,7 @@ export function createNavigator(
 			for (;;) {
 				const items = await openDelegates(env);
 				if (items === undefined) return noTmux(ctx);
-				if (!(await act(env, startNew, ctx, items, await show(env, ctx, items, false)))) return;
+				if (!(await act(env, startNew, ctx, items, await show(ctx, items)))) return;
 			}
 		},
 		openDelegate: (ctx: ExtensionContext, id: string, mode: OpenMode): Promise<void> => openOne(env, ctx, id, mode),

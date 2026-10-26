@@ -93,9 +93,10 @@ export interface TmuxClient {
 	 * Open a popup over a client that attaches to the window's session at the
 	 * window. `display-popup` returns only when the popup closes, so this
 	 * resolves once the popup was launched, not when it ends, and a launch that
-	 * fails at once rejects.
+	 * fails at once rejects. `onExit` runs when the popup's process ends, however
+	 * the popup was closed, and not when the launch failed.
 	 */
-	popup(client: string, window: PopupWindow): Promise<void>;
+	popup(client: string, window: PopupWindow, onExit: () => void): Promise<void>;
 	/** Close the popup on a client (`display-popup -C`). */
 	closePopup(client: string): Promise<void>;
 	/** The window's visible pane as text (`capture-pane -p`). */
@@ -144,30 +145,38 @@ const POPUP_SETTLE_MS = 300;
 /**
  * Launch `display-popup`, which blocks until the popup closes, detached and
  * outside `runTmux`'s timeout. Resolves once it is up; rejects on a spawn
- * error or an exit within the settle time.
+ * error or an exit within the settle time. Its stderr is read only until then
+ * and then released, so the open popup keeps nothing of this process alive;
+ * `onExit` runs when the popup's process ends, however it was closed.
  */
-function launchPopup(args: string[]): Promise<void> {
+function launchPopup(args: string[], onExit: () => void): Promise<void> {
 	return new Promise((resolve, reject) => {
 		let settled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const settle = (error?: Error) => {
+		let stderr = "";
+		const child = spawn("tmux", args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+		const onData = (chunk: Buffer): void => {
+			if (stderr.length < 4096) stderr += chunk.toString();
+		};
+		child.stderr?.on("data", onData);
+		const settle = (error?: Error): void => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			child.stderr?.off("data", onData);
+			child.stderr?.destroy();
 			if (error === undefined) resolve();
 			else reject(error);
 		};
-		const child = spawn("tmux", args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
-		let stderr = "";
-		child.stderr?.on("data", (chunk: Buffer) => {
-			stderr += chunk.toString();
-		});
+		const timer = setTimeout(() => settle(), POPUP_SETTLE_MS);
 		child.on("error", (err) => settle(err));
 		child.on("close", (code) => {
-			if (code === 0) return settle();
-			settle(new Error(stderr.trim() !== "" ? stderr.trim() : `tmux display-popup exited with ${code}`));
+			if (!settled && code !== 0) {
+				settle(new Error(stderr.trim() !== "" ? stderr.trim() : `tmux display-popup exited with ${code}`));
+				return;
+			}
+			settle();
+			onExit();
 		});
-		timer = setTimeout(() => settle(), POPUP_SETTLE_MS);
 		child.unref();
 	});
 }
@@ -267,13 +276,16 @@ function navigation(
 			await run(["switch-client", "-c", client, "-t", windowId]);
 		},
 
-		async popup(client, window) {
+		async popup(client, window, onExit) {
 			if (!/^@[0-9]+$/.test(window.id)) throw new Error(`${window.id} is not a tmux window id`);
 			const sessionId = (await run(["display-message", "-p", "-t", window.id, "-F", "#{session_id}"])).trim();
 			if (!/^\$[0-9]+$/.test(sessionId)) throw new Error(`tmux reported an invalid session id for ${window.id}`);
 			// Ids are `@N` and `$N` only; quoted so the popup's shell does not expand `$N`.
 			const command = `tmux select-window -t '${window.id}' \\; attach-session -t '${sessionId}'`;
-			await launchPopup(["display-popup", "-c", client, "-E", "-w", "90%", "-h", "90%", "-T", window.name, command]);
+			await launchPopup(
+				["display-popup", "-c", client, "-E", "-w", "90%", "-h", "90%", "-T", window.name, command],
+				onExit,
+			);
 		},
 
 		async closePopup(client) {

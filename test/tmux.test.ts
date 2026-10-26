@@ -370,7 +370,16 @@ test("the exit callback runs when the popup's process ends, after popup() return
 		});
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		assert.equal(early, false, "the popup is still open when popup() returns");
-		await ended;
+		// The popup's process is unref'd, so a timer keeps the event loop alive until it ends (Node 22 cancels a test otherwise).
+		let timer: NodeJS.Timeout | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error("the exit callback never ran")), 5000);
+		});
+		try {
+			await Promise.race([ended, timeout]);
+		} finally {
+			clearTimeout(timer);
+		}
 	});
 });
 

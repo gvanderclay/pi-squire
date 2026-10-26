@@ -22,8 +22,9 @@ import {
 	recordedName,
 	type StartedRecorded,
 } from "./results.ts";
-import type { TmuxClient } from "./tmux.ts";
+import { type OpenedWindow, requireTmuxVersion, type TmuxClient } from "./tmux.ts";
 import { listWindows, ownWindow, type ToolDef, toolResult, windowState } from "./tracking.ts";
+import type { WindowPlacement } from "./window-placement.ts";
 import type { Workspace } from "./workspace.ts";
 
 /** What a resume asks for; the fields after `task` are optional overrides. */
@@ -49,6 +50,8 @@ export type ResumeDeps = {
 	/** The refusal text for a session outside tmux. */
 	notInTmux: string;
 	startPolling(): void;
+	/** The window placement for this call; throws on an invalid setting. */
+	placement(): WindowPlacement;
 	roster(ctx: ExtensionContext): Roster;
 	chooseModel(
 		explicit: string | undefined,
@@ -65,7 +68,7 @@ export type ResumeDeps = {
 	): Promise<{ workspace: Workspace; trusted: boolean }>;
 	/** Mail the task to a session id; returns the request id. */
 	sendTask(to: string, task: string): string;
-	/** Open the window with `--session <path>`; returns its id. */
+	/** Open the window with `--session <path>`; returns its id and session. */
 	open(input: {
 		id: string;
 		name: string;
@@ -77,7 +80,8 @@ export type ResumeDeps = {
 		start: { agent: Agent; model: string; rest: string[]; thinking: string; autoExit: boolean };
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
-	}): Promise<string>;
+		placement: WindowPlacement;
+	}): Promise<OpenedWindow>;
 };
 
 /** A started resume: what the tool and the command report. */
@@ -92,6 +96,8 @@ export type Resumed = {
 	autoExit: boolean;
 	windowId: string;
 	windowName: string;
+	/** The session the window opened in, when tmux could say. */
+	windowSession?: string;
 	cwd: string;
 	sessionDir: string;
 	workspace: Workspace;
@@ -273,15 +279,22 @@ async function mailTask(deps: ResumeDeps, windowId: string, sessionId: string, t
 
 async function startResume(
 	deps: ResumeDeps,
-	input: { record: StartedRecorded; session: SessionFile; plan: Plan; task: string; toolCallId: string | undefined },
+	input: {
+		record: StartedRecorded;
+		session: SessionFile;
+		plan: Plan;
+		task: string;
+		toolCallId: string | undefined;
+		placement: WindowPlacement;
+	},
 	ctx: ExtensionContext,
 ): Promise<Resumed> {
-	const { record, session, plan, task, toolCallId } = input;
+	const { record, session, plan, task, toolCallId, placement } = input;
 	const { start, chosen, workspace } = plan;
 	const id = randomUUID();
 	const sessionId = sessionIdOf(record);
 	const name = recordedName(record);
-	const windowId = await deps.open({
+	const { id: windowId, session: windowSession } = await deps.open({
 		id,
 		name,
 		sessionPath: session.path,
@@ -292,6 +305,7 @@ async function startResume(
 		start,
 		toolCallId,
 		ctx,
+		placement,
 	});
 	const requestId = await mailTask(deps, windowId, sessionId, task);
 	deps.results.recordStart(
@@ -325,6 +339,7 @@ async function startResume(
 		autoExit: start.autoExit,
 		windowId,
 		windowName: name,
+		...(windowSession === undefined ? {} : { windowSession }),
 		cwd: workspace.cwd,
 		sessionDir: session.dir,
 		workspace,
@@ -346,6 +361,8 @@ async function resume(
 	signal: AbortSignal | undefined,
 ): Promise<Resumed> {
 	if (!deps.tmux.insideTmux()) throw new Error(deps.notInTmux);
+	await requireTmuxVersion(deps.tmux);
+	const placement = deps.placement(); // read once, before the exited window is killed or anything is mailed
 	if (request.task.trim() === "") throw new Error("a task is required");
 	const record = newestStarted(deps.results, request.id);
 	await ensureExited(record, deps.tmux);
@@ -360,15 +377,22 @@ async function resume(
 	inFlight.add(record.id);
 	try {
 		const plan = await planResume(deps, { record, agent, session, request }, ctx, signal);
-		return await startResume(deps, { record, session, plan, task: request.task, toolCallId: request.toolCallId }, ctx);
+		return await startResume(
+			deps,
+			{ record, session, plan, task: request.task, toolCallId: request.toolCallId, placement },
+			ctx,
+		);
 	} finally {
 		inFlight.delete(record.id);
 	}
 }
 
+/** The session a window opened in, for the start text. */
+const inSession = (session: string | undefined): string => (session === undefined ? "" : ` in session ${session}`);
+
 /** The one line the command and the tool tell the user. */
 export function startedLine(resumed: Resumed): string {
-	return `delegate: resumed ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} in window ${resumed.windowName}${resumed.fallbackNote === "" ? "" : `. ${resumed.fallbackNote}`}${resumed.notices.map((line) => `. ${line}`).join("")}`;
+	return `delegate: resumed ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} in window ${resumed.windowName}${inSession(resumed.windowSession)}${resumed.fallbackNote === "" ? "" : `. ${resumed.fallbackNote}`}${resumed.notices.map((line) => `. ${line}`).join("")}`;
 }
 
 /** The `delegation_resume` tool. */
@@ -410,7 +434,7 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 			const { fallbackNote, ...details } = resumed;
 			ctx.ui.notify(startedLine(resumed), "info");
 			return toolResult(
-				`Resumed delegation ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} (${resumed.model}, thinking ${resumed.thinking}) in window ${resumed.windowName}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote === "" ? "" : ` ${fallbackNote}`}${resumed.notices.map((line) => ` ${line}`).join("")}`,
+				`Resumed delegation ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} (${resumed.model}, thinking ${resumed.thinking}) in window ${resumed.windowName}${inSession(resumed.windowSession)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote === "" ? "" : ` ${fallbackNote}`}${resumed.notices.map((line) => ` ${line}`).join("")}`,
 				{ outcome: "started", ...details },
 			);
 		},

@@ -375,7 +375,10 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 			workspace: { mode: "inherited", cwd: root, git: { kind: "non-git" } },
 		},
 	});
-	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-${id.slice(0, 8)}`);
+	assert.equal(
+		s.notes.at(-1),
+		`delegate: scout ${id} started in window scout-${id.slice(0, 8)} in session work-squire`,
+	);
 });
 
 test('null or "null" for an optional field means unset, so the agent\'s defaults apply', async () => {
@@ -406,7 +409,7 @@ test("a label names the session and the window, shows in the reply and in delega
 	const { argv, name, windowId } = s.tmux.opened[0];
 	assert.equal(name, "scout-roster");
 	assert.equal(argv[argv.indexOf("--name") + 1], "scout-roster");
-	assert.ok(result.content[0].text.includes("in window scout-roster."), result.content[0].text);
+	assert.ok(result.content[0].text.includes("in window scout-roster in session work-squire."), result.content[0].text);
 	const statusResult = await s.toolCall("delegation_status", {});
 	const status = statusResult.content[0].text;
 	assert.ok(status.includes("name: scout-roster\n"), status);

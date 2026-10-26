@@ -1188,13 +1188,13 @@ test("same-repository trust change while queued refuses before second mail or cr
 	const gate = new Promise<void>((resolve) => (release = resolve));
 	const open = s.tmux.openWindow.bind(s.tmux);
 	let first = true;
-	s.tmux.openWindow = async (spec) => {
+	s.tmux.openWindow = async (spec, placement) => {
 		if (first) {
 			first = false;
 			entered();
 			await gate;
 		}
-		return open(spec);
+		return open(spec, placement);
 	};
 	const params = (branch: string) => ({ agent: "scout", task: "inspect", worktree: branch });
 	const firstLaunch = s.toolCall("delegate", params("queue/first"));
@@ -1224,13 +1224,13 @@ test("a saved unrelated-source denial appearing while queued refuses before mail
 	const gate = new Promise<void>((resolve) => (release = resolve));
 	const open = s.tmux.openWindow.bind(s.tmux);
 	let first = true;
-	s.tmux.openWindow = async (spec) => {
+	s.tmux.openWindow = async (spec, placement) => {
 		if (first) {
 			first = false;
 			entered();
 			await gate;
 		}
-		return open(spec);
+		return open(spec, placement);
 	};
 	const params = (branch: string) => ({ agent: "scout", task: "inspect", worktree: branch, worktree_source: source });
 	const firstLaunch = s.toolCall("delegate", params("saved/first"));

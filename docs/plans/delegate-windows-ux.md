@@ -40,17 +40,25 @@ Two pull requests: placement first (a release on its own), then navigation.
 ### Companion session
 
 - Name: the parent pane's session name (`#{session_name}` of `TMUX_PANE`)
-  plus `-squire`. A parent whose session name already ends in `-squire` uses
-  its own session, so a delegate that delegates does not make
-  `work-squire-squire`.
+  plus `-squire`. A parent whose session carries the user option
+  `@squire-companion` = `1` (set when pi-squire created it) uses its own
+  session, so a delegate that delegates does not make `work-squire-squire`.
+  The parent's session and that option are read in one `display-message`
+  (`#{session_id}\t#{@squire-companion}\t#{session_name}`, name last).
+  *Changed after a live test:* the first design used the name suffix alone
+  (a session already ending in `-squire` was taken as a companion), but the
+  user's own session was named `pi-squire`, so delegates landed in it. A
+  name proves nothing; the marker does, and `pi-squire` now gets
+  `pi-squire-squire`.
 - Targeted with an exact match, `=<name>:`, never a prefix match.
 - Created on demand on every launch, since tmux destroys a session with its
   last window (probe):
   1. `new-window -d … -t =<name>:` as today.
   2. On `can't find session`: `new-session -d -s <name> -n <window> -c <cwd>
      -e … -P -F '#{window_id}' -- argv` followed, in the same tmux
-     invocation, by `set-option -t =<name> detach-on-destroy off`. The
-     delegate is the session's first window; no placeholder.
+     invocation, by `set-option -t =<name>: detach-on-destroy off` and
+     `set-option -t =<name>: @squire-companion 1`. The delegate is the
+     session's first window; no placeholder.
   3. On `duplicate session` (another launch won the race): step 1 once more.
 - `detach-on-destroy off` on that session only: a user viewing it when its
   last delegate exits lands in their most recent other session instead of
@@ -115,7 +123,8 @@ switch to make `new-window` race (`duplicate session`) or fail after dispatch.
 - An existing companion session gets `new-window`; a vanished one is
   recreated on the next launch.
 - The duplicate-session race retries once with `new-window`.
-- A parent in `work-squire` uses `work-squire`.
+- A parent in a marked `work-squire` uses `work-squire`; a user's session
+  named `pi-squire`, unmarked, gets `pi-squire-squire`.
 - `windowPlacement: "current"` behaves exactly as today (existing tests run
   under it unchanged).
 - An invalid value refuses before mail is sent or a window opens.

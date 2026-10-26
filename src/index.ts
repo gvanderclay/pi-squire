@@ -53,9 +53,11 @@ import { Type } from "typebox";
 import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
+import { type NewRequest, startNewDelegate } from "./new-delegate.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
 import { createResults, delegateName, type WorkspaceAttempt } from "./results.ts";
 import { createResume, type ResumeRequest, resumableIds, startedLine } from "./resume.ts";
+import { pickResume } from "./resume-picker.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
@@ -587,19 +589,19 @@ export default function delegate(
 		return roster;
 	}
 
+	/** The refusal for an empty roster. */
+	const noAgents = (): string =>
+		`no agents are defined; add ${join(
+			getAgentDir(),
+			"squire",
+			"agents",
+			"<name>",
+			"AGENT.md",
+		)} with frontmatter description, model and thinking (optionally auto-exit, exclude-tools, tools, extensions and fallback), and the prompt as its body`;
+
 	/** The request as a start, or an error naming what to fix. */
 	async function validate(request: Parsed, roster: Roster, models: ModelRegistry): Promise<Start> {
-		if (roster.agents.length === 0) {
-			throw new Error(
-				`no agents are defined; add ${join(
-					getAgentDir(),
-					"squire",
-					"agents",
-					"<name>",
-					"AGENT.md",
-				)} with frontmatter description, model and thinking (optionally auto-exit, exclude-tools, tools, extensions and fallback), and the prompt as its body`,
-			);
-		}
+		if (roster.agents.length === 0) throw new Error(noAgents());
 		const agent = roster.agents.find((candidate) => candidate.name === request.agent);
 		if (agent === undefined) {
 			throw new Error(
@@ -1009,22 +1011,18 @@ export default function delegate(
 	const started = (launched: Launched, start: Start): string =>
 		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${inSession(launched.windowSession)}${placedIn(launched)}${launched.workspace.mode === "managed" ? `. Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
 
-	async function command(input: string, ctx: ExtensionContext): Promise<void> {
+	/** Start a delegate from a parsed `/delegate` or the form, telling the user how it went. */
+	async function runDelegate(parsed: Parsed, ctx: ExtensionContext): Promise<void> {
 		const fail = (message: string) => ctx.ui.notify(`delegate: ${message}`, "error");
-		const outcome = parse(input);
-		if ("error" in outcome) {
-			fail(outcome.error);
-			return;
-		}
 		try {
-			const cwd = normalizeWorkspaceValue(outcome.parsed.cwd, "--cwd");
-			const worktree_source = normalizeWorkspaceValue(outcome.parsed.worktree_source, "--worktree-source");
-			const worktree_base = normalizeWorkspaceValue(outcome.parsed.worktree_base, "--worktree-base");
-			const worktree = normalizeWorkspaceValue(outcome.parsed.worktree, "--worktree");
+			const cwd = normalizeWorkspaceValue(parsed.cwd, "--cwd");
+			const worktree_source = normalizeWorkspaceValue(parsed.worktree_source, "--worktree-source");
+			const worktree_base = normalizeWorkspaceValue(parsed.worktree_base, "--worktree-base");
+			const worktree = normalizeWorkspaceValue(parsed.worktree, "--worktree");
 			if (worktree_source !== undefined && worktree === undefined)
 				throw new Error("--worktree-source requires --worktree");
 			const start = await validate(
-				{ ...outcome.parsed, cwd, worktree, worktree_base, worktree_source },
+				{ ...parsed, cwd, worktree, worktree_base, worktree_source },
 				rosterFor(ctx),
 				ctx.modelRegistry,
 			);
@@ -1035,7 +1033,41 @@ export default function delegate(
 		}
 	}
 
+	/** `/delegate`: with no arguments the new-delegate form, otherwise the typed request. */
+	async function command(input: string, ctx: ExtensionContext): Promise<void> {
+		if (input.trim() === "") {
+			await startNewDelegate(ctx, {
+				unavailable: () => (tmux.insideTmux() ? undefined : NOT_IN_TMUX),
+				roster: rosterFor,
+				noAgents,
+				labelProblem,
+				start: (request: NewRequest, context) => runDelegate(request, context),
+			});
+			return;
+		}
+		const outcome = parse(input);
+		if ("error" in outcome) {
+			ctx.ui.notify(`delegate: ${outcome.error}`, "error");
+			return;
+		}
+		await runDelegate(outcome.parsed, ctx);
+	}
+
 	async function resumeCommand(input: string, ctx: ExtensionContext): Promise<void> {
+		if (input.trim() === "") {
+			await pickResume(ctx, {
+				unavailable: () => (tmux.insideTmux() ? undefined : NOT_IN_TMUX),
+				eligible: resumer.eligible,
+				resume: async (request, context) => {
+					try {
+						context.ui.notify(startedLine(await resumer.resume(request, context)), "info");
+					} catch (err) {
+						context.ui.notify(`delegate: ${(err as Error).message}`, "error");
+					}
+				},
+			});
+			return;
+		}
 		const outcome = parseResume(input);
 		if ("error" in outcome) {
 			ctx.ui.notify(`delegate: ${outcome.error}`, "error");

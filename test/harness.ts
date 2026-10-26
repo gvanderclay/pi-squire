@@ -147,6 +147,8 @@ export type UiAnswers = {
 	/** A promise answers when the test settles it, so a dialog can stay open while another call starts. */
 	select?: (string | undefined | Promise<string | undefined>)[];
 	editor?: (string | undefined)[];
+	/** One-line `ctx.ui.input` answers. */
+	input?: (string | undefined)[];
 	custom?: unknown[];
 };
 
@@ -249,10 +251,13 @@ export function session(options: SessionOptions = {}) {
 	const selects: { title: string; options: string[] }[] = [];
 	/** Every `ctx.ui.editor` call, with what it pre-filled. */
 	const editors: { title: string; prefill: string | undefined }[] = [];
+	/** Every `ctx.ui.input` call, with its title. */
+	const inputs: { title: string; placeholder: string | undefined }[] = [];
 	/** Every `ctx.ui.custom` factory, as passed. */
 	const customs: unknown[] = [];
 	const selectAnswers = [...(options.ui?.select ?? [])];
 	const editorAnswers = [...(options.ui?.editor ?? [])];
+	const inputAnswers = [...(options.ui?.input ?? [])];
 	const customAnswers = [...(options.ui?.custom ?? [])];
 	const events: EventBus = createEventBus();
 	const models = [...FAKE_MODELS, ...(options.extraModels ?? [])];
@@ -352,6 +357,10 @@ export function session(options: SessionOptions = {}) {
 				editors.push({ title, prefill });
 				return editorAnswers.shift();
 			},
+			input: async (title: string, placeholder?: string) => {
+				inputs.push({ title, placeholder });
+				return inputAnswers.shift();
+			},
 			custom: async (factory: unknown) => {
 				customs.push(factory);
 				return customAnswers.shift();
@@ -446,6 +455,7 @@ export function session(options: SessionOptions = {}) {
 		scan,
 		selects,
 		editors,
+		inputs,
 		customs,
 		/** The commands the extension registered, if any. */
 		commands: () => Object.keys(commands),

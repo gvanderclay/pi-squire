@@ -119,7 +119,7 @@ export function normalizeWorkspaceValue(value: unknown, name: string): string | 
 }
 
 /** The real path of an existing, accessible directory named by `value`, relative to `base`. */
-function resolveDirectory(value: string, base: string): string {
+export function resolveDirectory(value: string, base: string): string {
 	// Only a leading `~` or `~/`: no variables, globs or `~user`.
 	let expanded = value;
 	if (value === "~") expanded = homedir();

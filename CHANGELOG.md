@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `/delegate` with no arguments opens a new-delegate form: pick an agent, write
+  the task, name it, then a settings screen for model, thinking level (only the
+  levels the model supports, clamped when the model changes), auto-exit,
+  working directory and worktree. It launches through the same path as the
+  typed command. `/delegate-resume` with no arguments opens a picker of the
+  delegations that can be resumed, then an editor for the follow-up. Typed
+  commands and the tools are unchanged; the two commands no longer print
+  their usage when typed bare.
+- `@earendil-works/pi-ai` is now a peer dependency (`*`), supplied by Pi.
+
 ## [0.12.0] - 2026-10-26
 
 ### Changed

@@ -75,6 +75,20 @@ When the delegate finishes, its answer reaches the parent as one `[delegate]`
 message that quotes the task (see [Results](#results)), and the delegate then
 closes its own window ([auto-exit](#auto-exit)).
 
+`/delegate` with no arguments opens a form instead: pick an agent, write the
+task in the multi-line editor, give it an optional label (empty for the
+default name), then a settings screen. Its first row, Start, launches; the rows
+below it all begin at the agent's defaults: Model (a filterable list of the
+models your Pi has credentials for), Thinking (only the levels the selected
+model supports; changing the model moves an unsupported level to the nearest
+supported one and says so), Auto-exit, Working directory (your own, to change)
+and Worktree (a new branch name, empty for none). A worktree and a changed
+working directory exclude each other; the base, source and fallbacks stay
+command-only. The form starts the delegate through the same path as the
+command, in the background, with the same start message. The label and
+directory are checked as `--label` and `--cwd` are, before anything is sent
+or opened.
+
 ## How a delegation works
 
 `/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>]] [--auto-exit | --no-auto-exit] <task…>`
@@ -826,6 +840,11 @@ The model does the same with `delegation_resume` (`id` and `task`, optionally
 `model`, `thinking` and `auto_exit`), which returns the `delegate` tool's result
 plus `resumedFrom`. The command completes the ids that can still be resumed.
 
+`/delegate-resume` with no arguments opens a picker instead: the delegations
+that pass every check below (newest first, from one look at tmux), then the
+multi-line editor for the follow-up. The model, thinking level and auto-exit
+are the delegation's own, and it resumes as the command does.
+
 - The delegate's own session file is reopened with `pi --session <absolute path>`
   and the recorded `--session-dir`, in a new window named like the first. The
   delegate keeps everything it read and decided; Pi appends to the same file.
@@ -993,7 +1012,9 @@ Other extensions may rely on:
 - the `delegate`, `delegation_status`, `delegation_close` and `delegation_resume` tool names,
   parameters, the recorded `workspace` shape and the `workspaceSnapshot`
   shape in results and status;
-- the `/delegate` and `/delegate-resume` syntax and flags;
+- the `/delegate` and `/delegate-resume` syntax and flags, and their
+  no-argument forms: `/delegate` opens the new-delegate form and
+  `/delegate-resume` the resume picker;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,
   `<agent dir>/squire/agents/<name>/AGENT.md`;

@@ -527,7 +527,8 @@ test("/delegate-resume parses flags and the task, and reports refusals", async (
 		await d.s.command("delegate-resume", args);
 		return d.s.errors.join("\n");
 	};
-	assert.match(await fail(""), /usage: \/delegate-resume <id>/);
+	// No arguments now opens the resume picker, not a usage error (`test/new-delegate.test.ts`).
+	assert.equal(await fail(""), "");
 	assert.match(await fail("--model x task"), /the first argument is the delegation id/);
 	assert.match(await fail(`${d.id}`), /a task is required after the id and flags/);
 	assert.match(await fail(`${d.id} --cwd /tmp task`), /unknown flag --cwd/);

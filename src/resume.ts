@@ -387,6 +387,33 @@ async function resume(
 	}
 }
 
+/**
+ * The delegations that pass every check `resume` makes, newest first, read
+ * with one `listWindows` and changing nothing: an exited window is left for
+ * the resume itself to kill.
+ */
+async function eligible(deps: ResumeDeps, ctx: ExtensionContext): Promise<StartedRecorded[]> {
+	const windows = await listWindows(deps.tmux);
+	if (windows === undefined) return [];
+	const agents = deps.roster(ctx).agents;
+	const ids = new Set(resumableIds(deps.results));
+	const found: StartedRecorded[] = [];
+	for (const record of startedRecords(deps.results)) {
+		if (!ids.has(record.id) || inFlight.has(record.id)) continue;
+		if (deriveState(record, windowState(windows, record)) === "running") continue;
+		const own = ownWindow(windows, record);
+		if (own !== undefined && !own.exited) continue;
+		if (!agents.some((agent) => agent.name === record.agent)) continue;
+		try {
+			sessionFor(record, ctx);
+		} catch {
+			continue;
+		}
+		found.push(record);
+	}
+	return found.reverse();
+}
+
 /** The session a window opened in, for the start text. */
 const inSession = (session: string | undefined): string => (session === undefined ? "" : ` in session ${session}`);
 
@@ -463,9 +490,12 @@ function requestFrom(params: {
 /** Resuming as a function for the command, and the tool for the model. */
 export function createResume(deps: ResumeDeps): {
 	resume(request: ResumeRequest, ctx: ExtensionContext, signal?: AbortSignal): Promise<Resumed>;
+	/** The delegations a resume would accept now, newest first. */
+	eligible(ctx: ExtensionContext): Promise<StartedRecorded[]>;
 	tool(): ToolDef;
 } {
 	return {
+		eligible: (ctx: ExtensionContext) => eligible(deps, ctx),
 		resume: (request: ResumeRequest, ctx: ExtensionContext, signal?: AbortSignal) => resume(deps, request, ctx, signal),
 		tool: () => resumeTool(deps),
 	};

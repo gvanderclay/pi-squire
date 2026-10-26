@@ -394,3 +394,23 @@ test("a failed window listing leaves the popup for the next tick", async (t) => 
 	await tick(t);
 	assert.deepEqual(s.tmux.closedPopups, ["c1"]);
 });
+
+test("n in the empty panel starts the new-delegate flow, which launches as /delegate does", async () => {
+	const s = await started({ ui: { select: ["scout — Looks things up"], editor: ["look around"], input: [""] } });
+	s.queueCustom(keyScript(["n"]));
+	s.queueCustom({}); // the form's settings screen: Start with every default
+	await s.command("delegates");
+	assert.equal(s.selects[0].title, "New delegate: agent");
+	assert.equal(s.tmux.opened.length, 1);
+	assert.match(s.notes.join("\n"), /scout \S+ started in window scout-/);
+});
+
+test("n from a populated panel opens the form, and cancelling it starts nothing", async () => {
+	const s = await started({ ui: { select: [undefined] } });
+	await launch(s, "one");
+	const before = s.tmux.opened.length;
+	await panel(s, keyScript(["n"]));
+	assert.equal(s.selects.length, 1);
+	assert.equal(s.selects[0].title, "New delegate: agent");
+	assert.equal(s.tmux.opened.length, before);
+});

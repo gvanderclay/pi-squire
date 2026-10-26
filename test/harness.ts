@@ -193,6 +193,8 @@ export type UiAnswers = {
 	/** A promise answers when the test settles it, so a dialog can stay open while another call starts. */
 	select?: (string | undefined | Promise<string | undefined>)[];
 	editor?: (string | undefined)[];
+	/** One-line `ctx.ui.input` answers. */
+	input?: (string | undefined)[];
 	/** A `KeyScript` drives the component; anything else is the answer itself. */
 	custom?: unknown[];
 	confirm?: boolean[];
@@ -297,10 +299,13 @@ export function session(options: SessionOptions = {}) {
 	const selects: { title: string; options: string[] }[] = [];
 	/** Every `ctx.ui.editor` call, with what it pre-filled. */
 	const editors: { title: string; prefill: string | undefined }[] = [];
+	/** Every `ctx.ui.input` call, with its title. */
+	const inputs: { title: string; placeholder: string | undefined }[] = [];
 	/** Every `ctx.ui.custom` factory, as passed. */
 	const customs: unknown[] = [];
 	const selectAnswers = [...(options.ui?.select ?? [])];
 	const editorAnswers = [...(options.ui?.editor ?? [])];
+	const inputAnswers = [...(options.ui?.input ?? [])];
 	const customAnswers = [...(options.ui?.custom ?? [])];
 	const confirmAnswers = [...(options.ui?.confirm ?? [])];
 	/** Every `ctx.ui.confirm` call, with its title and message. */
@@ -412,6 +417,10 @@ export function session(options: SessionOptions = {}) {
 				confirms.push({ title, message });
 				return confirmAnswers.shift() ?? false;
 			},
+			input: async (title: string, placeholder?: string) => {
+				inputs.push({ title, placeholder });
+				return inputAnswers.shift();
+			},
 			custom: async (factory: unknown) => {
 				customs.push(factory);
 				const answer = customAnswers.shift();
@@ -507,6 +516,7 @@ export function session(options: SessionOptions = {}) {
 		scan,
 		selects,
 		editors,
+		inputs,
 		customs,
 		confirms,
 		/** Queue one more answer for `ctx.ui.custom`, such as a `keyScript`. */

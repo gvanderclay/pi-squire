@@ -12,10 +12,19 @@ follows [Semantic Versioning](https://semver.org/).
   window is open (newest first): `enter` opens one in a tmux popup, or switches
   to it when it is in your own session; `p` peeks at its pane (`r` refreshes,
   `enter` opens); `s` switches your client to it; `x` closes it, asking only
-  while it runs. `/delegate-open <id> [--popup|--switch|--peek]` does one of
+  while it runs; `n` opens the new-delegate form. `/delegate-open <id> [--popup|--switch|--peek]` does one of
   these directly. Popup and switch act on the most recently active client of the
   parent's session; the parent closes a popup once its delegate's window is gone.
   Commands and a shortcut only: the model gets no new tool.
+- `/delegate` with no arguments opens a new-delegate form: pick an agent, write
+  the task, name it, then a settings screen for model, thinking level (only the
+  levels the model supports, clamped when the model changes), auto-exit,
+  working directory and worktree. It launches through the same path as the
+  typed command. `/delegate-resume` with no arguments opens a picker of the
+  delegations that can be resumed, then an editor for the follow-up. Typed
+  commands and the tools are unchanged; the two commands no longer print
+  their usage when typed bare.
+- `@earendil-works/pi-ai` is now a peer dependency (`*`), supplied by Pi.
 
 ## [0.12.0] - 2026-10-26
 

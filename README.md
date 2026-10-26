@@ -75,6 +75,20 @@ When the delegate finishes, its answer reaches the parent as one `[delegate]`
 message that quotes the task (see [Results](#results)), and the delegate then
 closes its own window ([auto-exit](#auto-exit)).
 
+`/delegate` with no arguments opens a form instead: pick an agent, write the
+task in the multi-line editor, give it an optional label (empty for the
+default name), then a settings screen. Its first row, Start, launches; the rows
+below it all begin at the agent's defaults: Model (a filterable list of the
+models your Pi has credentials for), Thinking (only the levels the selected
+model supports; a level the model does not support, whether from the agent's
+default or after changing the model, moves to the nearest supported one and says so), Auto-exit, Working directory (your own, to change)
+and Worktree (a new branch name, empty for none). A worktree and a changed
+working directory exclude each other; the base, source and fallbacks stay
+command-only. The form starts the delegate through the same path as the
+command, in the background, with the same start message. The label and
+directory are checked as `--label` and `--cwd` are, before anything is sent
+or opened.
+
 ## How a delegation works
 
 `/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>]] [--auto-exit | --no-auto-exit] <task…>`
@@ -164,6 +178,34 @@ To open windows in your own session, as before, set `windowPlacement` in
 The values are `companion` (the default when the setting is absent) and
 `current`. The file is read at each launch. Any other value refuses the launch
 with an error naming the file, before the task is sent or a window opens.
+
+## Reaching delegates
+
+Delegate windows sit out of your way, so reach them from the parent. `/delegates`
+(or `alt+shift+d`) opens a panel of the delegations whose window is open: running,
+or done with auto-exit off, newest first. The model has no tool for any of this.
+
+| Key | Does |
+|---|---|
+| `↑` / `↓` | select a delegation; `esc` leaves the panel |
+| `enter` | open: a popup over your terminal, or a switch when the window is in the parent's own session |
+| `p` | peek: a snapshot of the window's pane (`capture-pane`) in an overlay; `r` refreshes, `enter` opens, `esc` returns to the list |
+| `s` | switch your tmux client to the window; `prefix L` returns you (tmux's last-session key) |
+| `x` | close the delegation as `delegation_close` does; asks first only while it is running |
+| `n` | new delegate: the same form `/delegate` opens with no arguments (see [First use](#first-use)) |
+
+Popup and switch act on the most recently active tmux client attached to the
+parent's session. With none attached they refuse with a notice; peek and close
+still work. The popup attaches to the window's session at that window, and
+detaching in it (`prefix d`) closes it. When the delegate's window goes, the parent
+closes the popup within one poll (up to 5 s). No tmux key bindings or options are
+added.
+
+`/delegate-open <id> [--popup|--switch|--peek]` does one of these on one
+delegation without the panel: with no flag or with `--popup`, what `enter` does (a popup, or a
+switch for a window in the parent's own session, since a popup of one's own session would show it
+inside itself); `--switch` always switches; `--peek` opens the peek overlay. Ids complete from the
+open delegations.
 
 ## Working directory
 
@@ -826,6 +868,15 @@ The model does the same with `delegation_resume` (`id` and `task`, optionally
 `model`, `thinking` and `auto_exit`), which returns the `delegate` tool's result
 plus `resumedFrom`. The command completes the ids that can still be resumed.
 
+`/delegate-resume` with no arguments opens a picker instead: the delegations
+that pass every check below (newest first, from one look at tmux), then the
+multi-line editor for the follow-up. The checks change nothing: it refuses as the
+command does when tmux is older than 3.2 or `windowPlacement` is invalid, and leaves out a
+delegation whose recorded thinking level is invalid or whose model and fallbacks cannot be used
+(credentials, usage limits). An exited window is left for the resume to close, and trust is
+asked only when you resume. The model, thinking level and auto-exit are the delegation's own,
+and it resumes as the command does.
+
 - The delegate's own session file is reopened with `pi --session <absolute path>`
   and the recorded `--session-dir`, in a new window named like the first. The
   delegate keeps everything it read and decided; Pi appends to the same file.
@@ -993,7 +1044,11 @@ Other extensions may rely on:
 - the `delegate`, `delegation_status`, `delegation_close` and `delegation_resume` tool names,
   parameters, the recorded `workspace` shape and the `workspaceSnapshot`
   shape in results and status;
-- the `/delegate` and `/delegate-resume` syntax and flags;
+- the `/delegate` and `/delegate-resume` syntax and flags, and their
+  no-argument forms: `/delegate` opens the new-delegate form and
+  `/delegate-resume` the resume picker;
+- the `/delegates` command and its `alt+shift+d` shortcut, and `/delegate-open <id>` with its
+  `--popup`, `--switch` and `--peek` flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,
   `<agent dir>/squire/agents/<name>/AGENT.md`;

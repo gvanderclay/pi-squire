@@ -5,9 +5,11 @@
 import { statSync } from "node:fs";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 
 import { type Mark, readMarks } from "./limits.ts";
+import { createPoll } from "./poll.ts";
+import type { Popup } from "./popups.ts";
 import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
 	type DelegationState,
@@ -19,7 +21,6 @@ import {
 	recordedName,
 	type StartedRecorded,
 	sessionIdOf,
-	type WindowState,
 	type WorkspaceAttempt,
 } from "./results.ts";
 import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
@@ -27,24 +28,29 @@ import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
 import { ago, autoExitLine, stateLine } from "./tracking-text.ts";
 import type { ReadingError } from "./usage.ts";
+import { listWindows, ownWindow, windowState } from "./windows.ts";
 import { WorkspaceSchema } from "./workspace.ts";
 
-/** The hook a tick emits so the provider claims waiting replies before windows are checked. */
-const SCAN = "message:scan";
-/** How often the parent checks its running delegations. */
-const POLL_MS = 5000;
+export { listWindows, ownWindow, windowState };
 
 /** What `src/index.ts` needs from tracking. */
 export type Tracking = {
 	/** Register `delegation_status` and `delegation_close`. */
 	registerTools(): void;
-	/** Start the poll when something is running. */
+	/** Start the poll when something is running or a popup is open. */
 	startPolling(): void;
+	/** Remember a popup the parent opened; the poll closes it once its window is gone. Returns the call that forgets it when its process ends. */
+	trackPopup(popup: Popup): () => void;
+	/** Close one delegation as `delegation_close` does; throws as the tool does. */
+	close(id: string): Promise<CloseResult>;
 	/** On `session_start`: rebuild the records and restart the poll. */
 	restore(ctx: ExtensionContext): void;
 	/** On `session_shutdown`: stop the poll, and declare nothing more. */
 	stop(): void;
 };
+
+/** What closing one delegation did. */
+export type CloseResult = { text: string; details: Static<typeof CloseSchema> };
 
 /** The one result every tool returns. `details` doubles as `structuredContent`, so it must match the tool's `outputSchema`; Pi does not check it. */
 export function toolResult(
@@ -134,27 +140,6 @@ export type ToolDef = {
 	annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
 	execute: (...args: never[]) => Promise<ReturnType<typeof toolResult>>;
 };
-
-/** Every window on the server, asked once; a failed ask is `undefined`, never an empty list. */
-export async function listWindows(tmux: TmuxClient): Promise<TmuxWindow[] | undefined> {
-	try {
-		return await tmux.listWindows();
-	} catch {
-		return undefined;
-	}
-}
-
-/** The window a delegation owns: one with both its recorded id and its recorded name, since ids restart with every tmux server. */
-export function ownWindow(windows: TmuxWindow[], record: StartedRecorded): TmuxWindow | undefined {
-	return windows.find((window) => window.id === record.windowId && window.name === record.windowName);
-}
-
-/** What the listing says about a delegation's window; a matching window whose program exited counts as gone. */
-export function windowState(windows: TmuxWindow[] | undefined, record: StartedRecorded): WindowState {
-	if (windows === undefined) return "unknown";
-	const own = ownWindow(windows, record);
-	return own !== undefined && !own.exited ? "open" : "gone";
-}
 
 /** One delegation as `delegation_status` reports it; its text and details both read from this. */
 type View = {
@@ -288,70 +273,6 @@ function selectRecords(results: Results, id: string | undefined): Recorded[] {
 	return records;
 }
 
-/** The poll over the records and tmux. `arm` readies it for a new session; `stop` ends it for good. */
-function createPoll(
-	pi: ExtensionAPI,
-	results: Results,
-	tmux: TmuxClient,
-): { start(): void; stop(): void; arm(): void } {
-	/** The poll timer; set only while some delegation is running. */
-	let poll: ReturnType<typeof setInterval> | undefined;
-	let ticking = false;
-	/** False once the session shuts down, so a tick still awaiting tmux declares nothing. */
-	let live = true;
-
-	function stopPolling(): void {
-		if (poll !== undefined) clearInterval(poll);
-		poll = undefined;
-	}
-
-	/** Record gone each running delegation whose window is missing or exited; a failed list declares nothing. */
-	function declareGone(windows: TmuxWindow[] | undefined): void {
-		if (windows === undefined) return;
-		for (const record of results.running()) {
-			if (windowState(windows, record) !== "gone" || !live) continue;
-			// A reply may have landed while the windows before this one were checked.
-			pi.events.emit(SCAN, {});
-			results.recordGone(record.id);
-		}
-	}
-
-	/** Claim waiting replies first, then declare gone every delegation whose window is missing or exited with still no result. */
-	async function tick(): Promise<void> {
-		if (ticking) return;
-		ticking = true;
-		try {
-			if (results.running().length === 0) return stopPolling();
-			const scan: { scanned?: boolean } = {};
-			pi.events.emit(SCAN, scan);
-			if (scan.scanned !== true) return; // no message:* provider: a waiting reply cannot be ruled out
-			declareGone(await listWindows(tmux)); // one ask per tick
-			if (results.running().length === 0) stopPolling();
-		} finally {
-			ticking = false;
-		}
-	}
-
-	/** Start the timer when something is running; it never keeps the process alive. */
-	function startPolling(): void {
-		if (poll !== undefined || results.running().length === 0) return;
-		poll = setInterval(() => void tick(), POLL_MS);
-		poll.unref?.();
-	}
-
-	return {
-		start: startPolling,
-		stop(): void {
-			live = false;
-			stopPolling();
-		},
-		arm(): void {
-			stopPolling();
-			live = true;
-		},
-	};
-}
-
 /** The `delegation_status` tool. */
 function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => ReadingError[]): ToolDef {
 	return {
@@ -409,6 +330,46 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 	};
 }
 
+/** Close one delegation: kill its window when it is open and record the close; throws when it cannot. */
+export async function closeDelegation(results: Results, tmux: TmuxClient, id: string): Promise<CloseResult> {
+	const [record] = selectRecords(results, id);
+	if (!isStarted(record)) {
+		throw new Error(
+			`delegation ${record.id} is a workspace attempt (${record.attempt.phase}): no verified window id was recorded; a window may still exist, so close is unavailable`,
+		);
+	}
+	const closed = (alreadyClosed: boolean, killed: boolean): CloseResult["details"] => ({
+		id: record.id,
+		windowId: record.windowId,
+		windowName: record.windowName,
+		closed: true as const,
+		alreadyClosed,
+		killed,
+	});
+	if (record.closed === true)
+		return { text: `Delegation ${record.id} is already closed.`, details: closed(true, false) };
+	let windows: TmuxWindow[];
+	try {
+		windows = await tmux.listWindows();
+	} catch (err) {
+		throw new Error(`could not ask tmux about window ${record.windowName}: ${(err as Error).message}`);
+	}
+	// Only a window with the recorded id and name is ours, exited program or not.
+	const alive = ownWindow(windows, record) !== undefined;
+	if (alive) {
+		try {
+			await tmux.kill(record.windowId);
+		} catch (err) {
+			throw new Error(`could not kill window ${record.windowName} (${record.windowId}): ${(err as Error).message}`);
+		}
+	}
+	results.recordClose(record.id);
+	const how = alive
+		? `killed window ${record.windowName} (${record.windowId})`
+		: `its window ${record.windowName} was already gone`;
+	return { text: `Closed delegation ${record.id}: ${how}.`, details: closed(false, alive) };
+}
+
 /** The `delegation_close` tool. */
 function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 	return {
@@ -429,41 +390,8 @@ function closeTool(results: Results, tmux: TmuxClient): ToolDef {
 			_onUpdate: unknown,
 			_ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
-			const [record] = selectRecords(results, params.id);
-			if (!isStarted(record)) {
-				throw new Error(
-					`delegation ${record.id} is a workspace attempt (${record.attempt.phase}): no verified window id was recorded; a window may still exist, so close is unavailable`,
-				);
-			}
-			const closed = (alreadyClosed: boolean, killed: boolean) => ({
-				id: record.id,
-				windowId: record.windowId,
-				windowName: record.windowName,
-				closed: true,
-				alreadyClosed,
-				killed,
-			});
-			if (record.closed === true) return toolResult(`Delegation ${record.id} is already closed.`, closed(true, false));
-			let windows: TmuxWindow[];
-			try {
-				windows = await tmux.listWindows();
-			} catch (err) {
-				throw new Error(`could not ask tmux about window ${record.windowName}: ${(err as Error).message}`);
-			}
-			// Only a window with the recorded id and name is ours, exited program or not.
-			const alive = ownWindow(windows, record) !== undefined;
-			if (alive) {
-				try {
-					await tmux.kill(record.windowId);
-				} catch (err) {
-					throw new Error(`could not kill window ${record.windowName} (${record.windowId}): ${(err as Error).message}`);
-				}
-			}
-			results.recordClose(record.id);
-			const how = alive
-				? `killed window ${record.windowName} (${record.windowId})`
-				: `its window ${record.windowName} was already gone`;
-			return toolResult(`Closed delegation ${record.id}: ${how}.`, closed(false, alive));
+			const { text, details } = await closeDelegation(results, tmux, params.id);
+			return toolResult(text, details);
 		},
 	};
 }
@@ -482,6 +410,8 @@ export function createTracking(
 			pi.registerTool(closeTool(results, tmux) as never);
 		},
 		startPolling: poll.start,
+		trackPopup: poll.track,
+		close: (id: string): Promise<CloseResult> => closeDelegation(results, tmux, id),
 		restore(ctx: ExtensionContext): void {
 			poll.arm();
 			results.restore(ctx);

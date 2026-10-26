@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -238,4 +239,155 @@ test("tmux versions parse, and only those below 3.2 are refused", async () => {
 		if (accepted) await check;
 		else await assert.rejects(check, new RegExp(`tmux 3\\.2 or later; this is ${text.replace(".", "\\.")}`));
 	}
+});
+
+/** Run `body` with a stub `tmux` first on PATH that logs each call and answers the navigation commands. */
+async function withNavigationStub(body: (log: () => string[]) => Promise<void>, popupExit = 0): Promise<void> {
+	const dir = mkdtempSync(join(tmpdir(), "squire-tmux-nav-"));
+	const oldPath = process.env.PATH;
+	try {
+		const script = [
+			"#!/bin/sh",
+			`printf '%s\\n' "$*" >> '${dir}/log'`,
+			'case "$1" in',
+			"list-clients) printf '100\\told\\n900\\tnew\\n500\\tmid\\n';;",
+			"display-message) echo '$7';;",
+			"capture-pane) echo 'pane text';;",
+			`display-popup) case "$2" in -C) ;; *) [ ${popupExit} -ne 0 ] || sleep 1; exit ${popupExit};; esac;;`,
+			"esac",
+			"",
+		].join("\n");
+		writeFileSync(join(dir, "tmux"), script);
+		chmodSync(join(dir, "tmux"), 0o755);
+		process.env.PATH = `${dir}:${oldPath}`;
+		await body(() => readFileSync(join(dir, "log"), "utf8").split("\n").filter(Boolean));
+	} finally {
+		process.env.PATH = oldPath;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+test("clientFor asks for the exact session's clients and picks the most recently active", async () => {
+	await withNavigationStub(async (log) => {
+		assert.equal(await createTmuxClient().clientFor("work"), "new");
+		assert.deepEqual(log(), ["list-clients -t =work: -F #{client_activity}\t#{client_name}"]);
+	});
+});
+
+test("switchTo, capture and closePopup run their tmux commands", async () => {
+	await withNavigationStub(async (log) => {
+		const tmux = createTmuxClient();
+		await tmux.switchTo("c1", "@4");
+		assert.equal(await tmux.capture("@4"), "pane text\n");
+		await tmux.closePopup("c1");
+		assert.deepEqual(log(), ["switch-client -c c1 -t @4", "capture-pane -p -t @4", "display-popup -C -c c1"]);
+	});
+});
+
+test("popup returns while display-popup still runs, and attaches by session id", async () => {
+	await withNavigationStub(async (log) => {
+		const started = Date.now();
+		await createTmuxClient().popup("c1", { id: "@4", name: "scout one" }, () => {});
+		assert.ok(Date.now() - started < 900, "display-popup blocks for a second; popup did not wait for it");
+		const [, popup] = log();
+		assert.equal(
+			popup,
+			"display-popup -c c1 -E -w 90% -h 90% -T scout one tmux select-window -t '@4' \\; attach-session -t '$7'",
+		);
+	});
+});
+
+test("a popup that fails at once rejects", async () => {
+	await withNavigationStub(async () => {
+		await assert.rejects(
+			createTmuxClient().popup("c1", { id: "@4", name: "x" }, () => {}),
+			/display-popup exited with 3/,
+		);
+	}, 3);
+});
+
+/** A stub `tmux` whose popup records its pid and lives `seconds`; `vanish` makes the binary disappear once display-message ran. */
+async function withPopupStub(
+	options: { seconds: number; vanish?: boolean },
+	body: (dir: string) => Promise<void>,
+): Promise<void> {
+	const dir = mkdtempSync(join(tmpdir(), "squire-tmux-popup-"));
+	const oldPath = process.env.PATH;
+	try {
+		const script = [
+			"#!/bin/sh",
+			'case "$1" in',
+			`display-message) echo '$7'; ${options.vanish === true ? '/bin/rm "$0"' : ":"};;`,
+			`display-popup) echo $$ > '${dir}/pid'; exec sleep ${options.seconds};;`,
+			"esac",
+			"",
+		].join("\n");
+		writeFileSync(join(dir, "tmux"), script);
+		chmodSync(join(dir, "tmux"), 0o755);
+		// A vanishing stub leaves no tmux on PATH at all, not even a real one.
+		process.env.PATH = options.vanish === true ? dir : `${dir}:${oldPath}`;
+		await body(dir);
+	} finally {
+		process.env.PATH = oldPath;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+test("an open popup does not keep the parent process alive, and the popup lives on", async () => {
+	await withPopupStub({ seconds: 4 }, async (dir) => {
+		const started = Date.now();
+		const out = await new Promise<string>((resolve, reject) => {
+			const child = spawn(process.execPath, [join(import.meta.dirname, "popup-parent.ts")], {
+				env: process.env,
+				stdio: ["ignore", "pipe", "inherit"],
+			});
+			let text = "";
+			child.stdout.on("data", (chunk: Buffer) => {
+				text += chunk.toString();
+			});
+			child.on("error", reject);
+			child.on("close", () => resolve(text));
+		});
+		const took = Date.now() - started;
+		assert.match(out, /popup returned/);
+		assert.ok(took < 2500, `the parent exited after ${took} ms; the popup lasts 4 s`);
+		const pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+		assert.doesNotThrow(() => process.kill(pid, 0), "the popup process is still running");
+		process.kill(pid);
+	});
+});
+
+test("the exit callback runs when the popup's process ends, after popup() returned", async () => {
+	await withPopupStub({ seconds: 1 }, async () => {
+		let exited: () => void = () => {};
+		const ended = new Promise<void>((resolve) => {
+			exited = resolve;
+		});
+		let early = false;
+		await createTmuxClient().popup("c1", { id: "@4", name: "x" }, () => exited());
+		void ended.then(() => {
+			early = true;
+		});
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		assert.equal(early, false, "the popup is still open when popup() returns");
+		// The popup's process is unref'd, so a timer keeps the event loop alive until it ends (Node 22 cancels a test otherwise).
+		let timer: NodeJS.Timeout | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error("the exit callback never ran")), 5000);
+		});
+		try {
+			await Promise.race([ended, timeout]);
+		} finally {
+			clearTimeout(timer);
+		}
+	});
+});
+
+test("a popup whose tmux cannot be started rejects with the spawn error", async () => {
+	await withPopupStub({ seconds: 1, vanish: true }, async () => {
+		await assert.rejects(
+			createTmuxClient().popup("c1", { id: "@4", name: "x" }, () => {}),
+			/ENOENT|spawn/,
+		);
+	});
 });

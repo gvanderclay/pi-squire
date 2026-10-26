@@ -1,6 +1,6 @@
 # Plan: resume an exited delegate
 
-Status: proposed. Research: [`docs/research/subagent-resume.md`](../research/subagent-resume.md).
+Status: implemented. Research: [`docs/research/subagent-resume.md`](../research/subagent-resume.md).
 
 ## Decision
 

@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Delegates open in a companion tmux session, `<your session>-squire`, instead
+  of your own session, created on demand and removed by tmux with its last
+  window. pi-squire marks the session it creates (tmux session option
+  `@squire-companion`), so only a marked session counts as a companion: your
+  own session called `pi-squire` gets `pi-squire-squire`. Set
+  `"windowPlacement": "current"` in `<agent dir>/squire/settings.json` to open
+  them in your session as before; any other value refuses the launch.
+  The start message, `delegation_status` and the delegate card name the session,
+  and the `delegate` and `delegation_resume` results and the status details gain
+  an optional `windowSession`. `session:launch` is unchanged.
+- tmux 3.2 or later is now required (it was 3.0); `/delegate`, `/delegate-resume`
+  and the tools refuse an older tmux with its version.
+
 ## [0.11.0] - 2026-10-26
 
 ### Added
@@ -21,20 +36,6 @@ follows [Semantic Versioning](https://semver.org/).
   window that never opened would otherwise reach the next resume as a second
   task; a failed send kills the new window). A resumed delegation is never
   reported closed without a result.
-
-### Changed
-
-- Delegates open in a companion tmux session, `<your session>-squire`, instead
-  of your own session, created on demand and removed by tmux with its last
-  window. pi-squire marks the session it creates (tmux session option
-  `@squire-companion`), so only a marked session counts as a companion: your
-  own session called `pi-squire` gets `pi-squire-squire`. Set `"windowPlacement": "current"` in `<agent dir>/squire/settings.json`
-  to open them in your session as before; any other value refuses the launch.
-  The start message, `delegation_status` and the delegate card name the session,
-  and the `delegate` and `delegation_resume` results and the status details gain
-  an optional `windowSession`. `session:launch` is unchanged.
-- tmux 3.2 or later is now required (it was 3.0); `/delegate`, `/delegate-resume`
-  and the tools refuse an older tmux with its version.
 
 ## [0.10.0] - 2026-10-24
 

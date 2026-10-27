@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-27
+
 ### Removed
 
 - The delegate popup: `enter` in `/delegates` and `/delegate-open --popup` no
@@ -542,7 +544,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/gvanderclay/pi-squire/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/gvanderclay/pi-squire/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/gvanderclay/pi-squire/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/gvanderclay/pi-squire/compare/v0.11.0...v0.12.0

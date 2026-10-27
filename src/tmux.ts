@@ -139,6 +139,19 @@ async function parentSession(run: Run): Promise<Parent | undefined> {
 	return id.trim() === "" ? undefined : { id: id.trim(), name: name.join("\t"), companion: marker === "1" };
 }
 
+/**
+ * The key that starts a tmux command, as tmux names it (`C-b`), for the
+ * popup's title; `prefix` when it cannot be read or is unset.
+ */
+async function prefixKey(run: Run): Promise<string> {
+	try {
+		const key = (await run(["show-options", "-gv", "prefix"])).trim();
+		return key === "" || key === "None" ? "prefix" : key;
+	} catch {
+		return "prefix";
+	}
+}
+
 /** How long a launched popup may take to fail before it counts as shown. */
 const POPUP_SETTLE_MS = 300;
 
@@ -282,10 +295,8 @@ function navigation(
 			if (!/^\$[0-9]+$/.test(sessionId)) throw new Error(`tmux reported an invalid session id for ${window.id}`);
 			// Ids are `@N` and `$N` only; quoted so the popup's shell does not expand `$N`.
 			const command = `tmux select-window -t '${window.id}' \\; attach-session -t '${sessionId}'`;
-			await launchPopup(
-				["display-popup", "-c", client, "-E", "-w", "90%", "-h", "90%", "-T", window.name, command],
-				onExit,
-			);
+			const title = `${window.name} · ${await prefixKey(run)} d to close`;
+			await launchPopup(["display-popup", "-c", client, "-E", "-w", "90%", "-h", "90%", "-T", title, command], onExit);
 		},
 
 		async closePopup(client) {

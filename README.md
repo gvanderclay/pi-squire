@@ -197,7 +197,8 @@ or done with auto-exit off, newest first. The model has no tool for any of this.
 Popup and switch act on the most recently active tmux client attached to the
 parent's session. With none attached they refuse with a notice; peek and close
 still work. The popup attaches to the window's session at that window, and
-detaching in it (`prefix d`) closes it. When the delegate's window goes, the parent
+detaching in it (`prefix d`) closes it; its title names that key with your
+prefix. When the delegate's window goes, the parent
 closes the popup within one poll (up to 5 s). No tmux key bindings or options are
 added.
 

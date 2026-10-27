@@ -9,7 +9,6 @@ import { type Static, Type } from "typebox";
 
 import { type Mark, readMarks } from "./limits.ts";
 import { createPoll } from "./poll.ts";
-import type { Popup } from "./popups.ts";
 import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
 	type DelegationState,
@@ -37,10 +36,8 @@ export { listWindows, ownWindow, windowState };
 export type Tracking = {
 	/** Register `delegation_status` and `delegation_close`. */
 	registerTools(): void;
-	/** Start the poll when something is running or a popup is open. */
+	/** Start the poll when a delegation is running. */
 	startPolling(): void;
-	/** Remember a popup the parent opened; the poll closes it once its window is gone. Returns the call that forgets it when its process ends. */
-	trackPopup(popup: Popup): () => void;
 	/** Close one delegation as `delegation_close` does; throws as the tool does. */
 	close(id: string): Promise<CloseResult>;
 	/** On `session_start`: rebuild the records and restart the poll. */
@@ -410,7 +407,6 @@ export function createTracking(
 			pi.registerTool(closeTool(results, tmux) as never);
 		},
 		startPolling: poll.start,
-		trackPopup: poll.track,
 		close: (id: string): Promise<CloseResult> => closeDelegation(results, tmux, id),
 		restore(ctx: ExtensionContext): void {
 			poll.arm();

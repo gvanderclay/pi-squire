@@ -1,6 +1,6 @@
 // The delegates panel and /delegate-open: which delegations they list, how
-// they reach a window (popup, switch, peek, close), which tmux client they
-// act on, and the popup's lifecycle in the poll. Tmux is the harness's fake
+// they reach a window (switch, peek, close), which tmux client they
+// act on, and that the poll runs only while a delegation does. Tmux is the harness's fake
 // and the panel is driven by keys through the scripted `ctx.ui.custom`.
 
 import assert from "node:assert/strict";
@@ -97,7 +97,7 @@ test("the panel lists only delegations whose window is open, newest first, and t
 	assert.match(frame, /second/);
 	assert.doesNotMatch(frame, /first|third|fourth/);
 	assert.ok(frame.includes(`${second.windowId} in work-squire`), frame);
-	assert.match(frame, /↑↓ select · enter open · p peek · s switch · x close · n new · esc leave/);
+	assert.match(frame, /↑↓ select · enter switch · p peek · x close · n new · esc leave/);
 });
 
 test("the list is newest first and a finished delegation with auto-exit off stays listed", async () => {
@@ -124,7 +124,7 @@ test("with nothing open the panel says so, and n starts a new delegate", async (
 	assert.deepEqual(choose.result, { action: "new" });
 });
 
-test("down moves the selection and enter opens that delegation in a popup over the companion session", async () => {
+test("down moves the selection and enter switches your client to that delegation's window, with a notice", async () => {
 	const s = await started();
 	await launch(s, "older");
 	const newer = await launch(s, "newer");
@@ -133,33 +133,22 @@ test("down moves the selection and enter opens that delegation in a popup over t
 	const script = keyScript(["down", "enter"]);
 	await panel(s, script);
 	assert.match(script.frames[1], /▸ scout-newer/);
-	assert.deepEqual(script.result, { action: "open", id: newer.id });
-	assert.deepEqual(s.tmux.popups, [{ client: "c1", windowId: newer.windowId, name: "scout-newer", open: true }]);
-	assert.deepEqual(s.tmux.switches, []);
-});
-
-test("enter switches instead of popping up when the window is in the parent's own session", async () => {
-	setPlacement("current");
-	const s = await started();
-	const one = await launch(s, "here");
-	s.tmux.attachClient("c1", 100);
-	const script = keyScript(["enter"]);
-	await panel(s, script);
-	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: one.windowId }]);
-	assert.deepEqual(s.tmux.popups, []);
+	assert.deepEqual(script.result, { action: "switch", id: newer.id });
+	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: newer.windowId }]);
 	assert.ok(
-		s.notes.some((note) => note.includes("prefix L returns you")),
+		s.notes.some((note) => note.includes("your tmux last-session key returns you")),
 		s.notes.join("|"),
 	);
 });
 
-test("s switches even for a window in the companion session, with a notice", async () => {
+test("s does nothing in the panel", async () => {
 	const s = await started();
-	const one = await launch(s, "there");
+	await launch(s, "one");
 	s.tmux.attachClient("c1", 100);
-	await panel(s, keyScript(["s"]));
-	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: one.windowId }]);
-	assert.ok(s.notes.some((note) => note.includes("prefix L returns you")));
+	const script = keyScript(["s", "escape"]);
+	await panel(s, script);
+	assert.equal(script.result, undefined);
+	assert.deepEqual(s.tmux.switches, []);
 });
 
 test("the client is the most recently active one attached to the parent's session", async () => {
@@ -170,43 +159,40 @@ test("the client is the most recently active one attached to the parent's sessio
 	s.tmux.attachClient("elsewhere", 500, "other-session");
 	await panel(s, keyScript(["enter"]));
 	assert.deepEqual(s.tmux.clientLookups, ["work"]);
-	assert.equal(s.tmux.popups[0].client, "fresh");
+	assert.deepEqual(
+		s.tmux.switches.map((sw) => sw.client),
+		["fresh"],
+	);
 });
 
-test("with no client attached popup and switch refuse with a notice and peek still works", async () => {
+test("with no client attached switch refuses with a notice and peek and close still work", async () => {
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.screens.set(one.windowId, "hello from the pane");
 	await panel(s, keyScript(["enter"]));
-	await panel(s, keyScript(["s"]));
-	assert.deepEqual([s.tmux.popups, s.tmux.switches], [[], []]);
-	assert.equal(s.warnings.length, 2);
-	assert.match(s.warnings[0], /cannot open a popup: no tmux client is attached to session work/);
-	assert.match(s.warnings[1], /cannot switch: no tmux client is attached/);
+	assert.deepEqual(s.tmux.switches, []);
+	assert.equal(s.warnings.length, 1);
+	assert.match(s.warnings[0], /cannot switch: no tmux client is attached to session work/);
 	const list = keyScript(["p"]);
 	const peek = keyScript(["x", "escape"]);
 	await panel(s, list, peek, keyScript(["escape"]));
 	assert.match(peek.frames[1], /hello from the pane/);
 });
 
-test("a failing client lookup, popup or switch is reported, not thrown", async () => {
+test("a failing client lookup or switch is reported, not thrown", async () => {
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.attachClient("c1", 1);
-	s.tmux.fail.popup = "no space for popup";
-	await s.command("delegate-open", `${one.id} --popup`);
 	s.tmux.fail.switchTo = "can't find client";
 	await s.command("delegate-open", `${one.id} --switch`);
 	s.tmux.fail.clientFor = "server gone";
-	await s.command("delegate-open", `${one.id} --popup`);
-	assert.deepEqual(s.errors.length + s.warnings.length, 3);
-	assert.match(s.errors[0], /could not open a popup: no space for popup/);
-	assert.match(s.errors[1], /could not switch: can't find client/);
+	await s.command("delegate-open", one.id);
+	assert.deepEqual(s.errors.length + s.warnings.length, 2);
+	assert.match(s.errors[0], /could not switch: can't find client/);
 	assert.match(s.warnings[0], /could not list tmux clients: server gone/);
-	assert.deepEqual(s.tmux.popups, []);
 });
 
-test("peek captures the pane in an overlay, r refreshes it and enter opens the delegate", async () => {
+test("peek captures the pane in an overlay, r refreshes it and enter switches to the delegate", async () => {
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.attachClient("c1", 1);
@@ -226,8 +212,8 @@ test("peek captures the pane in an overlay, r refreshes it and enter opens the d
 	assert.match(peek.frames[1], /first screen/);
 	assert.match(peek.frames[2], /second screen/);
 	assert.deepEqual(s.tmux.captures, [one.windowId, one.windowId]);
-	assert.deepEqual(peek.result, { action: "open" });
-	assert.equal(s.tmux.popups.length, 1);
+	assert.deepEqual(peek.result, { action: "switch" });
+	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: one.windowId }]);
 	assert.equal(s.customOptions[0], undefined, "the panel is not an overlay");
 	assert.deepEqual(s.customOptions[1], {
 		overlay: true,
@@ -242,9 +228,9 @@ test("esc in a peek returns to the list", async () => {
 	const peek = keyScript(["escape"]);
 	const again = keyScript(["escape"]);
 	await panel(s, list, peek, again);
-	assert.match(peek.frames[0], /r refresh · enter open · esc back/);
+	assert.match(peek.frames[0], /r refresh · enter switch · esc back/);
 	assert.match(again.frames[0], /↑↓ select/);
-	assert.equal(s.tmux.popups.length, 0);
+	assert.deepEqual(s.tmux.switches, []);
 });
 
 test("a failing capture is shown in the peek", async () => {
@@ -287,7 +273,8 @@ test("/delegate-open takes an id and at most one mode flag", async () => {
 	for (const [args, message] of [
 		["", /give one delegation id; \/delegate-open <id>/],
 		[`${one.id} ${one.id}`, /give one delegation id/],
-		[`${one.id} --popup --switch`, /at most one of/],
+		[`${one.id} --peek --switch`, /at most one of/],
+		[`${one.id} --popup`, /unknown flag --popup/],
 		[`${one.id} --window`, /unknown flag --window/],
 		["nope", /no open delegate "nope"; open: /],
 	] as const) {
@@ -295,29 +282,24 @@ test("/delegate-open takes an id and at most one mode flag", async () => {
 		await s.command("delegate-open", args);
 		assert.match(s.errors[0], message, args);
 	}
-	assert.deepEqual(s.tmux.popups, []);
 });
 
-test("/delegate-open acts like enter by default, --popup follows enter's rule and --switch always switches", async () => {
+test("/delegate-open switches by default and with --switch, in either session", async () => {
 	setPlacement("current");
 	const s = await started();
 	const here = await launch(s, "here");
 	s.tmux.attachClient("c1", 1);
 	await s.command("delegate-open", here.id);
-	assert.equal(s.tmux.switches.length, 1, "own session: a switch");
-	await s.command("delegate-open", `${here.id} --popup`);
-	assert.equal(s.tmux.switches.length, 2, "--popup on a window in the parent's own session switches, as enter does");
-	assert.deepEqual(s.tmux.popups, []);
+	assert.equal(s.tmux.switches.length, 1);
 	await s.command("delegate-open", `${here.id} --switch`);
-	assert.equal(s.tmux.switches.length, 3);
-	// A window moved into the companion session pops up, by default and with --popup.
+	assert.equal(s.tmux.switches.length, 2);
 	s.tmux.moveWindow(here.windowId, "work-squire");
 	await s.command("delegate-open", here.id);
-	await s.command("delegate-open", `${here.id} --popup`);
-	assert.equal(s.tmux.popups.length, 2);
+	assert.equal(s.tmux.switches.length, 3);
+	assert.deepEqual(s.tmux.switches.at(-1), { client: "c1", windowId: here.windowId });
 });
 
-test("/delegate-open --peek shows the pane and enter escalates to open", async () => {
+test("/delegate-open --peek shows the pane and enter escalates to a switch", async () => {
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.attachClient("c1", 1);
@@ -327,11 +309,11 @@ test("/delegate-open --peek shows the pane and enter escalates to open", async (
 	await s.command("delegate-open", `${one.id} --peek`);
 	assert.match(script.frames[1], /pane text/);
 	assert.equal(s.customOptions[0] !== undefined && (s.customOptions[0] as { overlay: boolean }).overlay, true);
-	assert.equal(s.tmux.popups.length, 1);
+	assert.equal(s.tmux.switches.length, 1);
 	const back = keyScript(["escape"]);
 	s.queueCustom(back);
 	await s.command("delegate-open", `${one.id} --peek`);
-	assert.equal(s.tmux.popups.length, 1, "esc leaves without opening");
+	assert.equal(s.tmux.switches.length, 1, "esc leaves without switching");
 });
 
 test("/delegate-open completes the ids of open delegations, then the flags", async () => {
@@ -341,67 +323,14 @@ test("/delegate-open completes the ids of open delegations, then the flags", asy
 	await s.toolCall("delegation_close", { id: shut.id });
 	const values = async (prefix: string): Promise<string[] | null> =>
 		(await s.completionsFor("delegate-open", prefix))?.map((item) => item.value) ?? null;
-	assert.deepEqual(await values(""), [open.id, "--popup", "--switch", "--peek"]);
-	assert.deepEqual(
-		await values("--p"),
-		["--popup", "--peek"].filter((flag) => flag.startsWith("--p")),
-	);
+	assert.deepEqual(await values(""), [open.id, "--switch", "--peek"]);
+	assert.deepEqual(await values("--p"), ["--peek"]);
 	assert.deepEqual(
 		await values(`${open.id} `),
-		["--popup", "--switch", "--peek"].map((flag) => `${open.id} ${flag}`),
+		["--switch", "--peek"].map((flag) => `${open.id} ${flag}`),
 	);
 	assert.deepEqual(await values(`${open.id} --s`), [`${open.id} --switch`]);
-	assert.equal(await values(`${open.id} --popup `), null);
-});
-
-test("the popup returns at once and the poll closes it when its window is gone", async (t) => {
-	t.mock.timers.enable({ apis: ["setInterval"] });
-	const s = await started();
-	const one = await launch(s, "one");
-	s.tmux.attachClient("c1", 1);
-	s.events.emit("message:inbound", reply(s, one.id)); // done: nothing is running
-	await s.command("delegate-open", `${one.id} --popup`);
-	// The fake popup stays open after the call returned, as the real one does until it is closed.
-	assert.equal(s.tmux.popups[0].open, true);
-	const listed = s.tmux.listCalls;
-	await tick(t, 3);
-	assert.ok(s.tmux.listCalls > listed, "the poll kept running with no delegation running");
-	assert.deepEqual(s.tmux.closedPopups, []);
-	s.tmux.windows.delete(one.windowId);
-	await tick(t);
-	assert.deepEqual(s.tmux.closedPopups, ["c1"]);
-	assert.equal(s.tmux.popups[0].open, false);
-	const after = s.tmux.listCalls;
-	await tick(t, 3);
-	assert.equal(s.tmux.listCalls, after, "the poll stopped with nothing left to watch");
-});
-
-test("a popup whose window id was recycled under another name is closed too", async (t) => {
-	t.mock.timers.enable({ apis: ["setInterval"] });
-	const s = await started();
-	const one = await launch(s, "one");
-	s.tmux.attachClient("c1", 1);
-	await s.command("delegate-open", `${one.id} --popup`);
-	s.tmux.windows.delete(one.windowId);
-	s.tmux.addWindow(one.windowId, "someone-else");
-	await tick(t, 2);
-	assert.deepEqual(s.tmux.closedPopups, ["c1"]);
-});
-
-test("a failed window listing leaves the popup for the next tick", async (t) => {
-	t.mock.timers.enable({ apis: ["setInterval"] });
-	const s = await started();
-	const one = await launch(s, "one");
-	s.tmux.attachClient("c1", 1);
-	s.events.emit("message:inbound", reply(s, one.id));
-	await s.command("delegate-open", `${one.id} --popup`);
-	s.tmux.windows.delete(one.windowId);
-	s.tmux.failList = "server busy";
-	await tick(t);
-	assert.deepEqual(s.tmux.closedPopups, []);
-	s.tmux.failList = undefined;
-	await tick(t);
-	assert.deepEqual(s.tmux.closedPopups, ["c1"]);
+	assert.equal(await values(`${open.id} --peek `), null);
 });
 
 test("n in the empty panel starts the new-delegate flow, which launches as /delegate does", async () => {
@@ -424,70 +353,19 @@ test("n from a populated panel opens the form, and cancelling it starts nothing"
 	assert.equal(s.tmux.opened.length, before);
 });
 
-/** Two finished delegations with their windows open and one client attached, under mock timers. */
-async function twoDone(
-	t: TestContext,
-): Promise<{ s: Session; a: { id: string; windowId: string }; b: { id: string; windowId: string } }> {
+test("the poll runs only while a delegation is running", async (t) => {
 	t.mock.timers.enable({ apis: ["setInterval"] });
 	const s = await started();
-	const a = await launch(s, "aaa");
-	const b = await launch(s, "bbb");
-	s.events.emit("message:inbound", reply(s, a.id));
-	s.events.emit("message:inbound", reply(s, b.id));
+	const one = await launch(s, "one");
 	s.tmux.attachClient("c1", 1);
-	return { s, a, b };
-}
-
-test("a popup the user dismisses by hand is forgotten and the poll stops", async (t) => {
-	const { s, a } = await twoDone(t);
-	await s.command("delegate-open", `${a.id} --popup`);
 	await tick(t);
 	const listed = s.tmux.listCalls;
-	assert.ok(listed > 0, "the poll runs while the popup is open");
-	s.tmux.dismissPopup("c1");
-	s.tmux.windows.delete(a.windowId);
+	assert.ok(listed > 0, "the poll runs while the delegation does");
+	s.events.emit("message:inbound", reply(s, one.id)); // done: nothing is running
+	await s.command("delegate-open", one.id);
 	await tick(t, 3);
-	assert.equal(s.tmux.listCalls, listed, "no popup left and nothing running: the poll stopped");
-	assert.deepEqual(s.tmux.closedPopups, [], "nothing was closed for a popup that was already gone");
-});
-
-test("reopening the same delegate's popup closes it once when its window goes", async (t) => {
-	const { s, a } = await twoDone(t);
-	await s.command("delegate-open", `${a.id} --popup`);
-	await s.command("delegate-open", `${a.id} --popup`);
-	s.tmux.windows.delete(a.windowId);
+	assert.ok(s.tmux.listCalls <= listed + 2, "a switch starts no poll of its own");
+	const after = s.tmux.listCalls;
 	await tick(t, 3);
-	assert.deepEqual(s.tmux.closedPopups, ["c1"]);
-});
-
-test("a popup for another delegate on the same client is not closed by the first one's window going away", async (t) => {
-	const { s, a, b } = await twoDone(t);
-	await s.command("delegate-open", `${a.id} --popup`);
-	s.tmux.dismissPopup("c1");
-	await s.command("delegate-open", `${b.id} --popup`);
-	s.tmux.windows.delete(a.windowId);
-	await tick(t, 2);
-	assert.deepEqual(s.tmux.closedPopups, [], "B's popup stays");
-	assert.equal(s.tmux.popups[1].open, true);
-	s.tmux.windows.delete(b.windowId);
-	await tick(t);
-	assert.deepEqual(s.tmux.closedPopups, ["c1"]);
-});
-
-test("a second popup on a client replaces the first one's record even before the first exits", async (t) => {
-	const { s, a, b } = await twoDone(t);
-	await s.command("delegate-open", `${a.id} --popup`);
-	await s.command("delegate-open", `${b.id} --popup`);
-	s.tmux.windows.delete(a.windowId);
-	await tick(t, 2);
-	assert.deepEqual(s.tmux.closedPopups, []);
-});
-
-test("a popup that fails to launch is not tracked", async (t) => {
-	const { s, a } = await twoDone(t);
-	s.tmux.fail.popup = "no space for popup";
-	await s.command("delegate-open", `${a.id} --popup`);
-	const listed = s.tmux.listCalls;
-	await tick(t, 2);
-	assert.equal(s.tmux.listCalls, listed, "no popup to watch, nothing running");
+	assert.equal(s.tmux.listCalls, after, "the poll stopped with nothing running");
 });

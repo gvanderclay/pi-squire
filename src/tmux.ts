@@ -1,6 +1,6 @@
 // The tmux operations `delegate` needs, behind an interface so tests can use a
 // fake. This client talks to tmux with `execFile` and no shell.
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 
 import type { WindowPlacement } from "./window-placement.ts";
 
@@ -18,7 +18,7 @@ export type TmuxWindow = { id: string; session: string; name: string; exited: bo
 /** A window just opened: its id and the name of the session it is in, when known. */
 export type OpenedWindow = { id: string; session: string | undefined };
 
-/** The oldest tmux delegate windows need: `new-session -e` and `display-popup` arrived in 3.2. */
+/** The oldest tmux delegate windows need: `new-session -e` arrived in 3.2. */
 export const MIN_TMUX = { major: 3, minor: 2 } as const;
 
 export type TmuxVersion = { text: string; major: number; minor: number };
@@ -62,9 +62,6 @@ export class WindowOpenError extends Error {
 	}
 }
 
-/** A window as the popup needs it: its id and its name, which titles the popup. */
-export type PopupWindow = { id: string; name: string };
-
 /** The session the parent's pane is in: its id (`$N`) and name. */
 export type OwnSession = { id: string; name: string };
 
@@ -89,16 +86,6 @@ export interface TmuxClient {
 	clientFor(session: string): Promise<string | undefined>;
 	/** Show the window to a client: `switch-client -c <client> -t @N`. */
 	switchTo(client: string, windowId: string): Promise<void>;
-	/**
-	 * Open a popup over a client that attaches to the window's session at the
-	 * window. `display-popup` returns only when the popup closes, so this
-	 * resolves once the popup was launched, not when it ends, and a launch that
-	 * fails at once rejects. `onExit` runs when the popup's process ends, however
-	 * the popup was closed, and not when the launch failed.
-	 */
-	popup(client: string, window: PopupWindow, onExit: () => void): Promise<void>;
-	/** Close the popup on a client (`display-popup -C`). */
-	closePopup(client: string): Promise<void>;
 	/** The window's visible pane as text (`capture-pane -p`). */
 	capture(windowId: string): Promise<string>;
 }
@@ -137,61 +124,6 @@ async function parentSession(run: Run): Promise<Parent | undefined> {
 	// The name comes last, so it is whatever follows the second tab.
 	const [id, marker, ...name] = out.split("\t");
 	return id.trim() === "" ? undefined : { id: id.trim(), name: name.join("\t"), companion: marker === "1" };
-}
-
-/**
- * The key that starts a tmux command, as tmux names it (`C-b`), for the
- * popup's title; `prefix` when it cannot be read or is unset.
- */
-async function prefixKey(run: Run): Promise<string> {
-	try {
-		const key = (await run(["show-options", "-gv", "prefix"])).trim();
-		return key === "" || key === "None" ? "prefix" : key;
-	} catch {
-		return "prefix";
-	}
-}
-
-/** How long a launched popup may take to fail before it counts as shown. */
-const POPUP_SETTLE_MS = 300;
-
-/**
- * Launch `display-popup`, which blocks until the popup closes, detached and
- * outside `runTmux`'s timeout. Resolves once it is up; rejects on a spawn
- * error or an exit within the settle time. Its stderr is read only until then
- * and then released, so the open popup keeps nothing of this process alive;
- * `onExit` runs when the popup's process ends, however it was closed.
- */
-function launchPopup(args: string[], onExit: () => void): Promise<void> {
-	return new Promise((resolve, reject) => {
-		let settled = false;
-		let stderr = "";
-		const child = spawn("tmux", args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
-		const onData = (chunk: Buffer): void => {
-			if (stderr.length < 4096) stderr += chunk.toString();
-		};
-		child.stderr?.on("data", onData);
-		const settle = (error?: Error): void => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			child.stderr?.off("data", onData);
-			child.stderr?.destroy();
-			if (error === undefined) resolve();
-			else reject(error);
-		};
-		const timer = setTimeout(() => settle(), POPUP_SETTLE_MS);
-		child.on("error", (err) => settle(err));
-		child.on("close", (code) => {
-			if (!settled && code !== 0) {
-				settle(new Error(stderr.trim() !== "" ? stderr.trim() : `tmux display-popup exited with ${code}`));
-				return;
-			}
-			settle();
-			onExit();
-		});
-		child.unref();
-	});
 }
 
 const envArgs = (spec: WindowSpec): string[] =>
@@ -263,10 +195,8 @@ function openCurrent(run: Run, spec: WindowSpec, parent: Parent | undefined): Pr
 	return create(run, args);
 }
 
-/** The methods that reach a delegate's window from the user's terminal: clients, switch, popup, capture. */
-function navigation(
-	run: Run,
-): Pick<TmuxClient, "ownSession" | "clientFor" | "switchTo" | "popup" | "closePopup" | "capture"> {
+/** The methods that reach a delegate's window from the user's terminal: clients, switch, capture. */
+function navigation(run: Run): Pick<TmuxClient, "ownSession" | "clientFor" | "switchTo" | "capture"> {
 	return {
 		async ownSession() {
 			const parent = await parentSession(run);
@@ -287,20 +217,6 @@ function navigation(
 
 		async switchTo(client, windowId) {
 			await run(["switch-client", "-c", client, "-t", windowId]);
-		},
-
-		async popup(client, window, onExit) {
-			if (!/^@[0-9]+$/.test(window.id)) throw new Error(`${window.id} is not a tmux window id`);
-			const sessionId = (await run(["display-message", "-p", "-t", window.id, "-F", "#{session_id}"])).trim();
-			if (!/^\$[0-9]+$/.test(sessionId)) throw new Error(`tmux reported an invalid session id for ${window.id}`);
-			// Ids are `@N` and `$N` only; quoted so the popup's shell does not expand `$N`.
-			const command = `tmux select-window -t '${window.id}' \\; attach-session -t '${sessionId}'`;
-			const title = `${window.name} · ${await prefixKey(run)} d to close`;
-			await launchPopup(["display-popup", "-c", client, "-E", "-w", "90%", "-h", "90%", "-T", title, command], onExit);
-		},
-
-		async closePopup(client) {
-			await run(["display-popup", "-C", "-c", client]);
 		},
 
 		async capture(windowId) {

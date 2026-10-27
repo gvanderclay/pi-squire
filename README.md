@@ -17,7 +17,7 @@ You need:
   on. Pi supplies the peer dependencies `@earendil-works/pi-coding-agent` and
   `typebox`.
 - tmux 3.2 or later, with the Pi session running in a tmux pane. That is the
-  first version with `new-session -e` and `display-popup`. Windows are placed
+  first version with `new-session -e`. Windows are placed
   relative to the pane's session (see [Where delegate windows
   open](#where-delegate-windows-open)), so a client attached elsewhere does
   not matter.
@@ -188,25 +188,21 @@ or done with auto-exit off, newest first. The model has no tool for any of this.
 | Key | Does |
 |---|---|
 | `↑` / `↓` | select a delegation; `esc` leaves the panel |
-| `enter` | open: a popup over your terminal, or a switch when the window is in the parent's own session |
-| `p` | peek: a snapshot of the window's pane (`capture-pane`) in an overlay; `r` refreshes, `enter` opens, `esc` returns to the list |
-| `s` | switch your tmux client to the window; `prefix L` returns you (tmux's last-session key) |
+| `enter` | switch your tmux client to the window |
+| `p` | peek: a snapshot of the window's pane (`capture-pane`) in an overlay; `r` refreshes, `enter` switches, `esc` returns to the list |
 | `x` | close the delegation as `delegation_close` does; asks first only while it is running |
 | `n` | new delegate: the same form `/delegate` opens with no arguments (see [First use](#first-use)) |
 
-Popup and switch act on the most recently active tmux client attached to the
-parent's session. With none attached they refuse with a notice; peek and close
-still work. The popup attaches to the window's session at that window, and
-detaching in it (`prefix d`) closes it; its title names that key with your
-prefix. When the delegate's window goes, the parent
-closes the popup within one poll (up to 5 s). No tmux key bindings or options are
-added.
+Switch acts on the most recently active tmux client attached to the parent's
+session. With none attached it refuses with a notice; peek and close still
+work. No tmux key bindings or options are added.
 
-`/delegate-open <id> [--popup|--switch|--peek]` does one of these on one
-delegation without the panel: with no flag or with `--popup`, what `enter` does (a popup, or a
-switch for a window in the parent's own session, since a popup of one's own session would show it
-inside itself); `--switch` always switches; `--peek` opens the peek overlay. Ids complete from the
-open delegations.
+To come back, use your own tmux last-session key (tmux's default is `prefix L`,
+often rebound); the notice after a switch says so.
+
+`/delegate-open <id> [--switch|--peek]` does one of these on one delegation
+without the panel: with no flag or with `--switch`, it switches; `--peek` opens
+the peek overlay. Ids complete from the open delegations.
 
 ## Working directory
 
@@ -1049,7 +1045,7 @@ Other extensions may rely on:
   no-argument forms: `/delegate` opens the new-delegate form and
   `/delegate-resume` the resume picker;
 - the `/delegates` command and its `alt+shift+d` shortcut, and `/delegate-open <id>` with its
-  `--popup`, `--switch` and `--peek` flags;
+  `--switch` and `--peek` flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - `AGENT.md`'s frontmatter keys and its location,
   `<agent dir>/squire/agents/<name>/AGENT.md`;

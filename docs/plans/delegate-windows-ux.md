@@ -1,12 +1,18 @@
 # Plan: delegate windows out of the way, and a way to reach them
 
+> **Popup removed.** After use, the popup was dropped: its close hint was hard
+> to see in the user's theme, and switch covers the need. `enter` in the panel
+> and `/delegate-open` without a flag now switch, the `s` key and `--popup` are
+> gone, and the poll no longer tracks popups. The popup text below is kept as
+> history and marked *(removed)*.
+
 Status: implemented (PR 1 in v0.12.0; PR 2 after it). Research: [`docs/research/delegate-windows-ux.md`](../research/delegate-windows-ux.md).
 
 ## Decision
 
 Delegates stop opening windows in the user's tmux session. They open in a
 **companion session**, `<parent's tmux session>-squire`, created on demand.
-The user reaches them from the parent through a **`/delegates` panel**: popup,
+The user reaches them from the parent through a **`/delegates` panel**: popup *(removed)*,
 peek, switch, close and new. No surveyed Pi library jumps to a tmux window;
 workmux (`mode: window|session`) is the precedent for the placement setting,
 and Claude Code's `claude agents` (peek, attach, detach) for the panel.
@@ -14,7 +20,7 @@ and Claude Code's `claude agents` (peek, attach, detach) for the panel.
 - Placement is a setting, `companion` (default) or `current` (today's
   behaviour). No shared or per-parent sessions.
 - tmux **3.2** becomes the minimum: `new-session -e` and `display-popup`
-  both arrived in 3.2 (tmux `CHANGES`, "3.1c to 3.2").
+  both arrived in 3.2 (only `new-session -e` still needs it) (tmux `CHANGES`, "3.1c to 3.2").
 - Commands and a shortcut only. The model gets no tool that moves the user's
   terminal or opens popups over it.
 - Tests stay on the fake tmux; the real client is still exercised by hand.
@@ -144,7 +150,7 @@ switch to make `new-window` race (`duplicate session`) or fail after dispatch.
 | `alt+shift+d` (`pi.registerShortcut`) | opens the panel; free in Pi's defaults and passes tmux without extended keys |
 | `/delegate` with no arguments | opens the panel straight into the new-delegate steps |
 | `/delegate-resume` with no arguments | opens the resume picker |
-| `/delegate-open <id> [--popup\|--switch\|--peek]` | one action on one delegation; id completions from open delegations |
+| `/delegate-open <id> [--switch\|--peek]` (`--popup` removed; no flag now switches) | one action on one delegation; id completions from open delegations |
 
 ### The panel
 
@@ -153,12 +159,12 @@ newest first, built from `results.list()` and one `listWindows` call. Keys,
 shown in a hint line:
 
 - `↑`/`↓` select; `esc` leaves.
-- `enter` **open**: a popup, or a switch when the window is in the parent's
+- `enter` **open**: a popup *(removed: `enter` now switches)*, or a switch when the window is in the parent's
   own session (a popup of one's own session shows it inside itself and moves
   its current window).
 - `p` **peek**: `capture-pane -p -t @N` snapshot in an overlay; `r`
   refreshes, `enter` opens, `esc` returns.
-- `s` **switch**: `switch-client -c <client> -t @N`, then a notice "prefix L
+- `s` **switch** *(removed: `enter` does this)*: `switch-client -c <client> -t @N`, then a notice "prefix L
   returns you". No tmux key bindings or options are added.
 - `x` **close**: the `delegation_close` path; a confirm only while the
   delegation is running.
@@ -174,7 +180,7 @@ parent's session: `list-clients -t <session> -F
 '#{client_activity}\t#{client_name}'`, highest activity. None attached:
 popup and switch refuse with a notice; peek and close still work.
 
-### Popup
+### Popup *(removed)*
 
 - `display-popup -c <client> -E -w 90% -h 90% -T <window name>` running
   `tmux select-window -t @N \; attach-session -t <session id>`. The session

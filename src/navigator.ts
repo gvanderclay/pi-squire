@@ -1,7 +1,6 @@
 // The delegate navigator: the `/delegates` panel and `/delegate-open`. It lists
-// the delegations whose window is open and reaches one of them: a popup over
-// the user's tmux client, a switch of that client, a peek at the pane, or a
-// close. Everything here is a command or a key; the model gets no tool that
+// the delegations whose window is open and reaches one of them: a switch of
+// the user's tmux client to its window, a peek at the pane, or a close. Everything here is a command or a key; the model gets no tool that
 // moves the user's terminal.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
@@ -10,11 +9,11 @@ import { type DelegationState, deriveState, isStarted, type Results, recordedNam
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import { listWindows, ownWindow, type Tracking } from "./tracking.ts";
 
-/** What `/delegate-open` does: `auto` is what enter does in the panel. */
-export type OpenMode = "auto" | "popup" | "switch" | "peek";
+/** What `/delegate-open` does; switch is what enter does in the panel. */
+export type OpenMode = "switch" | "peek";
 
-export const OPEN_USAGE = "/delegate-open <id> [--popup|--switch|--peek]";
-const OPEN_FLAGS = ["--popup", "--switch", "--peek"] as const;
+export const OPEN_USAGE = "/delegate-open <id> [--switch|--peek]";
+const OPEN_FLAGS = ["--switch", "--peek"] as const;
 
 /** One delegation whose window is open. */
 type OpenDelegate = {
@@ -26,14 +25,14 @@ type OpenDelegate = {
 };
 
 /** What the panel hands back: the action the user chose on one delegation, or none. */
-type PanelResult = { action: "open" | "switch" | "close" | "peek"; id: string } | { action: "new" } | undefined;
+type PanelResult = { action: "switch" | "close" | "peek"; id: string } | { action: "new" } | undefined;
 
-/** What the peek hands back: open the delegate, or nothing. */
-type PeekResult = { action: "open" } | undefined;
+/** What the peek hands back: switch to the delegate, or nothing. */
+type PeekResult = { action: "switch" } | undefined;
 
-const HINT = "↑↓ select · enter open · p peek · s switch · x close · n new · esc leave";
+const HINT = "↑↓ select · enter switch · p peek · x close · n new · esc leave";
 const EMPTY = "No open delegates · n new · esc close";
-const PEEK_HINT = "r refresh · enter open · esc back";
+const PEEK_HINT = "r refresh · enter switch · esc back";
 
 /** Where a peek shows: over the panel or the editor, not in its place. */
 const PEEK_OPTIONS = { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } } as const;
@@ -82,9 +81,8 @@ class Panel implements Component {
 		else if (item === undefined) return;
 		else if (matchesKey(data, "up")) this.selected = (this.selected + count - 1) % count;
 		else if (matchesKey(data, "down")) this.selected = (this.selected + 1) % count;
-		else if (matchesKey(data, "enter")) this.done({ action: "open", id: item.id });
+		else if (matchesKey(data, "enter")) this.done({ action: "switch", id: item.id });
 		else if (matchesKey(data, "p")) this.done({ action: "peek", id: item.id });
-		else if (matchesKey(data, "s")) this.done({ action: "switch", id: item.id });
 		else if (matchesKey(data, "x")) this.done({ action: "close", id: item.id });
 		this.redraw();
 	}
@@ -101,7 +99,7 @@ class Panel implements Component {
 	}
 }
 
-/** A snapshot of one delegate's pane, shown as an overlay: `r` refreshes, enter opens, esc returns. */
+/** A snapshot of one delegate's pane, shown as an overlay: `r` refreshes, enter switches, esc returns. */
 class PeekView implements Component {
 	private capture: Capture = { text: "", error: undefined, loading: true };
 	private readonly item: OpenDelegate;
@@ -147,7 +145,7 @@ class PeekView implements Component {
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape")) this.done(undefined);
 		else if (matchesKey(data, "r")) this.refresh();
-		else if (matchesKey(data, "enter")) this.done({ action: "open" });
+		else if (matchesKey(data, "enter")) this.done({ action: "switch" });
 		this.redraw();
 	}
 
@@ -176,10 +174,10 @@ export function parseOpen(text: string): { id: string; mode: OpenMode } | { erro
 	const ids = words.filter((word) => !word.startsWith("-"));
 	const unknown = flags.find((flag) => !(OPEN_FLAGS as readonly string[]).includes(flag));
 	if (unknown !== undefined) return { error: `unknown flag ${unknown}; ${OPEN_USAGE}` };
-	if (flags.length > 1) return { error: `give at most one of --popup, --switch and --peek; ${OPEN_USAGE}` };
+	if (flags.length > 1) return { error: `give at most one of --switch and --peek; ${OPEN_USAGE}` };
 	if (ids.length !== 1) return { error: `give one delegation id; ${OPEN_USAGE}` };
 	const flag = flags[0];
-	return { id: ids[0], mode: flag === undefined ? "auto" : (flag.slice(2) as OpenMode) };
+	return { id: ids[0], mode: flag === undefined ? "switch" : (flag.slice(2) as OpenMode) };
 }
 
 /** Completions for `/delegate-open`: ids first, then the mode flags not yet given. */
@@ -194,7 +192,7 @@ export function openCompletions(prefix: string, ids: readonly string[]): { value
 	return hits.length > 0 ? hits.map((value) => ({ value: head + value, label: value })) : null;
 }
 
-type Env = { results: Results; tmux: TmuxClient; tracking: Pick<Tracking, "trackPopup" | "close"> };
+type Env = { results: Results; tmux: TmuxClient; tracking: Pick<Tracking, "close"> };
 
 /** The open delegations, newest first, from the records and one listing; undefined when tmux cannot be asked. */
 async function openDelegates({ results, tmux }: Env): Promise<OpenDelegate[] | undefined> {
@@ -233,24 +231,6 @@ async function clientOf(tmux: TmuxClient): Promise<{ client: string } | { refusa
 	}
 }
 
-async function popup(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
-	const found = await clientOf(env.tmux);
-	if ("refusal" in found) return ctx.ui.notify(`delegate: cannot open a popup: ${found.refusal}`, "warning");
-	// Tracked before it launches, so a popup that closes at once is forgotten too.
-	const forget = env.tracking.trackPopup({
-		windowId: item.window.id,
-		windowName: item.window.name,
-		client: found.client,
-	});
-	try {
-		// Resolves once the popup is up, not when it closes; `forget` runs when it closes.
-		await env.tmux.popup(found.client, { id: item.window.id, name: item.window.name }, forget);
-	} catch (err) {
-		forget();
-		return ctx.ui.notify(`delegate: could not open a popup: ${(err as Error).message}`, "error");
-	}
-}
-
 async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
 	const found = await clientOf(env.tmux);
 	if ("refusal" in found) return ctx.ui.notify(`delegate: cannot switch: ${found.refusal}`, "warning");
@@ -259,13 +239,10 @@ async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Pr
 	} catch (err) {
 		return ctx.ui.notify(`delegate: could not switch: ${(err as Error).message}`, "error");
 	}
-	ctx.ui.notify(`delegate: switched to ${item.name} (${item.window.id}) · prefix L returns you`, "info");
-}
-
-/** Enter's behaviour: a switch inside the parent's own session, else a popup. */
-async function open(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
-	const own = await ownSessionName(env.tmux);
-	return own !== undefined && own === item.window.session ? switchTo(env, ctx, item) : popup(env, ctx, item);
+	ctx.ui.notify(
+		`delegate: switched to ${item.name} (${item.window.id}) · your tmux last-session key returns you`,
+		"info",
+	);
 }
 
 /** Close through the `delegation_close` path, asking first only while the delegate runs. */
@@ -294,7 +271,7 @@ function show(ctx: ExtensionContext, items: readonly OpenDelegate[]): Promise<Pa
 	);
 }
 
-/** Peek at a delegate's pane in an overlay; true when the user chose to open it. */
+/** Peek at a delegate's pane in an overlay; true when the user chose to switch to it. */
 async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<boolean> {
 	const result = await ctx.ui.custom<PeekResult>(
 		(tui, theme, _keybindings, done): PeekView =>
@@ -308,7 +285,7 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 			}),
 		PEEK_OPTIONS,
 	);
-	return result?.action === "open";
+	return result?.action === "switch";
 }
 
 const noUi = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: this needs an interactive session", "error");
@@ -335,10 +312,10 @@ async function act(
 	}
 	if (result.action === "peek") {
 		if (!(await peek(env, ctx, item))) return true; // back to the panel
-		await open(env, ctx, item);
+		await switchTo(env, ctx, item);
 		return false;
 	}
-	await (result.action === "switch" ? switchTo(env, ctx, item) : open(env, ctx, item));
+	await switchTo(env, ctx, item);
 	return false;
 }
 
@@ -352,16 +329,15 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 		return ctx.ui.notify(`delegate: no open delegate ${JSON.stringify(id)}; open: ${known}`, "error");
 	}
 	if (mode === "switch") return switchTo(env, ctx, item);
-	if (mode !== "peek") return open(env, ctx, item); // --popup follows enter's rule too
 	if (!ctx.hasUI) return noUi(ctx);
-	if (await peek(env, ctx, item)) await open(env, ctx, item);
+	if (await peek(env, ctx, item)) await switchTo(env, ctx, item);
 }
 
 /** The navigator over the records, tmux and tracking. `startNew` is the new-delegate flow, wired by the entry. */
 export function createNavigator(
 	results: Results,
 	tmux: TmuxClient,
-	tracking: Pick<Tracking, "trackPopup" | "close">,
+	tracking: Pick<Tracking, "close">,
 	startNew: (ctx: ExtensionContext) => Promise<void> | void,
 ): Navigator {
 	const env: Env = { results, tmux, tracking };

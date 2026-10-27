@@ -1284,7 +1284,7 @@ export default function delegate(
 	);
 
 	pi.registerCommand("delegates", {
-		description: "Open the panel of delegates whose window is open: popup, peek, switch, close",
+		description: "Open the panel of delegates whose window is open: switch, peek, close",
 		handler: async (_args: string, ctx: ExtensionContext) => navigator.panel(ctx),
 	});
 

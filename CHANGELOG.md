@@ -6,6 +6,28 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- The delegate popup: `enter` in `/delegates` and `/delegate-open --popup` no
+  longer open a tmux popup, and the popup title from 0.13.1 (the close key in
+  its title) goes with it. `--popup` is now an unknown-flag usage error. The
+  poll runs again only while a delegation is running. The close hint was hard to
+  see in some themes, and a switch covers the need.
+
+### Changed
+
+- `enter` in the `/delegates` panel, and in its peek, now switches your tmux
+  client to the delegate's window (the notice says your tmux last-session key returns you); `/delegate-open
+  <id>` with no flag switches too. The `s` key is gone. With no client attached,
+  switch still refuses; peek and close still work. tmux 3.2 stays the minimum,
+  for `new-session -e`.
+- Tests changed with it: in `test/navigator.test.ts` the panel hint, `enter`,
+  peek, no-client, failure, `/delegate-open` parsing, default and completion
+  tests now expect a switch, and the popup lifecycle tests are replaced by one
+  test that the poll runs only while a delegation does; `test/tmux.test.ts` no
+  longer tests `popup` and `closePopup`, and `test/popup-parent.ts` and the
+  fake's popup support are gone.
+
 ## [0.13.1] - 2026-10-27
 
 ### Changed

@@ -243,6 +243,7 @@ async function startResume(
 		{
 			id,
 			agent: start.agent.name,
+			...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
 			model: start.model,
 			thinking: start.thinking,
 			name,

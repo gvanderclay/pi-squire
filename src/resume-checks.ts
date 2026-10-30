@@ -8,7 +8,7 @@ import { isAbsolute } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { Agent } from "./agents.ts";
+import { type Agent, withoutLocked } from "./agents.ts";
 import { sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
@@ -113,12 +113,14 @@ export async function settleModel(
 	},
 	ctx: ExtensionContext,
 ): Promise<{ thinking: string; chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>> }> {
-	const { record, agent, session, request } = input;
+	const { record, agent, session } = input;
+	const preferred = preferredModels(record, agent, session.path);
+	const { request, notice } = withoutLocked(agent, input.request, { model: preferred[0], thinking: record.thinking });
 	const thinking = request.thinking ?? record.thinking;
 	const badThinking = deps.thinkingProblem(thinking);
 	if (badThinking !== undefined) throw new Error(badThinking);
-	const preferred = preferredModels(record, agent, session.path);
-	return { thinking, chosen: await deps.chooseModel(request.model, agent, ctx.modelRegistry, preferred) };
+	const chosen = await deps.chooseModel(request.model, agent, ctx.modelRegistry, preferred);
+	return { thinking, chosen: notice === undefined ? chosen : { ...chosen, notices: [notice, ...chosen.notices] } };
 }
 
 /** The call-wide prerequisites of a resume: inside tmux, a new enough tmux, a valid placement setting (read once). */

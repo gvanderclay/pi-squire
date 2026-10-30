@@ -9,8 +9,7 @@
 // moves to the agent's next fallback, from `PI_DELEGATE_FALLBACK`, and
 // continues there; it exits only when no fallback is left. The user
 // taking over — typing here, or stopping a run — turns it off for the rest of
-// the session, with a notice; `/auto-exit` turns it back on. Modelled on
-// edxeth/pi-subagents' `auto-exit` (README "Child lifecycle", `cf6dbf4`).
+// the session, with a notice; `/auto-exit` turns it back on.
 //
 // It also takes over the parent's task request on `message:inbound` and sends
 // it as a user prompt, so the task starts through the same path as a typed

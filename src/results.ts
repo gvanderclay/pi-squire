@@ -35,6 +35,8 @@ const INBOUND = "message:inbound";
 export type Delegation = {
 	id: string;
 	agent: string;
+	/** The agent's `display_name` at launch, shown instead of `agent`; absent when it had none. */
+	displayName?: string;
 	model: string;
 	thinking: string;
 	/** The delegate's session and window name; absent in records from before labels, where it was `<agent>-<8 id characters>`. */

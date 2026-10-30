@@ -311,7 +311,7 @@ test("refused: a missing session file, a header without a cwd and a missing work
 
 test("refused: an agent no longer in the roster", async () => {
 	const d = await exitedDelegate();
-	rmSync(join(root, "agent", "squire", "agents", "scout"), { recursive: true });
+	rmSync(join(root, "agent", "agents", "scout.md"));
 	writeAgent("other", agentFile(AGENT));
 	assert.match(await resumeError(d.s, { id: d.id, task: "x" }), /agent "scout" is no longer in the roster/);
 });
@@ -560,4 +560,16 @@ test("/delegate-resume completes resumable ids, flags, models and thinking level
 		(await d.s.completionsFor("delegate-resume", `${d.id} --thinking hi`))?.map((item) => item.label),
 		["high"],
 	);
+});
+
+test("a resume refuses a model or thinking the agent locks, and says so", async () => {
+	const d = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, locked: "[model, thinking]" }));
+	const result = await resume(d.s, { id: d.id, task: "more", model: "alpha/deep-model", thinking: "high" });
+	const { argv } = d.s.tmux.opened[1];
+	assert.equal(argv[argv.indexOf("--model") + 1], "alpha/fast-model");
+	assert.equal(argv[argv.indexOf("--thinking") + 1], "low");
+	const notice =
+		"Agent scout locks model and thinking, so the model alpha/deep-model and thinking high given were not used.";
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [notice]);
 });

@@ -1,0 +1,417 @@
+// Agent files: one `<name>.md` per agent in `<agent dir>/agents/` and, in a
+// trusted project, `<cwd>/.pi/agents/`. These tests cover where the roster is
+// read from and what each frontmatter field does to the delegate: its model,
+// thinking, tools (with the `delegateTools` setting), extensions, prompt, name
+// on screen and the fields a call cannot override. They drive the extension
+// only through its registration function: a temporary agent directory, a fake
+// Pi session, the fake tmux.
+
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { after, beforeEach, test } from "node:test";
+
+import { readRoster } from "../src/agents.ts";
+import {
+	agentDir,
+	agentFile,
+	cleanup,
+	keyScript,
+	resetRoot,
+	root,
+	rosterDir,
+	session,
+	writeAgent,
+	writeProjectAgent,
+} from "./harness.ts";
+
+beforeEach(() => resetRoot());
+after(() => cleanup());
+
+const SCOUT = { description: "Looks things up", model: "alpha/fast-model", thinking: "low" };
+
+const pair = (argv: readonly string[], flag: string) => argv.slice(argv.indexOf(flag), argv.indexOf(flag) + 2);
+const promptOf = (argv: readonly string[]) => readFileSync(argv[argv.indexOf("--append-system-prompt") + 1], "utf8");
+
+/** A fresh project directory for this test, so one test's `.pi/agents` cannot reach another. */
+const project = () => mkdtempSync(join(root, "project-"));
+
+const setSettings = (settings: unknown): void => {
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify(settings));
+};
+
+// ---------------------------------------------------------------------------
+// Where agents are read from
+
+test("an agent is <agent dir>/agents/<name>.md, named for the file", async () => {
+	writeAgent("scout", agentFile(SCOUT));
+	writeFileSync(join(rosterDir, "notes.txt"), "not an agent");
+	mkdirSync(join(rosterDir, "folder.md"));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => [agent.name, agent.path]),
+		[["scout", join(rosterDir, "scout.md")]],
+	);
+	assert.deepEqual(warnings, []);
+});
+
+test("a trusted project's agents load too, and a project file replaces the global one of the same name", async () => {
+	const cwd = project();
+	writeAgent("scout", agentFile(SCOUT));
+	writeAgent("worker", agentFile({ ...SCOUT, description: "Global worker" }));
+	writeProjectAgent(cwd, "worker", agentFile({ ...SCOUT, description: "Project worker", model: "alpha/deep-model" }));
+	writeProjectAgent(cwd, "local", agentFile({ ...SCOUT, description: "Only here" }));
+	const s = session({ cwd, projectTrusted: true });
+	await s.start();
+	const description = s.tool("delegate").description;
+	assert.ok(description.includes("- local — Only here"), description);
+	assert.ok(description.includes("- worker — Project worker (default alpha/deep-model"), description);
+	assert.ok(!description.includes("Global worker"), description);
+	await s.delegate("worker do it");
+	assert.equal(s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--model") + 1], "alpha/deep-model");
+});
+
+test("an untrusted project's agents are not read, so a cloned repository cannot change a delegate", async () => {
+	const cwd = project();
+	writeAgent("worker", agentFile({ ...SCOUT, description: "Global worker" }));
+	writeProjectAgent(cwd, "worker", agentFile({ ...SCOUT, description: "Project worker", model: "alpha/deep-model" }));
+	writeProjectAgent(cwd, "local", agentFile({ ...SCOUT, description: "Only here" }));
+	const s = session({ cwd, projectTrusted: false });
+	await s.start();
+	const description = s.tool("delegate").description;
+	assert.ok(description.includes("Global worker") && !description.includes("Project worker"), description);
+	await s.delegate("local do it");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.match(s.errors[0], /no agent named "local"; available: worker/);
+});
+
+test("enabled: false leaves an agent out, and a project file with it hides the global agent there", async () => {
+	const cwd = project();
+	writeAgent("scout", agentFile(SCOUT));
+	writeAgent("worker", agentFile({ ...SCOUT, enabled: "false" }));
+	writeProjectAgent(cwd, "scout", agentFile({ enabled: "false" }));
+	assert.deepEqual(
+		readRoster(agentDir).agents.map((agent) => agent.name),
+		["scout"],
+	);
+	const { agents, warnings } = readRoster(agentDir, join(cwd, ".pi", "agents"));
+	assert.deepEqual(agents, []);
+	assert.deepEqual(warnings, []);
+});
+
+test("an enabled that is not true or false leaves the agent out with a warning", async () => {
+	writeAgent("scout", agentFile({ ...SCOUT, enabled: "sometimes" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(agents, []);
+	assert.ok(warnings[0].endsWith(`scout.md has enabled "sometimes", not true or false; skipped`), warnings[0]);
+});
+
+// ---------------------------------------------------------------------------
+// Defaults from the parent
+
+test("with no model or thinking the delegate runs on the parent's, and description defaults to the name", async () => {
+	writeAgent("plain", "Just do it.\n");
+	const s = session({ parentModel: "beta/other-model", parentThinking: "high" });
+	await s.start();
+	assert.ok(
+		s.tool("delegate").description.includes("- plain — plain (default this session's model, thinking this session's)"),
+		s.tool("delegate").description,
+	);
+	const result = await s.toolCall("delegate", { agent: "plain", task: "go" });
+	const { argv } = s.tmux.opened[0];
+	assert.deepEqual(pair(argv, "--model"), ["--model", "beta/other-model"]);
+	assert.deepEqual(pair(argv, "--thinking"), ["--thinking", "high"]);
+	assert.equal((result.structuredContent as { model: string }).model, "beta/other-model");
+});
+
+test("an unknown thinking level is dropped with a warning and the parent's level applies", async () => {
+	writeAgent("scout", agentFile({ ...SCOUT, thinking: "very" }));
+	const s = session({ parentThinking: "minimal" });
+	await s.start();
+	await s.delegate("scout go");
+	assert.deepEqual(pair(s.tmux.opened[0].argv, "--thinking"), ["--thinking", "minimal"]);
+	assert.ok(
+		s.warnings.some((warning) =>
+			warning.endsWith(
+				`scout.md has thinking "very", not one of off, minimal, low, medium, high, xhigh, max; the parent's level applies`,
+			),
+		),
+		s.warnings.join("\n"),
+	);
+});
+
+test("every thinking level Pi takes is accepted, off included", async () => {
+	for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"])
+		writeAgent(`t-${level}`, agentFile({ ...SCOUT, thinking: level }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.thinking),
+		["high", "low", "max", "medium", "minimal", "off", "xhigh"],
+	);
+	assert.deepEqual(warnings, []);
+});
+
+test("a model or fallback the registry does not know goes to the child unchanged, for Pi to resolve", async () => {
+	writeAgent("pattern", agentFile({ ...SCOUT, model: "sonnet", fallback: "alpha/*, beta/other-model" }));
+	const s = session();
+	await s.start();
+	await s.delegate("pattern go");
+	assert.deepEqual(s.errors, []);
+	const opened = s.tmux.opened[0];
+	assert.deepEqual(pair(opened.argv, "--model"), ["--model", "sonnet"]);
+	assert.equal(opened.env.PI_DELEGATE_FALLBACK, "alpha/*,beta/other-model");
+});
+
+// ---------------------------------------------------------------------------
+// Tools
+
+test("a tools line is the delegate's whole list; without one no --tools flag passes, so it has the parent's tools", async () => {
+	writeAgent("listed", agentFile({ ...SCOUT, tools: "device_run, read" }));
+	writeAgent("yaml", agentFile({ ...SCOUT, tools: "[read, grep]" }));
+	writeAgent("empty", agentFile({ ...SCOUT, tools: "", extensions: "" }));
+	writeAgent("none", agentFile(SCOUT));
+	const s = session();
+	await s.start();
+	for (const name of ["listed", "yaml", "empty", "none"]) await s.delegate(`${name} go`);
+	assert.deepEqual(s.errors, []);
+	const [listed, yaml, empty, none] = s.tmux.opened.map((opened) => opened.argv);
+	assert.deepEqual(pair(listed, "--tools"), ["--tools", "device_run,read"]);
+	assert.deepEqual(pair(yaml, "--tools"), ["--tools", "read,grep"]);
+	for (const argv of [empty, none]) assert.ok(!argv.includes("--tools") && !argv.includes("-e"), argv.join(" "));
+	for (const argv of s.tmux.opened.map((opened) => opened.argv)) assert.ok(!argv.includes("--exclude-tools"));
+});
+
+test("the delegateTools setting is added to every tools line, unchanged, and to no agent without one", async () => {
+	setSettings({ delegateTools: ["reach_parent", "mcp__mail__*", "read"] });
+	writeAgent("listed", agentFile({ ...SCOUT, tools: "read, grep" }));
+	writeAgent("none", agentFile(SCOUT));
+	const s = session();
+	await s.start();
+	await s.delegate("listed go");
+	await s.delegate("none go");
+	assert.deepEqual(s.errors, []);
+	const [listed, none] = s.tmux.opened.map((opened) => opened.argv);
+	assert.deepEqual(pair(listed, "--tools"), ["--tools", "read,grep,reach_parent,mcp__mail__*"]);
+	assert.ok(!none.includes("--tools"), none.join(" "));
+});
+
+test("a delegateTools that is not a list of names refuses the launch before anything is sent", async () => {
+	setSettings({ delegateTools: "reach_parent" });
+	writeAgent("listed", agentFile({ ...SCOUT, tools: "read" }));
+	writeAgent("none", agentFile(SCOUT));
+	const s = session();
+	await s.start();
+	await s.delegate("listed go");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
+	assert.match(s.errors[0], /delegateTools must be a list of tool names or patterns/);
+	await s.delegate("none go");
+	assert.equal(s.tmux.opened.length, 1);
+});
+
+test("exclude-tools is no longer read: it passes no flag and says so", async () => {
+	writeAgent("scout", agentFile({ ...SCOUT, "exclude-tools": "edit, write" }));
+	const s = session();
+	await s.start();
+	await s.delegate("scout go");
+	assert.equal(s.tmux.opened.length, 1);
+	assert.ok(!s.tmux.opened[0].argv.includes("--exclude-tools"));
+	assert.ok(
+		s.warnings.some((warning) =>
+			warning.endsWith(
+				"scout.md has exclude-tools, which is no longer read; list the delegate's tools in tools instead",
+			),
+		),
+		s.warnings.join("\n"),
+	);
+});
+
+test("a tools that is not a list leaves the agent out with a warning", async () => {
+	writeAgent("bad", agentFile({ ...SCOUT, tools: "{ a: 1 }" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(agents, []);
+	assert.ok(warnings[0].includes("has tools"), warnings[0]);
+});
+
+test("keys pi-squire does not know, and the ones it knows to ignore, are ignored without a warning", async () => {
+	writeAgent(
+		"scout",
+		agentFile({
+			...SCOUT,
+			max_turns: "5",
+			inherit_context: "true",
+			run_in_background: "true",
+			permission: "\n  bash: deny",
+		}),
+	);
+	const { agents, warnings } = readRoster(agentDir);
+	assert.equal(agents.length, 1);
+	assert.deepEqual(warnings, []);
+});
+
+// ---------------------------------------------------------------------------
+// fallback and extensions
+
+test("fallback parses as a comma-separated string or a YAML list, and is empty when absent", async () => {
+	writeAgent("a", agentFile({ ...SCOUT, fallback: "beta/other-model, alpha/deep-model" }));
+	writeAgent("b", agentFile({ ...SCOUT, fallback: "[beta/other-model, alpha/deep-model]" }));
+	writeAgent("c", agentFile({ ...SCOUT, fallback: "\n  - beta/other-model\n  - alpha/deep-model" }));
+	writeAgent("d", agentFile(SCOUT));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.fallback),
+		[
+			["beta/other-model", "alpha/deep-model"],
+			["beta/other-model", "alpha/deep-model"],
+			["beta/other-model", "alpha/deep-model"],
+			[],
+		],
+	);
+	assert.deepEqual(warnings, []);
+});
+
+test("a fallback that is not a list is ignored with a warning and the agent still loads", async () => {
+	writeAgent("a", agentFile({ ...SCOUT, fallback: "5" }));
+	writeAgent("b", agentFile({ ...SCOUT, fallback: "\n  x: y" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.fallback),
+		[[], []],
+	);
+	assert.ok(warnings[0].endsWith(`a.md has fallback 5, not a list of models; ignored`), warnings[0]);
+	assert.ok(warnings[1].endsWith(`b.md has fallback {"x":"y"}, not a list of models; ignored`), warnings[1]);
+});
+
+test("extensions become repeated -e flags, ~ and paths relative to the agent file's folder resolved", async () => {
+	writeAgent("tester", agentFile({ ...SCOUT, extensions: "./ext.ts, ~/home-ext.ts" }));
+	const rel = join(rosterDir, "ext.ts");
+	writeFileSync(rel, "");
+	const savedHome = process.env.HOME;
+	process.env.HOME = agentDir; // os.homedir() follows HOME on POSIX
+	const home = join(homedir(), "home-ext.ts");
+	writeFileSync(home, "");
+	try {
+		const { agents } = readRoster(agentDir);
+		assert.deepEqual(agents[0].extensions, [rel, home]);
+		const s = session();
+		await s.start();
+		await s.delegate("tester go");
+		assert.deepEqual(s.errors, []);
+		const { argv } = s.tmux.opened[0];
+		assert.deepEqual(argv.flatMap((arg, i) => (arg === "-e" ? [argv[i + 1]] : [])).slice(-2), [rel, home]);
+		assert.ok(!argv.includes("--no-extensions") && !argv.includes("-ne"), argv.join(" "));
+	} finally {
+		process.env.HOME = savedHome;
+		rmSync(home);
+	}
+});
+
+test("a project agent's relative extension resolves against the project's agents folder", async () => {
+	const cwd = project();
+	const path = writeProjectAgent(cwd, "tester", agentFile({ ...SCOUT, extensions: "./ext.ts" }));
+	writeFileSync(join(cwd, ".pi", "agents", "ext.ts"), "");
+	const { agents } = readRoster(agentDir, join(cwd, ".pi", "agents"));
+	assert.equal(agents[0].path, path);
+	assert.deepEqual(agents[0].extensions, [join(cwd, ".pi", "agents", "ext.ts")]);
+});
+
+test("a missing extension path leaves the agent out with a warning", async () => {
+	writeAgent("tester", agentFile({ ...SCOUT, extensions: "./nope.ts" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(agents, []);
+	assert.ok(warnings[0].includes("nope.ts, which does not exist; skipped"), warnings[0]);
+});
+
+// ---------------------------------------------------------------------------
+// prompt_mode
+
+test("by default the body is wrapped in <agent_instructions>, and an empty body adds nothing", async () => {
+	writeAgent("wrapped", agentFile(SCOUT, "Look things up.\n\nCarefully."));
+	writeAgent("empty", `---\nmodel: alpha/fast-model\n---\n`);
+	writeAgent("unknown", agentFile({ ...SCOUT, prompt_mode: "prepend" }, "Look things up."));
+	const s = session();
+	await s.start();
+	for (const name of ["wrapped", "empty", "unknown"]) await s.delegate(`${name} go`);
+	const [wrapped, empty, unknown] = s.tmux.opened.map((opened) => promptOf(opened.argv));
+	assert.ok(
+		wrapped.startsWith(
+			"<agent_instructions>\nLook things up.\n\nCarefully.\n</agent_instructions>\n\nEnd with one self-contained final message:",
+		),
+		wrapped,
+	);
+	assert.ok(empty.startsWith("End with one self-contained final message:"), empty);
+	assert.ok(unknown.startsWith("<agent_instructions>\nLook things up.\n</agent_instructions>"), unknown);
+	assert.ok(
+		s.warnings.some((warning) =>
+			warning.endsWith(`unknown.md has prompt_mode "prepend", not append or replace; append applies`),
+		),
+	);
+});
+
+// ---------------------------------------------------------------------------
+// locked
+
+test("locked: true refuses a call's model and thinking for the fields the file sets, and the result says so", async () => {
+	writeAgent("strict", agentFile({ ...SCOUT, locked: "true" }));
+	const s = session();
+	await s.start();
+	const result = await s.toolCall("delegate", {
+		agent: "strict",
+		task: "go",
+		model: "alpha/deep-model",
+		thinking: "high",
+	});
+	const { argv } = s.tmux.opened[0];
+	assert.deepEqual(pair(argv, "--model"), ["--model", "alpha/fast-model"]);
+	assert.deepEqual(pair(argv, "--thinking"), ["--thinking", "low"]);
+	const notice =
+		"Agent strict locks model and thinking, so the model alpha/deep-model and thinking high given were not used.";
+	assert.ok(result.content[0].text.includes(notice), result.content[0].text);
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [notice]);
+	assert.ok(s.tool("delegate").description.includes("locked: model/thinking"), s.tool("delegate").description);
+});
+
+test("locked: true locks only what the file sets; a list locks what it names; the agent's own value passes quietly", async () => {
+	writeAgent("partial", agentFile({ description: "No model", thinking: "low", locked: "true" }));
+	writeAgent("listed", agentFile({ ...SCOUT, locked: "[thinking]" }));
+	const s = session();
+	await s.start();
+	await s.delegate("partial --model alpha/deep-model --thinking high go");
+	await s.delegate("listed --model alpha/deep-model --thinking high go");
+	await s.delegate("listed --thinking low go");
+	const [partial, listed, same] = s.tmux.opened.map((opened) => opened.argv);
+	assert.deepEqual(pair(partial, "--model"), ["--model", "alpha/deep-model"]);
+	assert.deepEqual(pair(partial, "--thinking"), ["--thinking", "low"]);
+	assert.deepEqual(pair(listed, "--model"), ["--model", "alpha/deep-model"]);
+	assert.deepEqual(pair(listed, "--thinking"), ["--thinking", "low"]);
+	assert.deepEqual(pair(same, "--thinking"), ["--thinking", "low"]);
+	assert.deepEqual(s.notes.filter((note) => note.includes("locks")).length, 2);
+	assert.ok(
+		s.notes.some((note) => note.includes("Agent listed locks thinking, so the thinking high given was not used.")),
+	);
+});
+
+// ---------------------------------------------------------------------------
+// display_name
+
+test("display_name names the window and the /delegates row; the agent's name still reaches session:launch", async () => {
+	writeAgent("reviewer", agentFile({ ...SCOUT, display_name: "Code Reviewer" }));
+	const s = session();
+	await s.start();
+	const launches: { agent: string; env: Record<string, string> }[] = [];
+	s.events.on("session:launch", (data) => launches.push(data as { agent: string; env: Record<string, string> }));
+	const result = await s.toolCall("delegate", { agent: "reviewer", task: "go", label: "pr-12" });
+	const opened = s.tmux.opened[0];
+	assert.equal(opened.name, "Code Reviewer-pr-12");
+	assert.equal((result.structuredContent as { windowName: string }).windowName, "Code Reviewer-pr-12");
+	assert.equal((result.structuredContent as { agent: string }).agent, "reviewer");
+	assert.equal(launches[0].agent, "reviewer");
+	assert.equal(opened.env.PI_DELEGATE_AGENT, "reviewer");
+	assert.equal(s.entries[0].data.displayName, "Code Reviewer");
+	const script = keyScript(["escape"]);
+	s.queueCustom(script);
+	await s.command("delegates");
+	assert.match(script.frames[0], /Code Reviewer-pr-12 · Code Reviewer · running/);
+});

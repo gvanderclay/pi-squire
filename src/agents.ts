@@ -6,11 +6,12 @@
 //
 // Every frontmatter field is optional: `description` (default the name),
 // `display_name`, `model` and `fallback` (each one model, `provider/id` or an
-// alias, passed to the child's Pi unchanged; a `*` pattern makes the file
-// invalid; absent `model` means the parent's), `thinking` (absent or unknown means the
-// parent's level), `tools` (the delegate's complete tool list; absent means the
-// parent's tools, empty means none), `extensions` (extra extension paths for the delegate only;
-// `~` expands, relative paths resolve against the agent file's folder, and a
+// alias, passed to the child's Pi unchanged; a `*` pattern, or a list entry
+// holding a comma, makes the file invalid; absent `model` means the parent's),
+// `thinking` (absent or unknown means the parent's level), `tools` (the
+// delegate's complete tool list; absent means the parent's tools, empty means
+// none; a list entry holding a comma makes the file invalid), `extensions`
+// (extra extension paths for the delegate only; `~` expands, relative paths resolve against the agent file's folder, and a
 // missing path leaves the agent out), `auto-exit` (default true),
 // `prompt_mode` (`append`, the default, or `replace`), `enabled` (false leaves
 // the agent out) and `locked` (true, or a list of `model` and `thinking`). Any
@@ -127,7 +128,7 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 	if ("invalid" in launch) return { ...launch, notes: [] };
 	const model = field(fields, "model");
 	const fallback = toolList(fields.fallback);
-	const pattern = patternProblem(path, model, fallback);
+	const pattern = patternProblem(path, model, fallback) ?? commaProblem(path, fields.fallback);
 	if (pattern !== undefined) return { invalid: pattern, notes: [] };
 	// A field that cannot be used is dropped with a note; it never costs the agent.
 	const notes: string[] = [];
@@ -172,6 +173,14 @@ function patternProblem(
 	if (entry !== undefined)
 		return `${path} has fallback ${JSON.stringify(entry)}: * patterns are not accepted; name one model per entry, as provider/id or an alias`;
 	return undefined;
+}
+
+/** Why a `fallback` list entry holding a comma makes the file invalid: each entry names one model. */
+function commaProblem(path: string, fallback: unknown): string | undefined {
+	const entry = commaEntry(fallback);
+	return entry === undefined
+		? undefined
+		: `${path} has fallback entry ${JSON.stringify(entry)}, which holds a comma; name one model per entry, or write fallback as one comma-separated line`;
 }
 
 /** The `thinking` field; an unknown level is dropped with a note, so the parent's level applies. */
@@ -229,8 +238,9 @@ function lockedFields(
 
 /**
  * The `tools` field: tool names (`*` patterns allowed) are the whole list;
- * only `-name` entries take those off the parent's tools. A `+name` entry, or
- * names and `-name` entries mixed, make the file invalid.
+ * only `-name` entries take those off the parent's tools. A `+name` entry,
+ * names and `-name` entries mixed, or a YAML list entry holding a comma make
+ * the file invalid.
  */
 function toolsField(
 	path: string,
@@ -243,6 +253,11 @@ function toolsField(
 			invalid: `${path} has tools ${JSON.stringify(frontmatter.tools)}, not a comma-separated list of tool names`,
 		};
 	if (tools === undefined) return { toolsExcept: [] };
+	const comma = commaEntry(frontmatter.tools);
+	if (comma !== undefined)
+		return {
+			invalid: `${path} has tools entry ${JSON.stringify(comma)}, which holds a comma; give one tool per entry, or write tools as one comma-separated line`,
+		};
 	const plus = tools.find((name) => name.startsWith("+"));
 	if (plus !== undefined)
 		return {
@@ -290,6 +305,16 @@ function toolList(value: unknown): string[] | undefined | null {
 	const names = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : null;
 	if (names === null || !names.every((name) => typeof name === "string")) return null;
 	return names.map((name) => name.trim()).filter((name) => name !== "");
+}
+
+/**
+ * The first entry of a YAML list `value` that holds a comma, such as
+ * `["read,-bash"]`: one entry must name one thing. Undefined for a list
+ * without one, and for a comma-separated line, which `toolList` splits.
+ */
+function commaEntry(value: unknown): string | undefined {
+	if (!Array.isArray(value)) return undefined;
+	return value.find((entry): entry is string => typeof entry === "string" && entry.includes(","));
 }
 
 /** A true/false frontmatter value; undefined when absent, null when it is neither. */
@@ -404,8 +429,8 @@ export function withoutLocked<T extends { model?: string; thinking?: string }>(
  * names or `*` patterns added to every delegate's tools, whether they come
  * from the agent's `tools` or the parent. Empty when unset or when the file
  * cannot be read or parsed (the worktree settings report that when a launch
- * needs them); a value that is not a list of names refuses the launch with
- * the file named.
+ * needs them); a value that is not a list of names, or an entry holding a
+ * comma or starting with `+` or `-`, refuses the launch with the file named.
  */
 export function delegateTools(agentDir: string): string[] {
 	const file = join(agentDir, "squire", "settings.json");
@@ -424,6 +449,11 @@ export function delegateTools(agentDir: string): string[] {
 		);
 	}
 	const names = value.map((entry: string) => entry.trim());
+	const comma = names.find((name) => name.includes(","));
+	if (comma !== undefined)
+		throw new Error(
+			`invalid delegate tools settings ${file}: delegateTools entry ${JSON.stringify(comma)} holds a comma; give one tool name or pattern per entry`,
+		);
 	const modifier = names.find((name) => name.startsWith("+") || name.startsWith("-"));
 	if (modifier !== undefined)
 		throw new Error(

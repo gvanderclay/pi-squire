@@ -73,8 +73,13 @@ follows [Semantic Versioning](https://semver.org/).
   pattern), then the `delegateTools` setting. A `+name` entry, or tool names
   and `-name` entries mixed, make the agent file invalid, so the agent is
   disabled. pi-squire always passes the child a plain `--tools` list.
-- A `delegateTools` entry that starts with `+` or `-` refuses every launch
-  with an error naming the settings file.
+- A `delegateTools` entry that starts with `+` or `-`, or holds a comma,
+  refuses every launch and resume with an error naming the settings file,
+  before the task is sent or a window opens.
+- A `tools` or `fallback` YAML list entry holding a comma, such as
+  `tools: ["read,-bash"]`, makes the agent file invalid, so the agent is
+  disabled with a warning naming the file and the reason. A comma-separated
+  line (`tools: read, bash`) and a list of single names still work.
 - A resume without `thinking`, for an agent that does not lock it, now runs
   on the level the delegate last ran on, read from its session (the last
   thinking-level change on the active branch, such as a change the user made

@@ -434,7 +434,7 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
 | `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other, and a tool of the agent's own `extensions` reaches the delegate only when `tools` or `delegateTools` names it. |
 | `extensions` | Extension paths only this agent's delegate loads (see below). |
-| `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern makes the file invalid. |
+| `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern, or a YAML list entry holding a comma, makes the file invalid. A comma-separated line (`fallback: a, b`) is two entries. |
 | `auto-exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
@@ -446,7 +446,9 @@ left for whatever else reads the file. `exclude-tools` is no longer read; a
 file that still has it gets a warning (use `tools` instead).
 
 `tools` lists the delegate's tools as a comma-separated or YAML list
-(`tools: read, grep`). pi-squire works out the delegate's whole selection
+(`tools: read, grep` or `tools: [read, grep]`). Each entry of a YAML list
+names one tool: an entry holding a comma, such as `tools: ["read,-bash"]`,
+makes the file invalid. pi-squire works out the delegate's whole selection
 itself and always passes the child a plain list, `--tools read,grep`, which Pi
 treats as the whole selection, extension tools included; entries may be `*`
 patterns. It never passes Pi `+name` or `-name` entries. MCP tools follow the
@@ -503,8 +505,8 @@ Each entry, a tool name or `*` pattern, is added to every delegate's tools,
 whether they come from its agent's `tools` or from the parent (after any
 `-name` entries are taken off), and passed to `--tools` unchanged. The setting
 is empty by default, is read at each launch and resume, and a value that is
-not a list of names, or an entry that starts with `+` or `-`, refuses every
-launch with an error naming the file, before the task is sent or a window
+not a list of names, or an entry that holds a comma or starts with `+` or
+`-`, refuses every launch with an error naming the file, before the task is sent or a window
 opens; it does not disable agents one by one.
 
 `extensions` lists extension paths only this agent's delegate loads, as a
@@ -539,8 +541,9 @@ An agent file that cannot be used is invalid, and its agent is disabled:
 frontmatter that is not readable YAML or not a set of fields, an `enabled` or
 `auto-exit` that is not `true` or `false`, a `tools` or `extensions` that is
 not a list, a `tools` list with a `+name` entry or with tool names and `-name`
-entries mixed, a `model` or `fallback` entry with a `*` pattern, or an
-extension path that does not exist. A disabled agent is left
+entries mixed, a `tools` or `fallback` YAML list entry holding a comma, a
+`model` or `fallback` entry with a `*` pattern, or an extension path that
+does not exist. A disabled agent is left
 out of the roster and of the `delegate` tool's description, so the model never
 picks it, and a warning names the file and the reason when the session starts
 (and before a run, when a file turns invalid while the session runs). A call

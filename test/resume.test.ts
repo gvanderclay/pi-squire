@@ -326,6 +326,19 @@ test("refused: an agent whose file turned invalid, naming the file and reason", 
 	assert.equal(d.s.tmux.opened.length, 1);
 });
 
+test("refused: a delegateTools entry holding a comma, before the window opens or the task is sent", async () => {
+	const d = await exitedDelegate();
+	const sent = d.s.sendCalls.length;
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ delegateTools: ["read,bash"] }));
+	const error = await resumeError(d.s, { id: d.id, task: "x" });
+	assert.ok(error.includes(join(agentDir, "squire", "settings.json")), error);
+	assert.match(error, /delegateTools entry "read,bash" holds a comma/);
+	assert.equal(d.s.tmux.opened.length, 1);
+	assert.equal(d.s.sendCalls.length, sent);
+	assert.equal(starts(d.s).length, 1);
+});
+
 test("refused: a concurrent resume of the same delegation, and the guard is released afterwards", async () => {
 	const d = await exitedDelegate();
 	const first = resume(d.s, { id: d.id, task: "one" });

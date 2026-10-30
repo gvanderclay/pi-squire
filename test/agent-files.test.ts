@@ -422,6 +422,69 @@ test("an agent extension's tools reach the delegate only when tools or delegateT
 	assert.ok(!existsSync(marker), "the parent loaded the agent's extension");
 });
 
+test("a tools or fallback list entry holding a comma makes the file invalid; a comma-separated line still splits", async () => {
+	writeAgent("commatools", agentFile({ ...SCOUT, tools: '["read,-bash"]' }));
+	writeAgent("commaone", agentFile({ ...SCOUT, tools: '[read, "grep,bash"]' }));
+	writeAgent("commafallback", agentFile({ ...SCOUT, fallback: '["beta/other-model,alpha/deep-model"]' }));
+	writeAgent("line", agentFile({ ...SCOUT, tools: "read, bash", fallback: "beta/other-model, alpha/deep-model" }));
+	writeAgent("yaml", agentFile({ ...SCOUT, tools: "[read, bash]", fallback: "[beta/other-model, alpha/deep-model]" }));
+	const { agents, disabled } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => [agent.name, agent.tools, agent.fallback]),
+		[
+			["line", ["read", "bash"], ["beta/other-model", "alpha/deep-model"]],
+			["yaml", ["read", "bash"], ["beta/other-model", "alpha/deep-model"]],
+		],
+	);
+	const reasons = Object.fromEntries(disabled.map((item) => [item.name, item.reason]));
+	assert.deepEqual(Object.keys(reasons).sort(), ["commafallback", "commaone", "commatools"]);
+	assert.match(
+		reasons.commatools,
+		/commatools\.md has tools entry "read,-bash", which holds a comma; give one tool per entry/,
+	);
+	assert.match(reasons.commaone, /commaone\.md has tools entry "grep,bash", which holds a comma/);
+	assert.match(
+		reasons.commafallback,
+		/commafallback\.md has fallback entry "beta\/other-model,alpha\/deep-model", which holds a comma; name one model per entry/,
+	);
+	const s = session();
+	await s.start();
+	assert.equal(s.warnings.length, 3, s.warnings.join("\n"));
+	assert.ok(s.warnings.every((warning) => warning.includes(rosterDir) && warning.includes("holds a comma")));
+	for (const name of ["commatools", "commafallback"]) {
+		await s.delegate(`${name} go`);
+		await assert.rejects(
+			s.toolCall("delegate", { agent: name, task: "go" }),
+			new RegExp(`agent "${name}" is disabled because its file is invalid: .*${name}\\.md has .*holds a comma`),
+		);
+	}
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
+	assert.equal(s.errors.length, 2);
+	for (const error of s.errors) assert.match(error, /is disabled because its file is invalid: .*holds a comma/);
+});
+
+test("a delegateTools entry holding a comma refuses every launch, before any mail or window, naming the file", async () => {
+	setSettings({ delegateTools: ["reach_parent", "read,-bash"] });
+	writeAgent("listed", agentFile({ ...SCOUT, tools: "read" }));
+	writeAgent("none", agentFile(SCOUT));
+	const s = session();
+	await s.start();
+	await s.delegate("listed go");
+	await s.delegate("none go");
+	await assert.rejects(s.toolCall("delegate", { agent: "none", task: "go" }), /holds a comma/);
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
+	assert.equal(s.errors.length, 2);
+	for (const error of s.errors) {
+		assert.ok(error.includes(join(agentDir, "squire", "settings.json")), error);
+		assert.ok(
+			error.includes(`delegateTools entry "read,-bash" holds a comma; give one tool name or pattern per entry`),
+			error,
+		);
+	}
+});
+
 test("an absent tools field and an empty one read differently", async () => {
 	writeAgent("absent", agentFile(SCOUT));
 	writeAgent("empty", agentFile({ ...SCOUT, tools: "" }));

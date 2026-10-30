@@ -69,7 +69,11 @@ Any other key is ignored silently.
   `tools` field, less those. A `-name` entry may be a `*` pattern, matched as
   Pi matches tool patterns.
 - A `+name` entry, or tool names and `-name` entries mixed, make the file
-  invalid and disable the agent. pi-squire resolves the selection itself and
+  invalid and disable the agent.
+- A YAML list entry holding a comma (`tools: ["read,-bash"]`) makes the file
+  invalid and disables the agent: one entry names one tool. A comma-separated
+  line (`tools: read, bash`) is split on its commas and stays valid. The same
+  holds for `fallback`: a list entry holding a comma makes the file invalid. pi-squire resolves the selection itself and
   always passes the child a plain list; it never passes `+name` or `-name`.
 - The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
   `delegation_resume`) are never available in a delegate, as today.
@@ -111,8 +115,9 @@ Any other key is ignored silently.
 ```
 
 - Tool names or `*` patterns, passed to the child's `--tools` unchanged. An
-  entry that starts with `+` or `-` makes the setting invalid, which refuses
-  every launch.
+  entry that starts with `+` or `-`, or holds a comma, makes the setting
+  invalid, which refuses every launch and resume before a window opens or the
+  task is sent.
 - Added to every delegate: to its agent's `tools`, to an empty `tools`, and
   to the parent's tools for an agent with no `tools` field.
 - The delegation tools are removed even when a pattern matches them.

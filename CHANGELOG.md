@@ -75,6 +75,12 @@ follows [Semantic Versioning](https://semver.org/).
   disabled. pi-squire always passes the child a plain `--tools` list.
 - A `delegateTools` entry that starts with `+` or `-` refuses every launch
   with an error naming the settings file.
+- A resume without `thinking`, for an agent that does not lock it, now runs
+  on the level the delegate last ran on, read from its session (the last
+  thinking-level change on the active branch, such as a change the user made
+  in the delegate's window or a clamp to a new model), instead of the level
+  recorded when the delegation started; the recorded level remains the
+  fallback when the session has none.
 - A delegate whose agent has no `tools` field, or only `-name` entries, also
   gets the tools its agent's own `extensions` register. pi-squire reads their
   names by loading each extension with Pi's extension loader at launch, apart

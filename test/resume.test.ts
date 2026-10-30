@@ -3,7 +3,7 @@
 // mailbox are the harness's fakes.
 
 import assert from "node:assert/strict";
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
@@ -617,6 +617,79 @@ test("unlocked, a resume keeps the model and thinking the delegate last ran on, 
 	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
 	assert.equal(argOf(d.s, 1, "--thinking"), "low");
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+/**
+ * Append session entries to a delegate's session file: each `[id, parentId,
+ * level]` is a thinking-level change, each `[id, parentId]` an assistant
+ * message. The last entry is the session's leaf, as Pi reads it.
+ */
+function appendEntries(file: string, entries: readonly (readonly [string, string | null, string?])[]): void {
+	const lines = entries.map(([id, parentId, level]) =>
+		JSON.stringify(
+			level === undefined
+				? { type: "message", id, parentId, message: { role: "assistant", content: [] } }
+				: { type: "thinking_level_change", id, parentId, timestamp: "", thinkingLevel: level },
+		),
+	);
+	writeFileSync(file, `${readFileSync(file, "utf8")}${lines.join("\n")}\n`);
+}
+
+test("unlocked, a resume with no thinking runs on the level the delegate's session last changed to", async () => {
+	const d = await exitedDelegate();
+	assert.equal(argOf(d.s, 0, "--thinking"), "low");
+	appendEntries(d.file, [
+		["a", null, "low"],
+		["b", "a"],
+		["c", "b", "high"],
+		["d", "c"],
+	]);
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--thinking"), "high");
+	assert.equal((result.structuredContent as { thinking: string }).thinking, "high");
+	assert.equal(starts(d.s)[1].thinking, "high");
+});
+
+test("the session's level is read on the active branch: a change on an abandoned branch does not count", async () => {
+	const d = await exitedDelegate();
+	// c (high) hangs off b, but the leaf d branched from b too, so the branch is a, b, d.
+	appendEntries(d.file, [
+		["a", null, "minimal"],
+		["b", "a"],
+		["c", "b", "high"],
+		["d", "b"],
+	]);
+	await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--thinking"), "minimal");
+});
+
+test("a session without a thinking change resumes on the level the delegation recorded", async () => {
+	const d = await exitedDelegate();
+	appendEntries(d.file, [
+		["a", null],
+		["b", "a"],
+	]);
+	await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--thinking"), "low");
+});
+
+test("locked, a resume runs on the file's thinking whatever the session changed to; a passed value unlocked wins", async () => {
+	const locked = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, thinking: "medium", locked: "[thinking]" }));
+	appendEntries(locked.file, [
+		["a", null, "low"],
+		["b", "a", "high"],
+	]);
+	await resume(locked.s, { id: locked.id, task: "again" });
+	assert.equal(argOf(locked.s, 1, "--thinking"), "medium");
+
+	const passed = await exitedDelegate();
+	appendEntries(passed.file, [
+		["a", null, "low"],
+		["b", "a", "high"],
+	]);
+	await resume(passed.s, { id: passed.id, task: "again", thinking: "minimal" });
+	assert.equal(argOf(passed.s, 1, "--thinking"), "minimal");
 });
 
 test("locked after the launch, a resume with nothing passed runs on the file's current model and thinking", async () => {

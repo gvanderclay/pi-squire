@@ -8,8 +8,8 @@ import { isAbsolute } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { type Agent, disabledProblem, withoutLocked } from "./agents.ts";
-import { sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
+import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
+import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-sessions.ts";
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { requireTmuxVersion, type TmuxWindow } from "./tmux.ts";
@@ -84,8 +84,10 @@ export function sessionFor(record: StartedRecorded, ctx: ExtensionContext): Sess
  * locks takes the agent file's current value, or the parent's current one when
  * the file sets none, even when the delegate last ran on another (a fallback
  * after a usage limit, or a value from before the file changed). A field it
- * does not lock keeps what the delegate last ran on. The models are in order,
- * the agent's fallbacks after the first.
+ * does not lock keeps what the delegate last ran on: the model of its last
+ * answer, and the thinking level its session last changed to, or the
+ * recorded ones when the session does not say. The models are in order, the
+ * agent's fallbacks after the first.
  */
 export function resumeDefaults(
 	record: StartedRecorded,
@@ -96,8 +98,16 @@ export function resumeDefaults(
 	const first = agent.locked.includes("model")
 		? (agent.model ?? parent.model)
 		: (finishedModel(sessionPath) ?? record.result?.finishedModel ?? record.model);
-	const thinking = agent.locked.includes("thinking") ? (agent.thinking ?? parent.thinking) : record.thinking;
+	const thinking = agent.locked.includes("thinking")
+		? (agent.thinking ?? parent.thinking)
+		: lastThinking(record, sessionPath);
 	return { models: [...new Set([...(first === undefined ? [] : [first]), ...agent.fallback])], thinking };
+}
+
+/** The thinking level the delegate last ran on: its session's last change, else the level recorded at its start. */
+function lastThinking(record: StartedRecorded, sessionPath: string): string {
+	const level = sessionThinking(sessionPath);
+	return level !== undefined && isThinking(level) ? level : record.thinking;
 }
 
 /** Steps 5 and 6: the session file and the agent, and no resume of the delegation already under way. */

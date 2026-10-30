@@ -356,7 +356,7 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 			),
 			thinking: Type.Optional(
 				Type.String({
-					description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the delegation's. Not used when the agent locks thinking: the agent's current level applies.`,
+					description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the level the delegate last ran on, from its session. Not used when the agent locks thinking: the agent's current level applies.`,
 				}),
 			),
 			auto_exit: Type.Optional(

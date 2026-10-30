@@ -124,7 +124,11 @@ Any other key is ignored silently.
   fallbacks, and no `provider/id` check for an alias. Model and thinking are
   decided separately.
 - Resumes: an unlocked field keeps what the delegate last ran on, unless the
-  call passes a value. A locked field takes the agent file's current value
+  call passes a value. For thinking that is the last `thinking_level_change`
+  on the active branch of the delegate's session file (the leaf is Pi's last
+  entry, walked back through `parentId`; Pi records one at start, one per
+  change and one per clamp), read by `sessionThinking`, and the record's
+  `thinking` only when the session has none. A locked field takes the agent file's current value
   when the resume starts, even if the file changed since the launch, and a
   locked model starts from the file's `model` again, then its fallbacks, even
   when the delegate had moved to a fallback mid-run. A passed value for a

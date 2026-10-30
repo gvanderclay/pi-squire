@@ -993,7 +993,8 @@ and it resumes as the command does.
   delegate instead) and tmux can be asked; no window with its id and name still
   runs a program (an exited one is killed first; a window that merely shares the
   name is ignored); its session file is found and the working directory in the
-  file's header still exists; its agent is still in the roster; and no other
+  file's header still exists; its agent is still in the roster and not disabled
+  (a disabled agent's refusal names its file and the reason); and no other
   resume of it is under way. A delegate whose window was killed mid-turn can be
   resumed.
 - A removed working directory, a removed managed worktree included, makes a
@@ -1004,8 +1005,12 @@ and it resumes as the command does.
 - Without `model` it continues on the model the delegate finished on, moving to
   its agent's fallbacks when that one is unavailable or marked (see
   [Usage limits](#usage-limits)). An explicit `model` is used alone and refused
-  rather than substituted. `thinking` and `auto_exit` default to the
-  delegation's own. A field the agent locks is the exception: it runs on the
+  rather than substituted. Without `thinking` it continues on the level the
+  delegate last ran on: the last thinking-level change on its session's
+  active branch (Pi records one at start, one per change, and one when a
+  model change clamps the level), or the delegation's recorded level when
+  the session has none. `auto_exit` defaults to the delegation's own. A
+  field the agent locks is the exception: it runs on the
   agent file's current `model` (then its fallbacks, even when the delegate had
   moved to a fallback) or `thinking`, a value passed for it is not used, with
   a notice, and passing the file's own value is the same as passing nothing. The agent's prompt, tools and extensions are those of the

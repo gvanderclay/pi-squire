@@ -124,8 +124,18 @@ Any other key is ignored silently.
   the file's current value.
 - A `model` or `fallback` entry that is an exact `provider/id` in the registry
   keeps the credential and usage-limit checks; anything else goes to the child
-  unchanged. The delegate's own mid-run switch still moves only to exact
-  `provider/id` entries.
+  unchanged.
+- The delegate's own mid-run switch resolves each `fallback` entry with Pi's
+  exported `resolveModelScopeWithDiagnostics`, the resolver behind
+  `--models`, over the registry's models with credentials: exact ids, bare
+  ids and aliases (`sonnet`) and `*` patterns (`alpha/*`), in listed order, a
+  pattern's matches in Pi's order. `resolveCliModel`, behind `--model`, was
+  not used: it has no `*` patterns and turns `alpha/*` into a custom model id
+  `*`. The registry is handed to the resolver as a runtime with only
+  `getAvailable`, the one method it reads.
+- Open: for the same reason a `*` pattern as `model`, or as the fallback a
+  launch picks, reaches the child's `--model` as a custom id rather than a
+  match. Aliases and exact ids are unaffected.
 - `exclude-tools` in a file gets a warning, so a moved file does not silently
   gain tools.
 - The child always gets an explicit tool selection: no flag would give it

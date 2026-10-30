@@ -46,12 +46,18 @@ follows [Semantic Versioning](https://semver.org/).
   field runs on the agent's value, and the result says which agent locked
   which field; passing the agent's own value is the same as passing nothing,
   so its fallbacks still apply; a resume runs a locked field on the file's
-  current value, not on what the delegate last ran on) and `prompt_mode`. Keys pi-squire does not use, such as
-  `max_turns` or another extension's policy, are ignored without a warning.
+  current value, not on what the delegate last ran on) and `prompt_mode`.
+  Keys pi-squire does not use, such as `max_turns` or another extension's
+  policy, are ignored without a warning.
 - The `delegateTools` setting in `<agent dir>/squire/settings.json`: tool
   names or `*` patterns added to every delegate's tools, from its agent's
   `tools` or the parent's, for the tools a `message:*` provider gives a
   delegate to reach its parent. Empty by default.
+- A running delegate that hits a usage limit now resolves `fallback` entries
+  that are aliases or `*` patterns (such as `sonnet` or `alpha/*`) with Pi's
+  model-pattern resolver, in the listed order, instead of skipping every entry
+  that is not an exact `provider/id`. A pattern's matches are tried one by one
+  before the next entry, and never the model that just failed.
 
 ### Removed
 

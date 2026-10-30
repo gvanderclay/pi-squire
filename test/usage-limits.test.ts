@@ -538,6 +538,77 @@ test("an unavailable endpoint mid-run moves to the fallback without marking the 
 	assert.equal(delegate.shutdowns(), 0);
 });
 
+// Fallback entries that are not an exact provider/id resolve as Pi resolves model patterns.
+
+const SONNET = [{ provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" }];
+
+/** A delegate whose launch passed `fallbackEnv`, with a Claude model in the registry too. */
+function patternDelegate(fallbackEnv: string) {
+	const delegate = session({
+		parentEnv: "parent-x",
+		parent: "delegation-1",
+		autoExitEnv: "1",
+		fallbackEnv,
+		extraModels: [...EXTRA, ...SONNET],
+	});
+	delete process.env.PI_DELEGATE_PARENT;
+	delete process.env.PI_DELEGATE_FALLBACK;
+	return delegate;
+}
+
+const switchedTo = (delegate: ReturnType<typeof session>, index = 0) =>
+	String(delegate.continuations[index]?.entries?.[0].content);
+
+test("a bare alias in fallback resolves to the model Pi would pick for it after a usage limit", async (t) => {
+	clock(t);
+	const delegate = patternDelegate("sonnet");
+	await delegate.start();
+	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
+	assert.deepEqual(delegate.modelSets, ["anthropic/claude-sonnet-4"]);
+	assert.match(switchedTo(delegate), /so this session switched to anthropic\/claude-sonnet-4\./);
+	assert.equal(delegate.shutdowns(), 0);
+});
+
+test("a provider wildcard in fallback moves through its models in order, each once", async (t) => {
+	clock(t);
+	const delegate = patternDelegate("alpha/*");
+	await delegate.start();
+	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
+	assert.deepEqual(delegate.modelSets, ["alpha/fast-model"]);
+	assert.match(
+		switchedTo(delegate),
+		/opencode-go\/paid hit a usage limit, so this session switched to alpha\/fast-model\./,
+	);
+	// An unavailable endpoint marks nothing, so the wildcard's next model is still open.
+	const unavailable = "429: Endpoint is unavailable";
+	await delegate.run("error", { errorMessage: unavailable, provider: "alpha", model: "fast-model" });
+	assert.deepEqual(delegate.modelSets, ["alpha/fast-model", "alpha/deep-model"]);
+	assert.match(
+		switchedTo(delegate, 1),
+		/alpha\/fast-model was unavailable .*, so this session switched to alpha\/deep-model\./,
+	);
+	await delegate.run("error", { errorMessage: unavailable, provider: "alpha", model: "deep-model" });
+	assert.equal(delegate.modelSets.length, 2);
+	assert.equal(delegate.shutdowns(), 1);
+});
+
+test("fallback entries keep their order whatever form they take, and a marked match is passed over", async (t) => {
+	clock(t);
+	const now = Date.now();
+	const mark = { reason: "limit", recordedAt: now, clearsAt: now + 3_600_000, source: "reactive", hits: 1 };
+	writeFileSync(FILE, JSON.stringify([{ ...mark, scope: "alpha/fast-model", delegations: [] }]));
+	const delegate = patternDelegate("nowhere/*,alpha/*,sonnet");
+	await delegate.start();
+	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
+	assert.deepEqual(delegate.modelSets, ["alpha/deep-model"]);
+	await delegate.run("error", {
+		errorMessage: '429: {"type":"rate_limit_error"}',
+		provider: "alpha",
+		model: "deep-model",
+	});
+	assert.deepEqual(delegate.modelSets, ["alpha/deep-model", "anthropic/claude-sonnet-4"]);
+});
+
 test("a failure that is not a usage limit, or a stopped run, never moves to a fallback", async (t) => {
 	clock(t);
 	const failed = fallbackDelegate("beta/other-model");

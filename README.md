@@ -497,8 +497,11 @@ A `model` or `fallback` entry that is an exact `provider/id` in Pi's registry
 is checked as before: a model without credentials or with an active
 usage-limit mark is skipped for the next candidate. Anything else, such as a
 pattern, goes to the child unchanged; if Pi cannot resolve it, the child's Pi
-reports the error and its window closes without a result. The delegate itself
-moves only to fallback entries that are an exact `provider/id`.
+reports the error and its window closes without a result. When a running
+delegate moves to a fallback after a usage limit, it resolves each entry the
+way Pi resolves a `--models` pattern: an exact `provider/id`, a bare id or
+alias such as `sonnet`, or a `*` pattern such as `alpha/*`, over the models
+with credentials, in the order the entries are listed.
 
 The body is followed by one fixed final-message line and a paragraph naming the
 parent session's address. The delegate's task arrives as a message from that
@@ -707,8 +710,10 @@ The launch also passes the candidates after the chosen one to the delegate as
 `PI_DELEGATE_FALLBACK` (none for an explicit model). When a delegate's run
 ends on a usage limit, it switches its session to the first of them that has
 credentials and is not marked, adds a message saying so, and continues the
-task there, so work done so far is kept. Each fallback is tried once; when
-none is left, the run fails as before. A `done` result from such a delegate
+task there, so work done so far is kept. An alias or `*` pattern resolves as
+it would in Pi's `--models`, and a pattern's matches are tried in Pi's order
+before the next entry. Each model is tried once, never the one that just
+failed; when none is left, the run fails as before. A `done` result from such a delegate
 carries the `Usage limit:` line too, saying it finished on a fallback.
 
 Before a launch, pi-squire also reads the OpenCode Go quota for a paid

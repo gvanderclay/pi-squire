@@ -7,7 +7,8 @@
 // exits too (the parent gets the error and the session file stays); only a
 // run the user stopped never exits. A run that ends on a usage limit first
 // moves to the agent's next fallback, from `PI_DELEGATE_FALLBACK`, and
-// continues there; it exits only when no fallback is left. The user
+// continues there; it exits only when no fallback is left. An entry that is
+// an alias or a `*` pattern resolves through Pi's own model-pattern resolver. The user
 // taking over — typing here, or stopping a run — turns it off for the rest of
 // the session, with a notice; `/auto-exit` turns it back on.
 //
@@ -17,7 +18,14 @@
 // for custom-message runs (earendil-works/pi#5581); this takeover remains the
 // package's pinned startup delivery path. The provider still arms the
 // automatic answer for a request a listener took over.
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	type ModelRegistry,
+	type ModelRuntime,
+	resolveModelScopeWithDiagnostics,
+} from "@earendil-works/pi-coding-agent";
 
 import { activeMark, classify, type Response, recordLimit } from "./limits.ts";
 import { STATUS_KEY } from "./results.ts";
@@ -54,14 +62,48 @@ function recordUsageLimit(last: Message, ctx: ExtensionContext, response?: Respo
 	}
 }
 
-/** Switch to the first of `fallback` that is usable and not marked, taking each off the list; the one switched to, if any. */
-async function switchModel(pi: ExtensionAPI, ctx: ExtensionContext, fallback: string[]): Promise<string | undefined> {
+/**
+ * The models one fallback entry names, in the order Pi lists them: an exact
+ * `provider/id`, a bare id or alias, or a `*` pattern such as `alpha/*`. Pi's
+ * `--models` resolver does the matching (the `--model` one has no `*`
+ * patterns), over the models with credentials. Empty when nothing matches.
+ */
+async function resolveEntry(registry: ModelRegistry, entry: string): Promise<Model<Api>[]> {
+	// The resolver reads only `getAvailable` from the runtime; the registry is the extension's view of it.
+	const runtime = { getAvailable: async () => registry.getAvailable() } as unknown as ModelRuntime;
+	try {
+		const { scopedModels } = await resolveModelScopeWithDiagnostics([entry], runtime);
+		return scopedModels.map((scoped) => scoped.model);
+	} catch {
+		return []; // an entry Pi cannot read is passed over like one that matches nothing
+	}
+}
+
+/**
+ * Switch to the first model `fallback` names that is usable, not marked and
+ * not tried yet, taking each entry off the list in order. A pattern's other
+ * matches go back to the front, so the next limit moves on to them. Returns
+ * the `provider/id` switched to, if any.
+ */
+async function switchModel(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	fallback: string[],
+	tried: Set<string>,
+): Promise<string | undefined> {
 	for (let next = fallback.shift(); next !== undefined; next = fallback.shift()) {
-		const slash = next.indexOf("/");
-		const model = ctx.modelRegistry.find(next.slice(0, slash), next.slice(slash + 1));
-		if (model === undefined || !ctx.modelRegistry.hasConfiguredAuth(model)) continue;
-		if (activeMark(ctx.modelRegistry, model.provider, model.id) !== undefined) continue;
-		if (await pi.setModel(model)) return next;
+		const models = (await resolveEntry(ctx.modelRegistry, next)).filter(
+			(model) => !tried.has(`${model.provider}/${model.id}`),
+		);
+		for (const [index, model] of models.entries()) {
+			const name = `${model.provider}/${model.id}`;
+			tried.add(name);
+			if (!ctx.modelRegistry.hasConfiguredAuth(model)) continue;
+			if (activeMark(ctx.modelRegistry, model.provider, model.id) !== undefined) continue;
+			if (!(await pi.setModel(model))) continue;
+			fallback.unshift(...models.slice(index + 1).map((rest) => `${rest.provider}/${rest.id}`));
+			return name;
+		}
 	}
 	return undefined;
 }
@@ -87,19 +129,27 @@ function registerTakeover(pi: ExtensionAPI, parent: string): void {
 /**
  * A usage limit or an unavailable endpoint moves the run to the next fallback
  * that is usable and not marked, and continues it in this session; each
- * fallback is tried once. Returns the setter for what ended the last run, as
+ * model is tried once, and never the one that just failed. Returns the setter
+ * for what ended the last run: the failed model as `provider/id`, and why as
  * `<provider/model> <what happened>`.
  */
-function registerFallback(pi: ExtensionAPI): (failure: string | undefined) => void {
-	/** The models still to move to on a usage limit, in order. */
-	const fallback = (process.env[FALLBACK_ENV] ?? "").split(",").filter((model) => model.includes("/"));
-	let failure: string | undefined;
+function registerFallback(pi: ExtensionAPI): (failure: Failure | undefined) => void {
+	/** The entries still to move to on a usage limit, in order: models, aliases or patterns. */
+	const fallback = (process.env[FALLBACK_ENV] ?? "")
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter((entry) => entry !== "");
+	/** The models already switched to or failed on, as `provider/id`. */
+	const tried = new Set<string>();
+	let failure: Failure | undefined;
 	pi.on("agent_before_settle", async (_event, ctx) => {
 		const from = failure;
 		failure = undefined;
-		const next = from === undefined ? undefined : await switchModel(pi, ctx, fallback);
+		if (from === undefined) return;
+		tried.add(from.model);
+		const next = await switchModel(pi, ctx, fallback, tried);
 		if (next === undefined) return;
-		const content = `[delegate] ${from}, so this session switched to ${next}. Carry on with the task from where it stopped.`;
+		const content = `[delegate] ${from.reason}, so this session switched to ${next}. Carry on with the task from where it stopped.`;
 		return { continue: true, entries: [{ type: "custom_message", customType: "delegate", content, display: true }] };
 	});
 	return (value) => {
@@ -107,14 +157,17 @@ function registerFallback(pi: ExtensionAPI): (failure: string | undefined) => vo
 	};
 }
 
-/** Why a failed run should move to a fallback, as `<provider/model> <what happened>`; undefined when it should not. */
-function fallbackReason(last: Message | undefined): string | undefined {
+/** A failed run that should move to a fallback: the model it failed on, and why. */
+type Failure = { model: string; reason: string };
+
+/** Why a failed run should move to a fallback, with `reason` as `<provider/model> <what happened>`; undefined when it should not. */
+function fallbackReason(last: Message | undefined): Failure | undefined {
 	const error = last?.errorMessage;
 	if (typeof error !== "string") return undefined;
 	const model = `${String(last?.provider)}/${String(last?.model)}`;
-	if (classify(error) !== undefined) return `${model} hit a usage limit`;
+	if (classify(error) !== undefined) return { model, reason: `${model} hit a usage limit` };
 	// Pi has already retried an unavailable endpoint; it marks nothing, but this run moves on.
-	if (/unavailable/i.test(error)) return `${model} was unavailable (${error})`;
+	if (/unavailable/i.test(error)) return { model, reason: `${model} was unavailable (${error})` };
 	return undefined;
 }
 

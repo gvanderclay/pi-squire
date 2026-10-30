@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { after, beforeEach, test } from "node:test";
+import { after, beforeEach, type TestContext, test } from "node:test";
 
 import { readRoster } from "../src/agents.ts";
 import {
@@ -455,6 +455,60 @@ test("locked: true locks only what the file sets; a list locks what it names; th
 	assert.ok(
 		s.notes.some((note) => note.includes("Agent listed locks thinking, so the thinking high given was not used.")),
 	);
+});
+
+/** Mark `scope` usage-limited for an hour in the marks file every session reads, until the test ends. */
+function markLimited(t: TestContext, scope: string): void {
+	const now = Date.now();
+	const mark = { scope, reason: "limit", recordedAt: now, clearsAt: now + 3_600_000, source: "reactive", hits: 1 };
+	const file = join(agentDir, "pi-squire-limits.json");
+	writeFileSync(file, JSON.stringify([{ ...mark, delegations: [] }]));
+	t.after(() => rmSync(file, { force: true }));
+}
+
+test("a locked alias passed back as given is no override: no notice, and no provider/id refusal", async () => {
+	writeAgent("alias", agentFile({ ...SCOUT, model: "fast-model", locked: "true" }));
+	const s = session();
+	await s.start();
+	const result = await s.toolCall("delegate", { agent: "alias", task: "go", model: "fast-model", thinking: "low" });
+	assert.deepEqual(pair(s.tmux.opened[0].argv, "--model"), ["--model", "fast-model"]);
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+test("a locked model passed back as given keeps its fallbacks, as if no model was passed", async (t) => {
+	writeAgent("strict", agentFile({ ...SCOUT, fallback: "beta/other-model", locked: "[model]" }));
+	const s = session();
+	await s.start();
+	await s.toolCall("delegate", { agent: "strict", task: "go", model: "alpha/fast-model" });
+	assert.equal(s.tmux.opened[0].env.PI_DELEGATE_FALLBACK, "beta/other-model");
+	markLimited(t, "alpha/fast-model");
+	const result = await s.toolCall("delegate", { agent: "strict", task: "again", model: "alpha/fast-model" });
+	const details = result.structuredContent as { model: string; skipped: { model: string }[]; notices: string[] };
+	assert.equal(details.model, "beta/other-model");
+	assert.deepEqual(
+		details.skipped.map((item) => item.model),
+		["alpha/fast-model"],
+	);
+	assert.deepEqual(details.notices, []);
+	assert.match(result.content[0].text, /Used fallback beta\/other-model because alpha\/fast-model is usage-limited/);
+});
+
+test("a locked field the file leaves unset keeps the parent's value, and a call's other value is refused", async () => {
+	writeAgent("bare", agentFile({ description: "No model or thinking", locked: "[model, thinking]" }));
+	const s = session({ parentModel: "beta/other-model", parentThinking: "high" });
+	await s.start();
+	const result = await s.toolCall("delegate", {
+		agent: "bare",
+		task: "go",
+		model: "alpha/deep-model",
+		thinking: "low",
+	});
+	const { argv } = s.tmux.opened[0];
+	assert.deepEqual(pair(argv, "--model"), ["--model", "beta/other-model"]);
+	assert.deepEqual(pair(argv, "--thinking"), ["--thinking", "high"]);
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [
+		"Agent bare locks model and thinking, so the model alpha/deep-model and thinking low given were not used.",
+	]);
 });
 
 // ---------------------------------------------------------------------------

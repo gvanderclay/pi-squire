@@ -1082,6 +1082,7 @@ export default function delegate(
 		startPolling: tracking.startPolling,
 		placement: () => windowPlacement(getAgentDir()),
 		roster: rosterFor,
+		parentDefaults,
 		chooseModel: (explicit, agent, models, preferred) =>
 			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
 		thinkingProblem,

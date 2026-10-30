@@ -587,3 +587,83 @@ test("a resume passes tools as a launch does: the parent's active tools now, or 
 	const none = e.s.tmux.opened[1].argv;
 	assert.ok(none.includes("--no-tools") && !none.includes("--tools"), none.join(" "));
 });
+
+/** Mark `scope` usage-limited for an hour. */
+function markLimited(scope: string): void {
+	const now = Date.now();
+	const mark = { scope, reason: "limit", recordedAt: now, clearsAt: now + 3_600_000, source: "reactive", hits: 1 };
+	writeFileSync(LIMITS, JSON.stringify([{ ...mark, delegations: [] }]));
+}
+
+const argOf = (s: Session, index: number, flag: string): string | undefined => {
+	const { argv } = s.tmux.opened[index];
+	return argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined;
+};
+
+test("unlocked, a resume keeps the model and thinking the delegate last ran on, whatever the file says now", async () => {
+	const d = await exitedDelegate({ model: "alpha/deep-model" });
+	writeAgent("scout", agentFile({ ...AGENT, model: "beta/other-model", thinking: "high" }));
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
+	assert.equal(argOf(d.s, 1, "--thinking"), "low");
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+test("locked after the launch, a resume with nothing passed runs on the file's current model and thinking", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ ...AGENT, model: "alpha/deep-model", thinking: "high", locked: "true" }));
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
+	assert.equal(argOf(d.s, 1, "--thinking"), "high");
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+test("a locked agent that switched to a fallback mid-run resumes on its model again, then the fallbacks", async () => {
+	const d = await exitedDelegate({ model: "beta/other-model", fallback: "beta/other-model" });
+	writeAgent("scout", agentFile({ ...AGENT, fallback: "beta/other-model", locked: "[model]" }));
+	await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--model"), "alpha/fast-model");
+	assert.equal(d.s.tmux.opened[1].env.PI_DELEGATE_FALLBACK, "beta/other-model");
+});
+
+test("locked after the launch, a resume's other value is refused for the file's current value, with the notice", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ ...AGENT, model: "alpha/deep-model", thinking: "high", locked: "true" }));
+	const result = await resume(d.s, { id: d.id, task: "again", model: "beta/other-model", thinking: "low" });
+	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
+	assert.equal(argOf(d.s, 1, "--thinking"), "high");
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [
+		"Agent scout locks model and thinking, so the model beta/other-model and thinking low given were not used.",
+	]);
+});
+
+test("a resume passing a locked alias back as given is no override: no notice, no provider/id refusal", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ ...AGENT, model: "fast-model", locked: "true" }));
+	const result = await resume(d.s, { id: d.id, task: "again", model: "fast-model", thinking: "low" });
+	assert.equal(argOf(d.s, 1, "--model"), "fast-model");
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+test("a resume passing a locked exact model back as given still moves on to its fallbacks", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ ...AGENT, fallback: "beta/other-model", locked: "[model]" }));
+	markLimited("alpha/fast-model");
+	const result = await resume(d.s, { id: d.id, task: "again", model: "alpha/fast-model" });
+	const details = result.structuredContent as { model: string; skipped: { model: string }[]; notices: string[] };
+	assert.equal(details.model, "beta/other-model");
+	assert.deepEqual(
+		details.skipped.map((item) => item.model),
+		["alpha/fast-model"],
+	);
+	assert.deepEqual(details.notices, []);
+});
+
+test("a locked field the file leaves unset resumes on the parent's current model and level", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ description: "No model or thinking", locked: "[model, thinking]" }));
+	(d.s.context as { model?: { provider: string; id: string } }).model = { provider: "beta", id: "other-model" };
+	await resume(d.s, { id: d.id, task: "again", thinking: "high" });
+	assert.equal(argOf(d.s, 1, "--model"), "beta/other-model");
+	assert.equal(argOf(d.s, 1, "--thinking"), "medium");
+});

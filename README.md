@@ -438,7 +438,7 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `auto-exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
-| `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate` or a resume that passes a locked field does not get it: the agent's value is used and the result says which agent locked which field. `true` locks the fields the file sets. |
+| `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate` or a resume that passes a locked field does not get it: the agent's value is used (the parent's when the file sets none) and the result says which agent locked which field. Passing the agent's own value is the same as passing nothing: no notice, and its fallbacks still apply. A resume of a locked field runs on the file's value as it is now, not on what the delegate last ran on. `true` locks the fields the file sets. |
 
 Any other key, such as `max_turns`, `inherit_context`, `run_in_background` or
 a permission policy for another extension, is ignored without a warning and
@@ -969,7 +969,10 @@ and it resumes as the command does.
   its agent's fallbacks when that one is unavailable or marked (see
   [Usage limits](#usage-limits)). An explicit `model` is used alone and refused
   rather than substituted. `thinking` and `auto_exit` default to the
-  delegation's own. The agent's prompt, tools and extensions are those of the
+  delegation's own. A field the agent locks is the exception: it runs on the
+  agent file's current `model` (then its fallbacks, even when the delegate had
+  moved to a fallback) or `thinking`, a value passed for it is not used, with
+  a notice, and passing the file's own value is the same as passing nothing. The agent's prompt, tools and extensions are those of the
   roster now, and an agent without a `tools` field gets the parent's tools as
   they are at the resume.
 - `session:launch` is emitted as for any launch, with the same payload.

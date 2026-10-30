@@ -302,19 +302,23 @@ export function readRoster(agentDir: string, projectDir?: string): Roster {
 }
 
 /**
- * A call's `model` and `thinking` with the fields `agent` locks taken out,
- * and the notice that says so. A value equal to `defaults`, what the call
- * would run with anyway, is no override and passes quietly.
+ * A call's `model` and `thinking` with every field `agent` locks taken out,
+ * so the call runs as if it had passed none of them, and the notice for those
+ * it passed with a value other than `locked`, the value the lock keeps (the
+ * file's, or the parent's when the file sets none). A locked field passed with
+ * that value is no override: it is dropped quietly.
  */
 export function withoutLocked<T extends { model?: string; thinking?: string }>(
 	agent: Agent,
 	request: T,
-	defaults: { model?: string; thinking?: string },
+	locked: { model?: string; thinking?: string },
 ): { request: T; notice?: string } {
-	const refused = agent.locked.filter((key) => request[key] !== undefined && request[key] !== defaults[key]);
-	if (refused.length === 0) return { request };
+	const passed = agent.locked.filter((key) => request[key] !== undefined);
+	if (passed.length === 0) return { request };
 	const kept = { ...request };
-	for (const key of refused) delete kept[key];
+	for (const key of passed) delete kept[key];
+	const refused = passed.filter((key) => request[key] !== locked[key]);
+	if (refused.length === 0) return { request: kept };
 	const given = refused.map((key) => `${key} ${request[key]}`).join(" and ");
 	return {
 		request: kept,
@@ -325,9 +329,10 @@ export function withoutLocked<T extends { model?: string; thinking?: string }>(
 /**
  * The `delegateTools` setting in `<agent dir>/squire/settings.json`: tool
  * names or `*` patterns added to every delegate's tools, whether they come
- * from the agent's `tools` or the parent. Empty when unset or when the file cannot be read or parsed (the
- * worktree settings report that when a launch needs them); a value that is
- * not a list of names refuses the launch with the file named.
+ * from the agent's `tools` or the parent. Empty when unset or when the file
+ * cannot be read or parsed (the worktree settings report that when a launch
+ * needs them); a value that is not a list of names refuses the launch with
+ * the file named.
  */
 export function delegateTools(agentDir: string): string[] {
 	const file = join(agentDir, "squire", "settings.json");

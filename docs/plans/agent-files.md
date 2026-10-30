@@ -110,9 +110,18 @@ Any other key is ignored silently.
 ## Implementation notes
 
 - `locked`: a call that passes a locked field still starts; the field keeps
-  the agent's value and the result's notices name the agent and the fields. A
-  value equal to the agent's own is no override and passes quietly. Resumes
-  apply the same rule.
+  the agent's value (the parent's when the file sets none) and the result's
+  notices name the agent and the fields. A value equal to that one is treated
+  exactly as no value: no notice, the usual model choice with the agent's
+  fallbacks, and no `provider/id` check for an alias. Model and thinking are
+  decided separately.
+- Resumes: an unlocked field keeps what the delegate last ran on, unless the
+  call passes a value. A locked field takes the agent file's current value
+  when the resume starts, even if the file changed since the launch, and a
+  locked model starts from the file's `model` again, then its fallbacks, even
+  when the delegate had moved to a fallback mid-run. A passed value for a
+  locked field is refused with the notice, or dropped quietly when it equals
+  the file's current value.
 - A `model` or `fallback` entry that is an exact `provider/id` in the registry
   keeps the credential and usage-limit checks; anything else goes to the child
   unchanged. The delegate's own mid-run switch still moves only to exact

@@ -44,7 +44,9 @@ follows [Semantic Versioning](https://semver.org/).
   out; a project file hides a global agent of the same name), `locked` (`true`
   or a list of `model` and `thinking`: a call or resume that passes a locked
   field runs on the agent's value, and the result says which agent locked
-  which field) and `prompt_mode`. Keys pi-squire does not use, such as
+  which field; passing the agent's own value is the same as passing nothing,
+  so its fallbacks still apply; a resume runs a locked field on the file's
+  current value, not on what the delegate last ran on) and `prompt_mode`. Keys pi-squire does not use, such as
   `max_turns` or another extension's policy, are ignored without a warning.
 - The `delegateTools` setting in `<agent dir>/squire/settings.json`: tool
   names or `*` patterns added to every delegate's tools, from its agent's

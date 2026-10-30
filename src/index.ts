@@ -56,6 +56,7 @@ import { Type } from "typebox";
 import {
 	type Agent,
 	delegateTools,
+	disabledProblem,
 	globalAgentsDir,
 	isThinking,
 	projectAgentsDir,
@@ -683,11 +684,25 @@ export default function delegate(
 		return roster;
 	}
 
+	/** The roster warnings already shown this session, so a run shows only new ones. */
+	const announced = new Set<string>();
+
+	/** Show each roster warning not yet shown this session, such as a file that is disabled. */
+	function announce(roster: Roster, ctx: ExtensionContext): void {
+		for (const warning of roster.warnings) {
+			if (announced.has(warning)) continue;
+			announced.add(warning);
+			ctx.ui.notify(`delegate: ${warning}`, "warning");
+		}
+	}
+
 	/** The refusal for an empty roster. */
 	const noAgents = (): string => `no agents are defined; add ${whereAgentsGo()}`;
 
 	/** The request as a start, or an error naming what to fix. */
 	async function validate(request: Parsed, roster: Roster, ctx: ExtensionContext): Promise<Start> {
+		const disabled = disabledProblem(roster, request.agent);
+		if (disabled !== undefined) throw new Error(disabled);
 		if (roster.agents.length === 0) throw new Error(noAgents());
 		const agent = roster.agents.find((candidate) => candidate.name === request.agent);
 		if (agent === undefined) {
@@ -1327,14 +1342,19 @@ export default function delegate(
 		latest = ctx;
 		tracking.restore(ctx);
 		// The roster is read at call time; the description is rebuilt here and before each run.
-		registerDelegate(toolDescription(currentRoster(ctx).agents));
+		const roster = currentRoster(ctx);
+		announced.clear();
+		announce(roster, ctx);
+		registerDelegate(toolDescription(roster.agents));
 	});
 
 	// One roster/prompt snapshot prepares this run: refresh the description only when
 	// it changed, and replace only this extension's prompt section from the same snapshot.
 	pi.on("before_agent_start", (event, ctx) => {
 		latest = ctx;
-		const description = toolDescription(currentRoster(ctx).agents);
+		const roster = currentRoster(ctx);
+		announce(roster, ctx);
+		const description = toolDescription(roster.agents);
 		const prompt = readParentPrompt();
 		const visible = delegateVisible(event.systemPromptOptions);
 		// Report a read failure even when guidance cannot be used, so it does not go unseen.

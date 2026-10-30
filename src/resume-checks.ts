@@ -8,7 +8,7 @@ import { isAbsolute } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { type Agent, withoutLocked } from "./agents.ts";
+import { type Agent, disabledProblem, withoutLocked } from "./agents.ts";
 import { sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
@@ -107,7 +107,10 @@ export function recordCheck(
 	ctx: ExtensionContext,
 ): { session: SessionFile; agent: Agent } {
 	const session = sessionFor(record, ctx);
-	const agent = deps.roster(ctx).agents.find((item) => item.name === record.agent);
+	const roster = deps.roster(ctx);
+	const disabled = disabledProblem(roster, record.agent);
+	if (disabled !== undefined) throw new Error(`${disabled}, so delegation ${record.id} is not resumed`);
+	const agent = roster.agents.find((item) => item.name === record.agent);
 	if (agent === undefined) {
 		throw new Error(
 			`agent ${JSON.stringify(record.agent)} is no longer in the roster, so delegation ${record.id} is not resumed`,

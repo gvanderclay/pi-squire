@@ -34,6 +34,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- An agent whose file is invalid is disabled: it is left out of the roster
+  and of the `delegate` tool's description, a warning names the file and the
+  reason when the session starts (and before a run, for a file that turns
+  invalid meanwhile), and a call or resume that names it is refused with that
+  reason instead of "no agent named".
 - Every agent field is optional: `description` defaults to the name, an absent
   `model` or `thinking` runs on the parent session's current model or level,
   and an unknown `thinking` is dropped with a warning instead of leaving the

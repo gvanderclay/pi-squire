@@ -316,6 +316,16 @@ test("refused: an agent no longer in the roster", async () => {
 	assert.match(await resumeError(d.s, { id: d.id, task: "x" }), /agent "scout" is no longer in the roster/);
 });
 
+test("refused: an agent whose file turned invalid, naming the file and reason", async () => {
+	const d = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, "auto-exit": "maybe" }));
+	assert.match(
+		await resumeError(d.s, { id: d.id, task: "x" }),
+		/agent "scout" is disabled because its file is invalid: .*scout\.md has auto-exit "maybe", not true or false/,
+	);
+	assert.equal(d.s.tmux.opened.length, 1);
+});
+
 test("refused: a concurrent resume of the same delegation, and the guard is released afterwards", async () => {
 	const d = await exitedDelegate();
 	const first = resume(d.s, { id: d.id, task: "one" });

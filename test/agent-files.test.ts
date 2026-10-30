@@ -109,6 +109,57 @@ test("an enabled that is not true or false leaves the agent out with a warning",
 });
 
 // ---------------------------------------------------------------------------
+// Invalid agent files are disabled
+
+test("an invalid agent file is disabled: out of the roster and the tool description, with a warning at session start", async () => {
+	writeAgent("scout", agentFile(SCOUT));
+	writeAgent("bad", agentFile({ ...SCOUT, description: "Broken", tools: "{ a: 1 }" }));
+	const { agents, disabled } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.name),
+		["scout"],
+	);
+	assert.deepEqual(
+		disabled.map((item) => [item.name, item.path]),
+		[["bad", join(rosterDir, "bad.md")]],
+	);
+	const s = session();
+	await s.start();
+	const description = s.tool("delegate").description;
+	assert.ok(description.includes("- scout —") && !description.includes("bad"), description);
+	assert.equal(s.warnings.length, 1, s.warnings.join("\n"));
+	assert.ok(s.warnings[0].includes(join(rosterDir, "bad.md")), s.warnings[0]);
+	assert.match(s.warnings[0], /has tools \{"a":1\}, not a comma-separated list of tool names/);
+	// Each warning is shown once per session, not before every run.
+	await s.prepare();
+	assert.equal(s.warnings.length, 1, s.warnings.join("\n"));
+	// A file that turns invalid later is warned about before the next run.
+	writeAgent("scout", agentFile({ ...SCOUT, "auto-exit": "maybe" }));
+	await s.prepare();
+	assert.equal(s.warnings.length, 2, s.warnings.join("\n"));
+	assert.match(s.warnings[1], /scout\.md has auto-exit "maybe"/);
+	assert.ok(!s.tool("delegate").description.includes("- scout —"), s.tool("delegate").description);
+});
+
+test("calling a disabled agent by name gets an error naming its file and reason, from the tool and the command", async () => {
+	writeAgent("bad", agentFile({ ...SCOUT, extensions: "./nope.ts" }));
+	const s = session();
+	await s.start();
+	await s.delegate("bad go");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
+	assert.equal(s.errors.length, 1);
+	assert.match(
+		s.errors[0],
+		/agent "bad" is disabled because its file is invalid: .*bad\.md has extension .*nope\.ts, which does not exist/,
+	);
+	await assert.rejects(
+		s.toolCall("delegate", { agent: "bad", task: "go" }),
+		/agent "bad" is disabled because its file is invalid: .*nope\.ts, which does not exist/,
+	);
+});
+
+// ---------------------------------------------------------------------------
 // Defaults from the parent
 
 test("with no model or thinking the delegate runs on the parent's, and description defaults to the name", async () => {

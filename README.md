@@ -512,10 +512,14 @@ not ask for. The paragraph names no provider, package or tool, so it holds
 whatever `message:*` provider delivers the task. `prompt_mode: replace` builds
 the prompt exactly as every delegate was built before `prompt_mode` existed.
 
-An agent file that cannot be used is left out of the roster and named in a
-warning: frontmatter that is not readable YAML or not a set of fields, an
-`enabled` or `auto-exit` that is not `true` or `false`, a `tools` or
-`extensions` that is not a list, or an extension path that does not exist. A
+An agent file that cannot be used is invalid, and its agent is disabled:
+frontmatter that is not readable YAML or not a set of fields, an `enabled` or
+`auto-exit` that is not `true` or `false`, a `tools` or `extensions` that is
+not a list, or an extension path that does not exist. A disabled agent is left
+out of the roster and of the `delegate` tool's description, so the model never
+picks it, and a warning names the file and the reason when the session starts
+(and before a run, when a file turns invalid while the session runs). A call
+or resume that names it anyway is refused with that reason. A
 field that cannot be used (a `fallback` that is not a list, an unknown
 `thinking`, `prompt_mode` or `locked` entry) is dropped with a warning and the
 agent still loads. While the retired `<agent dir>/squire/agents/` folder

@@ -14,8 +14,8 @@
 // `prompt_mode` (`append`, the default, or `replace`), `enabled` (false leaves
 // the agent out) and `locked` (true, or a list of `model` and `thinking`). Any
 // other key is ignored, left for whatever else reads the file. The body is the
-// delegate's instructions. A file that cannot be read as an agent is left out,
-// with a warning.
+// delegate's instructions. A file that cannot be read as an agent is disabled:
+// left out, with a warning, and a call naming it is refused with the reason.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -72,8 +72,13 @@ export type Agent = {
 	path: string;
 };
 
+/** An agent whose file is invalid: left out of the roster, and refused by name with `reason`. */
+export type Disabled = { name: string; path: string; reason: string };
+
 export type Roster = {
 	agents: Agent[];
+	/** The agents whose files are invalid, by name; a call naming one is refused with its reason. */
+	disabled: Disabled[];
 	/** One line per agent file left out or field ignored, naming its path and the reason. */
 	warnings: string[];
 };
@@ -89,32 +94,30 @@ const field = (frontmatter: Record<string, unknown>, key: string): string | unde
 	return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 };
 
-type Parsed = { agent?: Agent; warning?: string; notes: string[] };
+/** One parsed file: the agent, or why it is invalid; neither for a file with `enabled: false`. */
+type Parsed = { agent?: Agent; invalid?: string; notes: string[] };
 
-/** Parse one agent file; no agent, with a reason when there is one, when it cannot be an agent or is disabled. */
+/** Parse one agent file; no agent, with why it is invalid when it is, when it cannot be an agent or is disabled. */
 function parseAgent(name: string, path: string, text: string): Parsed {
 	let frontmatter: unknown;
 	let body: string;
 	try {
 		({ frontmatter, body } = parseFrontmatter(text) as { frontmatter: unknown; body: string });
 	} catch (err) {
-		return { warning: `${path} is not readable frontmatter (${(err as Error).message}); skipped`, notes: [] };
+		return { invalid: `${path} is not readable frontmatter (${(err as Error).message})`, notes: [] };
 	}
 	if (frontmatter === null || typeof frontmatter !== "object" || Array.isArray(frontmatter))
-		return { warning: `${path} has frontmatter that is not a set of fields; skipped`, notes: [] };
+		return { invalid: `${path} has frontmatter that is not a set of fields`, notes: [] };
 	const fields = frontmatter as Record<string, unknown>;
 	const enabled = flag(fields.enabled);
 	if (enabled === null)
-		return { warning: `${path} has enabled ${JSON.stringify(fields.enabled)}, not true or false; skipped`, notes: [] };
+		return { invalid: `${path} has enabled ${JSON.stringify(fields.enabled)}, not true or false`, notes: [] };
 	if (enabled === false) return { notes: [] };
 	const autoExit = flag(fields["auto-exit"]);
 	if (autoExit === null)
-		return {
-			warning: `${path} has auto-exit ${JSON.stringify(fields["auto-exit"])}, not true or false; skipped`,
-			notes: [],
-		};
+		return { invalid: `${path} has auto-exit ${JSON.stringify(fields["auto-exit"])}, not true or false`, notes: [] };
 	const launch = launchFields(path, fields);
-	if ("warning" in launch) return { ...launch, notes: [] };
+	if ("invalid" in launch) return { ...launch, notes: [] };
 	// A field that cannot be used is dropped with a note; it never costs the agent.
 	const notes: string[] = [];
 	const model = field(fields, "model");
@@ -196,25 +199,25 @@ function lockedFields(
 	return locked;
 }
 
-/** The `tools` and `extensions` fields, or the warning that leaves the agent out. */
+/** The `tools` and `extensions` fields, or why the agent is invalid. */
 function launchFields(
 	path: string,
 	frontmatter: Record<string, unknown>,
-): { tools?: string[]; extensions: string[] } | { warning: string } {
+): { tools?: string[]; extensions: string[] } | { invalid: string } {
 	// `tools:` with no value is YAML null: present and empty, unlike an absent field.
 	const tools = Object.hasOwn(frontmatter, "tools") && frontmatter.tools === null ? [] : toolList(frontmatter.tools);
 	if (tools === null)
 		return {
-			warning: `${path} has tools ${JSON.stringify(frontmatter.tools)}, not a comma-separated list of tool names; skipped`,
+			invalid: `${path} has tools ${JSON.stringify(frontmatter.tools)}, not a comma-separated list of tool names`,
 		};
 	const paths = toolList(frontmatter.extensions);
 	if (paths === null)
 		return {
-			warning: `${path} has extensions ${JSON.stringify(frontmatter.extensions)}, not a comma-separated list of paths; skipped`,
+			invalid: `${path} has extensions ${JSON.stringify(frontmatter.extensions)}, not a comma-separated list of paths`,
 		};
 	const extensions = (paths ?? []).map((entry) => resolveExtension(entry, dirname(path)));
 	const absent = extensions.find((entry) => !existsSync(entry));
-	if (absent !== undefined) return { warning: `${path} has extension ${absent}, which does not exist; skipped` };
+	if (absent !== undefined) return { invalid: `${path} has extension ${absent}, which does not exist` };
 	return { ...(tools === undefined ? {} : { tools }), extensions };
 }
 
@@ -268,37 +271,51 @@ function agentFiles(dir: string): Map<string, string> {
  * Read every agent, in name order: the global folder, then `projectDir` when
  * given, whose files replace global ones of the same name. The caller passes
  * `projectDir` only for a trusted project. A file that cannot be used is
- * warned about and left out; a disabled one is left out quietly.
+ * disabled: left out, warned about and kept in `disabled` with why; a file
+ * with `enabled: false` is left out quietly.
  */
 export function readRoster(agentDir: string, projectDir?: string): Roster {
 	const files = agentFiles(globalAgentsDir(agentDir));
 	if (projectDir !== undefined) for (const [name, path] of agentFiles(projectDir)) files.set(name, path);
 	const agents: Agent[] = [];
+	const disabled: Disabled[] = [];
 	const warnings: string[] = [];
 	const retired = join(agentDir, "squire", "agents");
 	if (existsSync(retired))
 		warnings.push(
 			`${retired} is no longer read; move each <name>/AGENT.md there to ${join(globalAgentsDir(agentDir), "<name>.md")}`,
 		);
+	const disable = (name: string, path: string, reason: string): void => {
+		disabled.push({ name, path, reason });
+		warnings.push(`${reason}; skipped`);
+	};
 	for (const name of [...files.keys()].sort()) {
 		const path = files.get(name) as string;
 		if (!NAME.test(name)) {
-			warnings.push(`${path} is not named as a usable agent (letters, digits, _ or -); skipped`);
+			disable(name, path, `${path} is not named as a usable agent (letters, digits, _ or -)`);
 			continue;
 		}
 		let text: string;
 		try {
 			text = readFileSync(path, "utf8");
 		} catch (err) {
-			warnings.push(`${path} could not be read (${(err as Error).message}); skipped`);
+			disable(name, path, `${path} could not be read (${(err as Error).message})`);
 			continue;
 		}
-		const { agent, warning, notes } = parseAgent(name, path, text);
+		const { agent, invalid, notes } = parseAgent(name, path, text);
 		warnings.push(...notes);
 		if (agent !== undefined) agents.push(agent);
-		else if (warning !== undefined) warnings.push(warning);
+		else if (invalid !== undefined) disable(name, path, invalid);
 	}
-	return { agents, warnings };
+	return { agents, disabled, warnings };
+}
+
+/** The refusal for a call that names a disabled agent; undefined when `name` is not one. */
+export function disabledProblem(roster: Roster, name: string): string | undefined {
+	const found = roster.disabled.find((item) => item.name === name);
+	return found === undefined
+		? undefined
+		: `agent ${JSON.stringify(name)} is disabled because its file is invalid: ${found.reason}`;
 }
 
 /**

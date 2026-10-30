@@ -145,5 +145,11 @@ Any other key is ignored silently.
   `--no-tools` (Pi's way to start with none, MCP tools included) when that is
   empty. Tools only the agent's own `extensions` register are not in the
   parent's list, so an agent without `tools` does not get them.
+- An invalid agent file disables its agent: `readRoster` keeps it in
+  `disabled` with the reason, the roster and the `delegate` description leave
+  it out, its warning is shown at session start and, once per session, before
+  a run for a file that turned invalid since, and a launch or resume naming it
+  is refused with the reason. The `delegateTools` setting is global, so an
+  invalid one refuses every launch with an error instead of disabling agents.
 - `display_name` replaces the agent's name in the window and session name
   (`<display_name>-<label>`); the record keeps it for `/delegates`.

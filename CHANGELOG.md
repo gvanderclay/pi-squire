@@ -17,8 +17,11 @@ follows [Semantic Versioning](https://semver.org/).
 - The body is now wrapped in `<agent_instructions>` lines by default
   (`prompt_mode: append`). `prompt_mode: replace` builds the delegate's prompt
   exactly as before.
-- `exclude-tools` is removed; a file that still has it gets a warning and the
-  delegate gets every tool. List the delegate's tools in `tools` instead.
+- `exclude-tools` is removed: a file that still has it gets a warning and the
+  field is ignored, so the delegate's tools follow the usual rules (its
+  `tools` line, or the parent session's active tools when there is none, plus
+  the `delegateTools` setting) with nothing taken off. List the delegate's
+  tools in `tools` instead.
 - A `model` or `fallback` entry the model registry does not know is no longer
   skipped for the next candidate: it goes to the child's `--model` unchanged,
   and Pi reports it if it cannot resolve it.

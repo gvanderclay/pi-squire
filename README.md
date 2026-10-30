@@ -46,22 +46,24 @@ The package has no runtime dependencies and no build step.
 
 The package ships no agents, so create one first. `<agent dir>` is Pi's agent
 directory: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when that is set. Save this
-as `<agent dir>/squire/agents/scout/AGENT.md`, replacing
-`provider/model-id` with a model your Pi can use:
+as `<agent dir>/agents/scout.md`, replacing `provider/model-id` with a model
+your Pi can use:
 
 ```markdown
 ---
 description: Looks things up and answers in one message
 model: provider/model-id
 thinking: medium
-exclude-tools: edit, write
+tools: read, grep, find, ls
 ---
 
 You research one question at a time and answer concisely, citing the files
 you read.
 ```
 
-The roster is read at call time, so no reload is needed. Delegation guidance
+Every field is optional: without `model` and `thinking` the delegate runs on
+your session's, and without `tools` it has your session's tools (see
+[Agents](#agents)). The roster is read at call time, so no reload is needed. Delegation guidance
 for the parent is optional: save Markdown as
 `<agent dir>/squire/delegation_prompt.md`, and it is read before each run.
 Then, from a Pi session running in tmux, hand it a task:
@@ -92,7 +94,8 @@ or opened.
 ## How a delegation works
 
 `/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>]] [--auto-exit | --no-auto-exit] <task…>`
-reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes
+reads the agent from `<agent dir>/agents/<name>.md` (or a trusted project's
+`.pi/agents/<name>.md`; see [Agents](#agents)), writes
 the task to the delegate's inbox through `message:send`, emits
 `session:launch` so other extensions can shape the launch, then opens a
 detached window running the parent's own Pi in the parent's working directory,
@@ -102,7 +105,8 @@ prompt reaches the child as a path to a private file under the system
 temporary folder, not as text on the command line.
 
 - The window and the child's Pi session share one name: `<agent>-<label>`, or
-  `<agent>-<first 8 characters of the id>` without a label. A label is at most
+  `<agent>-<first 8 characters of the id>` without a label, where `<agent>` is
+  the agent's `display_name` when it has one. A label is at most
   32 letters, digits, `_` or `-`, starting with a letter or digit. A `-` joins
   it rather than `:`, since tmux reads `:` in a target as session and window.
 - Labels need not be unique. The delegation id stays the handle for
@@ -183,7 +187,9 @@ with an error naming the file, before the task is sent or a window opens.
 
 Delegate windows sit out of your way, so reach them from the parent. `/delegates`
 (or `alt+shift+d`) opens a panel of the delegations whose window is open: running,
-or done with auto-exit off, newest first. The model has no tool for any of this.
+or done with auto-exit off, newest first. Each row shows the delegate's name,
+its agent (the agent's `display_name` when it had one), its state and its
+window. The model has no tool for any of this.
 
 | Key | Does |
 |---|---|
@@ -404,49 +410,85 @@ be read or written also refuses the launch; nothing is granted by default.
 
 ## Agents
 
-The roster is read at call time from
-`<agent dir>/squire/agents/<name>/AGENT.md`, one directory per agent, so a new
-agent is usable without a reload. Frontmatter
-carries `description`, `model` (`provider/id`) and `thinking`, and optionally
-`auto-exit` (`true` or `false`, default `true`; see [Auto-exit](#auto-exit)),
-`exclude-tools`, `tools`, `extensions` and `fallback`. The body is the delegate's system prompt,
-appended to Pi's own prompt; it reaches the child as a path to a private file
-under the system temporary folder, so the text stays off the command line. The
-[first-use example](#first-use) is a complete `AGENT.md`.
+An agent is one Markdown file, `<name>.md`, in the agents folders Pi agent
+tooling shares; the file name without `.md` is the agent's name (letters,
+digits, `_` or `-`). The roster is read at call time, so a new or edited file
+is usable without a reload.
 
-`exclude-tools` names the tools the delegate goes without, as a
-comma-separated list (`exclude-tools: edit, write`) or a YAML list
-(`exclude-tools: [edit, write]`). It reaches the child as
-`--exclude-tools edit,write`, which Pi subtracts from the tools it would
-otherwise turn on. It is a denylist only: without it the delegate gets every
-tool, and no flag is passed. There is no per-call override. Each name is
-checked against the tools the parent session has registered
-(`pi.getAllTools()`), since Pi ignores an unknown name without a word. The
-delegate's result reaches the parent through the `message:*` provider's reply
-when its run settles, not through a tool, so excluding tools cannot stop it
-answering.
+- `<agent dir>/agents/<name>.md` holds the global agents.
+- `<cwd>/.pi/agents/<name>.md` holds a project's agents, read only when Pi
+  reports the parent's project as trusted. A project file replaces the global
+  file of the same name. In an untrusted project only the global agents load,
+  so a cloned repository cannot change a delegate's prompt, model or tools.
 
-`tools` lists tools for the delegate as a comma-separated or YAML list
-(`tools: device_run`). It reaches the child as `--tools device_run`, which
-covers extension tools too. Without discovery tools such as `codemode` or
-`tool_search`, only the listed tools are visible. Pi can keep unlisted MCP
-tools registered unless the list includes an `mcp__` entry; discovery tools can
-also expose them. Names are not checked against the parent's tools, since a
-tool from one of the agent's own `extensions` exists only in the child. Empty or
-absent passes no flag. `exclude-tools` still applies alongside.
+The body is the delegate's instructions, appended to Pi's own prompt; it
+reaches the child as a path to a private file under the system temporary
+folder, so the text stays off the command line. Every frontmatter field is
+optional, and the [first-use example](#first-use) is a complete agent file:
+
+| Field | Meaning |
+| --- | --- |
+| `description` | Shown in the roster and the `delegate` tool's description. Defaults to the name. |
+| `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. |
+| `model` | `provider/id` or a pattern, passed to the child's `--model` unchanged, so Pi resolves it. Absent means the parent session's current model. |
+| `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
+| `tools` | The delegate's complete tool list (see below). Absent means the parent's tools. |
+| `extensions` | Extension paths only this agent's delegate loads (see below). |
+| `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is passed through like `model`. |
+| `auto-exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
+| `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
+| `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
+| `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate` or a resume that passes a locked field does not get it: the agent's value is used and the result says which agent locked which field. `true` locks the fields the file sets. |
+
+Any other key, such as `max_turns`, `inherit_context`, `run_in_background` or
+a permission policy for another extension, is ignored without a warning and
+left for whatever else reads the file. `exclude-tools` is no longer read; a
+file that still has it gets a warning (use `tools` instead).
+
+`tools` lists the delegate's tools as a comma-separated or YAML list
+(`tools: read, grep`). It reaches the child as `--tools read,grep`, which Pi
+treats as the whole selection, extension tools included; entries may be `*`
+patterns. Without discovery tools such as `codemode` or `tool_search`, only the
+listed tools are visible. Pi can keep unlisted MCP tools registered unless the
+list includes an `mcp__` entry, and an extension that turns tools on at run
+time can still add its own. Names are not checked against the parent's tools,
+since a tool from one of the agent's own `extensions` exists only in the child.
+An empty or absent list passes no flag, so the delegate gets the parent's
+tools. The delegation tools are never available in a delegate, whatever the
+list says: pi-squire registers none of them there.
+
+The delegate's result reaches the parent through the `message:*` provider's
+reply when its run settles, not through a tool, so a short `tools` list cannot
+stop it answering. To let a delegate with a `tools` line message its parent
+mid-task, list the tools your `message:*` provider gives a session for that in
+the `delegateTools` setting, in `<agent dir>/squire/settings.json` beside
+`windowPlacement` and `worktreeRoot`:
+
+```json
+{ "delegateTools": ["<tool or pattern>"] }
+```
+
+Each entry, a tool name or `*` pattern, is added to every agent's `tools` line
+and passed to `--tools` unchanged. An agent with no `tools` line already has
+the parent's tools, so nothing is added there. The setting is empty by default,
+is read at each launch, and a value that is not a list of names refuses the
+launch with an error naming the file, before the task is sent or a window
+opens.
 
 `extensions` lists extension paths only this agent's delegate loads, as a
 comma-separated or YAML list. Each reaches the child as a repeated
 `-e <absolute path>`, on top of its normal extensions, so pi-squire and the
 `message:*` provider still load and the result still reaches the parent. `~`
 and `~/` expand to the home directory and a relative path resolves against the
-directory holding that `AGENT.md`. A path that does not exist when the roster
-is read leaves the agent out, with a warning.
+folder holding the agent file. A path that does not exist when the roster is
+read leaves the agent out, with a warning.
 
-`fallback` lists models to try, in order, when the agent's `model` is
-usage-limited (see [Usage limits](#usage-limits)), as a comma-separated list
-or a YAML list of `provider/id`. An entry that is not `provider/id` is dropped
-with a warning; the agent still loads.
+A `model` or `fallback` entry that is an exact `provider/id` in Pi's registry
+is checked as before: a model without credentials or with an active
+usage-limit mark is skipped for the next candidate. Anything else, such as a
+pattern, goes to the child unchanged; if Pi cannot resolve it, the child's Pi
+reports the error and its window closes without a result. The delegate itself
+moves only to fallback entries that are an exact `provider/id`.
 
 The body is followed by one fixed final-message line and a paragraph naming the
 parent session's address. The delegate's task arrives as a message from that
@@ -454,19 +496,25 @@ session, and that message and every later one from the same address are
 instructions to follow as given. Other sessions are colleagues: the delegate
 may answer them, but checks with the parent before doing work the parent did
 not ask for. The paragraph names no provider, package or tool, so it holds
-whatever `message:*` provider delivers the task.
+whatever `message:*` provider delivers the task. `prompt_mode: replace` builds
+the prompt exactly as every delegate was built before `prompt_mode` existed.
 
-An `AGENT.md` that cannot be used is left out of the roster and named in a
-warning. That covers missing fields, a model that is not `provider/id`, an
-unknown thinking level, an `auto-exit` that is not `true` or `false`, an
-`exclude-tools` that is not a list of names or names a tool the session does
-not have, a `tools` or `extensions` that is not a list, an extension path that
-does not exist, and an empty body. With no agents at all, `/delegate` says how to
+An agent file that cannot be used is left out of the roster and named in a
+warning: frontmatter that is not readable YAML or not a set of fields, an
+`enabled` or `auto-exit` that is not `true` or `false`, a `tools` or
+`extensions` that is not a list, or an extension path that does not exist. A
+field that cannot be used (a `fallback` that is not a list, an unknown
+`thinking`, `prompt_mode` or `locked` entry) is dropped with a warning and the
+agent still loads. While the retired `<agent dir>/squire/agents/` folder
+exists, a warning says to move each `<name>/AGENT.md` to
+`<agent dir>/agents/<name>.md`. With no agents at all, `/delegate` says how to
 add one.
 
 ## Configuration
 
-`<agent dir>/squire/` holds the roster and the optional parent guidance file.
+`<agent dir>/squire/` holds the optional parent guidance file and
+`settings.json` (`windowPlacement`, `worktreeRoot` and `delegateTools`); the
+agents live in `<agent dir>/agents/` (see [Agents](#agents)).
 `delegation_prompt.md` is Markdown, inserted unchanged as the
 `squire_parent_delegation` system-prompt section before each new run, including
 a run started by an idle delegate result. It is not a conversation or user
@@ -482,7 +530,7 @@ policy.
 
 Refresh happens before a new run, not before every model request in a tool
 loop, and the extension does not watch the filesystem. `pi-squire` reads no
-settings file and no environment variable of its own. `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
+environment variable of its own. `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
 for the child, never read as configuration by the parent. The window starts
 with the tmux server's environment plus only these from the parent:
 `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` (when the parent has it
@@ -493,7 +541,8 @@ it to skip a dialog or confirmation instead of waiting on one, and any other
 runner that starts Pi unattended can set it too. Anything else the
 parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
 reaches the child only through a `session:launch` contributor. `--model` and
-`--thinking` override the agent's defaults for one call, and an unknown value
+`--thinking` override the agent's defaults for one call, unless the agent
+locks them (see [Agents](#agents)), and an unknown value
 is refused with close matches, and so is a model with no configured
 credentials. An API key that exists only as an environment variable in the
 parent's shell does not reach the delegate, so log in through Pi or make the
@@ -513,11 +562,12 @@ session's delegation records. None of them is registered inside a delegate.
 | `delegation_resume` | `id`, `task`, optional `model`, `thinking` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
 
 The `delegate` tool's description lists the current roster, one line per agent:
-its name, description, default model and thinking, auto-exit when it is off,
-and its excluded tools.
+its name and any display name, description, default model (or this session's)
+and fallbacks, thinking, auto-exit when it is off, its tools and the fields it
+locks.
 
 ```text
-- scout — Read-only recon (default provider/model-id, thinking low, auto-exit off, no edit/write)
+- scout "Recon" — Read-only recon (default provider/model-id, thinking low, auto-exit off, tools: read/grep, locked: model)
 ```
 
 The model picks an agent from these lines without reading files. The
@@ -529,9 +579,9 @@ merely to wait; a substantive follow-up remains fine. The description is
 rebuilt at session start and before each new run when the exposed roster
 changes, so an edit, addition or removal shows up in the run being prepared,
 including a run woken by an idle delegate result. Unchanged metadata is not
-re-registered. Pi cannot list the session's tools while extensions load, so
-the description built then skips the `exclude-tools` check, and the one built
-after startup applies it. The roster itself is still read at call time, and an
+re-registered. The description built while extensions load lists only the
+global agents, since the project's trust is known only once the session
+starts. The roster itself is still read at call time, and an
 unknown agent, model or thinking level is refused with close matches and
 nothing starts.
 
@@ -934,7 +984,7 @@ the window is open (see [Resuming a delegation](#resuming-a-delegation)).
 | --- | --- |
 | `args` | the child `pi`'s complete argument list, launcher first |
 | `env` | the child's environment, as `KEY`/`value` pairs |
-| `agent` | the agent's name, as in `<agent dir>/squire/agents/<name>/AGENT.md`; read it, do not change it |
+| `agent` | the agent's name, as in `<agent dir>/agents/<name>.md` or `<cwd>/.pi/agents/<name>.md` (never its `display_name`); read it, do not change it |
 | `cwd` | the directory the window opens in, the parent's or the resolved `--cwd`; read it, do not change it |
 | `toolCallId` | the ID of the `delegate` or `delegation_resume` tool call that started the launch; absent when started from the `/delegate` or `/delegate-resume` command; read it, do not change it |
 
@@ -1047,8 +1097,11 @@ Other extensions may rely on:
 - the `/delegates` command and its `alt+shift+d` shortcut, and `/delegate-open <id>` with its
   `--switch` and `--peek` flags;
 - the `[delegate]` result text and the closed-without-a-result text;
-- `AGENT.md`'s frontmatter keys and its location,
-  `<agent dir>/squire/agents/<name>/AGENT.md`;
+- the agent file's frontmatter keys and its locations,
+  `<agent dir>/agents/<name>.md` and, in a trusted project,
+  `<cwd>/.pi/agents/<name>.md`;
+- the `delegateTools`, `windowPlacement` and `worktreeRoot` settings in
+  `<agent dir>/squire/settings.json`;
 - the optional `<agent dir>/squire/delegation_prompt.md` file and the
   `squire_parent_delegation` system-prompt section;
 - the child environment variables `PI_DELEGATE_PARENT`,

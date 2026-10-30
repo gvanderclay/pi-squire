@@ -6,6 +6,45 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- Agents move to one file per agent in the agents folders Pi agent tooling
+  shares: `<agent dir>/agents/<name>.md` and, when the project is trusted,
+  `<cwd>/.pi/agents/<name>.md`, which replaces a global file of the same name.
+  `<agent dir>/squire/agents/<name>/AGENT.md` is no longer read; while that
+  folder exists, a warning says so. `squire/delegation_prompt.md` stays where
+  it is.
+- The body is now wrapped in `<agent_instructions>` lines by default
+  (`prompt_mode: append`). `prompt_mode: replace` builds the delegate's prompt
+  exactly as before.
+- `exclude-tools` is removed; a file that still has it gets a warning and the
+  delegate gets every tool. List the delegate's tools in `tools` instead.
+- A `model` or `fallback` entry the model registry does not know is no longer
+  skipped for the next candidate: it goes to the child's `--model` unchanged,
+  and Pi reports it if it cannot resolve it.
+- Migration: move each `<agent dir>/squire/agents/<name>/AGENT.md` to
+  `<agent dir>/agents/<name>.md`; add `prompt_mode: replace` to keep today's
+  prompt; replace `exclude-tools: a, b` with a `tools` line naming the tools
+  the delegate should have.
+
+### Added
+
+- Every agent field is optional: `description` defaults to the name, an absent
+  `model` or `thinking` runs on the parent session's current model or level,
+  and an unknown `thinking` is dropped with a warning instead of leaving the
+  agent out. `model` and `fallback` entries may be patterns. A body may be
+  empty.
+- New agent fields: `display_name` (shown on the delegate card, in
+  `/delegates` and in the window title), `enabled: false` (leaves the agent
+  out; a project file hides a global agent of the same name), `locked` (`true`
+  or a list of `model` and `thinking`: a call or resume that passes a locked
+  field runs on the agent's value, and the result says which agent locked
+  which field) and `prompt_mode`. Keys pi-squire does not use, such as
+  `max_turns` or another extension's policy, are ignored without a warning.
+- The `delegateTools` setting in `<agent dir>/squire/settings.json`: tool
+  names or `*` patterns added to every agent's `tools` line, for the tools a
+  `message:*` provider gives a delegate to reach its parent. Empty by default.
+
 ### Removed
 
 - The delegate popup: `enter` in `/delegates` and `/delegate-open --popup` no
@@ -27,6 +66,13 @@ follows [Semantic Versioning](https://semver.org/).
   test that the poll runs only while a delegation does; `test/tmux.test.ts` no
   longer tests `popup` and `closePopup`, and `test/popup-parent.ts` and the
   fake's popup support are gone.
+- Tests changed with the agent files: the harness writes `agents/<name>.md`
+  and the retired fixture to `squire/agents/<name>/AGENT.md`; prompt
+  assertions expect the `<agent_instructions>` wrapper; the roster, empty-roster
+  and malformed-file tests in `test/delegate.test.ts` and `test/tools.test.ts`
+  follow the optional fields and new location; the fallback render test skips
+  a model without credentials rather than an unknown one; and
+  `test/exclude-tools.test.ts` becomes `test/agent-files.test.ts`.
 
 ## [0.13.1] - 2026-10-27
 

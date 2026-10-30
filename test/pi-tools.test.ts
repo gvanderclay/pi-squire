@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, root, rosterDir, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, rosterDir, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -123,18 +123,23 @@ test("the parent's tools, with no tools field, reach the child exactly: MCP tool
 	);
 });
 
-test("an agent's own extension tools reach the child with the parent's tools, and only when named with a tools list", async () => {
+test("an agent's own extension tools reach the child only when its tools list or delegateTools names them", async () => {
 	mkdirSync(rosterDir, { recursive: true });
 	writeFileSync(
 		join(rosterDir, "own.ts"),
-		`export default function (pi) {\n\t${tool("own_tool", "direct")}\n\t${tool("own_hidden", "codemode")}\n}\n`,
+		`export default function (pi) {\n\t${tool("own_tool", "direct")}\n\t${tool("own_shared", "codemode")}\n\t${tool("own_hidden", "codemode")}\n}\n`,
 	);
-	writeAgent("inherit", agentFile({ ...SCOUT, extensions: "./own.ts", tools: "-own_hidden" }));
-	writeAgent("named", agentFile({ ...SCOUT, extensions: "./own.ts", tools: "read" }));
-	const inherit = await inPi(await launchArgs("inherit", ["read", "delegate"]));
-	assert.ok(inherit.all.includes("own_tool") && inherit.active.includes("own_tool"), inherit.all.join(", "));
-	assert.ok(!inherit.all.includes("own_hidden"), inherit.all.join(", "));
-	const named = await inPi(await launchArgs("named", ["read", "delegate"]));
-	assert.ok(!named.all.includes("own_tool") && !named.all.includes("own_hidden"), named.all.join(", "));
-	assert.ok(named.all.includes("read"), named.all.join(", "));
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ delegateTools: ["own_shared"] }));
+	writeAgent("inherit", agentFile({ ...SCOUT, extensions: "./own.ts" }));
+	writeAgent("less", agentFile({ ...SCOUT, extensions: "./own.ts", tools: "-bash" }));
+	writeAgent("named", agentFile({ ...SCOUT, extensions: "./own.ts", tools: "read, own_tool" }));
+	const own = (seen: { all: string[] }) => seen.all.filter((name) => name.startsWith("own_"));
+	const inherit = await inPi(await launchArgs("inherit", ["read", "bash", "delegate"]));
+	assert.deepEqual(own(inherit), ["own_shared"]);
+	const less = await inPi(await launchArgs("less", ["read", "bash", "delegate"]));
+	assert.deepEqual(own(less), ["own_shared"]);
+	const named = await inPi(await launchArgs("named", ["read", "bash", "delegate"]));
+	assert.deepEqual(own(named), ["own_shared", "own_tool"]);
+	assert.ok(named.active.includes("own_tool") && named.all.includes("read"), named.all.join(", "));
 });

@@ -56,8 +56,10 @@ Any other key is ignored silently.
 ## Tools
 
 - No `tools` field: the delegate gets the parent session's active tools at
-  launch, and the tools the agent's own `extensions` register, passed
-  explicitly as `--tools`.
+  launch, passed explicitly as `--tools`.
+- The tools the agent's own `extensions` register are not in that baseline:
+  they reach the delegate only when a plain `tools` list or `delegateTools`
+  names or matches them.
 - Whatever the selection, the delegate gets exactly it, MCP tools included:
   an MCP tool no entry names or matches is not registered in the child.
 - An empty `tools` field (`tools:` or `tools: []`): no tools except
@@ -160,18 +162,18 @@ Any other key is ignored silently.
   the delegation tools; an empty field passes only `delegateTools`, or
   `--no-tools` (Pi's way to start with none, MCP tools included) when that is
   empty.
-- The parent's tools for an agent without `tools` (or with only `-name`
-  entries) include the tools its own `extensions` register, which exist only
-  in the child. `extension-tools.ts` loads those extensions in the parent with
-  Pi's exported `discoverAndLoadExtensions`, pointed at an empty folder so
-  nothing else is discovered: a fresh module (Pi's loader caches nothing), a
-  throwaway event bus and runtime, no session, so `session_start` never fires.
-  The names are the keys of each loaded extension's `tools`. This sees the
-  tools an extension registers as it loads, which Pi's docs make the place to
-  register them; a tool registered later is not seen and must be named.
-  Computing the list in the child was not possible: `--tools` decides which
-  tools Pi registers at all, and a child extension cannot see or widen it.
-  An extension that fails to load is warned about and contributes nothing.
+- The baseline for an agent without `tools` (or with only `-name` entries)
+  is the parent's active tools only, less the delegation tools, plus
+  `delegateTools`. The tools the agent's own `extensions` register exist only
+  in the child, so they are not in it: name them in `tools` or
+  `delegateTools`. An earlier version loaded the agent's extensions in the
+  parent at each launch (Pi's `discoverAndLoadExtensions`) to read their tool
+  names; it was removed before release because loading them in the parent
+  left their side effects there (listeners, timers) on every launch, and it
+  still missed tools an extension registers only in the delegate's own
+  environment. Computing the list in the child is not possible either:
+  `--tools` decides which tools Pi registers at all, and a child extension
+  cannot see or widen it.
 - An invalid agent file disables its agent: `readRoster` keeps it in
   `disabled` with the reason, the roster and the `delegate` description leave
   it out, its warning is shown at session start and, once per session, before

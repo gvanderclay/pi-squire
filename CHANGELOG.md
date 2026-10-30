@@ -81,11 +81,14 @@ follows [Semantic Versioning](https://semver.org/).
   in the delegate's window or a clamp to a new model), instead of the level
   recorded when the delegation started; the recorded level remains the
   fallback when the session has none.
-- A delegate whose agent has no `tools` field, or only `-name` entries, also
-  gets the tools its agent's own `extensions` register. pi-squire reads their
-  names by loading each extension with Pi's extension loader at launch, apart
-  from any session; an extension that will not load is named in a warning.
-  A `tools` list of names stays exact: name an extension's tools to get them.
+- A tool that only an agent's own `extensions` register reaches its delegate
+  only when the agent's `tools` list or the `delegateTools` setting names (or
+  matches) it. With no `tools` field, or only `-name` entries, the baseline
+  is the parent session's active tools alone; pi-squire never loads an
+  agent's extensions in the parent. (An unreleased change on this branch had
+  loaded them in the parent to add their tools to that baseline; its tests in
+  `test/agent-files.test.ts` and `test/pi-tools.test.ts` now pin this rule
+  instead.)
 - A running delegate that hits a usage limit now resolves a `fallback` entry
   that is an alias or bare id (such as `sonnet`) to one model with Pi's
   `--model` resolver, in the listed order, instead of skipping every entry

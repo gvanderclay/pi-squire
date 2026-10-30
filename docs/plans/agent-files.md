@@ -56,7 +56,10 @@ Any other key is ignored silently.
 ## Tools
 
 - No `tools` field: the delegate gets the parent session's active tools at
-  launch, passed explicitly as `--tools`.
+  launch, and the tools the agent's own `extensions` register, passed
+  explicitly as `--tools`.
+- Whatever the selection, the delegate gets exactly it, MCP tools included:
+  an MCP tool no entry names or matches is not registered in the child.
 - An empty `tools` field (`tools:` or `tools: []`): no tools except
   `delegateTools`; `--no-tools` when that is empty too.
 - A `tools` line of tool names: exactly those tools.

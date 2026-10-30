@@ -432,7 +432,7 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. |
 | `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
-| `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. |
+| `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools and the tools the agent's own `extensions` register; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
 | `extensions` | Extension paths only this agent's delegate loads (see below). |
 | `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern makes the file invalid. |
 | `auto-exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |

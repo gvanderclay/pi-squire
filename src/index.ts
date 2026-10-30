@@ -566,20 +566,38 @@ function rosterLine(agent: Agent): string {
 		`default ${models.join(", ")}`,
 		`thinking ${agent.thinking ?? "this session's"}`,
 		...(agent.autoExit ? [] : ["auto-exit off"]),
-		...(agent.tools === undefined ? [] : [agent.tools.length > 0 ? `tools: ${agent.tools.join("/")}` : "no tools"]),
+		...toolsDetail(agent),
 		...(agent.locked.length > 0 ? [`locked: ${agent.locked.join("/")}`] : []),
 	];
 	const shown = agent.displayName === undefined ? "" : ` "${agent.displayName}"`;
 	return `- ${agent.name}${shown} — ${agent.description} (${details.join(", ")})`;
 }
 
+/** The roster line's word on an agent's tools; nothing for the parent's tools unchanged. */
+function toolsDetail(agent: Agent): string[] {
+	if (agent.tools !== undefined) return [agent.tools.length > 0 ? `tools: ${agent.tools.join("/")}` : "no tools"];
+	return agent.toolsExcept.length > 0 ? [`tools: this session's except ${agent.toolsExcept.join("/")}`] : [];
+}
+
+/** Whether tool `name` is `pattern`, where `*` matches any characters, as in Pi's tool lists. */
+function toolMatches(pattern: string, name: string): boolean {
+	const source = pattern
+		.split("*")
+		.map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+		.join(".*");
+	return new RegExp(`^${source}$`).test(name);
+}
+
 /**
- * The delegate's tool selection: the agent's `tools`, or `parentTools` when the
- * agent has no `tools` field, then `extra` (the `delegateTools` setting), with
- * the delegation tools left out. Empty means the delegate gets no tools.
+ * The delegate's tool selection, always a plain list: the agent's `tools`
+ * names, or `parentTools` less its `-name` entries when it has none, then
+ * `extra` (the `delegateTools` setting), with the delegation tools left out.
+ * Empty means the delegate gets no tools.
  */
 function toolSelection(agent: Agent, parentTools: readonly string[], extra: readonly string[]): string[] {
-	return [...new Set([...(agent.tools ?? parentTools), ...extra])].filter((name) => !DELEGATION_TOOLS.has(name));
+	const base =
+		agent.tools ?? parentTools.filter((name) => !agent.toolsExcept.some((pattern) => toolMatches(pattern, name)));
+	return [...new Set([...base, ...extra])].filter((name) => !DELEGATION_TOOLS.has(name));
 }
 
 /** The delegate's appended prompt: the agent's body, then the lines every delegate gets. */

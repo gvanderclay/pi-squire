@@ -284,6 +284,78 @@ test("an empty tools field, tools: or tools: [], gives the delegate no tools at 
 	assert.match(s.tool("delegate").description, /- bare — .*thinking low, no tools\)/);
 });
 
+test("a tools line of only -name entries is the parent's tools less those, then delegateTools", async () => {
+	setSettings({ delegateTools: ["reach_parent", "bash"] });
+	writeAgent("less", agentFile({ ...SCOUT, tools: "-bash, -edit" }));
+	writeAgent("nomcp", agentFile({ ...SCOUT, tools: "[-mcp__*]" }));
+	const { agents, warnings } = readRoster(agentDir);
+	assert.deepEqual(warnings, []);
+	assert.deepEqual(
+		agents.map((agent) => [agent.tools, agent.toolsExcept]),
+		[
+			[undefined, ["bash", "edit"]],
+			[undefined, ["mcp__*"]],
+		],
+	);
+	const s = session({ activeTools: ["read", "bash", "edit", "mcp__docs__search", "mcp__docs__read", "delegate"] });
+	await s.start();
+	for (const name of ["less", "nomcp"]) await s.delegate(`${name} go`);
+	assert.deepEqual(s.errors, []);
+	const [less, nomcp] = s.tmux.opened.map((opened) => opened.argv);
+	// delegateTools is added after the removals, so its bash stays.
+	assert.deepEqual(pair(less, "--tools").slice(1)[0].split(",").slice(0, 4), [
+		"read",
+		"mcp__docs__search",
+		"mcp__docs__read",
+		"reach_parent",
+	]);
+	assert.ok(pair(less, "--tools")[1].split(",").includes("bash"), less.join(" "));
+	assert.ok(!pair(less, "--tools")[1].split(",").includes("edit"), less.join(" "));
+	assert.deepEqual(pair(nomcp, "--tools")[1].split(",").slice(0, 4), ["read", "bash", "edit", "reach_parent"]);
+	assert.match(s.tool("delegate").description, /- less — .*tools: this session's except bash\/edit\)/);
+});
+
+test("a tools line with a +name entry, or with names and -name entries mixed, disables the agent", async () => {
+	writeAgent("plus", agentFile({ ...SCOUT, tools: "+codemode" }));
+	writeAgent("plusmixed", agentFile({ ...SCOUT, tools: "read, +grep" }));
+	writeAgent("mixed", agentFile({ ...SCOUT, tools: "read, -bash" }));
+	writeAgent("bare", agentFile({ ...SCOUT, tools: "-, -bash" }));
+	writeAgent("scout", agentFile(SCOUT));
+	const { agents, disabled } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.name),
+		["scout"],
+	);
+	const reasons = Object.fromEntries(disabled.map((item) => [item.name, item.reason]));
+	assert.match(reasons.plus, /plus\.md has tools entry "\+codemode": \+name entries are not accepted/);
+	assert.match(reasons.plusmixed, /plusmixed\.md has tools entry "\+grep": \+name entries are not accepted/);
+	assert.match(reasons.mixed, /mixed\.md has tools that mix tool names with -name entries/);
+	assert.match(reasons.bare, /bare\.md has tools entry "-", which names no tool/);
+	const s = session();
+	await s.start();
+	await s.delegate("mixed go");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.match(s.errors[0], /agent "mixed" is disabled because its file is invalid: .*mix tool names with -name/);
+});
+
+test("a delegateTools entry that starts with + or - refuses every launch with an error naming the file", async () => {
+	for (const entry of ["+codemode", "-bash"]) {
+		setSettings({ delegateTools: ["reach_parent", entry] });
+		writeAgent("scout", agentFile(SCOUT));
+		const s = session();
+		await s.start();
+		await s.delegate("scout go");
+		assert.deepEqual(s.tmux.opened, []);
+		assert.deepEqual(s.sendCalls, []);
+		assert.equal(s.errors.length, 1);
+		assert.ok(s.errors[0].includes(join(agentDir, "squire", "settings.json")), s.errors[0]);
+		assert.ok(
+			s.errors[0].includes(`delegateTools entries are tool names; ${JSON.stringify(entry)} starts with`),
+			s.errors[0],
+		);
+	}
+});
+
 test("an absent tools field and an empty one read differently", async () => {
 	writeAgent("absent", agentFile(SCOUT));
 	writeAgent("empty", agentFile({ ...SCOUT, tools: "" }));

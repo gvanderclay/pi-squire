@@ -432,7 +432,7 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. |
 | `model` | `provider/id` or a pattern, passed to the child's `--model` unchanged, so Pi resolves it. Absent means the parent session's current model. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
-| `tools` | The delegate's complete tool list (see below). Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. |
+| `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. |
 | `extensions` | Extension paths only this agent's delegate loads (see below). |
 | `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is passed through like `model`. |
 | `auto-exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
@@ -446,9 +446,10 @@ left for whatever else reads the file. `exclude-tools` is no longer read; a
 file that still has it gets a warning (use `tools` instead).
 
 `tools` lists the delegate's tools as a comma-separated or YAML list
-(`tools: read, grep`). It reaches the child as `--tools read,grep`, which Pi
+(`tools: read, grep`). pi-squire works out the delegate's whole selection
+itself and always passes the child a plain list, `--tools read,grep`, which Pi
 treats as the whole selection, extension tools included; entries may be `*`
-patterns. Without discovery tools such as `codemode` or `tool_search`, only the
+patterns. It never passes Pi `+name` or `-name` entries. Without discovery tools such as `codemode` or `tool_search`, only the
 listed tools are visible. Pi can keep unlisted MCP tools registered unless the
 list includes an `mcp__` entry, and an extension that turns tools on at run
 time can still add its own. Names are not checked against the parent's tools,
@@ -462,7 +463,14 @@ since a tool from one of the agent's own `extensions` exists only in the child.
 - An empty `tools` field, `tools:` or `tools: []`: the delegate gets no tools
   except the `delegateTools` entries. With none of those either, it starts
   with `--no-tools`.
-- A `tools` list: exactly those tools, plus the `delegateTools` entries.
+- A `tools` list of tool names: exactly those tools, plus the
+  `delegateTools` entries.
+- A `tools` list of only `-name` entries (`tools: -bash, -write`): the
+  parent's tools as with no `tools` field, less those, plus the
+  `delegateTools` entries. A `-name` entry may be a `*` pattern
+  (`-mcp__docs__*`).
+- A `+name` entry, or tool names and `-name` entries in one list, make the
+  file invalid, and the agent is disabled (see below).
 
 The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
 `delegation_resume`) are never passed and never available in a delegate:
@@ -480,10 +488,12 @@ the `delegateTools` setting, in `<agent dir>/squire/settings.json` beside
 ```
 
 Each entry, a tool name or `*` pattern, is added to every delegate's tools,
-whether they come from its agent's `tools` or from the parent, and passed to
-`--tools` unchanged. The setting is empty by default, is read at each launch
-and resume, and a value that is not a list of names refuses the launch with an
-error naming the file, before the task is sent or a window opens.
+whether they come from its agent's `tools` or from the parent (after any
+`-name` entries are taken off), and passed to `--tools` unchanged. The setting
+is empty by default, is read at each launch and resume, and a value that is
+not a list of names, or an entry that starts with `+` or `-`, refuses every
+launch with an error naming the file, before the task is sent or a window
+opens; it does not disable agents one by one.
 
 `extensions` lists extension paths only this agent's delegate loads, as a
 comma-separated or YAML list. Each reaches the child as a repeated
@@ -515,7 +525,8 @@ the prompt exactly as every delegate was built before `prompt_mode` existed.
 An agent file that cannot be used is invalid, and its agent is disabled:
 frontmatter that is not readable YAML or not a set of fields, an `enabled` or
 `auto-exit` that is not `true` or `false`, a `tools` or `extensions` that is
-not a list, or an extension path that does not exist. A disabled agent is left
+not a list, a `tools` list with a `+name` entry or with tool names and `-name`
+entries mixed, or an extension path that does not exist. A disabled agent is left
 out of the roster and of the `delegate` tool's description, so the model never
 picks it, and a warning names the file and the reason when the session starts
 (and before a run, when a file turns invalid while the session runs). A call
@@ -581,7 +592,8 @@ session's delegation records. None of them is registered inside a delegate.
 The `delegate` tool's description lists the current roster, one line per agent:
 its name and any display name, description, default model (or this session's)
 and fallbacks, thinking, auto-exit when it is off, its tools (`no tools` for
-an empty `tools` field) and the fields it locks.
+an empty `tools` field, `this session's except …` for `-name` entries) and the
+fields it locks.
 
 ```text
 - scout "Recon" — Read-only recon (default provider/model-id, thinking low, auto-exit off, tools: read/grep, locked: model)

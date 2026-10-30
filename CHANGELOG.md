@@ -58,6 +58,13 @@ follows [Semantic Versioning](https://semver.org/).
   names or `*` patterns added to every delegate's tools, from its agent's
   `tools` or the parent's, for the tools a `message:*` provider gives a
   delegate to reach its parent. Empty by default.
+- A `tools` line of only `-name` entries (`tools: -bash, -write`) gives the
+  delegate the parent session's tools less those (a `-name` entry may be a `*`
+  pattern), then the `delegateTools` setting. A `+name` entry, or tool names
+  and `-name` entries mixed, make the agent file invalid, so the agent is
+  disabled. pi-squire always passes the child a plain `--tools` list.
+- A `delegateTools` entry that starts with `+` or `-` refuses every launch
+  with an error naming the settings file.
 - A running delegate that hits a usage limit now resolves `fallback` entries
   that are aliases or `*` patterns (such as `sonnet` or `alpha/*`) with Pi's
   model-pattern resolver, in the listed order, instead of skipping every entry

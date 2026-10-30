@@ -59,7 +59,13 @@ Any other key is ignored silently.
   launch, passed explicitly as `--tools`.
 - An empty `tools` field (`tools:` or `tools: []`): no tools except
   `delegateTools`; `--no-tools` when that is empty too.
-- A `tools` line: exactly those tools.
+- A `tools` line of tool names: exactly those tools.
+- A `tools` line of only `-name` entries: the parent's tools, as with no
+  `tools` field, less those. A `-name` entry may be a `*` pattern, matched as
+  Pi matches tool patterns.
+- A `+name` entry, or tool names and `-name` entries mixed, make the file
+  invalid and disable the agent. pi-squire resolves the selection itself and
+  always passes the child a plain list; it never passes `+name` or `-name`.
 - The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
   `delegation_resume`) are never available in a delegate, as today.
 - Tools in the `delegateTools` setting are added to every delegate's tools,
@@ -99,7 +105,9 @@ Any other key is ignored silently.
 { "delegateTools": ["<tool or pattern>", "..."] }
 ```
 
-- Tool names or `*` patterns, passed to the child's `--tools` unchanged.
+- Tool names or `*` patterns, passed to the child's `--tools` unchanged. An
+  entry that starts with `+` or `-` makes the setting invalid, which refuses
+  every launch.
 - Added to every delegate: to its agent's `tools`, to an empty `tools`, and
   to the parent's tools for an agent with no `tools` field.
 - The delegation tools are removed even when a pattern matches them.

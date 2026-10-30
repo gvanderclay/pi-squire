@@ -57,8 +57,14 @@ export type Agent = {
 	thinking?: Thinking;
 	/** Whether the delegate closes itself after a normal completion; `auto-exit`, default true. */
 	autoExit: boolean;
-	/** The delegate's complete tool list, from `tools`: undefined when the field is absent (the parent's tools), empty when it is empty (no tools). */
+	/**
+	 * The delegate's complete tool list, from a `tools` line of tool names:
+	 * undefined when the field is absent or holds only `-name` entries (the
+	 * parent's tools), empty when it is empty (no tools).
+	 */
 	tools?: string[];
+	/** The names or `*` patterns a `tools` line of only `-name` entries takes off the parent's tools; empty otherwise. */
+	toolsExcept: string[];
 	/** Absolute paths of extra extensions the delegate loads, from `extensions`; empty when absent. */
 	extensions: string[];
 	/** Models to try, in order, when `model` is usage-limited; from `fallback`, empty when absent. */
@@ -199,17 +205,45 @@ function lockedFields(
 	return locked;
 }
 
-/** The `tools` and `extensions` fields, or why the agent is invalid. */
-function launchFields(
+/**
+ * The `tools` field: tool names (`*` patterns allowed) are the whole list;
+ * only `-name` entries take those off the parent's tools. A `+name` entry, or
+ * names and `-name` entries mixed, make the file invalid.
+ */
+function toolsField(
 	path: string,
 	frontmatter: Record<string, unknown>,
-): { tools?: string[]; extensions: string[] } | { invalid: string } {
+): { tools?: string[]; toolsExcept: string[] } | { invalid: string } {
 	// `tools:` with no value is YAML null: present and empty, unlike an absent field.
 	const tools = Object.hasOwn(frontmatter, "tools") && frontmatter.tools === null ? [] : toolList(frontmatter.tools);
 	if (tools === null)
 		return {
 			invalid: `${path} has tools ${JSON.stringify(frontmatter.tools)}, not a comma-separated list of tool names`,
 		};
+	if (tools === undefined) return { toolsExcept: [] };
+	const plus = tools.find((name) => name.startsWith("+"));
+	if (plus !== undefined)
+		return {
+			invalid: `${path} has tools entry ${JSON.stringify(plus)}: +name entries are not accepted; list every tool by name, or only -name entries to take tools off the parent's`,
+		};
+	const minus = tools.filter((name) => name.startsWith("-"));
+	if (minus.length === 0) return { tools, toolsExcept: [] };
+	if (minus.length < tools.length)
+		return {
+			invalid: `${path} has tools that mix tool names with -name entries; list every tool by name, or only -name entries to take tools off the parent's`,
+		};
+	const bare = minus.find((name) => name.slice(1).trim() === "");
+	if (bare !== undefined) return { invalid: `${path} has tools entry ${JSON.stringify(bare)}, which names no tool` };
+	return { toolsExcept: minus.map((name) => name.slice(1).trim()) };
+}
+
+/** The `tools` and `extensions` fields, or why the agent is invalid. */
+function launchFields(
+	path: string,
+	frontmatter: Record<string, unknown>,
+): { tools?: string[]; toolsExcept: string[]; extensions: string[] } | { invalid: string } {
+	const tools = toolsField(path, frontmatter);
+	if ("invalid" in tools) return tools;
 	const paths = toolList(frontmatter.extensions);
 	if (paths === null)
 		return {
@@ -218,7 +252,7 @@ function launchFields(
 	const extensions = (paths ?? []).map((entry) => resolveExtension(entry, dirname(path)));
 	const absent = extensions.find((entry) => !existsSync(entry));
 	if (absent !== undefined) return { invalid: `${path} has extension ${absent}, which does not exist` };
-	return { ...(tools === undefined ? {} : { tools }), extensions };
+	return { ...tools, extensions };
 }
 
 /** An extension path as an absolute one: `~` is the home directory, a relative path is against the agent file's folder. */
@@ -367,5 +401,11 @@ export function delegateTools(agentDir: string): string[] {
 			`invalid delegate tools settings ${file}: delegateTools must be a list of tool names or patterns, not ${JSON.stringify(value)}`,
 		);
 	}
-	return value.map((entry: string) => entry.trim());
+	const names = value.map((entry: string) => entry.trim());
+	const modifier = names.find((name) => name.startsWith("+") || name.startsWith("-"));
+	if (modifier !== undefined)
+		throw new Error(
+			`invalid delegate tools settings ${file}: delegateTools entries are tool names; ${JSON.stringify(modifier)} starts with ${modifier[0]}, which is not accepted there`,
+		);
+	return names;
 }

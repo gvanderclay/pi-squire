@@ -5,8 +5,9 @@
 // roster is read at call time, so a new agent is usable without a reload.
 //
 // Every frontmatter field is optional: `description` (default the name),
-// `display_name`, `model` and `fallback` (passed to the child's Pi unchanged;
-// absent `model` means the parent's), `thinking` (absent or unknown means the
+// `display_name`, `model` and `fallback` (each one model, `provider/id` or an
+// alias, passed to the child's Pi unchanged; a `*` pattern makes the file
+// invalid; absent `model` means the parent's), `thinking` (absent or unknown means the
 // parent's level), `tools` (the delegate's complete tool list; absent means the
 // parent's tools, empty means none), `extensions` (extra extension paths for the delegate only;
 // `~` expands, relative paths resolve against the agent file's folder, and a
@@ -124,11 +125,13 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 		return { invalid: `${path} has auto-exit ${JSON.stringify(fields["auto-exit"])}, not true or false`, notes: [] };
 	const launch = launchFields(path, fields);
 	if ("invalid" in launch) return { ...launch, notes: [] };
+	const model = field(fields, "model");
+	const fallback = toolList(fields.fallback);
+	const pattern = patternProblem(path, model, fallback);
+	if (pattern !== undefined) return { invalid: pattern, notes: [] };
 	// A field that cannot be used is dropped with a note; it never costs the agent.
 	const notes: string[] = [];
-	const model = field(fields, "model");
 	const thinking = thinkingField(path, fields, notes);
-	const fallback = toolList(fields.fallback);
 	if (fallback === null)
 		notes.push(`${path} has fallback ${JSON.stringify(fields.fallback)}, not a list of models; ignored`);
 	if (fields["exclude-tools"] !== undefined)
@@ -150,6 +153,25 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 			path,
 		},
 	};
+}
+
+/**
+ * Why a `model` or `fallback` entry makes the file invalid: a `*` pattern.
+ * Each entry names one model (an exact `provider/id` or an alias Pi resolves
+ * to one model), at launch through Pi's `--model` and in the delegate's own
+ * switch after a usage limit.
+ */
+function patternProblem(
+	path: string,
+	model: string | undefined,
+	fallback: string[] | null | undefined,
+): string | undefined {
+	if (model?.includes("*"))
+		return `${path} has model ${JSON.stringify(model)}: * patterns are not accepted; name one model, as provider/id or an alias`;
+	const entry = (fallback ?? []).find((name) => name.includes("*"));
+	if (entry !== undefined)
+		return `${path} has fallback ${JSON.stringify(entry)}: * patterns are not accepted; name one model per entry, as provider/id or an alias`;
+	return undefined;
 }
 
 /** The `thinking` field; an unknown level is dropped with a note, so the parent's level applies. */

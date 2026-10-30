@@ -38,14 +38,14 @@ longer read.
 | Field | Meaning | Change from today |
 | --- | --- | --- |
 | `description` | Shown in the roster and tool description. Defaults to the name. | Was required. |
-| `model` | `provider/id` or a pattern, passed to the child's `--model` unchanged, so Pi resolves it. Absent means the parent's model. | Was required and had to be `provider/id`. |
+| `model` | One model: `provider/id` or an alias, passed to the child's `--model` unchanged, so Pi resolves it. A `*` pattern makes the file invalid. Absent means the parent's model. | Was required and had to be `provider/id`. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. An unknown value is dropped and the parent's level applies. Absent means the parent's level. | Check today's accepted values against this list. |
 | `tools` | The delegate's complete tool list. Absent means the parent's tools. See Tools. | Meaning unchanged; the absent case is now stated. |
 | `prompt_mode` | `append` (default) wraps the body in `<agent_instructions>` after Pi's prompt. `replace` adds the body after Pi's prompt with no wrapper, which is how every delegate is built today. | New. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent in that project. | New. |
 | `locked` | `true`, or a list of `model` and `thinking`. A locked field cannot be overridden by the `delegate` tool or command; a call that passes one is refused for that field, and the result says which agent locked which field. `true` locks every field the file sets. | New. |
 | `display_name` | Shown on the delegate card, `/delegates` and the window title instead of the name. | New. |
-| `fallback` | Models to try when `model` is usage-limited. Each entry is passed through like `model`. | Entries no longer need to be `provider/id`. |
+| `fallback` | Models to try when `model` is usage-limited. Each entry is one model, like `model`; a `*` pattern makes the file invalid. | Entries no longer need to be `provider/id`. |
 | `auto-exit` | Unchanged. | — |
 | `extensions` | Unchanged, except relative paths (see above). | — |
 | `max_turns`, `inherit_context`, `run_in_background` | Ignored, with no warning. | New: known and ignored. |
@@ -92,7 +92,7 @@ Any other key is ignored silently.
 
 - How a tool that turns on other tools at run time, such as `web_enable`,
   behaves under a `tools` list.
-- That passing a pattern to `--model` and through `fallback` needs no
+- That passing an alias to `--model` and through `fallback` needs no
   validation beyond Pi's own error.
 - That the `thinking` values above match what Pi accepts.
 
@@ -133,17 +133,18 @@ Any other key is ignored silently.
 - A `model` or `fallback` entry that is an exact `provider/id` in the registry
   keeps the credential and usage-limit checks; anything else goes to the child
   unchanged.
+- No `*` patterns for models: a `model` or `fallback` entry containing `*`
+  makes the file invalid and disables the agent. Each entry names one model.
+  Pi's `--model` (`resolveCliModel`) has no `*` patterns and would turn
+  `alpha/*` into a custom model id, and expanding a pattern only mid-run gave
+  a launch and a resume of the same agent different meanings.
 - The delegate's own mid-run switch resolves each `fallback` entry with Pi's
-  exported `resolveModelScopeWithDiagnostics`, the resolver behind
-  `--models`, over the registry's models with credentials: exact ids, bare
-  ids and aliases (`sonnet`) and `*` patterns (`alpha/*`), in listed order, a
-  pattern's matches in Pi's order. `resolveCliModel`, behind `--model`, was
-  not used: it has no `*` patterns and turns `alpha/*` into a custom model id
-  `*`. The registry is handed to the resolver as a runtime with only
-  `getAvailable`, the one method it reads.
-- Open: for the same reason a `*` pattern as `model`, or as the fallback a
-  launch picks, reaches the child's `--model` as a custom id rather than a
-  match. Aliases and exact ids are unaffected.
+  exported `resolveCliModel`, the resolver behind `--model`, so an alias
+  means the same model as at launch: an exact `provider/id`, or a bare id or
+  alias (`sonnet`) to one model, in listed order. A custom model id it makes
+  up for an unknown entry is not used: the entry is passed over. The registry
+  is handed to the resolver as a runtime with only `getModels` and
+  `hasConfiguredAuth(provider)`, the two methods it reads.
 - `exclude-tools` in a file gets a warning, so a moved file does not silently
   gain tools.
 - The child always gets an explicit tool selection: no flag would give it

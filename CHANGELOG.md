@@ -51,8 +51,9 @@ follows [Semantic Versioning](https://semver.org/).
 - Every agent field is optional: `description` defaults to the name, an absent
   `model` or `thinking` runs on the parent session's current model or level,
   and an unknown `thinking` is dropped with a warning instead of leaving the
-  agent out. `model` and `fallback` entries may be patterns. A body may be
-  empty.
+  agent out. `model` and `fallback` entries may be aliases such as `sonnet`,
+  each resolving to one model; a `*` pattern makes the file invalid, so the
+  agent is disabled. A body may be empty.
 - New agent fields: `display_name` (shown on the delegate card, in
   `/delegates` and in the window title), `enabled: false` (leaves the agent
   out; a project file hides a global agent of the same name), `locked` (`true`
@@ -79,11 +80,11 @@ follows [Semantic Versioning](https://semver.org/).
   names by loading each extension with Pi's extension loader at launch, apart
   from any session; an extension that will not load is named in a warning.
   A `tools` list of names stays exact: name an extension's tools to get them.
-- A running delegate that hits a usage limit now resolves `fallback` entries
-  that are aliases or `*` patterns (such as `sonnet` or `alpha/*`) with Pi's
-  model-pattern resolver, in the listed order, instead of skipping every entry
-  that is not an exact `provider/id`. A pattern's matches are tried one by one
-  before the next entry, and never the model that just failed.
+- A running delegate that hits a usage limit now resolves a `fallback` entry
+  that is an alias or bare id (such as `sonnet`) to one model with Pi's
+  `--model` resolver, in the listed order, instead of skipping every entry
+  that is not an exact `provider/id`. Each model is tried once, never the one
+  that just failed.
 
 ### Removed
 

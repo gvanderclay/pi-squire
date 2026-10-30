@@ -538,7 +538,7 @@ test("an unavailable endpoint mid-run moves to the fallback without marking the 
 	assert.equal(delegate.shutdowns(), 0);
 });
 
-// Fallback entries that are not an exact provider/id resolve as Pi resolves model patterns.
+// Fallback entries that are not an exact provider/id resolve as Pi resolves --model: one model each.
 
 const SONNET = [{ provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" }];
 
@@ -569,35 +569,36 @@ test("a bare alias in fallback resolves to the model Pi would pick for it after 
 	assert.equal(delegate.shutdowns(), 0);
 });
 
-test("a provider wildcard in fallback moves through its models in order, each once", async (t) => {
+test("a bare id resolves to its one model, and a second limit there moves on to the next entry", async (t) => {
 	clock(t);
-	const delegate = patternDelegate("alpha/*");
+	const delegate = patternDelegate("deep-model,beta/other-model");
 	await delegate.start();
 	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
-	assert.deepEqual(delegate.modelSets, ["alpha/fast-model"]);
-	assert.match(
-		switchedTo(delegate),
-		/opencode-go\/paid hit a usage limit, so this session switched to alpha\/fast-model\./,
-	);
-	// An unavailable endpoint marks nothing, so the wildcard's next model is still open.
+	assert.deepEqual(delegate.modelSets, ["alpha/deep-model"]);
 	const unavailable = "429: Endpoint is unavailable";
-	await delegate.run("error", { errorMessage: unavailable, provider: "alpha", model: "fast-model" });
-	assert.deepEqual(delegate.modelSets, ["alpha/fast-model", "alpha/deep-model"]);
+	await delegate.run("error", { errorMessage: unavailable, provider: "alpha", model: "deep-model" });
+	// One model per entry: alpha's other model is not tried, the next entry is.
+	assert.deepEqual(delegate.modelSets, ["alpha/deep-model", "beta/other-model"]);
 	assert.match(
 		switchedTo(delegate, 1),
-		/alpha\/fast-model was unavailable .*, so this session switched to alpha\/deep-model\./,
+		/alpha\/deep-model was unavailable .*, so this session switched to beta\/other-model\./,
 	);
-	await delegate.run("error", { errorMessage: unavailable, provider: "alpha", model: "deep-model" });
-	assert.equal(delegate.modelSets.length, 2);
-	assert.equal(delegate.shutdowns(), 1);
 });
 
-test("fallback entries keep their order whatever form they take, and a marked match is passed over", async (t) => {
+test("a * pattern that reaches a delegate's fallback list anyway is not expanded: it matches no model", async (t) => {
+	clock(t);
+	const delegate = patternDelegate("alpha/*,beta/other-model");
+	await delegate.start();
+	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
+	assert.deepEqual(delegate.modelSets, ["beta/other-model"]);
+});
+
+test("fallback entries keep their order whatever form they take, and a marked one is passed over", async (t) => {
 	clock(t);
 	const now = Date.now();
 	const mark = { reason: "limit", recordedAt: now, clearsAt: now + 3_600_000, source: "reactive", hits: 1 };
 	writeFileSync(FILE, JSON.stringify([{ ...mark, scope: "alpha/fast-model", delegations: [] }]));
-	const delegate = patternDelegate("nowhere/*,alpha/*,sonnet");
+	const delegate = patternDelegate("nowhere/model,alpha/fast-model,deep-model,sonnet");
 	await delegate.start();
 	await delegate.run("error", { errorMessage: GO_LIMIT, provider: "opencode-go", model: "paid" });
 	assert.deepEqual(delegate.modelSets, ["alpha/deep-model"]);

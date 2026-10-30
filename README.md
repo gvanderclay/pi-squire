@@ -430,11 +430,11 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | --- | --- |
 | `description` | Shown in the roster and the `delegate` tool's description. Defaults to the name. |
 | `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. |
-| `model` | `provider/id` or a pattern, passed to the child's `--model` unchanged, so Pi resolves it. Absent means the parent session's current model. |
+| `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
 | `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. |
 | `extensions` | Extension paths only this agent's delegate loads (see below). |
-| `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is passed through like `model`. |
+| `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern makes the file invalid. |
 | `auto-exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
@@ -519,13 +519,14 @@ read leaves the agent out, with a warning.
 
 A `model` or `fallback` entry that is an exact `provider/id` in Pi's registry
 is checked as before: a model without credentials or with an active
-usage-limit mark is skipped for the next candidate. Anything else, such as a
-pattern, goes to the child unchanged; if Pi cannot resolve it, the child's Pi
-reports the error and its window closes without a result. When a running
-delegate moves to a fallback after a usage limit, it resolves each entry the
-way Pi resolves a `--models` pattern: an exact `provider/id`, a bare id or
-alias such as `sonnet`, or a `*` pattern such as `alpha/*`, over the models
-with credentials, in the order the entries are listed.
+usage-limit mark is skipped for the next candidate. Anything else, such as an
+alias, goes to the child's `--model` unchanged, and Pi resolves it to one
+model; if Pi cannot, the child's Pi reports the error and its window closes
+without a result. When a running delegate moves to a fallback after a usage
+limit, it resolves each entry the way Pi resolves `--model`: an exact
+`provider/id`, or a bare id or alias such as `sonnet`, to one model, in the
+order the entries are listed. No entry may be a `*` pattern: a `model` or
+`fallback` entry with `*` makes the file invalid, and the agent is disabled.
 
 The body is followed by one fixed final-message line and a paragraph naming the
 parent session's address. The delegate's task arrives as a message from that
@@ -540,7 +541,8 @@ An agent file that cannot be used is invalid, and its agent is disabled:
 frontmatter that is not readable YAML or not a set of fields, an `enabled` or
 `auto-exit` that is not `true` or `false`, a `tools` or `extensions` that is
 not a list, a `tools` list with a `+name` entry or with tool names and `-name`
-entries mixed, or an extension path that does not exist. A disabled agent is left
+entries mixed, a `model` or `fallback` entry with a `*` pattern, or an
+extension path that does not exist. A disabled agent is left
 out of the roster and of the `delegate` tool's description, so the model never
 picks it, and a warning names the file and the reason when the session starts
 (and before a run, when a file turns invalid while the session runs). A call
@@ -740,9 +742,8 @@ The launch also passes the candidates after the chosen one to the delegate as
 `PI_DELEGATE_FALLBACK` (none for an explicit model). When a delegate's run
 ends on a usage limit, it switches its session to the first of them that has
 credentials and is not marked, adds a message saying so, and continues the
-task there, so work done so far is kept. An alias or `*` pattern resolves as
-it would in Pi's `--models`, and a pattern's matches are tried in Pi's order
-before the next entry. Each model is tried once, never the one that just
+task there, so work done so far is kept. An alias resolves to one model, as
+it would in Pi's `--model`. Each model is tried once, never the one that just
 failed; when none is left, the run fails as before. A `done` result from such a delegate
 carries the `Usage limit:` line too, saying it finished on a fallback.
 

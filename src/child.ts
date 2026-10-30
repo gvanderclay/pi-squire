@@ -8,7 +8,7 @@
 // run the user stopped never exits. A run that ends on a usage limit first
 // moves to the agent's next fallback, from `PI_DELEGATE_FALLBACK`, and
 // continues there; it exits only when no fallback is left. An entry that is
-// an alias or a `*` pattern resolves through Pi's own model-pattern resolver. The user
+// an alias resolves to one model through Pi's own `--model` resolver. The user
 // taking over — typing here, or stopping a run — turns it off for the rest of
 // the session, with a notice; `/auto-exit` turns it back on.
 //
@@ -24,7 +24,7 @@ import {
 	type ExtensionContext,
 	type ModelRegistry,
 	type ModelRuntime,
-	resolveModelScopeWithDiagnostics,
+	resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
 
 import { activeMark, classify, type Response, recordLimit } from "./limits.ts";
@@ -63,27 +63,30 @@ function recordUsageLimit(last: Message, ctx: ExtensionContext, response?: Respo
 }
 
 /**
- * The models one fallback entry names, in the order Pi lists them: an exact
- * `provider/id`, a bare id or alias, or a `*` pattern such as `alpha/*`. Pi's
- * `--models` resolver does the matching (the `--model` one has no `*`
- * patterns), over the models with credentials. Empty when nothing matches.
+ * The one model a fallback entry names, as Pi's `--model` resolves it: an
+ * exact `provider/id`, or a bare id or alias such as `sonnet`. Undefined when
+ * the registry has no such model; a custom model id Pi would make up for an
+ * unknown one is not used.
  */
-async function resolveEntry(registry: ModelRegistry, entry: string): Promise<Model<Api>[]> {
-	// The resolver reads only `getAvailable` from the runtime; the registry is the extension's view of it.
-	const runtime = { getAvailable: async () => registry.getAvailable() } as unknown as ModelRuntime;
+function resolveEntry(registry: ModelRegistry, entry: string): Model<Api> | undefined {
+	// The resolver reads only these two from the runtime; the registry is the extension's view of it.
+	const runtime = {
+		getModels: () => registry.getAll(),
+		hasConfiguredAuth: (provider: string) =>
+			registry.getAll().some((model) => model.provider === provider && registry.hasConfiguredAuth(model)),
+	} as unknown as ModelRuntime;
 	try {
-		const { scopedModels } = await resolveModelScopeWithDiagnostics([entry], runtime);
-		return scopedModels.map((scoped) => scoped.model);
+		const { model } = resolveCliModel({ cliModel: entry, modelRuntime: runtime });
+		return model === undefined ? undefined : registry.find(model.provider, model.id);
 	} catch {
-		return []; // an entry Pi cannot read is passed over like one that matches nothing
+		return undefined; // an entry Pi cannot read is passed over like one that names no model
 	}
 }
 
 /**
  * Switch to the first model `fallback` names that is usable, not marked and
- * not tried yet, taking each entry off the list in order. A pattern's other
- * matches go back to the front, so the next limit moves on to them. Returns
- * the `provider/id` switched to, if any.
+ * not tried yet, taking each entry off the list in order. Returns the
+ * `provider/id` switched to, if any.
  */
 async function switchModel(
 	pi: ExtensionAPI,
@@ -92,18 +95,14 @@ async function switchModel(
 	tried: Set<string>,
 ): Promise<string | undefined> {
 	for (let next = fallback.shift(); next !== undefined; next = fallback.shift()) {
-		const models = (await resolveEntry(ctx.modelRegistry, next)).filter(
-			(model) => !tried.has(`${model.provider}/${model.id}`),
-		);
-		for (const [index, model] of models.entries()) {
-			const name = `${model.provider}/${model.id}`;
-			tried.add(name);
-			if (!ctx.modelRegistry.hasConfiguredAuth(model)) continue;
-			if (activeMark(ctx.modelRegistry, model.provider, model.id) !== undefined) continue;
-			if (!(await pi.setModel(model))) continue;
-			fallback.unshift(...models.slice(index + 1).map((rest) => `${rest.provider}/${rest.id}`));
-			return name;
-		}
+		const model = resolveEntry(ctx.modelRegistry, next);
+		if (model === undefined) continue;
+		const name = `${model.provider}/${model.id}`;
+		if (tried.has(name)) continue;
+		tried.add(name);
+		if (!ctx.modelRegistry.hasConfiguredAuth(model)) continue;
+		if (activeMark(ctx.modelRegistry, model.provider, model.id) !== undefined) continue;
+		if (await pi.setModel(model)) return name;
 	}
 	return undefined;
 }
@@ -134,7 +133,7 @@ function registerTakeover(pi: ExtensionAPI, parent: string): void {
  * `<provider/model> <what happened>`.
  */
 function registerFallback(pi: ExtensionAPI): (failure: Failure | undefined) => void {
-	/** The entries still to move to on a usage limit, in order: models, aliases or patterns. */
+	/** The entries still to move to on a usage limit, in order: models or aliases. */
 	const fallback = (process.env[FALLBACK_ENV] ?? "")
 		.split(",")
 		.map((entry) => entry.trim())

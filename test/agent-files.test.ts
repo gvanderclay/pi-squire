@@ -213,15 +213,35 @@ test("every thinking level Pi takes is accepted, off included", async () => {
 	assert.deepEqual(warnings, []);
 });
 
-test("a model or fallback the registry does not know goes to the child unchanged, for Pi to resolve", async () => {
-	writeAgent("pattern", agentFile({ ...SCOUT, model: "sonnet", fallback: "alpha/*, beta/other-model" }));
+test("a model or fallback the registry does not know, such as an alias, goes to the child unchanged, for Pi to resolve", async () => {
+	writeAgent("alias", agentFile({ ...SCOUT, model: "sonnet", fallback: "deep-model, beta/other-model" }));
 	const s = session();
 	await s.start();
-	await s.delegate("pattern go");
+	await s.delegate("alias go");
 	assert.deepEqual(s.errors, []);
 	const opened = s.tmux.opened[0];
 	assert.deepEqual(pair(opened.argv, "--model"), ["--model", "sonnet"]);
-	assert.equal(opened.env.PI_DELEGATE_FALLBACK, "alpha/*,beta/other-model");
+	assert.equal(opened.env.PI_DELEGATE_FALLBACK, "deep-model,beta/other-model");
+});
+
+test("a model or fallback entry with a * pattern makes the file invalid, so the agent is disabled", async () => {
+	writeAgent("model", agentFile({ ...SCOUT, model: "alpha/*" }));
+	writeAgent("fallback", agentFile({ ...SCOUT, fallback: "beta/other-model, alpha/*-model" }));
+	writeAgent("scout", agentFile(SCOUT));
+	const { agents, disabled } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.name),
+		["scout"],
+	);
+	const reasons = Object.fromEntries(disabled.map((item) => [item.name, item.reason]));
+	assert.match(reasons.model, /model\.md has model "alpha\/\*": \* patterns are not accepted; name one model/);
+	assert.match(reasons.fallback, /fallback\.md has fallback "alpha\/\*-model": \* patterns are not accepted/);
+	const s = session();
+	await s.start();
+	assert.ok(!s.tool("delegate").description.includes("alpha/*"), s.tool("delegate").description);
+	await s.delegate("model go");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.match(s.errors[0], /agent "model" is disabled because its file is invalid: .*\* patterns are not accepted/);
 });
 
 // ---------------------------------------------------------------------------

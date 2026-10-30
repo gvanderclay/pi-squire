@@ -767,21 +767,69 @@ test("a locked field the file leaves unset keeps the parent's value, and a call'
 // display_name
 
 test("display_name names the window and the /delegates row; the agent's name still reaches session:launch", async () => {
-	writeAgent("reviewer", agentFile({ ...SCOUT, display_name: "Code Reviewer" }));
+	writeAgent("reviewer", agentFile({ ...SCOUT, display_name: "Code_Reviewer-2" }));
 	const s = session();
 	await s.start();
 	const launches: { agent: string; env: Record<string, string> }[] = [];
 	s.events.on("session:launch", (data) => launches.push(data as { agent: string; env: Record<string, string> }));
 	const result = await s.toolCall("delegate", { agent: "reviewer", task: "go", label: "pr-12" });
 	const opened = s.tmux.opened[0];
-	assert.equal(opened.name, "Code Reviewer-pr-12");
-	assert.equal((result.structuredContent as { windowName: string }).windowName, "Code Reviewer-pr-12");
+	assert.equal(opened.name, "Code_Reviewer-2-pr-12");
+	assert.equal((result.structuredContent as { windowName: string }).windowName, "Code_Reviewer-2-pr-12");
 	assert.equal((result.structuredContent as { agent: string }).agent, "reviewer");
 	assert.equal(launches[0].agent, "reviewer");
 	assert.equal(opened.env.PI_DELEGATE_AGENT, "reviewer");
-	assert.equal(s.entries[0].data.displayName, "Code Reviewer");
+	assert.equal(s.entries[0].data.displayName, "Code_Reviewer-2");
 	const script = keyScript(["escape"]);
 	s.queueCustom(script);
 	await s.command("delegates");
-	assert.match(script.frames[0], /Code Reviewer-pr-12 · Code Reviewer · running/);
+	assert.match(script.frames[0], /Code_Reviewer-2-pr-12 · Code_Reviewer-2 · running/);
+});
+
+test("a display_name with anything but ASCII letters, digits, - and _ makes the file invalid, so the agent is disabled", async () => {
+	const bad: Record<string, string> = {
+		spaced: '"Code Reviewer"',
+		hash: '"pr#1"',
+		dotted: "v1.2",
+		unicode: "Revisor-ñ",
+		empty: '""',
+		blank: "",
+		control: '"a\\tb"',
+		number: "7",
+	};
+	for (const [name, value] of Object.entries(bad)) writeAgent(name, agentFile({ ...SCOUT, display_name: value }));
+	writeAgent("good", agentFile({ ...SCOUT, display_name: "Good_one-2" }));
+	const { agents, disabled } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => [agent.name, agent.displayName]),
+		[["good", "Good_one-2"]],
+	);
+	const reasons = Object.fromEntries(disabled.map((item) => [item.name, item.reason]));
+	assert.deepEqual(Object.keys(reasons).sort(), Object.keys(bad).sort());
+	assert.equal(
+		reasons.spaced,
+		`${join(rosterDir, "spaced.md")} has display_name "Code Reviewer", which may hold only ASCII letters, digits, - and _`,
+	);
+	assert.match(reasons.hash, /hash\.md has display_name "pr#1", which may hold only/);
+	assert.match(reasons.dotted, /dotted\.md has display_name "v1\.2", which may hold only/);
+	assert.match(reasons.unicode, /unicode\.md has display_name "Revisor-ñ", which may hold only/);
+	assert.match(reasons.empty, /empty\.md has display_name "", which may hold only/);
+	assert.match(reasons.blank, /blank\.md has display_name null, which may hold only/);
+	assert.match(reasons.control, /control\.md has display_name "a\\tb", which may hold only/);
+	assert.match(reasons.number, /number\.md has display_name 7, which may hold only/);
+	const s = session();
+	await s.start();
+	assert.equal(s.warnings.length, Object.keys(bad).length, s.warnings.join("\n"));
+	assert.ok(s.warnings.some((warning) => warning.includes(join(rosterDir, "spaced.md"))));
+	const description = s.tool("delegate").description;
+	assert.ok(description.includes('- good "Good_one-2" —') && !description.includes("spaced"), description);
+	await s.delegate("spaced go");
+	await assert.rejects(
+		s.toolCall("delegate", { agent: "spaced", task: "go" }),
+		/agent "spaced" is disabled because its file is invalid: .*spaced\.md has display_name "Code Reviewer", which may hold only ASCII letters, digits, - and _/,
+	);
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.sendCalls, []);
+	assert.equal(s.errors.length, 1);
+	assert.match(s.errors[0], /agent "spaced" is disabled because its file is invalid: .*display_name "Code Reviewer"/);
 });

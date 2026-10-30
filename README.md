@@ -429,7 +429,7 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | Field | Meaning |
 | --- | --- |
 | `description` | Shown in the roster and the `delegate` tool's description. Defaults to the name. |
-| `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. |
+| `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. It may hold only ASCII letters, digits, `-` and `_`; any other value (a space, `#`, `.`, a non-ASCII letter, or an empty value) makes the file invalid, so the agent is disabled. |
 | `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
 | `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other, and a tool of the agent's own `extensions` reaches the delegate only when `tools` or `delegateTools` names it. |

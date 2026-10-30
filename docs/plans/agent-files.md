@@ -44,7 +44,7 @@ longer read.
 | `prompt_mode` | `append` (default) wraps the body in `<agent_instructions>` after Pi's prompt. `replace` adds the body after Pi's prompt with no wrapper, which is how every delegate is built today. | New. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent in that project. | New. |
 | `locked` | `true`, or a list of `model` and `thinking`. A locked field cannot be overridden by the `delegate` tool or command; a call that passes one is refused for that field, and the result says which agent locked which field. `true` locks every field the file sets. | New. |
-| `display_name` | Shown on the delegate card, `/delegates` and the window title instead of the name. | New. |
+| `display_name` | Shown on the delegate card, `/delegates` and the window title instead of the name. ASCII letters, digits, `-` and `_` only; any other value, empty included, makes the file invalid. | New. |
 | `fallback` | Models to try when `model` is usage-limited. Each entry is one model, like `model`; a `*` pattern makes the file invalid. | Entries no longer need to be `provider/id`. |
 | `auto-exit` | Unchanged. | — |
 | `extensions` | Unchanged, except relative paths (see above). | — |
@@ -197,4 +197,7 @@ Any other key is ignored silently.
   probe extension registering stand-in MCP tools, and checks what Pi
   registered.
 - `display_name` replaces the agent's name in the window and session name
-  (`<display_name>-<label>`); the record keeps it for `/delegates`.
+  (`<display_name>-<label>`); the record keeps it for `/delegates`. It must
+  match `^[A-Za-z0-9_-]+$`, so the name is safe as a tmux window name and a
+  Pi session name; anything else (a space, `#`, `.`, a non-ASCII letter, an
+  empty value) makes the file invalid and disables the agent.

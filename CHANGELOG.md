@@ -55,7 +55,10 @@ follows [Semantic Versioning](https://semver.org/).
   each resolving to one model; a `*` pattern makes the file invalid, so the
   agent is disabled. A body may be empty.
 - New agent fields: `display_name` (shown on the delegate card, in
-  `/delegates` and in the window title), `enabled: false` (leaves the agent
+  `/delegates` and in the window title; it may hold only ASCII letters,
+  digits, `-` and `_`, and any other value, a space, `#`, `.`, a non-ASCII
+  letter or an empty value among them, makes the file invalid, so the agent is
+  disabled), `enabled: false` (leaves the agent
   out; a project file hides a global agent of the same name), `locked` (`true`
   or a list of `model` and `thinking`: a call or resume that passes a locked
   field runs on the agent's value, and the result says which agent locked
@@ -126,8 +129,9 @@ follows [Semantic Versioning](https://semver.org/).
   assertions expect the `<agent_instructions>` wrapper; the roster, empty-roster
   and malformed-file tests in `test/delegate.test.ts` and `test/tools.test.ts`
   follow the optional fields and new location; the fallback render test skips
-  a model without credentials rather than an unknown one; and
-  `test/exclude-tools.test.ts` becomes `test/agent-files.test.ts`.
+  a model without credentials rather than an unknown one; the `display_name`
+  test names its agent `Code_Reviewer-2`, since a space is no longer accepted;
+  and `test/exclude-tools.test.ts` becomes `test/agent-files.test.ts`.
 - Tests changed with tools inheritance: the test that pinned an empty `tools`
   field as the parent's tools now pins it as no tools; the argv tests in
   `test/delegate.test.ts` expect the parent's tools as `--tools`; and an

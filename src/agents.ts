@@ -5,7 +5,8 @@
 // roster is read at call time, so a new agent is usable without a reload.
 //
 // Every frontmatter field is optional: `description` (default the name),
-// `display_name`, `model` and `fallback` (each one model, `provider/id` or an
+// `display_name` (ASCII letters, digits, `-` and `_` only; anything else,
+// empty included, makes the file invalid), `model` and `fallback` (each one model, `provider/id` or an
 // alias, passed to the child's Pi unchanged; a `*` pattern, or a list entry
 // holding a comma, makes the file invalid; absent `model` means the parent's),
 // `thinking` (absent or unknown means the parent's level), `tools` (the
@@ -44,13 +45,12 @@ export type PromptMode = "append" | "replace";
 /** An agent name is one safe path segment and one safe tmux window name. */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
-/** Whether `value` holds a control character, which a display name cannot: it names a tmux window. */
-const hasControl = (value: string): boolean =>
-	[...value].some((char) => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f);
+/** A display name names a tmux window and a Pi session: ASCII letters, digits, `-` and `_` only. */
+const DISPLAY_NAME = /^[A-Za-z0-9_-]+$/;
 
 export type Agent = {
 	name: string;
-	/** Shown instead of the name on the delegate card, `/delegates` and the window title; from `display_name`. */
+	/** Shown instead of the name on the delegate card, `/delegates` and the window title; from `display_name`, `[A-Za-z0-9_-]+`. */
 	displayName?: string;
 	description: string;
 	/** Passed to the child's `--model` unchanged; undefined means the parent's model. */
@@ -130,6 +130,8 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 	const fallback = toolList(fields.fallback);
 	const pattern = patternProblem(path, model, fallback) ?? commaProblem(path, fields.fallback);
 	if (pattern !== undefined) return { invalid: pattern, notes: [] };
+	const shown = displayName(path, fields);
+	if ("invalid" in shown) return { ...shown, notes: [] };
 	// A field that cannot be used is dropped with a note; it never costs the agent.
 	const notes: string[] = [];
 	const thinking = thinkingField(path, fields, notes);
@@ -141,7 +143,7 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 		notes,
 		agent: {
 			name,
-			...displayName(path, fields, notes),
+			...shown,
 			description: field(fields, "description") ?? name,
 			...(model === undefined ? {} : { model }),
 			...(thinking === undefined ? {} : { thinking }),
@@ -194,13 +196,14 @@ function thinkingField(path: string, fields: Record<string, unknown>, notes: str
 	return undefined;
 }
 
-/** The `display_name` field, as a spread; one with control characters is ignored with a note. */
-function displayName(path: string, fields: Record<string, unknown>, notes: string[]): { displayName?: string } {
-	const value = field(fields, "display_name");
-	if (value === undefined) return {};
-	if (!hasControl(value)) return { displayName: value };
-	notes.push(`${path} has a display_name with control characters; ignored`);
-	return {};
+/** The `display_name` field, as a spread, or why the file is invalid: anything but `[A-Za-z0-9_-]+`, empty included. */
+function displayName(path: string, fields: Record<string, unknown>): { displayName?: string } | { invalid: string } {
+	if (!Object.hasOwn(fields, "display_name")) return {};
+	const value = fields.display_name;
+	if (typeof value === "string" && DISPLAY_NAME.test(value)) return { displayName: value };
+	return {
+		invalid: `${path} has display_name ${JSON.stringify(value)}, which may hold only ASCII letters, digits, - and _`,
+	};
 }
 
 /** The `prompt_mode` field; an unknown mode is ignored with a note, so the default applies. */

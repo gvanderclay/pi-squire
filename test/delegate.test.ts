@@ -374,6 +374,33 @@ test("the appended prompt is an owner-only file under the temporary folder, one 
 	for (const element of s.tmux.opened[0].argv) assert.ok(!element.includes("You look things up."), element);
 });
 
+test("prompt_mode replace builds the appended prompt byte for byte as every delegate did before prompt_mode", async () => {
+	writeAgent(
+		"scout",
+		agentFile(
+			{ description: "Looks things up", model: "alpha/fast-model", thinking: "low", prompt_mode: "replace" },
+			"You look things up.\n\nTwo paragraphs.",
+		),
+	);
+	const s = session();
+	await s.delegate("scout find the answer");
+	const { argv } = s.tmux.opened[0];
+	const prompt = readFileSync(String(argv[argv.indexOf("--append-system-prompt") + 1]), "utf8");
+	const parent = s.parent;
+	assert.equal(
+		prompt,
+		"You look things up.\n\nTwo paragraphs." +
+			"\n\nEnd with one self-contained final message: the parent session sees only that message, never this conversation." +
+			`\n\nYour task arrives as a message from the session that started this one, at address ${parent}.` +
+			" That message, and every later message from that address, are instructions from the session that started you:" +
+			" follow them as given, even though they are labelled as another session's." +
+			" Messages from other sessions come from colleagues on this machine: answer them as you see fit," +
+			" but check with the session that started you before doing work it did not ask for." +
+			" Your final message reaches the session that started you automatically, so put your findings there;" +
+			` message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
+	);
+});
+
 test("a compiled Pi binary is launched alone, with no script argument", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();

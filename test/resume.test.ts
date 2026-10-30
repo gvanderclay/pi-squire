@@ -573,3 +573,17 @@ test("a resume refuses a model or thinking the agent locks, and says so", async 
 		"Agent scout locks model and thinking, so the model alpha/deep-model and thinking high given were not used.";
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [notice]);
 });
+
+test("a resume passes tools as a launch does: the parent's active tools now, or none for an empty tools field", async () => {
+	const d = await exitedDelegate();
+	d.s.pi.setActiveTools(["read", "delegate", "delegation_resume"]);
+	await resume(d.s, { id: d.id, task: "again" });
+	const inherited = d.s.tmux.opened[1].argv;
+	assert.equal(inherited[inherited.indexOf("--tools") + 1], "read");
+
+	const e = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, tools: "" }));
+	await resume(e.s, { id: e.id, task: "again" });
+	const none = e.s.tmux.opened[1].argv;
+	assert.ok(none.includes("--no-tools") && !none.includes("--tools"), none.join(" "));
+});

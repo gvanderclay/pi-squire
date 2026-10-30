@@ -432,7 +432,7 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. |
 | `model` | `provider/id` or a pattern, passed to the child's `--model` unchanged, so Pi resolves it. Absent means the parent session's current model. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
-| `tools` | The delegate's complete tool list (see below). Absent means the parent's tools. |
+| `tools` | The delegate's complete tool list (see below). Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. |
 | `extensions` | Extension paths only this agent's delegate loads (see below). |
 | `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is passed through like `model`. |
 | `auto-exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
@@ -453,14 +453,25 @@ listed tools are visible. Pi can keep unlisted MCP tools registered unless the
 list includes an `mcp__` entry, and an extension that turns tools on at run
 time can still add its own. Names are not checked against the parent's tools,
 since a tool from one of the agent's own `extensions` exists only in the child.
-An empty or absent list passes no flag, so the delegate gets the parent's
-tools. The delegation tools are never available in a delegate, whatever the
-list says: pi-squire registers none of them there.
+
+- No `tools` field: the delegate gets the parent session's tools as they are
+  when the launch (or resume) starts, the tools active there then, passed as
+  `--tools`. A parent limited to `read` gives such a delegate only `read`. A
+  tool only the agent's own `extensions` register is not among them; name it
+  in `tools` or `delegateTools`.
+- An empty `tools` field, `tools:` or `tools: []`: the delegate gets no tools
+  except the `delegateTools` entries. With none of those either, it starts
+  with `--no-tools`.
+- A `tools` list: exactly those tools, plus the `delegateTools` entries.
+
+The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
+`delegation_resume`) are never passed and never available in a delegate:
+pi-squire registers none of them there.
 
 The delegate's result reaches the parent through the `message:*` provider's
 reply when its run settles, not through a tool, so a short `tools` list cannot
-stop it answering. To let a delegate with a `tools` line message its parent
-mid-task, list the tools your `message:*` provider gives a session for that in
+stop it answering. To let a delegate message its parent mid-task, whatever its
+`tools`, list the tools your `message:*` provider gives a session for that in
 the `delegateTools` setting, in `<agent dir>/squire/settings.json` beside
 `windowPlacement` and `worktreeRoot`:
 
@@ -468,12 +479,11 @@ the `delegateTools` setting, in `<agent dir>/squire/settings.json` beside
 { "delegateTools": ["<tool or pattern>"] }
 ```
 
-Each entry, a tool name or `*` pattern, is added to every agent's `tools` line
-and passed to `--tools` unchanged. An agent with no `tools` line already has
-the parent's tools, so nothing is added there. The setting is empty by default,
-is read at each launch, and a value that is not a list of names refuses the
-launch with an error naming the file, before the task is sent or a window
-opens.
+Each entry, a tool name or `*` pattern, is added to every delegate's tools,
+whether they come from its agent's `tools` or from the parent, and passed to
+`--tools` unchanged. The setting is empty by default, is read at each launch
+and resume, and a value that is not a list of names refuses the launch with an
+error naming the file, before the task is sent or a window opens.
 
 `extensions` lists extension paths only this agent's delegate loads, as a
 comma-separated or YAML list. Each reaches the child as a repeated
@@ -563,8 +573,8 @@ session's delegation records. None of them is registered inside a delegate.
 
 The `delegate` tool's description lists the current roster, one line per agent:
 its name and any display name, description, default model (or this session's)
-and fallbacks, thinking, auto-exit when it is off, its tools and the fields it
-locks.
+and fallbacks, thinking, auto-exit when it is off, its tools (`no tools` for
+an empty `tools` field) and the fields it locks.
 
 ```text
 - scout "Recon" — Read-only recon (default provider/model-id, thinking low, auto-exit off, tools: read/grep, locked: model)
@@ -960,7 +970,8 @@ and it resumes as the command does.
   [Usage limits](#usage-limits)). An explicit `model` is used alone and refused
   rather than substituted. `thinking` and `auto_exit` default to the
   delegation's own. The agent's prompt, tools and extensions are those of the
-  roster now.
+  roster now, and an agent without a `tools` field gets the parent's tools as
+  they are at the resume.
 - `session:launch` is emitted as for any launch, with the same payload.
 - Not detected: a Pi process you opened yourself on the same session outside
   pi-squire's window. Close it before resuming.

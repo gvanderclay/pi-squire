@@ -153,6 +153,8 @@ test("flags override the agent's defaults, and the task arrives verbatim", async
 		"alpha/deep-model",
 		"--thinking",
 		"high",
+		"--tools",
+		"read,bash,edit,write",
 	]);
 	assert.equal(s.sendCalls[0].body, "run   the --model thing");
 });
@@ -269,6 +271,9 @@ test("the argv runs the parent's own script pi with the task's flags", async () 
 		"alpha/fast-model",
 		"--thinking",
 		"low",
+		// No tools field: the parent's active tools, less the delegation tools.
+		"--tools",
+		"read,bash,edit,write",
 	]);
 	const promptPath = String(argv[promptAt + 1]);
 	assert.ok(isAbsolute(promptPath), promptPath);

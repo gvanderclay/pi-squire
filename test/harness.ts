@@ -240,6 +240,8 @@ export type SessionOptions = {
 	ui?: UiAnswers;
 	/** The tool names `pi.getAllTools()` reports once the session has started. */
 	registeredTools?: readonly string[];
+	/** The tool names `pi.getActiveTools()` reports; default `DEFAULT_TOOLS` and the delegation tools. `pi.setActiveTools` changes them. */
+	activeTools?: readonly string[];
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
 	noCredentials?: readonly string[];
 	/** Models only this session's registry also knows, on top of `FAKE_MODELS`. */
@@ -269,6 +271,9 @@ export type RunFailure = {
 
 /** The tools a fake session has unless a test says otherwise. */
 export const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
+
+/** The tools pi-squire registers in a parent, active there unless a test says otherwise. */
+export const DELEGATION_TOOLS = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 
 /**
  * Pi passes `structuredContent` to codemode scripts without checking it, so
@@ -355,8 +360,13 @@ export function session(options: SessionOptions = {}) {
 	/** Pi's action methods throw until the runtime binds, which is before `session_start`. */
 	let bound = false;
 	const registeredTools = options.registeredTools ?? DEFAULT_TOOLS;
+	let activeTools = [...(options.activeTools ?? [...DEFAULT_TOOLS, ...DELEGATION_TOOLS])];
 	const pi = {
 		getThinkingLevel: () => options.parentThinking ?? "medium",
+		getActiveTools: () => [...activeTools],
+		setActiveTools: (names: string[]) => {
+			activeTools = [...names];
+		},
 		getAllTools: () => {
 			if (!bound)
 				throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");

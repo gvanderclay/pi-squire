@@ -167,48 +167,112 @@ test("a model or fallback the registry does not know goes to the child unchanged
 // ---------------------------------------------------------------------------
 // Tools
 
-test("a tools line is the delegate's whole list; without one no --tools flag passes, so it has the parent's tools", async () => {
+test("a tools line is the delegate's whole list, as a comma-separated or YAML list", async () => {
 	writeAgent("listed", agentFile({ ...SCOUT, tools: "device_run, read" }));
 	writeAgent("yaml", agentFile({ ...SCOUT, tools: "[read, grep]" }));
-	writeAgent("empty", agentFile({ ...SCOUT, tools: "", extensions: "" }));
-	writeAgent("none", agentFile(SCOUT));
 	const s = session();
 	await s.start();
-	for (const name of ["listed", "yaml", "empty", "none"]) await s.delegate(`${name} go`);
+	for (const name of ["listed", "yaml"]) await s.delegate(`${name} go`);
 	assert.deepEqual(s.errors, []);
-	const [listed, yaml, empty, none] = s.tmux.opened.map((opened) => opened.argv);
+	const [listed, yaml] = s.tmux.opened.map((opened) => opened.argv);
 	assert.deepEqual(pair(listed, "--tools"), ["--tools", "device_run,read"]);
 	assert.deepEqual(pair(yaml, "--tools"), ["--tools", "read,grep"]);
-	for (const argv of [empty, none]) assert.ok(!argv.includes("--tools") && !argv.includes("-e"), argv.join(" "));
-	for (const argv of s.tmux.opened.map((opened) => opened.argv)) assert.ok(!argv.includes("--exclude-tools"));
+	for (const argv of s.tmux.opened.map((opened) => opened.argv)) {
+		assert.ok(!argv.includes("--exclude-tools") && !argv.includes("--no-tools"), argv.join(" "));
+	}
 });
 
-test("the delegateTools setting is added to every tools line, unchanged, and to no agent without one", async () => {
-	setSettings({ delegateTools: ["reach_parent", "mcp__mail__*", "read"] });
-	writeAgent("listed", agentFile({ ...SCOUT, tools: "read, grep" }));
-	writeAgent("none", agentFile(SCOUT));
-	const s = session();
+test("without a tools field the delegate gets the parent's active tools, less the delegation tools", async () => {
+	writeAgent("none", agentFile({ ...SCOUT, extensions: "" }));
+	const s = session({
+		activeTools: ["read", "grep", "delegate", "delegation_status", "codemode", "delegation_resume"],
+	});
 	await s.start();
-	await s.delegate("listed go");
 	await s.delegate("none go");
 	assert.deepEqual(s.errors, []);
-	const [listed, none] = s.tmux.opened.map((opened) => opened.argv);
-	assert.deepEqual(pair(listed, "--tools"), ["--tools", "read,grep,reach_parent,mcp__mail__*"]);
-	assert.ok(!none.includes("--tools"), none.join(" "));
+	const { argv } = s.tmux.opened[0];
+	assert.deepEqual(pair(argv, "--tools"), ["--tools", "read,grep,codemode"]);
+	assert.ok(!argv.includes("--no-tools") && !argv.includes("-e"), argv.join(" "));
 });
 
-test("a delegateTools that is not a list of names refuses the launch before anything is sent", async () => {
+test("a parent restricted to one tool passes just that tool, read when each launch starts", async () => {
+	writeAgent("none", agentFile(SCOUT));
+	const s = session({ activeTools: ["read", "delegate"] });
+	await s.start();
+	await s.delegate("none go");
+	s.pi.setActiveTools(["read", "bash", "delegate"]);
+	await s.toolCall("delegate", { agent: "none", task: "again" });
+	const [first, second] = s.tmux.opened.map((opened) => opened.argv);
+	assert.deepEqual(pair(first, "--tools"), ["--tools", "read"]);
+	assert.deepEqual(pair(second, "--tools"), ["--tools", "read,bash"]);
+});
+
+test("a parent whose only active tools are the delegation tools gives a delegate without a tools field no tools", async () => {
+	writeAgent("none", agentFile(SCOUT));
+	const s = session({ activeTools: ["delegate", "delegation_status", "delegation_close", "delegation_resume"] });
+	await s.start();
+	await s.delegate("none go");
+	const { argv } = s.tmux.opened[0];
+	assert.ok(argv.includes("--no-tools") && !argv.includes("--tools"), argv.join(" "));
+});
+
+test("an empty tools field, tools: or tools: [], gives the delegate no tools at all", async () => {
+	writeAgent("bare", agentFile({ ...SCOUT, tools: "" }));
+	writeAgent("list", agentFile({ ...SCOUT, tools: "[]" }));
+	assert.deepEqual(
+		readRoster(agentDir).agents.map((agent) => agent.tools),
+		[[], []],
+	);
+	const s = session();
+	await s.start();
+	for (const name of ["bare", "list"]) await s.delegate(`${name} go`);
+	assert.deepEqual(s.errors, []);
+	for (const { argv } of s.tmux.opened) {
+		assert.ok(argv.includes("--no-tools") && !argv.includes("--tools"), argv.join(" "));
+	}
+	assert.match(s.tool("delegate").description, /- bare — .*thinking low, no tools\)/);
+});
+
+test("an absent tools field and an empty one read differently", async () => {
+	writeAgent("absent", agentFile(SCOUT));
+	writeAgent("empty", agentFile({ ...SCOUT, tools: "" }));
+	assert.deepEqual(
+		readRoster(agentDir).agents.map((agent) => [agent.name, agent.tools]),
+		[
+			["absent", undefined],
+			["empty", []],
+		],
+	);
+});
+
+test("the delegateTools setting is added to every delegate: a tools line, an empty one and none", async () => {
+	setSettings({ delegateTools: ["reach_parent", "mcp__mail__*", "read"] });
+	writeAgent("listed", agentFile({ ...SCOUT, tools: "read, grep" }));
+	writeAgent("empty", agentFile({ ...SCOUT, tools: "[]" }));
+	writeAgent("none", agentFile(SCOUT));
+	const s = session({ activeTools: ["read", "bash", "delegate"] });
+	await s.start();
+	for (const name of ["listed", "empty", "none"]) await s.delegate(`${name} go`);
+	assert.deepEqual(s.errors, []);
+	const [listed, empty, none] = s.tmux.opened.map((opened) => opened.argv);
+	assert.deepEqual(pair(listed, "--tools"), ["--tools", "read,grep,reach_parent,mcp__mail__*"]);
+	assert.deepEqual(pair(empty, "--tools"), ["--tools", "reach_parent,mcp__mail__*,read"]);
+	assert.deepEqual(pair(none, "--tools"), ["--tools", "read,bash,reach_parent,mcp__mail__*"]);
+	for (const argv of [listed, empty, none]) assert.ok(!argv.includes("--no-tools"), argv.join(" "));
+});
+
+test("a delegateTools that is not a list of names refuses every launch before anything is sent", async () => {
 	setSettings({ delegateTools: "reach_parent" });
 	writeAgent("listed", agentFile({ ...SCOUT, tools: "read" }));
 	writeAgent("none", agentFile(SCOUT));
 	const s = session();
 	await s.start();
 	await s.delegate("listed go");
+	await s.delegate("none go");
 	assert.deepEqual(s.tmux.opened, []);
 	assert.deepEqual(s.sendCalls, []);
-	assert.match(s.errors[0], /delegateTools must be a list of tool names or patterns/);
-	await s.delegate("none go");
-	assert.equal(s.tmux.opened.length, 1);
+	assert.equal(s.errors.length, 2);
+	for (const error of s.errors) assert.match(error, /delegateTools must be a list of tool names or patterns/);
 });
 
 test("exclude-tools is no longer read: it passes no flag and says so", async () => {

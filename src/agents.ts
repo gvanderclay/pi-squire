@@ -8,7 +8,7 @@
 // `display_name`, `model` and `fallback` (passed to the child's Pi unchanged;
 // absent `model` means the parent's), `thinking` (absent or unknown means the
 // parent's level), `tools` (the delegate's complete tool list; absent means the
-// parent's tools), `extensions` (extra extension paths for the delegate only;
+// parent's tools, empty means none), `extensions` (extra extension paths for the delegate only;
 // `~` expands, relative paths resolve against the agent file's folder, and a
 // missing path leaves the agent out), `auto-exit` (default true),
 // `prompt_mode` (`append`, the default, or `replace`), `enabled` (false leaves
@@ -57,8 +57,8 @@ export type Agent = {
 	thinking?: Thinking;
 	/** Whether the delegate closes itself after a normal completion; `auto-exit`, default true. */
 	autoExit: boolean;
-	/** The delegate's complete tool list, from `tools`; empty means no `--tools` flag, so the parent's tools. */
-	tools: string[];
+	/** The delegate's complete tool list, from `tools`: undefined when the field is absent (the parent's tools), empty when it is empty (no tools). */
+	tools?: string[];
 	/** Absolute paths of extra extensions the delegate loads, from `extensions`; empty when absent. */
 	extensions: string[];
 	/** Models to try, in order, when `model` is usage-limited; from `fallback`, empty when absent. */
@@ -200,8 +200,9 @@ function lockedFields(
 function launchFields(
 	path: string,
 	frontmatter: Record<string, unknown>,
-): { tools: string[]; extensions: string[] } | { warning: string } {
-	const tools = toolList(frontmatter.tools);
+): { tools?: string[]; extensions: string[] } | { warning: string } {
+	// `tools:` with no value is YAML null: present and empty, unlike an absent field.
+	const tools = Object.hasOwn(frontmatter, "tools") && frontmatter.tools === null ? [] : toolList(frontmatter.tools);
 	if (tools === null)
 		return {
 			warning: `${path} has tools ${JSON.stringify(frontmatter.tools)}, not a comma-separated list of tool names; skipped`,
@@ -214,7 +215,7 @@ function launchFields(
 	const extensions = (paths ?? []).map((entry) => resolveExtension(entry, dirname(path)));
 	const absent = extensions.find((entry) => !existsSync(entry));
 	if (absent !== undefined) return { warning: `${path} has extension ${absent}, which does not exist; skipped` };
-	return { tools: tools ?? [], extensions };
+	return { ...(tools === undefined ? {} : { tools }), extensions };
 }
 
 /** An extension path as an absolute one: `~` is the home directory, a relative path is against the agent file's folder. */
@@ -323,8 +324,8 @@ export function withoutLocked<T extends { model?: string; thinking?: string }>(
 
 /**
  * The `delegateTools` setting in `<agent dir>/squire/settings.json`: tool
- * names or `*` patterns added to every delegate whose agent has a `tools`
- * line. Empty when unset or when the file cannot be read or parsed (the
+ * names or `*` patterns added to every delegate's tools, whether they come
+ * from the agent's `tools` or the parent. Empty when unset or when the file cannot be read or parsed (the
  * worktree settings report that when a launch needs them); a value that is
  * not a list of names refuses the launch with the file named.
  */

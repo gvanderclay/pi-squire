@@ -22,6 +22,11 @@ follows [Semantic Versioning](https://semver.org/).
 - A `model` or `fallback` entry the model registry does not know is no longer
   skipped for the next candidate: it goes to the child's `--model` unchanged,
   and Pi reports it if it cannot resolve it.
+- A delegate whose agent has no `tools` field now gets the parent session's
+  active tools when the launch or resume starts, passed as `--tools`, instead
+  of Pi's default tools. An empty `tools` field (`tools:` or `tools: []`) now
+  means no tools except the `delegateTools` setting, and `--no-tools` when that
+  is empty too; it used to mean the parent's tools.
 - Migration: move each `<agent dir>/squire/agents/<name>/AGENT.md` to
   `<agent dir>/agents/<name>.md`; add `prompt_mode: replace` to keep today's
   prompt; replace `exclude-tools: a, b` with a `tools` line naming the tools
@@ -42,8 +47,9 @@ follows [Semantic Versioning](https://semver.org/).
   which field) and `prompt_mode`. Keys pi-squire does not use, such as
   `max_turns` or another extension's policy, are ignored without a warning.
 - The `delegateTools` setting in `<agent dir>/squire/settings.json`: tool
-  names or `*` patterns added to every agent's `tools` line, for the tools a
-  `message:*` provider gives a delegate to reach its parent. Empty by default.
+  names or `*` patterns added to every delegate's tools, from its agent's
+  `tools` or the parent's, for the tools a `message:*` provider gives a
+  delegate to reach its parent. Empty by default.
 
 ### Removed
 
@@ -73,6 +79,10 @@ follows [Semantic Versioning](https://semver.org/).
   follow the optional fields and new location; the fallback render test skips
   a model without credentials rather than an unknown one; and
   `test/exclude-tools.test.ts` becomes `test/agent-files.test.ts`.
+- Tests changed with tools inheritance: the test that pinned an empty `tools`
+  field as the parent's tools now pins it as no tools; the argv tests in
+  `test/delegate.test.ts` expect the parent's tools as `--tools`; and an
+  invalid `delegateTools` now refuses an agent without a `tools` field too.
 
 ## [0.13.1] - 2026-10-27
 

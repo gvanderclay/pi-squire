@@ -18,9 +18,11 @@
 // With auto-exit on (the agent's `auto-exit`, default true, overridden per
 // call) the delegate closes its own window after a normal completion; the
 // delegate's side lives in `child.ts`. With it off the window stays open.
-// An agent's `tools` goes to the child as `--tools`, with the `delegateTools`
-// setting added, and each of its `extensions` as `-e`, both for the child
-// alone. An agent with no `model` or `thinking` runs on the parent's.
+// An agent's `tools`, or the parent's active tools when it has no `tools`
+// field, goes to the child as `--tools` with the `delegateTools` setting added
+// (`--no-tools` when that leaves nothing), and each of its `extensions` as
+// `-e`, both for the child alone. An agent with no `model` or `thinking` runs
+// on the parent's.
 //
 // The model gets four tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
@@ -103,6 +105,13 @@ const LAUNCH = "session:launch";
 const PARENT_ENV = "PI_DELEGATE_PARENT";
 /** Forwarded to the child when the parent has it set. */
 const SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
+/** The tools this extension registers in a parent; a delegate never gets them. */
+const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
+	"delegate",
+	"delegation_status",
+	"delegation_close",
+	"delegation_resume",
+]);
 /** Asked of every delegate, so the parent gets an answer it can use alone. */
 const FINAL_LINE =
 	"End with one self-contained final message: the parent session sees only that message, never this conversation.";
@@ -556,11 +565,20 @@ function rosterLine(agent: Agent): string {
 		`default ${models.join(", ")}`,
 		`thinking ${agent.thinking ?? "this session's"}`,
 		...(agent.autoExit ? [] : ["auto-exit off"]),
-		...(agent.tools.length > 0 ? [`tools: ${agent.tools.join("/")}`] : []),
+		...(agent.tools === undefined ? [] : [agent.tools.length > 0 ? `tools: ${agent.tools.join("/")}` : "no tools"]),
 		...(agent.locked.length > 0 ? [`locked: ${agent.locked.join("/")}`] : []),
 	];
 	const shown = agent.displayName === undefined ? "" : ` "${agent.displayName}"`;
 	return `- ${agent.name}${shown} — ${agent.description} (${details.join(", ")})`;
+}
+
+/**
+ * The delegate's tool selection: the agent's `tools`, or `parentTools` when the
+ * agent has no `tools` field, then `extra` (the `delegateTools` setting), with
+ * the delegation tools left out. Empty means the delegate gets no tools.
+ */
+function toolSelection(agent: Agent, parentTools: readonly string[], extra: readonly string[]): string[] {
+	return [...new Set([...(agent.tools ?? parentTools), ...extra])].filter((name) => !DELEGATION_TOOLS.has(name));
 }
 
 /** The delegate's appended prompt: the agent's body, then the lines every delegate gets. */
@@ -649,6 +667,15 @@ export default function delegate(
 		return { ...(ctx.model === undefined ? {} : { model: `${ctx.model.provider}/${ctx.model.id}` }), thinking };
 	}
 
+	/**
+	 * The delegate's tools for a launch or resume starting now: the agent's, or
+	 * the parent's active tools at this moment, with the `delegateTools`
+	 * setting. Throws, naming the file, on an invalid setting.
+	 */
+	function childTools(agent: Agent): string[] {
+		return toolSelection(agent, agent.tools === undefined ? pi.getActiveTools() : [], delegateTools(getAgentDir()));
+	}
+
 	/** Read the roster now, warning about every file left out. */
 	function rosterFor(ctx: ExtensionContext): Roster {
 		const roster = currentRoster(ctx);
@@ -732,8 +759,8 @@ export default function delegate(
 		ctx: ExtensionContext;
 		/** Chosen once, when the launch or resume began, so no later settings change can refuse it after mail. */
 		placement: WindowPlacement;
-		/** The `delegateTools` setting, read with `placement`; added to an agent's `tools`. */
-		extraTools: readonly string[];
+		/** The delegate's tools, from `toolSelection`, read when the launch began; empty means none. */
+		tools: readonly string[];
 		onWindowOpened?: () => void;
 	}): Promise<OpenedWindow> {
 		const {
@@ -748,7 +775,7 @@ export default function delegate(
 			toolCallId,
 			ctx,
 			placement,
-			extraTools,
+			tools,
 			onWindowOpened,
 		} = input;
 		const parent = ctx.sessionManager.getSessionId();
@@ -759,7 +786,6 @@ export default function delegate(
 					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
 					: "";
 		const prompt = writePromptFile(delegatePrompt(start.agent, parent, managedContext));
-		const tools = start.agent.tools.length > 0 ? [...new Set([...start.agent.tools, ...extraTools])] : [];
 		const argv = [
 			...parentCommand(),
 			...session,
@@ -772,7 +798,8 @@ export default function delegate(
 			"--thinking",
 			start.thinking,
 			...start.agent.extensions.flatMap((extension) => ["-e", extension]),
-			...(tools.length > 0 ? ["--tools", tools.join(",")] : []),
+			// Always explicit: no flag would give the child Pi's default tools, not the parent's.
+			...(tools.length > 0 ? ["--tools", tools.join(",")] : ["--no-tools"]),
 			"--append-system-prompt",
 			prompt,
 		];
@@ -815,7 +842,7 @@ export default function delegate(
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
 		placement: WindowPlacement;
-		extraTools: readonly string[];
+		tools: readonly string[];
 		onWindowOpened: () => void;
 	}): Promise<Launched> {
 		const { id, requestId, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement, onWindowOpened } =
@@ -833,7 +860,7 @@ export default function delegate(
 			toolCallId,
 			ctx,
 			placement,
-			extraTools: input.extraTools,
+			tools: input.tools,
 			onWindowOpened,
 		});
 		// No task text in the record: the request copy in `sent/` has it.
@@ -869,7 +896,7 @@ export default function delegate(
 		await requireTmuxVersion(tmux);
 		// Read once, before anything is created or mailed; the launch keeps these values.
 		const placement = windowPlacement(getAgentDir());
-		const extraTools = start.agent.tools.length > 0 ? delegateTools(getAgentDir()) : [];
+		const tools = childTools(start.agent);
 		const sessionDir = ctx.sessionManager.getSessionDir();
 		if (!isAbsolute(sessionDir))
 			throw new Error(
@@ -981,7 +1008,7 @@ export default function delegate(
 				toolCallId,
 				ctx,
 				placement,
-				extraTools,
+				tools,
 				onWindowOpened: () => {
 					windowOpened = true;
 				},
@@ -1074,7 +1101,7 @@ export default function delegate(
 				ctx,
 				placement,
 				// Read before the window opens, and a resume mails only after it opens.
-				extraTools: start.agent.tools.length > 0 ? delegateTools(getAgentDir()) : [],
+				tools: childTools(start.agent),
 			}),
 	});
 

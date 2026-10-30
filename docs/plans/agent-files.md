@@ -55,12 +55,15 @@ Any other key is ignored silently.
 
 ## Tools
 
-- No `tools` line: the delegate gets the parent session's tools.
+- No `tools` field: the delegate gets the parent session's active tools at
+  launch, passed explicitly as `--tools`.
+- An empty `tools` field (`tools:` or `tools: []`): no tools except
+  `delegateTools`; `--no-tools` when that is empty too.
 - A `tools` line: exactly those tools.
 - The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
   `delegation_resume`) are never available in a delegate, as today.
-- Tools in the `delegateTools` setting are added to every `tools` line. See
-  Tools added to every delegate.
+- Tools in the `delegateTools` setting are added to every delegate's tools,
+  inherited or listed. See Tools added to every delegate.
 
 ## Prompt
 
@@ -97,8 +100,8 @@ Any other key is ignored silently.
 ```
 
 - Tool names or `*` patterns, passed to the child's `--tools` unchanged.
-- Added to every delegate whose agent file has a `tools` line. An agent with
-  no `tools` line already has the parent's tools.
+- Added to every delegate: to its agent's `tools`, to an empty `tools`, and
+  to the parent's tools for an agent with no `tools` field.
 - The delegation tools are removed even when a pattern matches them.
 - Empty by default. `pi-squire` names no provider's tools; the README tells
   the user to list the tools their `message:*` provider gives a delegate for
@@ -116,7 +119,12 @@ Any other key is ignored silently.
   `provider/id` entries.
 - `exclude-tools` in a file gets a warning, so a moved file does not silently
   gain tools.
-- An empty `tools` line passes no flag, as before, so it means the parent's
-  tools.
+- The child always gets an explicit tool selection: no flag would give it
+  Pi's default tools, not the parent's. An absent `tools` field passes the
+  parent's `pi.getActiveTools()` read when the launch or resume starts, less
+  the delegation tools; an empty field passes only `delegateTools`, or
+  `--no-tools` (Pi's way to start with none, MCP tools included) when that is
+  empty. Tools only the agent's own `extensions` register are not in the
+  parent's list, so an agent without `tools` does not get them.
 - `display_name` replaces the agent's name in the window and session name
   (`<display_name>-<label>`); the record keeps it for `/delegates`.

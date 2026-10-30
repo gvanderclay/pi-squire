@@ -589,7 +589,7 @@ test("a resume passes tools as a launch does: the parent's active tools now, or 
 	d.s.pi.setActiveTools(["read", "delegate", "delegation_resume"]);
 	await resume(d.s, { id: d.id, task: "again" });
 	const inherited = d.s.tmux.opened[1].argv;
-	assert.equal(inherited[inherited.indexOf("--tools") + 1], "read");
+	assert.equal(inherited[inherited.indexOf("--tools") + 1], "read,mcp__");
 
 	const e = await exitedDelegate();
 	writeAgent("scout", agentFile({ ...AGENT, tools: "" }));

@@ -27,6 +27,15 @@ follows [Semantic Versioning](https://semver.org/).
   of Pi's default tools. An empty `tools` field (`tools:` or `tools: []`) now
   means no tools except the `delegateTools` setting, and `--no-tools` when that
   is empty too; it used to mean the parent's tools.
+- A delegate now gets exactly its selected tools, MCP tools included. Pi
+  kept every MCP tool registered, callable from `codemode` and loadable by
+  `tool_search`, unless a `--tools` entry started with `mcp__`; pi-squire now
+  adds the entry `mcp__`, which names no tool, to a list with no such entry,
+  so an MCP tool reaches a delegate only when its tools (or the parent's, for
+  an agent without `tools`) name or match it. Name a server's tools, such as
+  `mcp__docs__*`, to keep them. Tests changed with it: the argv tests in
+  `test/agent-files.test.ts`, `test/delegate.test.ts` and
+  `test/resume.test.ts` now expect the extra `mcp__` entry.
 - Migration: move each `<agent dir>/squire/agents/<name>/AGENT.md` to
   `<agent dir>/agents/<name>.md`; add `prompt_mode: replace` to keep today's
   prompt; replace `exclude-tools: a, b` with a `tools` line naming the tools

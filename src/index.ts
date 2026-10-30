@@ -573,6 +573,26 @@ function rosterLine(agent: Agent): string {
 	return `- ${agent.name}${shown} — ${agent.description} (${details.join(", ")})`;
 }
 
+/**
+ * The entry that makes Pi filter MCP tools by `--tools`. Pi keeps every MCP
+ * tool registered (callable from codemode, loadable by tool_search) unless an
+ * entry starts with `mcp__`; this one does and names no tool, since an MCP
+ * tool is `mcp__<server>__<tool>`.
+ */
+const MCP_FILTER = "mcp__";
+
+/**
+ * The child's tool arguments for a selection: `--tools` with exactly those
+ * tools, MCP tools included, or `--no-tools` (which Pi applies to MCP tools
+ * too) when it is empty. Always explicit: no flag would give the child the
+ * parent's tools rather than Pi's defaults.
+ */
+function toolArgs(tools: readonly string[]): string[] {
+	if (tools.length === 0) return ["--no-tools"];
+	const filtered = tools.some((name) => name.startsWith(MCP_FILTER)) ? tools : [...tools, MCP_FILTER];
+	return ["--tools", filtered.join(",")];
+}
+
 /** The roster line's word on an agent's tools; nothing for the parent's tools unchanged. */
 function toolsDetail(agent: Agent): string[] {
 	if (agent.tools !== undefined) return [agent.tools.length > 0 ? `tools: ${agent.tools.join("/")}` : "no tools"];
@@ -831,8 +851,7 @@ export default function delegate(
 			"--thinking",
 			start.thinking,
 			...start.agent.extensions.flatMap((extension) => ["-e", extension]),
-			// Always explicit: no flag would give the child Pi's default tools, not the parent's.
-			...(tools.length > 0 ? ["--tools", tools.join(",")] : ["--no-tools"]),
+			...toolArgs(tools),
 			"--append-system-prompt",
 			prompt,
 		];

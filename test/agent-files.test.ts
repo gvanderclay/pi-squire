@@ -226,11 +226,23 @@ test("a tools line is the delegate's whole list, as a comma-separated or YAML li
 	for (const name of ["listed", "yaml"]) await s.delegate(`${name} go`);
 	assert.deepEqual(s.errors, []);
 	const [listed, yaml] = s.tmux.opened.map((opened) => opened.argv);
-	assert.deepEqual(pair(listed, "--tools"), ["--tools", "device_run,read"]);
-	assert.deepEqual(pair(yaml, "--tools"), ["--tools", "read,grep"]);
+	assert.deepEqual(pair(listed, "--tools"), ["--tools", "device_run,read,mcp__"]);
+	assert.deepEqual(pair(yaml, "--tools"), ["--tools", "read,grep,mcp__"]);
 	for (const argv of s.tmux.opened.map((opened) => opened.argv)) {
 		assert.ok(!argv.includes("--exclude-tools") && !argv.includes("--no-tools"), argv.join(" "));
 	}
+});
+
+test("a list with no mcp__ entry gets the mcp__ entry that names no tool, so Pi filters MCP tools by it too", async () => {
+	writeAgent("plain", agentFile({ ...SCOUT, tools: "read" }));
+	writeAgent("named", agentFile({ ...SCOUT, tools: "read, mcp__docs__search" }));
+	const s = session();
+	await s.start();
+	for (const name of ["plain", "named"]) await s.delegate(`${name} go`);
+	const [plain, named] = s.tmux.opened.map((opened) => opened.argv);
+	assert.deepEqual(pair(plain, "--tools"), ["--tools", "read,mcp__"]);
+	assert.deepEqual(pair(named, "--tools"), ["--tools", "read,mcp__docs__search"]);
+	for (const argv of [plain, named]) assert.ok(!argv.includes("--exclude-tools"), argv.join(" "));
 });
 
 test("without a tools field the delegate gets the parent's active tools, less the delegation tools", async () => {
@@ -242,7 +254,7 @@ test("without a tools field the delegate gets the parent's active tools, less th
 	await s.delegate("none go");
 	assert.deepEqual(s.errors, []);
 	const { argv } = s.tmux.opened[0];
-	assert.deepEqual(pair(argv, "--tools"), ["--tools", "read,grep,codemode"]);
+	assert.deepEqual(pair(argv, "--tools"), ["--tools", "read,grep,codemode,mcp__"]);
 	assert.ok(!argv.includes("--no-tools") && !argv.includes("-e"), argv.join(" "));
 });
 
@@ -254,8 +266,8 @@ test("a parent restricted to one tool passes just that tool, read when each laun
 	s.pi.setActiveTools(["read", "bash", "delegate"]);
 	await s.toolCall("delegate", { agent: "none", task: "again" });
 	const [first, second] = s.tmux.opened.map((opened) => opened.argv);
-	assert.deepEqual(pair(first, "--tools"), ["--tools", "read"]);
-	assert.deepEqual(pair(second, "--tools"), ["--tools", "read,bash"]);
+	assert.deepEqual(pair(first, "--tools"), ["--tools", "read,mcp__"]);
+	assert.deepEqual(pair(second, "--tools"), ["--tools", "read,bash,mcp__"]);
 });
 
 test("a parent whose only active tools are the delegation tools gives a delegate without a tools field no tools", async () => {

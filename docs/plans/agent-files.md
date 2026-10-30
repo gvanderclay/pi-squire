@@ -159,5 +159,16 @@ Any other key is ignored silently.
   a run for a file that turned invalid since, and a launch or resume naming it
   is refused with the reason. The `delegateTools` setting is global, so an
   invalid one refuses every launch with an error instead of disabling agents.
+- MCP tools obey the selection. Pi (1.3, 1.4) keeps every MCP tool
+  registered, so callable from `codemode` and loadable by `tool_search`,
+  unless a `--tools` entry starts with `mcp__` (`_allowlistFiltersMcp`), in
+  which case MCP tools are filtered by the list like any other tool, the
+  resource tools included. pi-squire adds the entry `mcp__`, which names no
+  tool, to a list without such an entry. `--exclude-tools 'mcp__*'` was not
+  used: it would also drop MCP tools that a `*` pattern in the list selects,
+  and it would need the resource tools named one by one. `test/pi-tools.test.ts`
+  starts the project's own Pi with the tool arguments a launch passed and a
+  probe extension registering stand-in MCP tools, and checks what Pi
+  registered.
 - `display_name` replaces the agent's name in the window and session name
   (`<display_name>-<label>`); the record keeps it for `/delegates`.

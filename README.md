@@ -449,11 +449,18 @@ file that still has it gets a warning (use `tools` instead).
 (`tools: read, grep`). pi-squire works out the delegate's whole selection
 itself and always passes the child a plain list, `--tools read,grep`, which Pi
 treats as the whole selection, extension tools included; entries may be `*`
-patterns. It never passes Pi `+name` or `-name` entries. Without discovery tools such as `codemode` or `tool_search`, only the
-listed tools are visible. Pi can keep unlisted MCP tools registered unless the
-list includes an `mcp__` entry, and an extension that turns tools on at run
-time can still add its own. Names are not checked against the parent's tools,
-since a tool from one of the agent's own `extensions` exists only in the child.
+patterns. It never passes Pi `+name` or `-name` entries. MCP tools follow the
+list like any other tool: an MCP tool (`mcp__<server>__<tool>`, or one of the
+MCP resource tools) that no entry names or matches is not registered in the
+delegate at all, so it is neither declared nor callable from `codemode` nor
+loadable by `tool_search`, whatever its exposure. Pi filters MCP tools by
+`--tools` only once an entry starts with `mcp__`, so when the list has no
+such entry pi-squire adds the entry `mcp__`, which names no tool; an empty
+selection is `--no-tools`, which removes MCP tools too. To give a delegate an
+MCP server's tools, name them, for example `mcp__docs__*`. An extension that
+turns tools on at run time can still add only tools the list allows. Names
+are not checked against the parent's tools, since a tool from one of the
+agent's own `extensions` exists only in the child.
 
 - No `tools` field: the delegate gets the parent session's tools as they are
   when the launch (or resume) starts, the tools active there then, passed as

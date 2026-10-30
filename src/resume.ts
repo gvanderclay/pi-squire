@@ -52,6 +52,8 @@ export type ResumeDeps = {
 	/** The window placement for this call; throws on an invalid setting. */
 	placement(): WindowPlacement;
 	roster(ctx: ExtensionContext): Roster;
+	/** The parent's current model and thinking level, which a field the agent locks but does not set keeps. */
+	parentDefaults(ctx: ExtensionContext): { model?: string; thinking: string };
 	chooseModel(
 		explicit: string | undefined,
 		agent: Agent,
@@ -243,6 +245,7 @@ async function startResume(
 		{
 			id,
 			agent: start.agent.name,
+			...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
 			model: start.model,
 			thinking: start.thinking,
 			name,
@@ -348,11 +351,13 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 			model: Type.Optional(
 				Type.String({
 					description:
-						"provider/id to resume on; used as given. Omit to continue on the model the delegate finished on, or its agent's next fallback when that one is unavailable.",
+						"provider/id to resume on; used as given. Omit to continue on the model the delegate finished on, or its agent's next fallback when that one is unavailable. Not used when the agent locks model: the agent's current model applies.",
 				}),
 			),
 			thinking: Type.Optional(
-				Type.String({ description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the delegation's.` }),
+				Type.String({
+					description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the level the delegate last ran on, from its session. Not used when the agent locks thinking: the agent's current level applies.`,
+				}),
 			),
 			auto_exit: Type.Optional(
 				Type.Boolean({ description: "Close the window once it finishes; defaults to the delegation's setting." }),

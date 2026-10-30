@@ -6,6 +6,106 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- Agents move to one file per agent in the agents folders Pi agent tooling
+  shares: `<agent dir>/agents/<name>.md` and, when the project is trusted,
+  `<cwd>/.pi/agents/<name>.md`, which replaces a global file of the same name.
+  `<agent dir>/squire/agents/<name>/AGENT.md` is no longer read; while that
+  folder exists, a warning says so. `squire/delegation_prompt.md` stays where
+  it is.
+- The body is now wrapped in `<agent_instructions>` lines by default
+  (`prompt_mode: append`). `prompt_mode: replace` builds the delegate's prompt
+  exactly as before.
+- `exclude-tools` is removed: a file that still has it gets a warning and the
+  field is ignored, so the delegate's tools follow the usual rules (its
+  `tools` line, or the parent session's active tools when there is none, plus
+  the `delegateTools` setting) with nothing taken off. List the delegate's
+  tools in `tools` instead.
+- A `model` or `fallback` entry the model registry does not know is no longer
+  skipped for the next candidate: it goes to the child's `--model` unchanged,
+  and Pi reports it if it cannot resolve it.
+- A delegate whose agent has no `tools` field now gets the parent session's
+  active tools when the launch or resume starts, passed as `--tools`, instead
+  of Pi's default tools. An empty `tools` field (`tools:` or `tools: []`) now
+  means no tools except the `delegateTools` setting, and `--no-tools` when that
+  is empty too; it used to mean the parent's tools.
+- A delegate now gets exactly its selected tools, MCP tools included. Pi
+  kept every MCP tool registered, callable from `codemode` and loadable by
+  `tool_search`, unless a `--tools` entry started with `mcp__`; pi-squire now
+  adds the entry `mcp__`, which names no tool, to a list with no such entry,
+  so an MCP tool reaches a delegate only when its tools (or the parent's, for
+  an agent without `tools`) name or match it. Name a server's tools, such as
+  `mcp__docs__*`, to keep them. Tests changed with it: the argv tests in
+  `test/agent-files.test.ts`, `test/delegate.test.ts` and
+  `test/resume.test.ts` now expect the extra `mcp__` entry.
+- Migration: move each `<agent dir>/squire/agents/<name>/AGENT.md` to
+  `<agent dir>/agents/<name>.md`; add `prompt_mode: replace` to keep today's
+  prompt; replace `exclude-tools: a, b` with a `tools` line naming the tools
+  the delegate should have.
+
+### Added
+
+- An agent whose file is invalid is disabled: it is left out of the roster
+  and of the `delegate` tool's description, a warning names the file and the
+  reason when the session starts (and before a run, for a file that turns
+  invalid meanwhile), and a call or resume that names it is refused with that
+  reason instead of "no agent named".
+- Every agent field is optional: `description` defaults to the name, an absent
+  `model` or `thinking` runs on the parent session's current model or level,
+  and an unknown `thinking` is dropped with a warning instead of leaving the
+  agent out. `model` and `fallback` entries may be aliases such as `sonnet`,
+  each resolving to one model; a `*` pattern makes the file invalid, so the
+  agent is disabled. A body may be empty.
+- New agent fields: `display_name` (shown on the delegate card, in
+  `/delegates` and in the window title; it may hold only ASCII letters,
+  digits, `-` and `_`, and any other value, a space, `#`, `.`, a non-ASCII
+  letter or an empty value among them, makes the file invalid, so the agent is
+  disabled), `enabled: false` (leaves the agent
+  out; a project file hides a global agent of the same name), `locked` (`true`
+  or a list of `model` and `thinking`: a call or resume that passes a locked
+  field runs on the agent's value, and the result says which agent locked
+  which field; passing the agent's own value is the same as passing nothing,
+  so its fallbacks still apply; a resume runs a locked field on the file's
+  current value, not on what the delegate last ran on) and `prompt_mode`.
+  Keys pi-squire does not use, such as `max_turns` or another extension's
+  policy, are ignored without a warning.
+- The `delegateTools` setting in `<agent dir>/squire/settings.json`: tool
+  names or `*` patterns added to every delegate's tools, from its agent's
+  `tools` or the parent's, for the tools a `message:*` provider gives a
+  delegate to reach its parent. Empty by default.
+- A `tools` line of only `-name` entries (`tools: -bash, -write`) gives the
+  delegate the parent session's tools less those (a `-name` entry may be a `*`
+  pattern), then the `delegateTools` setting. A `+name` entry, or tool names
+  and `-name` entries mixed, make the agent file invalid, so the agent is
+  disabled. pi-squire always passes the child a plain `--tools` list.
+- A `delegateTools` entry that starts with `+` or `-`, or holds a comma,
+  refuses every launch and resume with an error naming the settings file,
+  before the task is sent or a window opens.
+- A `tools` or `fallback` YAML list entry holding a comma, such as
+  `tools: ["read,-bash"]`, makes the agent file invalid, so the agent is
+  disabled with a warning naming the file and the reason. A comma-separated
+  line (`tools: read, bash`) and a list of single names still work.
+- A resume without `thinking`, for an agent that does not lock it, now runs
+  on the level the delegate last ran on, read from its session (the last
+  thinking-level change on the active branch, such as a change the user made
+  in the delegate's window or a clamp to a new model), instead of the level
+  recorded when the delegation started; the recorded level remains the
+  fallback when the session has none.
+- A tool that only an agent's own `extensions` register reaches its delegate
+  only when the agent's `tools` list or the `delegateTools` setting names (or
+  matches) it. With no `tools` field, or only `-name` entries, the baseline
+  is the parent session's active tools alone; pi-squire never loads an
+  agent's extensions in the parent. (An unreleased change on this branch had
+  loaded them in the parent to add their tools to that baseline; its tests in
+  `test/agent-files.test.ts` and `test/pi-tools.test.ts` now pin this rule
+  instead.)
+- A running delegate that hits a usage limit now resolves a `fallback` entry
+  that is an alias or bare id (such as `sonnet`) to one model with Pi's
+  `--model` resolver, in the listed order, instead of skipping every entry
+  that is not an exact `provider/id`. Each model is tried once, never the one
+  that just failed.
+
 ## [0.14.0] - 2026-10-27
 
 ### Removed
@@ -29,6 +129,18 @@ follows [Semantic Versioning](https://semver.org/).
   test that the poll runs only while a delegation does; `test/tmux.test.ts` no
   longer tests `popup` and `closePopup`, and `test/popup-parent.ts` and the
   fake's popup support are gone.
+- Tests changed with the agent files: the harness writes `agents/<name>.md`
+  and the retired fixture to `squire/agents/<name>/AGENT.md`; prompt
+  assertions expect the `<agent_instructions>` wrapper; the roster, empty-roster
+  and malformed-file tests in `test/delegate.test.ts` and `test/tools.test.ts`
+  follow the optional fields and new location; the fallback render test skips
+  a model without credentials rather than an unknown one; the `display_name`
+  test names its agent `Code_Reviewer-2`, since a space is no longer accepted;
+  and `test/exclude-tools.test.ts` becomes `test/agent-files.test.ts`.
+- Tests changed with tools inheritance: the test that pinned an empty `tools`
+  field as the parent's tools now pins it as no tools; the argv tests in
+  `test/delegate.test.ts` expect the parent's tools as `--tools`; and an
+  invalid `delegateTools` now refuses an agent without a `tools` field too.
 
 ## [0.13.1] - 2026-10-27
 

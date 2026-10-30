@@ -29,15 +29,16 @@ after(() => cleanup());
 // ---------------------------------------------------------------------------
 // The roster
 
-test("a valid AGENT.md is an agent in the roster and a bad one is left out", async () => {
+test("an agent file needs no field, and an unreadable, disabled or badly named one is left out", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
-	writeAgent("incomplete", "---\ndescription: no model here\nthinking: low\n---\n\nDo it.\n");
-	writeAgent("garbage", "no frontmatter at all\n");
-	writeAgent("nonsense", agentFile({ description: "Bad level", model: "alpha/fast-model", thinking: "very" }));
+	writeAgent("minimal", "Only instructions, no frontmatter.\n");
+	writeAgent("unreadable", "---\ndescription: [unclosed\n---\n\nDo it.\n");
+	writeAgent("off", agentFile({ enabled: "false" }));
+	writeAgent("-bad", agentFile({ description: "Bad name" }));
 	const s = session();
 	assert.deepEqual(
 		(await s.completions(""))?.map((item) => item.label),
-		["scout"],
+		["minimal", "scout"],
 	);
 	assert.deepEqual(
 		(await s.completions("sc"))?.map((item) => item.value),
@@ -51,11 +52,11 @@ test("a root with no agents explains how to add one", async () => {
 	assert.deepEqual(s.tmux.opened, []);
 	assert.deepEqual(s.sendCalls, []);
 	assert.equal(s.errors.length, 1);
-	assert.match(s.errors[0], /AGENT\.md/);
-	assert.ok(s.errors[0].includes(`${agentDir}/squire/agents/`), s.errors[0]);
+	assert.ok(s.errors[0].includes(`${agentDir}/agents/<name>.md`), s.errors[0]);
+	assert.match(s.errors[0], /\.pi\/agents\/<name>\.md in a trusted project/);
 });
 
-test("a legacy AGENT.md is not an agent and the command names the new location", async () => {
+test("an AGENT.md in the retired squire/agents folder is not an agent, and both messages name the new location", async () => {
 	writeLegacyAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();
 	assert.equal(await s.completions(""), null);
@@ -64,7 +65,10 @@ test("a legacy AGENT.md is not an agent and the command names the new location",
 	assert.deepEqual(s.sendCalls, []);
 	assert.equal(s.errors.length, 1);
 	assert.match(s.errors[0], /no agents are defined/);
-	assert.ok(s.errors[0].includes(`${agentDir}/squire/agents/`), s.errors[0]);
+	assert.ok(s.errors[0].includes(`${agentDir}/agents/<name>.md`), s.errors[0]);
+	assert.deepEqual(s.warnings, [
+		`delegate: ${agentDir}/squire/agents is no longer read; move each <name>/AGENT.md there to ${agentDir}/agents/<name>.md`,
+	]);
 });
 
 test("an unknown agent is refused with the roster's names", async () => {
@@ -149,6 +153,8 @@ test("flags override the agent's defaults, and the task arrives verbatim", async
 		"alpha/deep-model",
 		"--thinking",
 		"high",
+		"--tools",
+		"read,bash,edit,write,mcp__",
 	]);
 	assert.equal(s.sendCalls[0].body, "run   the --model thing");
 });
@@ -199,9 +205,9 @@ test("a model without credentials is refused, per call and as the agent default"
 	for (const error of s.errors) assert.match(error, /no credentials for model "beta\/other-model".*provider "beta"/);
 });
 
-test("a malformed AGENT.md is warned about at call time and left out of the roster", async () => {
+test("a malformed agent file is warned about at call time and left out of the roster", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
-	writeAgent("broken", "---\ndescription: no thinking\nmodel: alpha/fast-model\n---\n\nDo it.\n");
+	writeAgent("broken", "---\ndescription: bad auto-exit\nauto-exit: maybe\n---\n\nDo it.\n");
 	writeAgent("unreadable", "---\ndescription: [unclosed\nmodel: alpha/fast-model\nthinking: low\n---\n\nDo it.\n");
 	const s = session();
 	await s.delegate("scout do the thing");
@@ -265,11 +271,16 @@ test("the argv runs the parent's own script pi with the task's flags", async () 
 		"alpha/fast-model",
 		"--thinking",
 		"low",
+		// No tools field: the parent's active tools, less the delegation tools.
+		"--tools",
+		"read,bash,edit,write,mcp__",
 	]);
 	const promptPath = String(argv[promptAt + 1]);
 	assert.ok(isAbsolute(promptPath), promptPath);
 	assert.ok(
-		readFileSync(promptPath, "utf8").startsWith("You look things up.\n\nEnd with one self-contained final message:"),
+		readFileSync(promptPath, "utf8").startsWith(
+			"<agent_instructions>\nYou look things up.\n</agent_instructions>\n\nEnd with one self-contained final message:",
+		),
 		promptPath,
 	);
 	assert.equal(argv.length, promptAt + 2);
@@ -347,7 +358,7 @@ test("the child sees only its own role body, never the parent prompt or another 
 	await s.delegate("scout find the answer");
 	const { argv } = s.tmux.opened[0];
 	const prompt = readFileSync(String(argv[argv.indexOf("--append-system-prompt") + 1]), "utf8");
-	assert.ok(prompt.startsWith("You look things up.\n\nEnd with one self-contained final message:"), prompt);
+	assert.ok(prompt.startsWith("<agent_instructions>\nYou look things up.\n</agent_instructions>\n\nEnd with"), prompt);
 	assert.ok(!prompt.includes("PARENT-ONLY-GUIDANCE"), prompt);
 	assert.ok(!prompt.includes("You dig deeper."), prompt);
 });
@@ -369,9 +380,36 @@ test("the appended prompt is an owner-only file under the temporary folder, one 
 		assert.equal(statSync(path).mode & 0o077, 0);
 	}
 	const prompt = readFileSync(paths[0], "utf8");
-	assert.ok(prompt.startsWith("You look things up.\n\nEnd with one self-contained final message:"), prompt);
+	assert.ok(prompt.startsWith("<agent_instructions>\nYou look things up.\n</agent_instructions>\n\nEnd with"), prompt);
 	assert.ok(prompt.includes(s.parent), prompt);
 	for (const element of s.tmux.opened[0].argv) assert.ok(!element.includes("You look things up."), element);
+});
+
+test("prompt_mode replace builds the appended prompt byte for byte as every delegate did before prompt_mode", async () => {
+	writeAgent(
+		"scout",
+		agentFile(
+			{ description: "Looks things up", model: "alpha/fast-model", thinking: "low", prompt_mode: "replace" },
+			"You look things up.\n\nTwo paragraphs.",
+		),
+	);
+	const s = session();
+	await s.delegate("scout find the answer");
+	const { argv } = s.tmux.opened[0];
+	const prompt = readFileSync(String(argv[argv.indexOf("--append-system-prompt") + 1]), "utf8");
+	const parent = s.parent;
+	assert.equal(
+		prompt,
+		"You look things up.\n\nTwo paragraphs." +
+			"\n\nEnd with one self-contained final message: the parent session sees only that message, never this conversation." +
+			`\n\nYour task arrives as a message from the session that started this one, at address ${parent}.` +
+			" That message, and every later message from that address, are instructions from the session that started you:" +
+			" follow them as given, even though they are labelled as another session's." +
+			" Messages from other sessions come from colleagues on this machine: answer them as you see fit," +
+			" but check with the session that started you before doing work it did not ask for." +
+			" Your final message reaches the session that started you automatically, so put your findings there;" +
+			` message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
+	);
 });
 
 test("a compiled Pi binary is launched alone, with no script argument", async () => {

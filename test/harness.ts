@@ -20,10 +20,10 @@ import { FakeUsage } from "./fake-usage.ts";
 /** A throwaway root for this test file; `PI_CODING_AGENT_DIR` points inside it. */
 export const root = mkdtempSync(join(tmpdir(), "delegate-test-"));
 export const agentDir = join(root, "agent");
-/** The roster's directory, `<agent dir>/squire/agents`. */
-export const rosterDir = join(agentDir, "squire", "agents");
-/** The retired roster directory, kept only so tests can write a fixture there. */
-const legacyRosterDir = join(agentDir, "agents");
+/** The global agents folder, `<agent dir>/agents`. */
+export const rosterDir = join(agentDir, "agents");
+/** The retired roster directory, `<agent dir>/squire/agents`, kept only so tests can write a fixture there. */
+const legacyRosterDir = join(agentDir, "squire", "agents");
 /** The optional parent guidance file. */
 export const delegationPromptPath = join(agentDir, "squire", "delegation_prompt.md");
 /** The session directory the fake `sessionManager` reports. */
@@ -31,7 +31,7 @@ export const sessionDir = join(agentDir, "sessions");
 process.env.PI_CODING_AGENT_DIR = agentDir;
 export const cleanup = () => rmSync(root, { recursive: true, force: true });
 
-/** A frontmatter block and body, the way `AGENT.md` is written. */
+/** A frontmatter block and body, the way an agent file is written. */
 export function agentFile(fields: Record<string, string>, body = "Do the task and report back."): string {
 	const front = Object.entries(fields)
 		.map(([key, value]) => `${key}: ${value}`)
@@ -57,10 +57,18 @@ export function resetRoot(): void {
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
-/** Write `<agent dir>/squire/agents/<name>/AGENT.md`. */
+/** Write `<agent dir>/agents/<name>.md`. */
 export function writeAgent(name: string, content: string): void {
-	mkdirSync(join(rosterDir, name), { recursive: true });
-	writeFileSync(join(rosterDir, name, "AGENT.md"), content);
+	mkdirSync(rosterDir, { recursive: true });
+	writeFileSync(join(rosterDir, `${name}.md`), content);
+}
+
+/** Write `<cwd>/.pi/agents/<name>.md`, a project's agent file; returns its path. */
+export function writeProjectAgent(cwd: string, name: string, content: string): string {
+	const dir = join(cwd, ".pi", "agents");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, `${name}.md`), content);
+	return join(dir, `${name}.md`);
 }
 
 /** Write `<agent dir>/squire/delegation_prompt.md`. */
@@ -69,7 +77,7 @@ export function writeDelegationPrompt(content: string): void {
 	writeFileSync(delegationPromptPath, content);
 }
 
-/** Write `<agent dir>/agents/<name>/AGENT.md`, the retired location no roster reads. */
+/** Write `<agent dir>/squire/agents/<name>/AGENT.md`, the retired location no roster reads. */
 export function writeLegacyAgent(name: string, content: string): void {
 	mkdirSync(join(legacyRosterDir, name), { recursive: true });
 	writeFileSync(join(legacyRosterDir, name, "AGENT.md"), content);
@@ -232,6 +240,8 @@ export type SessionOptions = {
 	ui?: UiAnswers;
 	/** The tool names `pi.getAllTools()` reports once the session has started. */
 	registeredTools?: readonly string[];
+	/** The tool names `pi.getActiveTools()` reports; default `DEFAULT_TOOLS` and the delegation tools. `pi.setActiveTools` changes them. */
+	activeTools?: readonly string[];
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
 	noCredentials?: readonly string[];
 	/** Models only this session's registry also knows, on top of `FAKE_MODELS`. */
@@ -242,6 +252,10 @@ export type SessionOptions = {
 	oauth?: string[];
 	/** Base URLs the fake registry reports per provider; none unless set. */
 	providerBaseUrls?: Record<string, string>;
+	/** The parent's current model, `ctx.model`, as provider/id; default `alpha/fast-model`, `null` for none. */
+	parentModel?: string | null;
+	/** The parent's thinking level, `pi.getThinkingLevel()`; default `medium`. */
+	parentThinking?: string;
 };
 
 type ProviderResponse = { status: number; headers: Record<string, string> };
@@ -257,6 +271,9 @@ export type RunFailure = {
 
 /** The tools a fake session has unless a test says otherwise. */
 export const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
+
+/** The tools pi-squire registers in a parent, active there unless a test says otherwise. */
+export const DELEGATION_TOOLS = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 
 /**
  * Pi passes `structuredContent` to codemode scripts without checking it, so
@@ -343,7 +360,13 @@ export function session(options: SessionOptions = {}) {
 	/** Pi's action methods throw until the runtime binds, which is before `session_start`. */
 	let bound = false;
 	const registeredTools = options.registeredTools ?? DEFAULT_TOOLS;
+	let activeTools = [...(options.activeTools ?? [...DEFAULT_TOOLS, ...DELEGATION_TOOLS])];
 	const pi = {
+		getThinkingLevel: () => options.parentThinking ?? "medium",
+		getActiveTools: () => [...activeTools],
+		setActiveTools: (names: string[]) => {
+			activeTools = [...names];
+		},
 		getAllTools: () => {
 			if (!bound)
 				throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
@@ -374,7 +397,15 @@ export function session(options: SessionOptions = {}) {
 			return true;
 		},
 	};
+	const parentModel = options.parentModel === undefined ? "alpha/fast-model" : options.parentModel;
 	const ctx = {
+		model:
+			parentModel === null
+				? undefined
+				: {
+						provider: parentModel.slice(0, parentModel.indexOf("/")),
+						id: parentModel.slice(parentModel.indexOf("/") + 1),
+					},
 		cwd: options.cwd ?? root,
 		hasUI: options.hasUI ?? true,
 		isProjectTrusted: () => options.projectTrusted ?? false,

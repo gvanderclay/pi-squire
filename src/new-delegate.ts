@@ -47,6 +47,8 @@ export type NewDelegateDeps = {
 	roster(ctx: ExtensionContext): Roster;
 	/** The refusal text for an empty roster. */
 	noAgents(): string;
+	/** The model and thinking `agent` runs on when the request names none: its own, else the parent's. */
+	defaults(agent: Agent, ctx: ExtensionContext): { model?: string; thinking: string };
 	/** Why `value` is not a usable label, or undefined; the check `--label` gets. */
 	labelProblem(value: string): string | undefined;
 	/** Start the delegate as `/delegate` would, notifying the start or the refusal. */
@@ -207,12 +209,12 @@ export class SettingsForm implements Component {
 		this.options = options;
 		const { agent, models, style } = options;
 		for (const model of models) this.byId.set(`${model.provider}/${model.id}`, model);
-		this.model = agent.model;
-		this.thinking = agent.thinking;
+		this.model = agent.model ?? "";
+		this.thinking = agent.thinking ?? "";
 		this.autoExit = agent.autoExit;
 		this.cwd = options.cwd;
 		this.clampInitialThinking();
-		const modelItems: SelectItem[] = [...new Set([agent.model, ...this.byId.keys()])].map((value) => ({
+		const modelItems: SelectItem[] = [...new Set([this.model, ...this.byId.keys()])].map((value) => ({
 			value,
 			label: value,
 		}));
@@ -360,8 +362,8 @@ export class SettingsForm implements Component {
 			return;
 		}
 		this.options.done({
-			...(this.model === this.options.agent.model ? {} : { model: this.model }),
-			...(this.thinking === this.options.agent.thinking ? {} : { thinking: this.thinking }),
+			...(this.model === (this.options.agent.model ?? "") ? {} : { model: this.model }),
+			...(this.thinking === (this.options.agent.thinking ?? "") ? {} : { thinking: this.thinking }),
 			...(this.autoExit === this.options.agent.autoExit ? {} : { autoExit: this.autoExit }),
 			...(this.cwd === this.options.cwd ? {} : { cwd: this.cwd }),
 			...(this.worktree === "" ? {} : { worktree: this.worktree }),
@@ -410,14 +412,20 @@ export async function startNewDelegate(ctx: ExtensionContext, deps: NewDelegateD
 	if (unavailable !== undefined) return fail(unavailable);
 	const roster = deps.roster(ctx);
 	if (roster.agents.length === 0) return fail(deps.noAgents());
-	const options = roster.agents.map((agent) => `${agent.name} — ${agent.description}`);
+	const options = roster.agents.map(
+		(agent) =>
+			`${agent.name}${agent.displayName === undefined ? "" : ` (${agent.displayName})`} — ${agent.description}`,
+	);
 	const picked = await ctx.ui.select("New delegate: agent", options);
 	const agent = roster.agents[options.indexOf(picked ?? "")];
 	if (agent === undefined) return;
 	const task = await ctx.ui.editor(`Task for ${agent.name}`);
 	if (task === undefined) return;
 	if (task.trim() === "") return fail("a task is required");
-	const typed = await ctx.ui.input(`Label (optional; empty for ${agent.name}-<id>)`, "letters, digits, _ or -");
+	const typed = await ctx.ui.input(
+		`Label (optional; empty for ${agent.displayName ?? agent.name}-<id>)`,
+		"letters, digits, _ or -",
+	);
 	if (typed === undefined) return;
 	const label = typed.trim() === "" ? undefined : typed.trim();
 	const badLabel = label === undefined ? undefined : deps.labelProblem(label);
@@ -425,7 +433,8 @@ export async function startNewDelegate(ctx: ExtensionContext, deps: NewDelegateD
 	const chosen = await ctx.ui.custom<FormResult | undefined>(
 		(_tui, theme, _keys, done): Component =>
 			new SettingsForm({
-				agent,
+				// The rows start at what a request naming nothing runs on.
+				agent: { ...agent, ...deps.defaults(agent, ctx) } as Agent,
 				models: ctx.modelRegistry.getAvailable() as Model<never>[],
 				cwd: ctx.cwd,
 				style: theme,

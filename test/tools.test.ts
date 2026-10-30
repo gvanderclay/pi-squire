@@ -62,9 +62,8 @@ test("a roster written after registration shows up in the description at session
 
 test("with an empty roster the description says how to add an agent", async () => {
 	const s = session();
-	assert.match(s.tool("delegate").description, /AGENT\.md/);
 	assert.ok(
-		s.tool("delegate").description.includes(join(agentDir, "squire", "agents")),
+		s.tool("delegate").description.includes(join(agentDir, "agents", "<name>.md")),
 		s.tool("delegate").description,
 	);
 });
@@ -264,7 +263,7 @@ test("roster edits, additions and removals reach the current run preparation wit
 	assert.equal(added.systemPromptOptions.sections[PARENT_SECTION], undefined);
 
 	writeAgent("scout", agentFile({ ...SCOUT_EDITED }));
-	rmSync(join(rosterDir, "researcher"), { recursive: true, force: true });
+	rmSync(join(rosterDir, "researcher.md"), { force: true });
 	const changed = await s.prepare();
 	assert.equal(s.registrations.length, before + 2);
 	assert.match(s.tool("delegate").description, /scout — Looks things up differently/);

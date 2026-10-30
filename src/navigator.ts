@@ -205,7 +205,7 @@ async function openDelegates({ results, tmux }: Env): Promise<OpenDelegate[] | u
 		if (window === undefined || window.exited) continue;
 		const state = deriveState(record, "open");
 		if (state !== "running" && state !== "done") continue;
-		found.push({ id: record.id, name: recordedName(record), agent: record.agent, state, window });
+		found.push({ id: record.id, name: recordedName(record), agent: record.displayName ?? record.agent, state, window });
 	}
 	return found.reverse();
 }

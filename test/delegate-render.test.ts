@@ -122,22 +122,23 @@ test("an expanded started row adds the ids, window, thinking and auto-exit", asy
 });
 
 test("a launch on a fallback says which model was skipped", async () => {
+	// A model the registry does not know goes to the child for Pi to resolve, so the skipped one is a keyless model.
 	writeAgent(
 		"scout",
 		agentFile({
 			description: "Looks things up",
-			model: "nowhere/missing",
+			model: "beta/other-model",
 			fallback: "alpha/fast-model",
 			thinking: "low",
 		}),
 	);
-	const s = session();
+	const s = session({ noCredentials: ["beta/other-model"] });
 	await s.start();
 	const args = { agent: "scout", task: "t" };
 	const result = await s.toolCall("delegate", args);
 	const tool = s.tool("delegate") as unknown as Renderers;
 	const text = lines(tool.renderResult(result, { expanded: false }, theme, context(args, false))).join("\n");
-	assert.match(text, /<warning:\[Skipped nowhere\/missing: [^\]]+\]>/);
+	assert.match(text, /<warning:\[Skipped beta\/other-model: [^\]]+\]>/);
 });
 
 test("a refused call keeps its plain error text", async () => {

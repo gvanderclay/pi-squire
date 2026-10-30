@@ -3,7 +3,7 @@
 // mailbox are the harness's fakes.
 
 import assert from "node:assert/strict";
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
@@ -311,9 +311,42 @@ test("refused: a missing session file, a header without a cwd and a missing work
 
 test("refused: an agent no longer in the roster", async () => {
 	const d = await exitedDelegate();
-	rmSync(join(root, "agent", "squire", "agents", "scout"), { recursive: true });
+	rmSync(join(root, "agent", "agents", "scout.md"));
 	writeAgent("other", agentFile(AGENT));
 	assert.match(await resumeError(d.s, { id: d.id, task: "x" }), /agent "scout" is no longer in the roster/);
+});
+
+test("refused: an agent whose file turned invalid, naming the file and reason", async () => {
+	const d = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, "auto-exit": "maybe" }));
+	assert.match(
+		await resumeError(d.s, { id: d.id, task: "x" }),
+		/agent "scout" is disabled because its file is invalid: .*scout\.md has auto-exit "maybe", not true or false/,
+	);
+	assert.equal(d.s.tmux.opened.length, 1);
+});
+
+test("refused: an agent whose display_name turned invalid, naming the file and reason", async () => {
+	const d = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, display_name: '"Scout One"' }));
+	assert.match(
+		await resumeError(d.s, { id: d.id, task: "x" }),
+		/agent "scout" is disabled because its file is invalid: .*scout\.md has display_name "Scout One", which may hold only ASCII letters, digits, - and _/,
+	);
+	assert.equal(d.s.tmux.opened.length, 1);
+});
+
+test("refused: a delegateTools entry holding a comma, before the window opens or the task is sent", async () => {
+	const d = await exitedDelegate();
+	const sent = d.s.sendCalls.length;
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ delegateTools: ["read,bash"] }));
+	const error = await resumeError(d.s, { id: d.id, task: "x" });
+	assert.ok(error.includes(join(agentDir, "squire", "settings.json")), error);
+	assert.match(error, /delegateTools entry "read,bash" holds a comma/);
+	assert.equal(d.s.tmux.opened.length, 1);
+	assert.equal(d.s.sendCalls.length, sent);
+	assert.equal(starts(d.s).length, 1);
 });
 
 test("refused: a concurrent resume of the same delegation, and the guard is released afterwards", async () => {
@@ -560,4 +593,183 @@ test("/delegate-resume completes resumable ids, flags, models and thinking level
 		(await d.s.completionsFor("delegate-resume", `${d.id} --thinking hi`))?.map((item) => item.label),
 		["high"],
 	);
+});
+
+test("a resume refuses a model or thinking the agent locks, and says so", async () => {
+	const d = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, locked: "[model, thinking]" }));
+	const result = await resume(d.s, { id: d.id, task: "more", model: "alpha/deep-model", thinking: "high" });
+	const { argv } = d.s.tmux.opened[1];
+	assert.equal(argv[argv.indexOf("--model") + 1], "alpha/fast-model");
+	assert.equal(argv[argv.indexOf("--thinking") + 1], "low");
+	const notice =
+		"Agent scout locks model and thinking, so the model alpha/deep-model and thinking high given were not used.";
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [notice]);
+});
+
+test("a resume passes tools as a launch does: the parent's active tools now, or none for an empty tools field", async () => {
+	const d = await exitedDelegate();
+	d.s.pi.setActiveTools(["read", "delegate", "delegation_resume"]);
+	await resume(d.s, { id: d.id, task: "again" });
+	const inherited = d.s.tmux.opened[1].argv;
+	assert.equal(inherited[inherited.indexOf("--tools") + 1], "read,mcp__");
+
+	const e = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, tools: "" }));
+	await resume(e.s, { id: e.id, task: "again" });
+	const none = e.s.tmux.opened[1].argv;
+	assert.ok(none.includes("--no-tools") && !none.includes("--tools"), none.join(" "));
+});
+
+/** Mark `scope` usage-limited for an hour. */
+function markLimited(scope: string): void {
+	const now = Date.now();
+	const mark = { scope, reason: "limit", recordedAt: now, clearsAt: now + 3_600_000, source: "reactive", hits: 1 };
+	writeFileSync(LIMITS, JSON.stringify([{ ...mark, delegations: [] }]));
+}
+
+const argOf = (s: Session, index: number, flag: string): string | undefined => {
+	const { argv } = s.tmux.opened[index];
+	return argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined;
+};
+
+test("unlocked, a resume keeps the model and thinking the delegate last ran on, whatever the file says now", async () => {
+	const d = await exitedDelegate({ model: "alpha/deep-model" });
+	writeAgent("scout", agentFile({ ...AGENT, model: "beta/other-model", thinking: "high" }));
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
+	assert.equal(argOf(d.s, 1, "--thinking"), "low");
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+/**
+ * Append session entries to a delegate's session file: each `[id, parentId,
+ * level]` is a thinking-level change, each `[id, parentId]` an assistant
+ * message. The last entry is the session's leaf, as Pi reads it.
+ */
+function appendEntries(file: string, entries: readonly (readonly [string, string | null, string?])[]): void {
+	const lines = entries.map(([id, parentId, level]) =>
+		JSON.stringify(
+			level === undefined
+				? { type: "message", id, parentId, message: { role: "assistant", content: [] } }
+				: { type: "thinking_level_change", id, parentId, timestamp: "", thinkingLevel: level },
+		),
+	);
+	writeFileSync(file, `${readFileSync(file, "utf8")}${lines.join("\n")}\n`);
+}
+
+test("unlocked, a resume with no thinking runs on the level the delegate's session last changed to", async () => {
+	const d = await exitedDelegate();
+	assert.equal(argOf(d.s, 0, "--thinking"), "low");
+	appendEntries(d.file, [
+		["a", null, "low"],
+		["b", "a"],
+		["c", "b", "high"],
+		["d", "c"],
+	]);
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--thinking"), "high");
+	assert.equal((result.structuredContent as { thinking: string }).thinking, "high");
+	assert.equal(starts(d.s)[1].thinking, "high");
+});
+
+test("the session's level is read on the active branch: a change on an abandoned branch does not count", async () => {
+	const d = await exitedDelegate();
+	// c (high) hangs off b, but the leaf d branched from b too, so the branch is a, b, d.
+	appendEntries(d.file, [
+		["a", null, "minimal"],
+		["b", "a"],
+		["c", "b", "high"],
+		["d", "b"],
+	]);
+	await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--thinking"), "minimal");
+});
+
+test("a session without a thinking change resumes on the level the delegation recorded", async () => {
+	const d = await exitedDelegate();
+	appendEntries(d.file, [
+		["a", null],
+		["b", "a"],
+	]);
+	await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--thinking"), "low");
+});
+
+test("locked, a resume runs on the file's thinking whatever the session changed to; a passed value unlocked wins", async () => {
+	const locked = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, thinking: "medium", locked: "[thinking]" }));
+	appendEntries(locked.file, [
+		["a", null, "low"],
+		["b", "a", "high"],
+	]);
+	await resume(locked.s, { id: locked.id, task: "again" });
+	assert.equal(argOf(locked.s, 1, "--thinking"), "medium");
+
+	const passed = await exitedDelegate();
+	appendEntries(passed.file, [
+		["a", null, "low"],
+		["b", "a", "high"],
+	]);
+	await resume(passed.s, { id: passed.id, task: "again", thinking: "minimal" });
+	assert.equal(argOf(passed.s, 1, "--thinking"), "minimal");
+});
+
+test("locked after the launch, a resume with nothing passed runs on the file's current model and thinking", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ ...AGENT, model: "alpha/deep-model", thinking: "high", locked: "true" }));
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
+	assert.equal(argOf(d.s, 1, "--thinking"), "high");
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+test("a locked agent that switched to a fallback mid-run resumes on its model again, then the fallbacks", async () => {
+	const d = await exitedDelegate({ model: "beta/other-model", fallback: "beta/other-model" });
+	writeAgent("scout", agentFile({ ...AGENT, fallback: "beta/other-model", locked: "[model]" }));
+	await resume(d.s, { id: d.id, task: "again" });
+	assert.equal(argOf(d.s, 1, "--model"), "alpha/fast-model");
+	assert.equal(d.s.tmux.opened[1].env.PI_DELEGATE_FALLBACK, "beta/other-model");
+});
+
+test("locked after the launch, a resume's other value is refused for the file's current value, with the notice", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ ...AGENT, model: "alpha/deep-model", thinking: "high", locked: "true" }));
+	const result = await resume(d.s, { id: d.id, task: "again", model: "beta/other-model", thinking: "low" });
+	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
+	assert.equal(argOf(d.s, 1, "--thinking"), "high");
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [
+		"Agent scout locks model and thinking, so the model beta/other-model and thinking low given were not used.",
+	]);
+});
+
+test("a resume passing a locked alias back as given is no override: no notice, no provider/id refusal", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ ...AGENT, model: "fast-model", locked: "true" }));
+	const result = await resume(d.s, { id: d.id, task: "again", model: "fast-model", thinking: "low" });
+	assert.equal(argOf(d.s, 1, "--model"), "fast-model");
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+test("a resume passing a locked exact model back as given still moves on to its fallbacks", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ ...AGENT, fallback: "beta/other-model", locked: "[model]" }));
+	markLimited("alpha/fast-model");
+	const result = await resume(d.s, { id: d.id, task: "again", model: "alpha/fast-model" });
+	const details = result.structuredContent as { model: string; skipped: { model: string }[]; notices: string[] };
+	assert.equal(details.model, "beta/other-model");
+	assert.deepEqual(
+		details.skipped.map((item) => item.model),
+		["alpha/fast-model"],
+	);
+	assert.deepEqual(details.notices, []);
+});
+
+test("a locked field the file leaves unset resumes on the parent's current model and level", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	writeAgent("scout", agentFile({ description: "No model or thinking", locked: "[model, thinking]" }));
+	(d.s.context as { model?: { provider: string; id: string } }).model = { provider: "beta", id: "other-model" };
+	await resume(d.s, { id: d.id, task: "again", thinking: "high" });
+	assert.equal(argOf(d.s, 1, "--model"), "beta/other-model");
+	assert.equal(argOf(d.s, 1, "--thinking"), "medium");
 });

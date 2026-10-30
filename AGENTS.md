@@ -9,7 +9,7 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
 
 - The extension is the `.ts` files in `src/`. `src/index.ts` is the entry Pi
   loads; `child.ts` is what a delegate itself registers, `agents.ts` reads
-  the roster, `results.ts` handles replies and works out a delegation's
+  the roster and the `delegateTools` setting, `results.ts` handles replies and works out a delegation's
   state (`result-message.ts` words the result), `render.ts` draws the
   delegate messages, `tracking.ts` holds the status and close
   tools, `poll.ts` the poll (with `windows.ts`), `navigator.ts`

@@ -8,8 +8,8 @@ import { isAbsolute } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { Agent } from "./agents.ts";
-import { sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
+import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
+import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-sessions.ts";
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { requireTmuxVersion, type TmuxWindow } from "./tmux.ts";
@@ -79,10 +79,35 @@ export function sessionFor(record: StartedRecorded, ctx: ExtensionContext): Sess
 	return { path, cwd, dir };
 }
 
-/** The model choices: an explicit model alone, else where the delegate ended, then the agent's fallbacks. */
-export function preferredModels(record: StartedRecorded, agent: Agent, sessionPath: string): string[] {
-	const ended = finishedModel(sessionPath) ?? record.result?.finishedModel ?? record.model;
-	return [...new Set([ended, ...agent.fallback])];
+/**
+ * What a resume runs with when the call passes nothing. A field the agent
+ * locks takes the agent file's current value, or the parent's current one when
+ * the file sets none, even when the delegate last ran on another (a fallback
+ * after a usage limit, or a value from before the file changed). A field it
+ * does not lock keeps what the delegate last ran on: the model of its last
+ * answer, and the thinking level its session last changed to, or the
+ * recorded ones when the session does not say. The models are in order, the
+ * agent's fallbacks after the first.
+ */
+export function resumeDefaults(
+	record: StartedRecorded,
+	agent: Agent,
+	sessionPath: string,
+	parent: { model?: string; thinking: string },
+): { models: string[]; thinking: string } {
+	const first = agent.locked.includes("model")
+		? (agent.model ?? parent.model)
+		: (finishedModel(sessionPath) ?? record.result?.finishedModel ?? record.model);
+	const thinking = agent.locked.includes("thinking")
+		? (agent.thinking ?? parent.thinking)
+		: lastThinking(record, sessionPath);
+	return { models: [...new Set([...(first === undefined ? [] : [first]), ...agent.fallback])], thinking };
+}
+
+/** The thinking level the delegate last ran on: its session's last change, else the level recorded at its start. */
+function lastThinking(record: StartedRecorded, sessionPath: string): string {
+	const level = sessionThinking(sessionPath);
+	return level !== undefined && isThinking(level) ? level : record.thinking;
 }
 
 /** Steps 5 and 6: the session file and the agent, and no resume of the delegation already under way. */
@@ -92,7 +117,10 @@ export function recordCheck(
 	ctx: ExtensionContext,
 ): { session: SessionFile; agent: Agent } {
 	const session = sessionFor(record, ctx);
-	const agent = deps.roster(ctx).agents.find((item) => item.name === record.agent);
+	const roster = deps.roster(ctx);
+	const disabled = disabledProblem(roster, record.agent);
+	if (disabled !== undefined) throw new Error(`${disabled}, so delegation ${record.id} is not resumed`);
+	const agent = roster.agents.find((item) => item.name === record.agent);
 	if (agent === undefined) {
 		throw new Error(
 			`agent ${JSON.stringify(record.agent)} is no longer in the roster, so delegation ${record.id} is not resumed`,
@@ -113,12 +141,17 @@ export async function settleModel(
 	},
 	ctx: ExtensionContext,
 ): Promise<{ thinking: string; chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>> }> {
-	const { record, agent, session, request } = input;
-	const thinking = request.thinking ?? record.thinking;
+	const { record, agent, session } = input;
+	const defaults = resumeDefaults(record, agent, session.path, deps.parentDefaults(ctx));
+	const { request, notice } = withoutLocked(agent, input.request, {
+		model: defaults.models[0],
+		thinking: defaults.thinking,
+	});
+	const thinking = request.thinking ?? defaults.thinking;
 	const badThinking = deps.thinkingProblem(thinking);
 	if (badThinking !== undefined) throw new Error(badThinking);
-	const preferred = preferredModels(record, agent, session.path);
-	return { thinking, chosen: await deps.chooseModel(request.model, agent, ctx.modelRegistry, preferred) };
+	const chosen = await deps.chooseModel(request.model, agent, ctx.modelRegistry, defaults.models);
+	return { thinking, chosen: notice === undefined ? chosen : { ...chosen, notices: [notice, ...chosen.notices] } };
 }
 
 /** The call-wide prerequisites of a resume: inside tmux, a new enough tmux, a valid placement setting (read once). */
@@ -143,7 +176,7 @@ export async function passes(
 		windowCheck(record, windows);
 		const { session, agent } = recordCheck(deps, record, ctx);
 		// Model choice depends on the agent and where the delegate ended, so records alike share one answer.
-		const key = JSON.stringify([record.thinking, agent.name, preferredModels(record, agent, session.path)]);
+		const key = JSON.stringify([agent.name, resumeDefaults(record, agent, session.path, deps.parentDefaults(ctx))]);
 		let ok = models.get(key);
 		if (ok === undefined) {
 			ok = await settleModel(deps, { record, agent, session, request: {} }, ctx).then(

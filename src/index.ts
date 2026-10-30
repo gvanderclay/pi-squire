@@ -3,7 +3,8 @@
 //
 // `/delegate <agent> [--model <provider/id>] [--thinking <level>]
 // [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task…>`
-// reads the agent from `<agent dir>/squire/agents/<name>/AGENT.md`, writes the task
+// reads the agent from `<agent dir>/agents/<name>.md` or, in a trusted project,
+// `<cwd>/.pi/agents/<name>.md` (`agents.ts`), writes the task
 // to the delegate's inbox through `message:send`, emits `session:launch` so
 // listeners can add arguments and environment, then opens a window in the
 // parent's working directory, or the existing directory `--cwd` selects
@@ -17,9 +18,13 @@
 // With auto-exit on (the agent's `auto-exit`, default true, overridden per
 // call) the delegate closes its own window after a normal completion; the
 // delegate's side lives in `child.ts`. With it off the window stays open.
-// An agent's `exclude-tools` goes to the child as `--exclude-tools`; a name the
-// session has no tool for leaves the agent out of the roster. Its `tools` goes
-// as `--tools` and each of its `extensions` as `-e`, both for the child alone.
+// An agent's `tools`, or the parent's active tools when it has no `tools`
+// field (less any `-name` entries), goes to the child as `--tools` with the
+// `delegateTools` setting added (`--no-tools` when that leaves nothing), and
+// each of its `extensions` as `-e`, both for the child alone. A tool only the
+// agent's own extensions register is passed only when `tools` or
+// `delegateTools` names it. An agent with no `model` or `thinking` runs
+// on the parent's.
 //
 // The model gets four tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
@@ -50,7 +55,18 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { type Agent, isThinking, type Roster, readRoster, THINKING_LEVELS } from "./agents.ts";
+import {
+	type Agent,
+	delegateTools,
+	disabledProblem,
+	globalAgentsDir,
+	isThinking,
+	projectAgentsDir,
+	type Roster,
+	readRoster,
+	THINKING_LEVELS,
+	withoutLocked,
+} from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
@@ -92,6 +108,13 @@ const LAUNCH = "session:launch";
 const PARENT_ENV = "PI_DELEGATE_PARENT";
 /** Forwarded to the child when the parent has it set. */
 const SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
+/** The tools this extension registers in a parent; a delegate never gets them. */
+const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
+	"delegate",
+	"delegation_status",
+	"delegation_close",
+	"delegation_resume",
+]);
 /** Asked of every delegate, so the parent gets an answer it can use alone. */
 const FINAL_LINE =
 	"End with one self-contained final message: the parent session sees only that message, never this conversation.";
@@ -406,26 +429,49 @@ function modelProblem(value: string, registry: ModelRegistry): string | undefine
 	return `unknown model ${JSON.stringify(value)}${close.length > 0 ? `; close matches: ${close.join(", ")}` : ""}`;
 }
 
+/** The registry's model for an exact `provider/id`; undefined for anything else, such as a pattern. */
+function registered(value: string, registry: ModelRegistry): { provider: string; id: string } | undefined {
+	const slash = value.indexOf("/");
+	if (slash <= 0 || slash === value.length - 1) return undefined;
+	return registry.find(value.slice(0, slash), value.slice(slash + 1));
+}
+
+/** An agent's own models in order: its `model`, or the parent's when it has none, then its fallbacks. */
+function agentModels(agent: Agent, parentModel: string | undefined): string[] {
+	const first = agent.model ?? parentModel;
+	return [...(first === undefined ? [] : [first]), ...agent.fallback];
+}
+
 /**
  * The model for a launch. An explicit model is the only candidate; otherwise
- * the agent's model then its fallbacks. The first candidate that passes
- * `modelProblem` and has no active mark wins; the rest are returned as skipped.
- * A paid candidate on a provider with a quota check is read first, and
- * skipped when its quota is used up. Refuses, listing every candidate, when
- * none is left. `preferred` replaces the agent's own list when there is no
- * explicit model, as a resume does.
+ * `preferred`, by default `own`: the agent's model then its fallbacks. The
+ * first candidate that passes `modelProblem` and has no active mark wins; the
+ * rest are returned as skipped. A paid candidate on a provider with a quota
+ * check is read first, and skipped when its quota is used up. A candidate from
+ * the agent file that is not an exact `provider/id` the registry knows, such
+ * as a pattern, is passed to the child unchanged for Pi to resolve. Refuses,
+ * listing every candidate, when none is left. A resume passes its own
+ * `preferred`.
  */
 async function chooseModel(
 	explicit: string | undefined,
 	agent: Agent,
 	models: ModelRegistry,
 	proactive: Proactive,
-	preferred: readonly string[] = [agent.model, ...agent.fallback],
+	own: readonly string[],
+	preferred: readonly string[] = own,
 ): Promise<{ model: string; skipped: Skipped[]; notices: string[]; rest: string[] }> {
 	const candidates = explicit !== undefined ? [explicit] : [...preferred];
+	if (candidates.length === 0)
+		throw new Error(
+			`agent ${agent.name} names no model and this session has none; add model to ${agent.path}, or pass one`,
+		);
 	const skipped: Skipped[] = [];
 	const notices: string[] = [];
 	for (const model of candidates) {
+		const rest = () => candidates.slice(candidates.indexOf(model) + 1);
+		if (explicit === undefined && registered(model, models) === undefined)
+			return { model, skipped, notices, rest: rest() };
 		const problem = modelProblem(model, models);
 		if (problem !== undefined) {
 			skipped.push({ model, why: `unavailable (${problem})`, reason: problem });
@@ -445,7 +491,7 @@ async function chooseModel(
 			if (checked.notice !== undefined && !notices.includes(checked.notice)) notices.push(checked.notice);
 			mark = activeMark(models, provider, id) ?? checked.mark;
 		}
-		if (mark === undefined) return { model, skipped, notices, rest: candidates.slice(candidates.indexOf(model) + 1) };
+		if (mark === undefined) return { model, skipped, notices, rest: rest() };
 		const what = mark.scope.includes("/") ? `model ${mark.scope}` : `provider ${mark.scope}`;
 		const until = new Date(mark.clearsAt).toISOString();
 		skipped.push({
@@ -458,8 +504,10 @@ async function chooseModel(
 		const [only] = skipped;
 		if (!only.why.startsWith("usage-limited")) throw new Error(only.reason);
 		// An explicit model is never substituted, but the refusal names the agent's models still open.
-		const open = [agent.model, ...agent.fallback].filter((model) => {
-			if (model === only.model || modelProblem(model, models) !== undefined) return false;
+		const open = own.filter((model) => {
+			if (model === only.model) return false;
+			if (registered(model, models) === undefined) return true;
+			if (modelProblem(model, models) !== undefined) return false;
 			const slash = model.indexOf("/");
 			return activeMark(models, model.slice(0, slash), model.slice(slash + 1)) === undefined;
 		});
@@ -508,32 +556,97 @@ function delegateVisible(options: { selectedTools: string[]; hiddenTools: string
 	return options.selectedTools.includes("delegate") && !options.hiddenTools.includes("delegate");
 }
 
+/** Where agent files go, for the messages that say how to add one. */
+function whereAgentsGo(): string {
+	return `${join(globalAgentsDir(getAgentDir()), "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, extensions, fallback, auto-exit, prompt_mode, display_name, locked and enabled`;
+}
+
+/** One roster line for the `delegate` tool's description. */
+function rosterLine(agent: Agent): string {
+	const models = [agent.model ?? "this session's model", ...agent.fallback.map((model) => `fallback ${model}`)];
+	const details = [
+		`default ${models.join(", ")}`,
+		`thinking ${agent.thinking ?? "this session's"}`,
+		...(agent.autoExit ? [] : ["auto-exit off"]),
+		...toolsDetail(agent),
+		...(agent.locked.length > 0 ? [`locked: ${agent.locked.join("/")}`] : []),
+	];
+	const shown = agent.displayName === undefined ? "" : ` "${agent.displayName}"`;
+	return `- ${agent.name}${shown} — ${agent.description} (${details.join(", ")})`;
+}
+
+/**
+ * The entry that makes Pi filter MCP tools by `--tools`. Pi keeps every MCP
+ * tool registered (callable from codemode, loadable by tool_search) unless an
+ * entry starts with `mcp__`; this one does and names no tool, since an MCP
+ * tool is `mcp__<server>__<tool>`.
+ */
+const MCP_FILTER = "mcp__";
+
+/**
+ * The child's tool arguments for a selection: `--tools` with exactly those
+ * tools, MCP tools included, or `--no-tools` (which Pi applies to MCP tools
+ * too) when it is empty. Always explicit: no flag would give the child the
+ * parent's tools rather than Pi's defaults.
+ */
+function toolArgs(tools: readonly string[]): string[] {
+	if (tools.length === 0) return ["--no-tools"];
+	const filtered = tools.some((name) => name.startsWith(MCP_FILTER)) ? tools : [...tools, MCP_FILTER];
+	return ["--tools", filtered.join(",")];
+}
+
+/** The roster line's word on an agent's tools; nothing for the parent's tools unchanged. */
+function toolsDetail(agent: Agent): string[] {
+	if (agent.tools !== undefined) return [agent.tools.length > 0 ? `tools: ${agent.tools.join("/")}` : "no tools"];
+	return agent.toolsExcept.length > 0 ? [`tools: this session's except ${agent.toolsExcept.join("/")}`] : [];
+}
+
+/** Whether tool `name` is `pattern`, where `*` matches any characters, as in Pi's tool lists. */
+function toolMatches(pattern: string, name: string): boolean {
+	const source = pattern
+		.split("*")
+		.map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+		.join(".*");
+	return new RegExp(`^${source}$`).test(name);
+}
+
+/**
+ * The delegate's tool selection, always a plain list: the agent's `tools`
+ * names, or `parentTools` less its `-name` entries when it has none, then
+ * `extra` (the `delegateTools` setting), with the delegation tools left out.
+ * Empty means the delegate gets no tools.
+ */
+function toolSelection(agent: Agent, parentTools: readonly string[], extra: readonly string[]): string[] {
+	const base =
+		agent.tools ?? parentTools.filter((name) => !agent.toolsExcept.some((pattern) => toolMatches(pattern, name)));
+	return [...new Set([...base, ...extra])].filter((name) => !DELEGATION_TOOLS.has(name));
+}
+
+/** The delegate's appended prompt: the agent's body, then the lines every delegate gets. */
+function delegatePrompt(agent: Agent, parent: string, managedContext: string): string {
+	const tail = `${FINAL_LINE}\n\n${parentTrust(parent)}${managedContext}`;
+	if (agent.prompt === "") return tail;
+	// `replace` is how every delegate was built before `prompt_mode`, byte for byte.
+	const body =
+		agent.promptMode === "replace" ? agent.prompt : `<agent_instructions>\n${agent.prompt}\n</agent_instructions>`;
+	return `${body}\n\n${tail}`;
+}
+
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 function toolDescription(agents: readonly Agent[]): string {
 	const intro =
 		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory, or the cwd given, with this session's agent root, and reports back later as one message. While it runs, keep working or end your turn: its result starts your next turn on its own. Do not poll delegation_status or send a blocking mail request merely to wait for the result; send a substantive follow-up only when you have something to add or ask. Use it when the work is self-contained and you would rather keep your own context for it.";
 	if (agents.length === 0) {
-		return `${intro}\n\nNo agents are defined yet. Add ${join(
-			getAgentDir(),
-			"squire",
-			"agents",
-			"<name>",
-			"AGENT.md",
-		)} with frontmatter description, model and thinking (optionally auto-exit, exclude-tools, tools, extensions and fallback) and the prompt as its body; /delegate explains the format too.`;
+		return `${intro}\n\nNo agents are defined yet. Add ${whereAgentsGo()}.`;
 	}
 	return [
 		intro,
 		"",
 		"Agents:",
-		...agents.map(
-			(agent) =>
-				`- ${agent.name} — ${agent.description} (default ${[agent.model, ...agent.fallback.map((model) => `fallback ${model}`)].join(", ")}, thinking ${agent.thinking}${agent.autoExit ? "" : ", auto-exit off"}${
-					agent.excludeTools.length > 0 ? `, no ${agent.excludeTools.join("/")}` : ""
-				}${agent.tools.length > 0 ? `, tools: ${agent.tools.join("/")}` : ""})`,
-		),
+		...agents.map(rosterLine),
 		"",
 		"`cwd` runs the delegate in another existing directory. Alternatively, `worktree` creates a new local branch and checkout from this repository's committed HEAD, or `worktree_source` selects another existing Git checkout; `worktree_base` selects a commit in that source. Source dirt is reported but not copied. `cwd` and `worktree` are mutually exclusive, and source/base require worktree.",
-		"`model` and `thinking` override the agent's defaults for this call; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one. `delegation_resume` continues an exited delegate in its own session with a follow-up task, for work that needs the context it already built.",
+		"`model` and `thinking` override the agent's defaults for this call, except a field the agent locks; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one. `delegation_resume` continues an exited delegate in its own session with a follow-up task, for work that needs the context it already built.",
 		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
 		"",
 		"Writing the task: the delegate sees nothing of this session, so the task must stand alone. State the question, the decision its answer feeds, what is already known or ruled out, and the files or paths to start from. When the work produces a report, name the path to write it to and ask for the conclusion back, not the contents.",
@@ -564,44 +677,75 @@ export default function delegate(
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
+	/** The latest context, for the roster a completion reads; undefined before the session starts. */
+	let latest: ExtensionContext | undefined;
 
 	const modelIds = (source: ModelRegistry | undefined): string[] =>
 		(source?.getAll() ?? []).map((model) => `${model.provider}/${model.id}`);
 
-	/**
-	 * The session's tool names, which `exclude-tools` must name; undefined
-	 * while Pi is still loading extensions and cannot list them yet.
-	 */
-	function sessionTools(): string[] | undefined {
+	/** The project's agents folder when `ctx`'s project is trusted; undefined otherwise or without a context. */
+	function trustedProject(ctx: ExtensionContext | undefined): string | undefined {
+		if (ctx === undefined) return undefined;
 		try {
-			return pi.getAllTools().map((tool) => tool.name);
+			return ctx.isProjectTrusted() ? projectAgentsDir(ctx.cwd) : undefined;
 		} catch {
-			return undefined;
+			return undefined; // a stale context after a session replacement
 		}
 	}
 
-	/** The roster as it stands, checked against the session's tools. */
-	const currentRoster = (): Roster => readRoster(getAgentDir(), sessionTools());
+	/** The roster as it stands: the global agents, and the project's when it is trusted. */
+	const currentRoster = (ctx: ExtensionContext | undefined = latest): Roster =>
+		readRoster(getAgentDir(), trustedProject(ctx));
+
+	/** What an agent with no `model` or `thinking` runs on: the parent's model and level now. */
+	function parentDefaults(ctx: ExtensionContext): { model?: string; thinking: string } {
+		let thinking = "medium";
+		try {
+			thinking = pi.getThinkingLevel();
+		} catch {
+			// Pi binds this before any call can reach here; the default only covers a host without it.
+		}
+		return { ...(ctx.model === undefined ? {} : { model: `${ctx.model.provider}/${ctx.model.id}` }), thinking };
+	}
+
+	/**
+	 * The delegate's tools for a launch or resume starting now: the agent's
+	 * named tools, or the parent's active tools at this moment (less any
+	 * `-name` entries), then the `delegateTools` setting. The agent's own
+	 * extensions are never loaded here: a tool only they register is passed
+	 * only when `tools` or `delegateTools` names it. Throws, naming the file,
+	 * on an invalid setting.
+	 */
+	function childTools(agent: Agent): string[] {
+		return toolSelection(agent, agent.tools === undefined ? pi.getActiveTools() : [], delegateTools(getAgentDir()));
+	}
 
 	/** Read the roster now, warning about every file left out. */
 	function rosterFor(ctx: ExtensionContext): Roster {
-		const roster = currentRoster();
+		const roster = currentRoster(ctx);
 		for (const warning of roster.warnings) ctx.ui.notify(`delegate: ${warning}`, "warning");
 		return roster;
 	}
 
+	/** The roster warnings already shown this session, so a run shows only new ones. */
+	const announced = new Set<string>();
+
+	/** Show each roster warning not yet shown this session, such as a file that is disabled. */
+	function announce(roster: Roster, ctx: ExtensionContext): void {
+		for (const warning of roster.warnings) {
+			if (announced.has(warning)) continue;
+			announced.add(warning);
+			ctx.ui.notify(`delegate: ${warning}`, "warning");
+		}
+	}
+
 	/** The refusal for an empty roster. */
-	const noAgents = (): string =>
-		`no agents are defined; add ${join(
-			getAgentDir(),
-			"squire",
-			"agents",
-			"<name>",
-			"AGENT.md",
-		)} with frontmatter description, model and thinking (optionally auto-exit, exclude-tools, tools, extensions and fallback), and the prompt as its body`;
+	const noAgents = (): string => `no agents are defined; add ${whereAgentsGo()}`;
 
 	/** The request as a start, or an error naming what to fix. */
-	async function validate(request: Parsed, roster: Roster, models: ModelRegistry): Promise<Start> {
+	async function validate(request: Parsed, roster: Roster, ctx: ExtensionContext): Promise<Start> {
+		const disabled = disabledProblem(roster, request.agent);
+		if (disabled !== undefined) throw new Error(disabled);
 		if (roster.agents.length === 0) throw new Error(noAgents());
 		const agent = roster.agents.find((candidate) => candidate.name === request.agent);
 		if (agent === undefined) {
@@ -610,8 +754,14 @@ export default function delegate(
 			);
 		}
 		if (request.task.trim() === "") throw new Error("a task is required");
-		const thinking = request.thinking ?? agent.thinking;
-		const { model, skipped, notices, rest } = await chooseModel(request.model, agent, models, proactive);
+		const parent = parentDefaults(ctx);
+		const own = agentModels(agent, parent.model);
+		const defaultThinking = agent.thinking ?? parent.thinking;
+		const unlocked = withoutLocked(agent, request, { model: own[0], thinking: defaultThinking });
+		const thinking = unlocked.request.thinking ?? defaultThinking;
+		const chosen = await chooseModel(unlocked.request.model, agent, ctx.modelRegistry, proactive, own);
+		const { model, skipped, rest } = chosen;
+		const notices = unlocked.notice === undefined ? chosen.notices : [unlocked.notice, ...chosen.notices];
 		const badThinking = thinkingProblem(thinking);
 		if (badThinking !== undefined) throw new Error(badThinking);
 		const badLabel = request.label === undefined ? undefined : labelProblem(request.label);
@@ -667,6 +817,8 @@ export default function delegate(
 		ctx: ExtensionContext;
 		/** Chosen once, when the launch or resume began, so no later settings change can refuse it after mail. */
 		placement: WindowPlacement;
+		/** The delegate's tools, from `toolSelection`, read when the launch began; empty means none. */
+		tools: readonly string[];
 		onWindowOpened?: () => void;
 	}): Promise<OpenedWindow> {
 		const {
@@ -681,6 +833,7 @@ export default function delegate(
 			toolCallId,
 			ctx,
 			placement,
+			tools,
 			onWindowOpened,
 		} = input;
 		const parent = ctx.sessionManager.getSessionId();
@@ -690,7 +843,7 @@ export default function delegate(
 				: workspace.mode === "existing"
 					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
 					: "";
-		const prompt = writePromptFile(`${start.agent.prompt}\n\n${FINAL_LINE}\n\n${parentTrust(parent)}${managedContext}`);
+		const prompt = writePromptFile(delegatePrompt(start.agent, parent, managedContext));
 		const argv = [
 			...parentCommand(),
 			...session,
@@ -703,8 +856,7 @@ export default function delegate(
 			"--thinking",
 			start.thinking,
 			...start.agent.extensions.flatMap((extension) => ["-e", extension]),
-			...(start.agent.tools.length > 0 ? ["--tools", start.agent.tools.join(",")] : []),
-			...(start.agent.excludeTools.length > 0 ? ["--exclude-tools", start.agent.excludeTools.join(",")] : []),
+			...toolArgs(tools),
 			"--append-system-prompt",
 			prompt,
 		];
@@ -747,11 +899,12 @@ export default function delegate(
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
 		placement: WindowPlacement;
+		tools: readonly string[];
 		onWindowOpened: () => void;
 	}): Promise<Launched> {
 		const { id, requestId, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement, onWindowOpened } =
 			input;
-		const name = delegateName(start.agent.name, id, start.label);
+		const name = delegateName(start.agent.displayName ?? start.agent.name, id, start.label);
 		const { id: windowId, session: windowSession } = await openChild({
 			id,
 			name,
@@ -764,6 +917,7 @@ export default function delegate(
 			toolCallId,
 			ctx,
 			placement,
+			tools: input.tools,
 			onWindowOpened,
 		});
 		// No task text in the record: the request copy in `sent/` has it.
@@ -771,6 +925,7 @@ export default function delegate(
 			{
 				id,
 				agent: start.agent.name,
+				...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
 				model: start.model,
 				thinking: start.thinking,
 				name,
@@ -796,8 +951,9 @@ export default function delegate(
 	): Promise<Launched> {
 		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 		await requireTmuxVersion(tmux);
-		// Read once, before anything is created or mailed; the launch keeps this value.
+		// Read once, before anything is created or mailed; the launch keeps these values.
 		const placement = windowPlacement(getAgentDir());
+		const tools = childTools(start.agent);
 		const sessionDir = ctx.sessionManager.getSessionDir();
 		if (!isAbsolute(sessionDir))
 			throw new Error(
@@ -909,6 +1065,7 @@ export default function delegate(
 				toolCallId,
 				ctx,
 				placement,
+				tools,
 				onWindowOpened: () => {
 					windowOpened = true;
 				},
@@ -982,7 +1139,9 @@ export default function delegate(
 		startPolling: tracking.startPolling,
 		placement: () => windowPlacement(getAgentDir()),
 		roster: rosterFor,
-		chooseModel: (explicit, agent, models, preferred) => chooseModel(explicit, agent, models, proactive, preferred),
+		parentDefaults,
+		chooseModel: (explicit, agent, models, preferred) =>
+			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
 		thinkingProblem,
 		prepareDirectory: (cwd, ctx, signal) => prepareDirectory({ cwd, signal }, ctx, getAgentDir()),
 		sendTask,
@@ -999,6 +1158,8 @@ export default function delegate(
 				toolCallId,
 				ctx,
 				placement,
+				// Read before the window opens, and a resume mails only after it opens.
+				tools: childTools(start.agent),
 			}),
 	});
 
@@ -1022,11 +1183,7 @@ export default function delegate(
 			const worktree = normalizeWorkspaceValue(parsed.worktree, "--worktree");
 			if (worktree_source !== undefined && worktree === undefined)
 				throw new Error("--worktree-source requires --worktree");
-			const start = await validate(
-				{ ...parsed, cwd, worktree, worktree_base, worktree_source },
-				rosterFor(ctx),
-				ctx.modelRegistry,
-			);
+			const start = await validate({ ...parsed, cwd, worktree, worktree_base, worktree_source }, rosterFor(ctx), ctx);
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 		} catch (err) {
@@ -1039,6 +1196,11 @@ export default function delegate(
 		unavailable: () => (tmux.insideTmux() ? undefined : NOT_IN_TMUX),
 		roster: rosterFor,
 		noAgents,
+		defaults: (agent, ctx) => {
+			const parent = parentDefaults(ctx);
+			const model = agentModels(agent, parent.model)[0];
+			return { ...(model === undefined ? {} : { model }), thinking: agent.thinking ?? parent.thinking };
+		},
 		labelProblem,
 		start: (request: NewRequest, context) => runDelegate(request, context),
 	};
@@ -1096,9 +1258,16 @@ export default function delegate(
 			task: Type.String({
 				description: "The task for the delegate. It sees this and its agent prompt, nothing else of this session.",
 			}),
-			model: Type.Optional(Type.String({ description: "provider/id model for this call; defaults to the agent's." })),
+			model: Type.Optional(
+				Type.String({
+					description:
+						"provider/id model for this call; defaults to the agent's, or this session's when it names none. Not used when the agent locks model.",
+				}),
+			),
 			thinking: Type.Optional(
-				Type.String({ description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the agent's.` }),
+				Type.String({
+					description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the agent's, or this session's when it names none. Not used when the agent locks thinking.`,
+				}),
 			),
 			label: Type.Optional(
 				Type.String({
@@ -1179,7 +1348,7 @@ export default function delegate(
 					task: params.task ?? "",
 				},
 				rosterFor(ctx),
-				ctx.modelRegistry,
+				ctx,
 			);
 			const launched = await launch(start, ctx, signal, toolCallId);
 			ctx.ui.notify(started(launched, start), "info");
@@ -1212,15 +1381,22 @@ export default function delegate(
 
 	pi.on("session_start", (_event, ctx) => {
 		registry = ctx.modelRegistry;
+		latest = ctx;
 		tracking.restore(ctx);
 		// The roster is read at call time; the description is rebuilt here and before each run.
-		registerDelegate(toolDescription(currentRoster().agents));
+		const roster = currentRoster(ctx);
+		announced.clear();
+		announce(roster, ctx);
+		registerDelegate(toolDescription(roster.agents));
 	});
 
 	// One roster/prompt snapshot prepares this run: refresh the description only when
 	// it changed, and replace only this extension's prompt section from the same snapshot.
 	pi.on("before_agent_start", (event, ctx) => {
-		const description = toolDescription(currentRoster().agents);
+		latest = ctx;
+		const roster = currentRoster(ctx);
+		announce(roster, ctx);
+		const description = toolDescription(roster.agents);
 		const prompt = readParentPrompt();
 		const visible = delegateVisible(event.systemPromptOptions);
 		// Report a read failure even when guidance cannot be used, so it does not go unseen.

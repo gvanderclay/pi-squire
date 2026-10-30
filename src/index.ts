@@ -18,9 +18,10 @@
 // With auto-exit on (the agent's `auto-exit`, default true, overridden per
 // call) the delegate closes its own window after a normal completion; the
 // delegate's side lives in `child.ts`. With it off the window stays open.
-// An agent's `tools`, or the parent's active tools when it has no `tools`
-// field, goes to the child as `--tools` with the `delegateTools` setting added
-// (`--no-tools` when that leaves nothing), and each of its `extensions` as
+// An agent's `tools`, or the parent's active tools and the tools its own
+// extensions register when it has no `tools` field (less any `-name`
+// entries), goes to the child as `--tools` with the `delegateTools` setting
+// added (`--no-tools` when that leaves nothing), and each of its `extensions` as
 // `-e`, both for the child alone. An agent with no `model` or `thinking` runs
 // on the parent's.
 //
@@ -66,6 +67,7 @@ import {
 	withoutLocked,
 } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
+import { extensionTools } from "./extension-tools.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
@@ -707,12 +709,19 @@ export default function delegate(
 	}
 
 	/**
-	 * The delegate's tools for a launch or resume starting now: the agent's, or
-	 * the parent's active tools at this moment, with the `delegateTools`
-	 * setting. Throws, naming the file, on an invalid setting.
+	 * The delegate's tools for a launch or resume starting now: the agent's
+	 * named tools, or the parent's active tools at this moment with the tools
+	 * the agent's own `extensions` register (less any `-name` entries), then
+	 * the `delegateTools` setting. Throws, naming the file, on an invalid
+	 * setting; warns about an extension whose tools cannot be read.
 	 */
-	function childTools(agent: Agent): string[] {
-		return toolSelection(agent, agent.tools === undefined ? pi.getActiveTools() : [], delegateTools(getAgentDir()));
+	async function childTools(agent: Agent, ctx: ExtensionContext): Promise<string[]> {
+		const extra = delegateTools(getAgentDir());
+		if (agent.tools !== undefined) return toolSelection(agent, [], extra);
+		const own = await extensionTools(agent.extensions);
+		for (const problem of own.problems)
+			ctx.ui.notify(`delegate: ${problem}; the delegate gets none of its tools unless tools names them`, "warning");
+		return toolSelection(agent, [...pi.getActiveTools(), ...own.tools], extra);
 	}
 
 	/** Read the roster now, warning about every file left out. */
@@ -948,7 +957,7 @@ export default function delegate(
 		await requireTmuxVersion(tmux);
 		// Read once, before anything is created or mailed; the launch keeps these values.
 		const placement = windowPlacement(getAgentDir());
-		const tools = childTools(start.agent);
+		const tools = await childTools(start.agent, ctx);
 		const sessionDir = ctx.sessionManager.getSessionDir();
 		if (!isAbsolute(sessionDir))
 			throw new Error(
@@ -1140,7 +1149,7 @@ export default function delegate(
 		thinkingProblem,
 		prepareDirectory: (cwd, ctx, signal) => prepareDirectory({ cwd, signal }, ctx, getAgentDir()),
 		sendTask,
-		open: ({ id, name, sessionPath, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement }) =>
+		open: async ({ id, name, sessionPath, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement }) =>
 			openChild({
 				id,
 				name,
@@ -1154,7 +1163,7 @@ export default function delegate(
 				ctx,
 				placement,
 				// Read before the window opens, and a resume mails only after it opens.
-				tools: childTools(start.agent),
+				tools: await childTools(start.agent, ctx),
 			}),
 	});
 

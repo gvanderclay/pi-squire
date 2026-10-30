@@ -463,18 +463,25 @@ are not checked against the parent's tools, since a tool from one of the
 agent's own `extensions` exists only in the child.
 
 - No `tools` field: the delegate gets the parent session's tools as they are
-  when the launch (or resume) starts, the tools active there then, passed as
-  `--tools`. A parent limited to `read` gives such a delegate only `read`. A
-  tool only the agent's own `extensions` register is not among them; name it
-  in `tools` or `delegateTools`.
+  when the launch (or resume) starts, the tools active there then, and the
+  tools the agent's own `extensions` register, passed as `--tools`. A parent
+  limited to `read` gives such a delegate only `read` and its extensions'
+  tools. To learn those names, pi-squire loads each of the agent's extensions
+  with Pi's extension loader when the launch starts, apart from any session
+  (a fresh module, its own event bus, nothing else discovered), and reads the
+  tools it registers as it loads; `session_start` never fires there. A tool an
+  extension registers only later, such as on `session_start`, is not seen:
+  name it in `tools` or `delegateTools`. An extension that will not load is
+  named in a warning, and the launch goes on without its tools.
 - An empty `tools` field, `tools:` or `tools: []`: the delegate gets no tools
   except the `delegateTools` entries. With none of those either, it starts
   with `--no-tools`.
 - A `tools` list of tool names: exactly those tools, plus the
-  `delegateTools` entries.
+  `delegateTools` entries. A tool of the agent's own `extensions` must be
+  named to be there.
 - A `tools` list of only `-name` entries (`tools: -bash, -write`): the
-  parent's tools as with no `tools` field, less those, plus the
-  `delegateTools` entries. A `-name` entry may be a `*` pattern
+  parent's tools and the extensions' tools, as with no `tools` field, less
+  those, plus the `delegateTools` entries. A `-name` entry may be a `*` pattern
   (`-mcp__docs__*`).
 - A `+name` entry, or tool names and `-name` entries in one list, make the
   file invalid, and the agent is disabled (see below).

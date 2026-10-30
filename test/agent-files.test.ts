@@ -37,6 +37,15 @@ const promptOf = (argv: readonly string[]) => readFileSync(argv[argv.indexOf("--
 /** A fresh project directory for this test, so one test's `.pi/agents` cannot reach another. */
 const project = () => mkdtempSync(join(root, "project-"));
 
+/** An extension file that registers a tool for each name in `tools`, and nothing else. */
+const extensionSource = (tools: readonly string[]): string =>
+	`export default function (pi) {\n${tools
+		.map(
+			(name) =>
+				`\tpi.registerTool({ name: ${JSON.stringify(name)}, label: ${JSON.stringify(name)}, description: "test", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [], details: undefined }) });`,
+		)
+		.join("\n")}\n}\n`;
+
 const setSettings = (settings: unknown): void => {
 	mkdirSync(join(agentDir, "squire"), { recursive: true });
 	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify(settings));
@@ -366,6 +375,39 @@ test("a delegateTools entry that starts with + or - refuses every launch with an
 			s.errors[0],
 		);
 	}
+});
+
+test("an agent extension's tools join the parent's tools when tools is absent or only -name entries, never a named list", async () => {
+	const ext = join(rosterDir, "ext.ts");
+	writeAgent("inherit", agentFile({ ...SCOUT, extensions: "./ext.ts" }));
+	writeAgent("less", agentFile({ ...SCOUT, extensions: "./ext.ts", tools: "-ext_other, -bash" }));
+	writeAgent("named", agentFile({ ...SCOUT, extensions: "./ext.ts", tools: "read" }));
+	writeAgent("namedext", agentFile({ ...SCOUT, extensions: "./ext.ts", tools: "read, ext_tool" }));
+	writeFileSync(ext, extensionSource(["ext_tool", "ext_other"]));
+	const s = session({ activeTools: ["read", "bash", "delegate"] });
+	await s.start();
+	for (const name of ["inherit", "less", "named", "namedext"]) await s.delegate(`${name} go`);
+	assert.deepEqual(s.errors, []);
+	assert.deepEqual(s.warnings, []);
+	const [inherit, less, named, namedext] = s.tmux.opened.map((opened) => pair(opened.argv, "--tools")[1]);
+	assert.equal(inherit, "read,bash,ext_tool,ext_other,mcp__");
+	assert.equal(less, "read,ext_tool,mcp__");
+	assert.equal(named, "read,mcp__");
+	assert.equal(namedext, "read,ext_tool,mcp__");
+});
+
+test("an agent extension pi-squire cannot load for its tool names is warned about; the launch goes on without them", async () => {
+	writeAgent("inherit", agentFile({ ...SCOUT, extensions: "./broken.ts" }));
+	writeFileSync(join(rosterDir, "broken.ts"), "export default 5;\n");
+	const s = session({ activeTools: ["read", "delegate"] });
+	await s.start();
+	await s.delegate("inherit go");
+	assert.deepEqual(s.errors, []);
+	assert.equal(s.tmux.opened.length, 1);
+	assert.deepEqual(pair(s.tmux.opened[0].argv, "--tools"), ["--tools", "read,mcp__"]);
+	assert.equal(s.warnings.length, 1, s.warnings.join("\n"));
+	assert.ok(s.warnings[0].includes(join(rosterDir, "broken.ts")), s.warnings[0]);
+	assert.match(s.warnings[0], /could not read the tools .* registers/);
 });
 
 test("an absent tools field and an empty one read differently", async () => {

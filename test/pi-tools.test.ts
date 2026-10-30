@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
+import { agentFile, cleanup, resetRoot, root, rosterDir, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -121,4 +121,20 @@ test("the parent's tools, with no tools field, reach the child exactly: MCP tool
 		withOne.all.filter((name) => MCP.includes(name) || name === "probe_tool"),
 		["mcp__fake__other"],
 	);
+});
+
+test("an agent's own extension tools reach the child with the parent's tools, and only when named with a tools list", async () => {
+	mkdirSync(rosterDir, { recursive: true });
+	writeFileSync(
+		join(rosterDir, "own.ts"),
+		`export default function (pi) {\n\t${tool("own_tool", "direct")}\n\t${tool("own_hidden", "codemode")}\n}\n`,
+	);
+	writeAgent("inherit", agentFile({ ...SCOUT, extensions: "./own.ts", tools: "-own_hidden" }));
+	writeAgent("named", agentFile({ ...SCOUT, extensions: "./own.ts", tools: "read" }));
+	const inherit = await inPi(await launchArgs("inherit", ["read", "delegate"]));
+	assert.ok(inherit.all.includes("own_tool") && inherit.active.includes("own_tool"), inherit.all.join(", "));
+	assert.ok(!inherit.all.includes("own_hidden"), inherit.all.join(", "));
+	const named = await inPi(await launchArgs("named", ["read", "delegate"]));
+	assert.ok(!named.all.includes("own_tool") && !named.all.includes("own_hidden"), named.all.join(", "));
+	assert.ok(named.all.includes("read"), named.all.join(", "));
 });

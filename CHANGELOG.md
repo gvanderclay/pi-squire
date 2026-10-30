@@ -74,6 +74,11 @@ follows [Semantic Versioning](https://semver.org/).
   disabled. pi-squire always passes the child a plain `--tools` list.
 - A `delegateTools` entry that starts with `+` or `-` refuses every launch
   with an error naming the settings file.
+- A delegate whose agent has no `tools` field, or only `-name` entries, also
+  gets the tools its agent's own `extensions` register. pi-squire reads their
+  names by loading each extension with Pi's extension loader at launch, apart
+  from any session; an extension that will not load is named in a warning.
+  A `tools` list of names stays exact: name an extension's tools to get them.
 - A running delegate that hits a usage limit now resolves `fallback` entries
   that are aliases or `*` patterns (such as `sonnet` or `alpha/*`) with Pi's
   model-pattern resolver, in the listed order, instead of skipping every entry

@@ -151,8 +151,19 @@ Any other key is ignored silently.
   parent's `pi.getActiveTools()` read when the launch or resume starts, less
   the delegation tools; an empty field passes only `delegateTools`, or
   `--no-tools` (Pi's way to start with none, MCP tools included) when that is
-  empty. Tools only the agent's own `extensions` register are not in the
-  parent's list, so an agent without `tools` does not get them.
+  empty.
+- The parent's tools for an agent without `tools` (or with only `-name`
+  entries) include the tools its own `extensions` register, which exist only
+  in the child. `extension-tools.ts` loads those extensions in the parent with
+  Pi's exported `discoverAndLoadExtensions`, pointed at an empty folder so
+  nothing else is discovered: a fresh module (Pi's loader caches nothing), a
+  throwaway event bus and runtime, no session, so `session_start` never fires.
+  The names are the keys of each loaded extension's `tools`. This sees the
+  tools an extension registers as it loads, which Pi's docs make the place to
+  register them; a tool registered later is not seen and must be named.
+  Computing the list in the child was not possible: `--tools` decides which
+  tools Pi registers at all, and a child extension cannot see or widen it.
+  An extension that fails to load is warned about and contributes nothing.
 - An invalid agent file disables its agent: `readRoster` keeps it in
   `disabled` with the reason, the roster and the `delegate` description leave
   it out, its warning is shown at session start and, once per session, before

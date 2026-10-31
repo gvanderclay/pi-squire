@@ -27,9 +27,8 @@ export function placementProject(cwd: string): { companion: string; notices: str
 
 /**
  * The placement for this call. An unknown value refuses with the file named.
- * A file that cannot be read or parsed is left to the worktree settings,
- * which report it when a launch needs them: it does not stop the launches
- * that never read it, so those keep the default.
+ * This reader defaults malformed/unreadable files to companion; mandatory
+ * tree-cap admission separately refuses those files for every launch/resume.
  */
 export function windowPlacement(agentDir: string): WindowPlacement {
 	const file = join(agentDir, "squire", "settings.json");

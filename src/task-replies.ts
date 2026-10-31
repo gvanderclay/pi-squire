@@ -24,6 +24,7 @@ class Answers {
 	readonly parent: () => string | undefined;
 	readonly canComplete: () => boolean;
 	readonly coordinates: (ctx: ExtensionContext) => boolean;
+	readonly terminal: (ctx: ExtensionContext, ids: readonly string[]) => void;
 	state: TaskState | undefined;
 	path: string | undefined;
 	current: ExtensionContext | undefined;
@@ -38,11 +39,13 @@ class Answers {
 		parent: () => string | undefined,
 		canComplete: () => boolean,
 		coordinates: (ctx: ExtensionContext) => boolean,
+		terminal: (ctx: ExtensionContext, ids: readonly string[]) => void,
 	) {
 		this.pi = pi;
 		this.parent = parent;
 		this.canComplete = canComplete;
 		this.coordinates = coordinates;
+		this.terminal = terminal;
 	}
 
 	warn(error: unknown, advice?: string): void {
@@ -76,6 +79,9 @@ class Answers {
 					body: reply.body,
 					status: reply.status,
 				};
+				if (!this.current)
+					throw new Error("task reply context is unavailable; reopen the session to publish the retained answer");
+				this.terminal(this.current, reply.ids);
 				this.pi.events.emit("message:reply", payload);
 				if (payload.error !== undefined || payload.envelope === undefined)
 					throw new Error(payload.error ?? "no message:reply provider installed");
@@ -221,12 +227,14 @@ export function registerTaskReplies(
 	parent: string | (() => string | undefined) | undefined = undefined,
 	canComplete: () => boolean = () => true,
 	coordinates: (ctx: ExtensionContext) => boolean = () => false,
+	terminal: (ctx: ExtensionContext, ids: readonly string[]) => void = () => {},
 ): TaskReplies {
 	const answers: Answers = new Answers(
 		pi,
 		typeof parent === "function" ? parent : (): string | undefined => parent,
 		canComplete,
 		coordinates,
+		terminal,
 	);
 	pi.on("session_start", (_event, ctx) => answers.start(ctx));
 	pi.on("session_shutdown", () => answers.stop());

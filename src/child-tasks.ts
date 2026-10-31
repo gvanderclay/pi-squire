@@ -18,6 +18,13 @@ export type ChildOutcome = {
 	details: MessageDetails;
 };
 type State = { records: Recorded[]; outcomes: ChildOutcome[] };
+export function readChildRecords(session: string): Recorded[] {
+	const path = join(getAgentDir(), "squire", "child-tasks", `${encodeURIComponent(session)}.json`);
+	const state = readState<State>(path);
+	if (state !== undefined && (!state || !Array.isArray(state.records) || !Array.isArray(state.outcomes)))
+		throw new Error(`invalid child task record for ${session}`);
+	return state?.records ?? [];
+}
 export class ChildTasks {
 	path: string | undefined;
 	outcomes: ChildOutcome[] = [];

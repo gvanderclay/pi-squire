@@ -24,6 +24,7 @@ import {
 } from "./resume-checks.ts";
 import type { OpenedWindow, TmuxClient } from "./tmux.ts";
 import { listWindows, type ToolDef, toolResult } from "./tracking.ts";
+import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -55,6 +56,7 @@ export type ResumeDeps = {
 	roster(ctx: ExtensionContext): Roster;
 	/** Depth/current-parent grant check, before even an exited window is killed. */
 	admit?(agent: string, ctx: ExtensionContext): void;
+	reserve(record: StartedRecorded, id: string, ctx: ExtensionContext): Promise<Reservation>;
 	/** The parent's current model and thinking level, which a field the agent locks but does not set keeps. */
 	parentDefaults(ctx: ExtensionContext): { model?: string; thinking: string };
 	chooseModel(
@@ -216,6 +218,17 @@ async function mailTask(deps: ResumeDeps, windowId: string, sessionId: string, t
 	}
 }
 
+function publishResumeRequest(token: Reservation, requestId: string, windowId: string, ctx: ExtensionContext): void {
+	try {
+		bindTree(token, { requestId });
+	} catch (error) {
+		ctx.ui.notify(
+			`delegate: window ${windowId} opened and task mail was sent, but shared request publication failed: ${String(error)}. Local tracking continues; accounting reconciles before the next admission.`,
+			"warning",
+		);
+	}
+}
+
 async function startResume(
 	deps: ResumeDeps,
 	input: {
@@ -225,12 +238,13 @@ async function startResume(
 		task: string;
 		toolCallId: string | undefined;
 		placement: WindowPlacement;
+		reservation: Reservation;
 	},
 	ctx: ExtensionContext,
 ): Promise<Resumed> {
 	const { record, session, plan, task, toolCallId, placement } = input;
 	const { start, chosen, workspace } = plan;
-	const id = randomUUID();
+	const id = input.reservation.id;
 	const sessionId = sessionIdOf(record);
 	const name = recordedName(record);
 	const { id: windowId, session: windowSession } = await deps.open({
@@ -249,6 +263,7 @@ async function startResume(
 		placement,
 	});
 	const requestId = await mailTask(deps, windowId, sessionId, task);
+	publishResumeRequest(input.reservation, requestId, windowId, ctx);
 	deps.results.recordStart(
 		{
 			id,
@@ -305,18 +320,28 @@ async function resume(
 	const record = newestStarted(deps.results, request.id);
 	deps.admit?.(record.agent, ctx);
 	deps.results.checkStorage(true);
-	await ensureExited(record, deps.tmux);
-	const { session, agent } = recordCheck(deps, record, ctx);
-	inFlight.add(record.id);
+	const reservation = await deps.reserve(record, randomUUID(), ctx);
+	let acquired = false;
 	try {
+		await ensureExited(record, deps.tmux);
+		const { session, agent } = recordCheck(deps, record, ctx);
+		inFlight.add(record.id);
+		acquired = true;
 		const plan = await planResume(deps, { record, agent, session, request }, ctx, signal);
 		return await startResume(
 			deps,
-			{ record, session, plan, task: request.task, toolCallId: request.toolCallId, placement },
+			{ record, session, plan, task: request.task, toolCallId: request.toolCallId, placement, reservation },
 			ctx,
 		);
+	} catch (error) {
+		try {
+			failedTree(reservation);
+		} catch (accounting) {
+			ctx.ui.notify(`delegate: reservation remains charged: ${String(accounting)}`, "error");
+		}
+		throw error;
 	} finally {
-		inFlight.delete(record.id);
+		if (acquired) inFlight.delete(record.id);
 	}
 }
 

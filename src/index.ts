@@ -71,13 +71,25 @@ import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
-import { createResults, delegateName, type WorkspaceAttempt } from "./results.ts";
+import { createResults, delegateName, sessionIdOf, type WorkspaceAttempt } from "./results.ts";
 import { createResume, type ResumeRequest, resumableIds, startedLine } from "./resume.ts";
 import { pickResume } from "./resume-picker.ts";
 import { registerTaskReplies } from "./task-replies.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { availableTools, enforceToolCeiling } from "./tool-ceiling.ts";
 import { createTracking, toolResult } from "./tracking.ts";
+import {
+	bindTree,
+	claimTree,
+	dispatchTree,
+	failedTree,
+	finishTree,
+	openedTree,
+	publishTreeRecords,
+	type Reservation,
+	reconcileTree,
+	reserveTree,
+} from "./tree-registry.ts";
 import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 import { placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
@@ -677,7 +689,16 @@ export default function delegate(
 	usage: UsageClient = createUsageClient(),
 ): void {
 	const identity = createIdentity(pi);
-	const results = createResults(pi, () => identity.current() !== undefined);
+	const results = createResults(
+		pi,
+		() => identity.current() !== undefined,
+		(ctx, records) =>
+			publishTreeRecords(
+				identity.current()?.root ?? ctx.sessionManager.getSessionId(),
+				ctx.sessionManager.getSessionId(),
+				records,
+			),
+	);
 	pi.on("session_start", (_event, ctx) => tracking.restore(ctx));
 	const replies = registerTaskReplies(
 		pi,
@@ -691,8 +712,25 @@ export default function delegate(
 			}
 		},
 		(ctx) => coordinates(currentRoster(ctx)),
+		(ctx, ids) => {
+			const own = identity.current();
+			if (own) finishTree(own.root, ctx.sessionManager.getSessionId(), ids);
+		},
 	);
 	registerChild(pi, replies, identity.current);
+	// Restore answers synchronously before this potentially slow tmux read.
+	pi.on("session_start", async (_event, ctx) => {
+		try {
+			const own = identity.current();
+			if (!own) return;
+			claimTree(own.root, ctx.sessionManager.getSessionId(), await tmux.currentWindow?.());
+		} catch (error) {
+			ctx.ui.notify(
+				`delegate: could not publish startup accounting: ${String(error)}; uncertain reservations remain charged.`,
+				"error",
+			);
+		}
+	});
 
 	const proactive = createProactive(usage);
 	const tracking = createTracking(pi, results, tmux, proactive.errors);
@@ -963,15 +1001,36 @@ export default function delegate(
 			});
 			payload.args.splice(prefix, payload.args.length - prefix, ...args);
 		}
+		const token: Reservation = { root: own.root, id };
+		bindTree(token, { windowName: name, cwd, workspace });
+		dispatchTree(token);
 		let opened: OpenedWindow;
 		try {
 			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement, project.companion);
-			onWindowOpened?.();
 		} catch (err) {
+			if (err instanceof WindowOpenError && err.certainty === "not-opened") {
+				try {
+					failedTree(token, true);
+				} catch (accounting) {
+					ctx.ui.notify(
+						`delegate: could not refund the pre-start reservation: ${String(accounting)}; it remains charged.`,
+						"warning",
+					);
+				}
+			}
 			if (err instanceof WindowOpenError) {
 				throw new WindowOpenError(`could not open window ${name} for ${id}: ${err.message}`, err.certainty);
 			}
 			throw new WindowOpenError(`could not open window ${name} for ${id}: ${(err as Error).message}`, "unknown");
+		}
+		onWindowOpened?.();
+		try {
+			openedTree(token, opened.id);
+		} catch (error) {
+			ctx.ui.notify(
+				`delegate: window ${opened.id} opened, but shared accounting publication failed: ${String(error)}. Local tracking continues; the reservation remains charged until accounting reconciles.`,
+				"warning",
+			);
 		}
 		return opened;
 	}
@@ -1101,9 +1160,15 @@ export default function delegate(
 		let attempt: WorkspaceAttempt | undefined;
 		let managed: Extract<Workspace, { mode: "managed" }> | undefined;
 		let windowOpened = false;
+		let reservation: Reservation | undefined;
 		const run = async (): Promise<Launched> => {
 			admit(start.agent.name, currentRoster(ctx));
 			results.checkStorage(true);
+			const own = identity.child(start.agent, ctx);
+			await reconcileTree(own.root, tmux);
+			admit(start.agent.name, currentRoster(ctx));
+			if (combined?.aborted) throw new Error("the launch was aborted");
+			reservation = reserveTree({ id, sessionId: id, identity: own, sessionDir });
 			if (plan !== undefined) {
 				revalidate(plan);
 				revalidateTrust?.();
@@ -1153,6 +1218,7 @@ export default function delegate(
 			// at session start without a handshake, and a window that fails leaves
 			// mail that is reported rather than cleaned up.
 			const requestId = sendTask(id, start.task);
+			bindTree(reservation, { requestId });
 			if (attempt !== undefined) {
 				attempt = { ...attempt, requestId };
 				results.recordAttempt(attempt, ctx);
@@ -1178,6 +1244,13 @@ export default function delegate(
 			try {
 				return await run();
 			} catch (error) {
+				if (reservation) {
+					try {
+						failedTree(reservation);
+					} catch (accounting) {
+						ctx.ui.notify(`delegate: reservation remains charged: ${String(accounting)}`, "error");
+					}
+				}
 				if (attempt !== undefined && managed !== undefined) {
 					const cause = (error as Error).message;
 					if (windowOpened || (error instanceof WindowOpenError && error.certainty === "unknown")) {
@@ -1243,6 +1316,29 @@ export default function delegate(
 		placement: () => windowPlacement(getAgentDir()),
 		roster: rosterFor,
 		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
+		reserve: async (record, id, ctx) => {
+			let own = record.identity ?? readIdentity(sessionIdOf(record));
+			if (!own) {
+				const roster = currentRoster(ctx);
+				const disabled = disabledProblem(roster, record.agent);
+				if (disabled) throw new Error(`${disabled}, so delegation ${record.id} is not resumed`);
+				const agent = roster.agents.find((agent) => agent.name === record.agent);
+				if (!agent)
+					throw new Error(
+						`agent ${JSON.stringify(record.agent)} is no longer in the roster, so delegation ${record.id} is not resumed`,
+					);
+				own = identity.child(agent, ctx);
+			}
+			await reconcileTree(own.root, tmux);
+			admit(record.agent, currentRoster(ctx));
+			return reserveTree({
+				id,
+				sessionId: sessionIdOf(record),
+				identity: own,
+				resumedFrom: record.id,
+				sessionDir: record.sessionDir,
+			});
+		},
 		parentDefaults,
 		chooseModel: (explicit, agent, models, preferred) =>
 			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),

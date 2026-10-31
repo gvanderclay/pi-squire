@@ -156,15 +156,17 @@ temporary folder, not as text on the command line.
 
 ## Nested delegation (unreleased)
 
-This integration is not ready for production nested agents: shared tree caps
-and tree controls are still separate
-required slices. Use only isolated development fixtures until the full nesting
+This integration is not ready for production nested agents: descendant tree
+controls and full milestone validation remain required slices. Use only isolated
+development fixtures until the full nesting
 milestone is integrated and tested.
 
 The default `maxDepth` in `<agent dir>/squire/settings.json` is **1**: root
 (depth 0) → delegate (depth 1), with no grandchildren. Set `maxDepth: 2` for
 root → coordinator → worker. A readable value must be a positive safe integer;
-an absent/unreadable settings file uses the safe depth-1 default.
+an absent/unreadable settings file uses the safe depth-1 default for exposure.
+Launch/resume refuses malformed, unreadable or non-object settings rather than
+risk silently losing configured tree caps.
 
 A coordinator's agent file opts in with
 `allow_nested_delegation: [worker, reviewer]`, or `true` for any current roster
@@ -240,6 +242,58 @@ explicit subtree close remain later slices; do not open the same session twice.
 A nested launch/resume needing an unresolved trust decision asks the attended
 root directly, outside model task mail (see [Project trust](#project-trust)).
 Already-decided trust, inherited-directory trust and explicit approve/no-approve flags remain.
+
+### Tree-wide launch budgets
+
+All sessions beneath a root share these call-time settings in
+`<agent dir>/squire/settings.json`:
+
+| Setting | Meaning | Absent with maxDepth > 1 | Absent with maxDepth 1 |
+| --- | --- | --- | --- |
+| `maxConcurrentDelegates` | Unfinished delegations across the tree, including coordinators waiting for children | 16 | unlimited |
+| `maxDelegatesPerRoot` | Launches over that root session's lifetime, including resumes | 64 | unlimited |
+
+Both accept nonnegative safe integers; **0 means unlimited**. A changed setting
+applies to subsequent admissions. Lowering it never kills existing work. At a
+cap, launch/resume refuses with the current count and limit, before mail,
+worktree creation or killing an exited resume window. There is no launch queue.
+A finished task frees concurrency even if its `auto_exit: false` window stays
+open. It never refunds its lifetime launch. A coordinator's intermediate settle
+or a held user stop does not finish its task.
+
+Shared structural facts and reservations live under
+`<agent dir>/squire/trees/<encoded root session id>.json`. The registry indexes
+ownership, ancestry, resume chains and launch locators; local child-task records
+still own result delivery/processing. Publishing those saved parent facts is
+best-effort: failure warns but does not suppress result/gone messages, steer,
+close tracking or local outcome processing. Every admission reconciles durable
+facts under the registry lock before checking caps, so missed publication does
+not create spare capacity. True local child-task storage failures still block
+completion and admission. Frozen worker replies publish terminal accounting
+before transport, so a finished worker frees a slot even while its parent is
+absent. A failed worker-terminal publication retains the outbox and blocks auto-exit;
+retry/reopen preserves the existing answer. This accounting publication does
+not claim that the parent received or processed the reply.
+
+Admissions use a cross-process mutex on a **local filesystem**, not NFS, and
+atomically reserve both budgets. Short lock contention can wait up to five
+seconds, then refuses; cap exhaustion never waits for a slot. Lock contenders
+have unique files; only a process proven absent permits cleanup, never a lease
+expiry. A reused PID or unknown process state conservatively blocks cleanup.
+Keep the same agent directory when reopening a session. Registry corruption
+refuses admission instead of resetting the budget. Atomic replacement protects
+ordinary process restarts; these records do not promise power-loss durability.
+
+Confirmed pre-start failure refunds both reservations. After a tmux create may
+have been dispatched, an error/timeout is **uncertain**, not a refund. A child
+that starts publishes its own window locator to recover a lost tmux response.
+Subsequent admissions reconcile durable parent/worker facts and observed windows,
+even with the root/intermediate parent absent. Confirmed disappearance frees
+concurrency but is not success; the direct parent still processes its own
+missing-result notification or late reply. Unknown tmux state releases nothing.
+If neither start nor no-start can be established, the reservation remains
+charged; no timeout guesses it away or relaunches it. No parent-death watcher,
+repair daemon, mailbox scraping or implicit ownership transfer is involved.
 
 ## Where delegate windows open
 
@@ -429,10 +483,12 @@ is `/Users/me/.pi/agent/squire`, the matching relative override resolves to
 `/Users/me/.pi/agent/special-checkouts/feature-topic`. The Git branch remains
 `feature/topic`.
 
-The settings file is read only for managed creation. A missing file uses the
-built-in default; malformed or inaccessible settings, invalid templates and
-duplicate canonical repository keys refuse creation rather than silently
-falling back. They do not affect inherited or `cwd` launches. Placement does
+Worktree placement keys are read only for managed creation. A missing file
+uses the built-in default; invalid templates and duplicate canonical repository
+keys refuse creation rather than silently falling back. Those creation-key
+errors do not affect inherited or `cwd` launches, but malformed, inaccessible
+or non-object shared settings refuse every launch/resume because tree caps
+cannot be read safely. Placement does
 not choose a source checkout or base commit. Pi discovers `AGENTS.md`, skills
 and other project context from the created directory and its ancestors, so the
 chosen layout determines which instructions and skills apply. For a layout
@@ -729,7 +785,8 @@ add one.
 ## Configuration
 
 `<agent dir>/squire/` holds the optional parent guidance file and
-`settings.json` (`maxDepth`, `windowPlacement`, `worktreeRoot` and `delegateTools`); the
+`settings.json` (`maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`,
+`windowPlacement`, `worktreeRoot` and `delegateTools`); the
 agents live in `<agent dir>/agents/` (see [Agents](#agents)).
 `delegation_prompt.md` is Markdown, inserted unchanged as the
 `squire_parent_delegation` system-prompt section before each new run, including
@@ -1318,7 +1375,9 @@ block final completion/auto-exit and new launch/resume admission in roots and
 coordinators. Read-only admission checks the restored store health; a write
 preflight persists unchanged task facts before mail, windows, worktree creation
 or killing an exited resume window. Repair unhealthy storage and reload before
-launching again. These local task records are not a shared tree registry.
+launching again. These local task records remain the result-processing authority;
+the shared [tree registry](#tree-wide-launch-budgets) indexes their durable
+lifecycle facts without copying task bodies or processing outcomes.
 
 A failed write produces a visible `delegate: could not handle the task reply`
 error and blocks auto-exit. A frozen answer is retried on the next settled
@@ -1428,7 +1487,8 @@ Other extensions may rely on:
 - the agent file's frontmatter keys and its locations,
   `<agent dir>/agents/<name>.md` and, in a trusted project,
   `<cwd>/.pi/agents/<name>.md`;
-- the `maxDepth`, `delegateTools`, `windowPlacement` and `worktreeRoot` settings in
+- the `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`,
+  `windowPlacement` and `worktreeRoot` settings in
   `<agent dir>/squire/settings.json`;
 - the optional `<agent dir>/squire/delegation_prompt.md` file and the
   `squire_parent_delegation` system-prompt section;

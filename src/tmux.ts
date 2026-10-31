@@ -86,6 +86,8 @@ export interface TmuxClient {
 	 * the root project's managed companion, created when it does not exist.
 	 */
 	openWindow(spec: WindowSpec, placement: WindowPlacement, companion: string): Promise<OpenedWindow>;
+	/** This process's pane window, for recovering an ambiguous launch at child startup. */
+	currentWindow?(): Promise<{ id: string; name: string } | undefined>;
 	/** Every window on the server, in one tmux call. */
 	listWindows(): Promise<TmuxWindow[]>;
 	/** Kill a window. */
@@ -287,6 +289,18 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 				throw new WindowOpenError("could not tell which tmux session this pane is in (TMUX_PANE)", "not-opened");
 			}
 			return openCompanion(run, spec, companion);
+		},
+
+		async currentWindow() {
+			const pane = process.env.TMUX_PANE;
+			if (!pane) return undefined;
+			const out = (await run(["display-message", "-p", "-t", pane, "-F", "#{window_id}\t#{window_name}"])).replace(
+				/\r?\n$/,
+				"",
+			);
+			const [id, ...name] = out.split("\t");
+			if (!/^@[0-9]+$/.test(id) || !name.length) return undefined;
+			return { id, name: name.join("\t") };
 		},
 
 		async listWindows() {

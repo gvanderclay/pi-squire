@@ -93,6 +93,20 @@ async function exitedDelegate(
 const resume = (s: Session, params: Record<string, unknown>): Promise<ToolResult> =>
 	s.toolCall("delegation_resume", params);
 
+async function within<T>(promise: Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error("resume test operation did not settle")), 2000);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
 const resumeError = async (s: Session, params: Record<string, unknown>): Promise<string> => {
 	try {
 		await resume(s, params);
@@ -433,6 +447,41 @@ test("refused: a concurrent resume of the same delegation, and the guard is rele
 	failing.s.tmux.failOpen = undefined;
 	await resume(failing.s, { id: failing.id, task: "x again" });
 	assert.equal(starts(failing.s).length, 2);
+});
+
+test("a refused second resume cannot release the first call's guard for a third before dispatch", async () => {
+	const d = await exitedDelegate();
+	const protectedDir = join(root, "three-way-resume");
+	mkdirSync(join(protectedDir, ".pi"), { recursive: true });
+	writeFileSync(join(protectedDir, ".pi", "settings.json"), "{}");
+	writeSession(d.file, d.id, protectedDir);
+	let release: (choice: string | undefined) => void = () => {};
+	let entered: () => void = () => {};
+	const gate = new Promise<string | undefined>((resolve) => {
+		release = resolve;
+	});
+	const prompt = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	let prompts = 0;
+	d.s.context.ui.select = async () => {
+		prompts++;
+		entered();
+		return gate;
+	};
+	const first = resume(d.s, { id: d.id, task: "one" });
+	try {
+		await within(prompt);
+		assert.match(await within(resumeError(d.s, { id: d.id, task: "two" })), /already being resumed/);
+		assert.match(await within(resumeError(d.s, { id: d.id, task: "three" })), /already being resumed/);
+		assert.equal(prompts, 1);
+		assert.equal(d.s.tmux.opened.length, 1, "only the original launch exists while the first resume is parked");
+	} finally {
+		release("Do not trust (this session only)");
+		await first;
+	}
+	assert.equal(starts(d.s).length, 2);
+	assert.equal(d.s.tmux.opened.length, 2);
 });
 
 test("an exited window of the delegate is killed first; a window that only shares its name is ignored", async () => {

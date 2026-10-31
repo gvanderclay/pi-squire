@@ -21,6 +21,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { toolMatches } from "./tool-ceiling.ts";
 
 /** The levels `pi --thinking` accepts. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -58,6 +59,8 @@ export type Agent = {
 	autoExit: boolean;
 	/** Current grant: true for the roster, or an explicit list of child identities. */
 	allowNested?: true | string[];
+	/** Presence of a permission map only; not a policy evaluation or privilege comparison. */
+	hasPermission?: boolean;
 	/**
 	 * The delegate's complete tool list, from a `tools` line of tool names:
 	 * undefined when the field is absent or holds only `-name` entries (the
@@ -121,9 +124,12 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 	const autoExit = flag(fields.auto_exit);
 	if (autoExit === null)
 		return { invalid: `${path} has auto_exit ${JSON.stringify(fields.auto_exit)}, not true or false`, notes: [] };
-	const nested = fields.allow_nested_delegation;
+	const nested = fields.allow_nested_delegation === false ? undefined : fields.allow_nested_delegation;
 	if (!validNested(nested))
-		return { invalid: `${path} has allow_nested_delegation that is not true or a list of agent names`, notes: [] };
+		return {
+			invalid: `${path} has allow_nested_delegation that is not true, false or a list of agent names`,
+			notes: [],
+		};
 	const launch = toolsField(path, fields);
 	if ("invalid" in launch) return { ...launch, notes: [] };
 	const model = field(fields, "model");
@@ -135,16 +141,7 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 	// A field that cannot be used is dropped with a note; it never costs the agent.
 	const notes: string[] = [];
 	const thinking = thinkingField(path, fields, notes);
-	if (
-		nested !== true &&
-		!(Array.isArray(nested) && nested.length > 0) &&
-		launch.tools?.some((name) =>
-			["delegate", "delegation_status", "delegation_close", "delegation_resume"].includes(name),
-		)
-	)
-		notes.push(
-			`${path} lists delegation tools without allow_nested_delegation; listing tools alone does not grant nesting`,
-		);
+	warnDelegationTools(path, nested, launch.tools, notes);
 	if (fallback === null)
 		notes.push(`${path} has fallback ${JSON.stringify(fields.fallback)}, not a list of models; ignored`);
 	if (fields["exclude-tools"] !== undefined)
@@ -158,7 +155,9 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 			...(model === undefined ? {} : { model }),
 			...(thinking === undefined ? {} : { thinking }),
 			autoExit: autoExit ?? true,
-			...(nested === undefined ? {} : { allowNested: nested as true | string[] }),
+			...(nested === undefined ? {} : { allowNested: nested === true ? true : [...new Set(nested as string[])] }),
+			hasPermission:
+				fields.permission !== null && typeof fields.permission === "object" && !Array.isArray(fields.permission),
 			...launch,
 			fallback: fallback ?? [],
 			locked: lockedFields(path, fields, { model, thinking }, notes),
@@ -167,6 +166,20 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 			path,
 		},
 	};
+}
+
+function warnDelegationTools(path: string, nested: unknown, tools: string[] | undefined, notes: string[]): void {
+	if (nested === true || (Array.isArray(nested) && nested.length > 0)) return;
+	if (
+		tools?.some((name) =>
+			["delegate", "delegation_status", "delegation_close", "delegation_resume"].some((tool) =>
+				toolMatches(name, tool),
+			),
+		)
+	)
+		notes.push(
+			`${path} lists delegation tools without allow_nested_delegation; listing tools alone does not grant nesting`,
+		);
 }
 
 function validNested(value: unknown): boolean {
@@ -384,6 +397,20 @@ export function readRoster(agentDir: string, projectDir?: string): Roster {
 		warnings.push(...notes);
 		if (agent !== undefined) agents.push(agent);
 		else if (invalid !== undefined) disable(name, path, invalid);
+	}
+	for (const agent of agents) {
+		const targets = agent.allowNested === true ? agents.map((item) => item.name) : (agent.allowNested ?? []);
+		for (const name of targets) {
+			const child = agents.find((item) => item.name === name);
+			if (!child)
+				warnings.push(
+					`${agent.path} allows unknown or unavailable nested agent ${JSON.stringify(name)}; it cannot launch until present in the current roster`,
+				);
+			else if (agent.hasPermission && !child.hasPermission)
+				warnings.push(
+					`${agent.path} grants nested agent ${JSON.stringify(name)} (${child.path}) without a permission block; this is a delegation grant, not proof of equal or lesser permission authority`,
+				);
+		}
 	}
 	return { agents, disabled, warnings };
 }

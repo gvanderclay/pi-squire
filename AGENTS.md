@@ -16,10 +16,13 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   the `/delegates` panel and `/delegate-open`, `new-delegate.ts` the new-delegate
   form, `resume-picker.ts` the resume picker, `resume.ts` the resume launch (`resume-checks.ts` the checks the picker shares) and the `delegation_resume` tool, `workspace.ts` resolves a
   delegate's directory, its Git checkout at launch and its project trust,
+  `trust-prompt.ts` serializes local/root trust choices, `trust-control.ts`
+  owns root control lifecycle and `trust-wire.ts` carries bounded loopback requests,
   `snapshot.ts` observes that checkout read-only for results and status,
   `git.ts` contains read-only Git identity and path parsing, `worktree.ts`
   plans/creates/rolls back managed worktrees, `worktree-placement.ts` resolves
-  call-time placement settings, and `tmux.ts` talks to tmux.
+  call-time placement settings, `tool-ceiling.ts` enforces the nested callable-tool
+  ceiling after launch customization, and `tmux.ts` talks to tmux.
 - `src/task-replies.ts` owns task takeover/retries, `task-settlement.ts` the
   request settlement wording, and `task-store.ts` the durable answer outbox.
 - `src/tree-registry.ts` owns shared per-root structural facts and admission;

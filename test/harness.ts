@@ -50,7 +50,7 @@ export function resetRoot(): void {
 		rmSync(join(agentDir, name), { recursive: true, force: true });
 	}
 	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
-	for (const name of ["identity", "child-tasks", "trees"])
+	for (const name of ["identity", "child-tasks", "trees", "trust"])
 		rmSync(join(agentDir, "squire", name), { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
@@ -59,6 +59,7 @@ export function resetRoot(): void {
 	delete process.env.PI_DELEGATE_ROOT;
 	delete process.env.PI_DELEGATE_DEPTH;
 	delete process.env.PI_DELEGATE_CHAIN;
+	delete process.env.PI_UNATTENDED;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
@@ -253,6 +254,8 @@ export type SessionOptions = {
 	ui?: UiAnswers;
 	/** The tool names `pi.getAllTools()` reports once the session has started. */
 	registeredTools?: readonly string[];
+	/** Per-tool exposure metadata, including tools not directly displayed. */
+	toolExposures?: Record<string, "direct" | "model-only" | "codemode" | "deferred" | "hidden">;
 	/** The tool names `pi.getActiveTools()` reports; default `DEFAULT_TOOLS` and the delegation tools. `pi.setActiveTools` changes them. */
 	activeTools?: readonly string[];
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
@@ -326,7 +329,7 @@ export function session(options: SessionOptions = {}) {
 	/** Every `pi.registerTool` call, in order, so a test can count re-registrations. */
 	const registrations: string[] = [];
 	/** Every `ctx.ui.select` call, with what it showed. */
-	const selects: { title: string; options: string[] }[] = [];
+	const selects: { title: string; options: string[]; signal?: AbortSignal; timeout?: number }[] = [];
 	/** Every `ctx.ui.editor` call, with what it pre-filled. */
 	const editors: { title: string; prefill: string | undefined }[] = [];
 	/** Every `ctx.ui.input` call, with its title. */
@@ -383,7 +386,10 @@ export function session(options: SessionOptions = {}) {
 		getAllTools: () => {
 			if (!bound)
 				throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
-			return registeredTools.map((name) => ({ name }));
+			return [...new Set([...registeredTools, ...activeTools, ...Object.keys(tools)])].map((name) => ({
+				name,
+				exposure: options.toolExposures?.[name] ?? "direct",
+			}));
 		},
 		events,
 		on: (name: string, handler: Handler) => (handlers[name] ??= []).push(handler),
@@ -453,9 +459,22 @@ export function session(options: SessionOptions = {}) {
 					text: text?.replace(/^(?:👨|👩) /u, "<parent> ").replace(/^(?:👦|👧) /u, "<child> "),
 				}),
 			theme: { fg: (_color: string, text: string) => text },
-			select: async (title: string, options: string[]) => {
-				selects.push({ title, options });
-				return await selectAnswers.shift();
+			select: async (title: string, options: string[], opts?: { signal?: AbortSignal; timeout?: number }) => {
+				selects.push({ title, options, ...opts });
+				const answer = selectAnswers.shift();
+				if (!opts?.signal) return await answer;
+				const signal = opts.signal;
+				if (signal.aborted) return undefined;
+				let dismiss = () => {};
+				const dismissed = new Promise<undefined>((resolve) => {
+					dismiss = () => resolve(undefined);
+					signal.addEventListener("abort", dismiss, { once: true });
+				});
+				try {
+					return await Promise.race([Promise.resolve(answer), dismissed]);
+				} finally {
+					signal.removeEventListener("abort", dismiss);
+				}
 			},
 			editor: async (title: string, prefill?: string) => {
 				editors.push({ title, prefill });

@@ -7,12 +7,12 @@
 // when a fence has no runner.
 
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -55,6 +55,25 @@ test("the README's session:launch example adds its flag and env key to the launc
 	assert.equal(opened.env.GATE_CHAIN, "scout");
 	assert.equal(opened.env.GATE_PARENT, s.parent);
 	assert.equal(opened.env.PI_DELEGATE_PARENT, s.parent, "the emitter's own env stays");
+});
+
+test("the executable launch example preserves unrelated flags/env under the nested final ceiling", async () => {
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), '{"maxDepth":2}');
+	writeAgent("coordinator", agentFile({ allow_nested_delegation: "[scout]" }));
+	writeAgent("scout", agentFile({ model: "alpha/fast-model" }));
+	const s = session({ parentEnv: "root", agentEnv: "coordinator", activeTools: ["read", "delegate"] });
+	try {
+		await runExample("session:launch", { pi: s.pi });
+		await s.delegate("scout go");
+		const opened = s.tmux.opened[0];
+		assert.ok(opened.argv.includes("--auto"));
+		assert.equal(opened.env.GATE_MODE, "auto");
+		assert.equal(opened.env.GATE_PARENT, s.parent);
+		assert.deepEqual(opened.argv.slice(-2), ["--tools", "read,mcp__"]);
+	} finally {
+		await s.shutdown();
+	}
 });
 
 test("session:launch can still add an extension after agent-specific loading was removed", async () => {

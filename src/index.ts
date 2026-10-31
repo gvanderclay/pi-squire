@@ -76,6 +76,7 @@ import { createResume, type ResumeRequest, resumableIds, startedLine } from "./r
 import { pickResume } from "./resume-picker.ts";
 import { registerTaskReplies } from "./task-replies.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
+import { availableTools, enforceToolCeiling } from "./tool-ceiling.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import {
 	bindTree,
@@ -89,6 +90,7 @@ import {
 	reconcileTree,
 	reserveTree,
 } from "./tree-registry.ts";
+import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 import { placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
 import {
@@ -732,6 +734,7 @@ export default function delegate(
 
 	const proactive = createProactive(usage);
 	const tracking = createTracking(pi, results, tmux, proactive.errors);
+	const trustControl = registerTrustControl(pi, identity.current);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
@@ -768,14 +771,14 @@ export default function delegate(
 
 	/**
 	 * The delegate's tools for a launch or resume starting now: the agent's
-	 * named tools, or the parent's active tools at this moment (less any
-	 * `-name` entries), then the `delegateTools` setting. Throws, naming the
-	 * file, on an invalid setting.
+	 * named tools, or the parent's current tools (including indirect callable
+	 * tools when nested, less any `-name` entries), then `delegateTools`.
+	 * Throws, naming the file, on an invalid setting.
 	 */
 	function childTools(agent: Agent): string[] {
 		const selected = toolSelection(
 			agent,
-			agent.tools === undefined ? pi.getActiveTools() : [],
+			agent.tools === undefined ? (identity.current() ? availableTools(pi) : pi.getActiveTools()) : [],
 			delegateTools(getAgentDir()),
 		);
 		if (grantsNesting(agent, (identity.current()?.depth ?? 0) + 1)) selected.push(...DELEGATION_TOOLS);
@@ -982,6 +985,22 @@ export default function delegate(
 		for (const key of ["parent", "root", "depth", "chain"] as const)
 			Object.defineProperty(payload, key, { writable: false, configurable: false });
 		pi.events.emit(LAUNCH, payload);
+		if (identity.current()) {
+			const prefix = parentCommand().length;
+			const args = payload.args.slice(prefix);
+			enforceToolCeiling({
+				args,
+				available: availableTools(pi).filter(
+					(name) => grantsNesting(start.agent, own.depth) || !DELEGATION_TOOLS.has(name),
+				),
+				registered: pi.getAllTools().map((tool) => tool.name),
+				cwd,
+				agentDir: payload.env.PI_CODING_AGENT_DIR,
+				trusted,
+				notices: start.notices,
+			});
+			payload.args.splice(prefix, payload.args.length - prefix, ...args);
+		}
 		const token: Reservation = { root: own.root, id };
 		bindTree(token, { windowName: name, cwd, workspace });
 		dispatchTree(token);
@@ -1116,14 +1135,20 @@ export default function delegate(
 				getAgentDir(),
 			);
 			if (combined?.aborted) throw new Error("the launch was aborted");
-			const trust = await trustPlannedWorktree(plan, ctx, getAgentDir(), combined, identity.current() !== undefined);
+			const trust = await trustPlannedWorktree(
+				plan,
+				ctx,
+				getAgentDir(),
+				combined,
+				trustControl.forAgent(start.agent.name, ctx),
+			);
 			if (combined?.aborted) throw new Error("the launch was aborted");
 			trusted = trust.trusted;
 			revalidateTrust = trust.revalidate;
 			plan.trusted = trusted;
 		} else {
 			const prepared = await prepareDirectory(
-				{ cwd: cwdOption, signal, nested: identity.current() !== undefined },
+				{ cwd: cwdOption, signal, trust: trustControl.forAgent(start.agent.name, ctx) },
 				ctx,
 				getAgentDir(),
 			);
@@ -1318,8 +1343,8 @@ export default function delegate(
 		chooseModel: (explicit, agent, models, preferred) =>
 			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
 		thinkingProblem,
-		prepareDirectory: (cwd, ctx, signal) =>
-			prepareDirectory({ cwd, signal, nested: identity.current() !== undefined }, ctx, getAgentDir()),
+		prepareDirectory: (cwd, ctx, signal, agent) =>
+			prepareDirectory({ cwd, signal, trust: trustControl.forAgent(agent, ctx) }, ctx, getAgentDir()),
 		sendTask,
 		open: ({
 			id,

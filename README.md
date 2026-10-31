@@ -147,7 +147,8 @@ temporary folder, not as text on the command line.
   and resume admission enforce that boundary even through commands (see
   [Nested delegation](#nested-delegation-unreleased)).
 - Without a UI the command and the `delegate` tool still work, except a
-  `--cwd` launch whose project trust needs a question (see
+  top-level launch whose project trust needs a question (a nested launch can
+  ask its attended root; see
   [Project trust](#project-trust)). They need tmux
   and a provider of `message:*`, and refuse with a message when either is
   missing. In print mode (`pi -p`) Pi does not show the refusal notices, so
@@ -155,8 +156,9 @@ temporary folder, not as text on the command line.
 
 ## Nested delegation (unreleased)
 
-This integration is not ready for production nested agents: tool ceilings,
-root-mediated trust and tree controls are still separate required slices. Use only isolated development fixtures until the full nesting
+This integration is not ready for production nested agents: descendant tree
+controls and full milestone validation remain required slices. Use only isolated
+development fixtures until the full nesting
 milestone is integrated and tested.
 
 The default `maxDepth` in `<agent dir>/squire/settings.json` is **1**: root
@@ -168,11 +170,15 @@ risk silently losing configured tree caps.
 
 A coordinator's agent file opts in with
 `allow_nested_delegation: [worker, reviewer]`, or `true` for any current roster
-agent. Absent or an empty list grants no nesting. This slice accepts only true
-or a YAML list of valid agent names; complete grant diagnostics belong to the
-remaining validation slice. Below the limit the grant adds `delegate`,
+agent. Absent, false or an empty list grants no nesting. A list names exact
+agent identities; duplicates are removed. Other values (including null, empty
+scalars, quoted booleans, malformed lists and patterns) disable the agent with
+a path-specific warning. Unknown or unavailable names warn and cannot launch;
+known entries remain usable, and later roster changes apply normally.
+Below the limit the grant adds `delegate`,
 `delegation_status`, `delegation_close` and `delegation_resume` even with an
-explicit `tools` list. Merely listing those tools does not opt in and produces
+explicit `tools` list, subject to the nested tool ceiling. Merely listing those
+tools (including by pattern) does not opt in and produces
 a roster warning. At the depth limit they are inactive and not passed onward.
 
 Every launch/resume re-reads the direct parent's current grant before side
@@ -180,6 +186,29 @@ effects. A refusal names the permitted agents or depth/setting. Removing an
 agent from the grant blocks future launches/resumes, not existing work.
 Trusted project agents still shadow global definitions. Each launching session
 keeps the existing throttled quota checks and shared reactive usage-limit marks.
+
+A nested launch or resume resolves its requested tools, `delegateTools` additions
+and automatic nesting grants, then restricts them to operations available to its
+direct parent. This includes active model-only operations and registered
+codemode/deferred tools, not just displayed schemas. Inactive direct tools and
+hidden tools are excluded. Patterns become exact names; removed tools and
+restricted patterns are reported in the launch/resume notice. The final
+registration allowlist is enforced after synchronous `session:launch`
+customization, so additions cannot register or reach tool names outside the
+direct parent’s ceiling. Top-level launch selection is unchanged.
+
+Each agent keeps its own permission policy; squire does not inherit or compare
+effective policies. A granting agent with a `permission:` map (even `{}`) warns
+when a listed child lacks one; `true` checks all applicable roster agents.
+This is only a heuristic warning, not authorization or proof of lesser privilege.
+Permission policy parsing/enforcement remains the permission provider’s job.
+Tool-name restrictions and configuration permission rules are not filesystem
+isolation: tools such as bash can write files or start processes. The ceiling
+bounds tool names, not arbitrary extension code or the implementation an
+extension registers under an allowed name. Rules asking
+before changes to agent/squire configuration cannot promise interception of
+every indirect write by scripts or repository changes; exact shell handling
+belongs to the permission provider.
 
 A coordinator's task finishes child-first: no final task reply or auto-exit
 while any direct-child task is unfinished. Idle runs and open windows are not
@@ -210,9 +239,9 @@ adopt another parent's children. Closing/reloading/exiting a parent does not
 terminate its workers. Descendant discovery, duplicate-process arbitration and
 explicit subtree close remain later slices; do not open the same session twice.
 
-Until root trust routing lands, a nested launch/resume needing an unresolved
-trust decision refuses clearly instead of opening unattended UI. Already-decided
-trust, inherited-directory trust and explicit approve/no-approve flags remain.
+A nested launch/resume needing an unresolved trust decision asks the attended
+root directly, outside model task mail (see [Project trust](#project-trust)).
+Already-decided trust, inherited-directory trust and explicit approve/no-approve flags remain.
 
 ### Tree-wide launch budgets
 
@@ -518,9 +547,12 @@ command, and nothing acts on it.
 
 ### Project trust
 
-The delegate's trust flag for a `--cwd` directory is decided in the parent,
-before the task is sent or a window opens. A same-repository managed worktree
-uses the parent's current trust for that repository. The model has no trust input.
+The requesting parent resolves the delegate's trust flag before task mail,
+worktree creation or a window opens. Unresolved choices go to the root user,
+not to an intervening model or an unattended delegate UI. A same-repository
+managed worktree uses the requester's current trust for that repository.
+The model has no trust input; every launch/resume still passes explicit
+`--approve` or `--no-approve`.
 
 1. A directory in the parent's own repository, by Git's common directory, so
    including its linked worktrees, gets the parent's current trust, even a
@@ -538,8 +570,9 @@ uses the parent's current trust for that repository. The model has no trust inpu
    (`.pi/settings.json`, extensions, skills and the like, or an
    `.agents/skills` directory above it), the delegate starts with
    `--no-approve` and no question.
-4. Otherwise the parent asks, naming the directory, the main repository when
-   it is the key, and what each answer saves:
+4. Otherwise the root asks, naming the requesting agent chain, requester
+   session id, directory, the main repository when it is the key, and what each
+   answer saves:
    `Trust`, `Trust parent folder (<folder>)` (left out at the filesystem
    root), `Trust (this session only)`, `Do not trust` and
    `Do not trust (this session only)`. The two "this session only" answers
@@ -550,9 +583,52 @@ uses the parent's current trust for that repository. The model has no trust inpu
    the turn or tool call stops a launch that is waiting for or answering a
    question; nothing is saved, sent or opened.
 
-Without a UI a question cannot be asked, so the launch is refused: open Pi in
-that directory and answer its trust question first. A trust store that cannot
-be read or written also refuses the launch; nothing is granted by default.
+An unresolved nested question requires the same root Pi session to be running
+with dialog-capable UI (TUI or RPC), without `PI_UNATTENDED=1`. An absent or
+unavailable root refuses immediately; a disconnected root fails its pending
+launches, rather than waiting for the root to return. Already-resolved trust
+and resource-free targets need no root connection. A root's own trust in a
+different repository never supplies approval. For a top-level launch without UI,
+open Pi in the trust key directory named by the refusal (the source/main checkout
+for a managed worktree), answer its trust question, then delegate again.
+
+Root questions, local and remote together, are serialized, even while the
+root model is busy. Each request has a **10-minute deadline including queue
+wait**. Escape, tool/turn cancellation, requester or root shutdown/reload/session
+replacement, disconnection and expiry cancel that launch and dismiss its
+question; canceled queued requests are skipped. An unrelated root model run's
+abort does not cancel a remote request. Late decisions cannot save trust or
+start the canceled work. A new launch after reopening makes a new request;
+pending requests and decisions are never replayed.
+
+Squire uses an authenticated **127.0.0.1 loopback connection**, not mail or
+`session_mail_ask`, for this control. The root writes its random port and
+per-runtime token to the owner-only
+`<agent dir>/squire/trust/<SHA-256 of root id>.json` descriptor. Only squire
+reads it; no provider files, APIs or tool grants are needed. Unreachable
+endpoints fail at once (connection establishment is bounded to one second).
+A fresh client-nonce/HMAC handshake verifies the root before sending any
+question or secret, so a reused stale port cannot impersonate it. Root restart
+changes the token, invalidating old frames.
+The descriptor is transient and removed on ordinary shutdown; a crash can
+leave a harmless stale descriptor that cannot approve anything. Like the rest
+of squire, this is not an OS boundary against processes running as you.
+
+Only the live **requester** saves a persistent choice in that agent directory's
+Pi `trust.json`, after cancellation/deadline checks and before launch.
+The root holds the queue until the requester has applied the answer or
+disconnected, so queued requests re-read saved decisions. The two session-only
+choices save nothing and apply only to that launch. `Do not trust` launches
+untrusted; Escape cancels instead. A trust store that cannot be read or written
+refuses the launch; nothing is granted by default.
+
+Model questions still use `session_mail_ask` to the direct parent, parent by
+parent. Permission prompts remain with the permission provider, with each
+child's own agent policy: there is **no permission inheritance**. Its bridge
+can label a requester with `PI_DELEGATE_CHAIN` (comma-separated roster names,
+root downward including the current delegate); `session:launch.chain` is the
+corresponding frozen string array. Routing uses separate parent/root session
+ids, not chain names. Squire does not implement that permission bridge.
 
 ## Agents
 
@@ -581,14 +657,15 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
 | `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern, or a YAML list entry holding a comma, makes the file invalid. A comma-separated line (`fallback: a, b`) is two entries. |
 | `auto_exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
-| `allow_nested_delegation` | Unreleased: `true` or a YAML list of child agent names; grants nested delegation below `maxDepth` (see [Nested delegation](#nested-delegation-unreleased)). Absent grants none. |
+| `allow_nested_delegation` | Unreleased: `true` or a YAML list of exact child agent names; grants nested delegation below `maxDepth`, subject to the parent tool ceiling (see [Nested delegation](#nested-delegation-unreleased)). Absent, false or an empty list grants none. Malformed values disable the agent; unavailable names warn. |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
 | `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate` or a resume that passes a locked field does not get it: the agent's value is used (the parent's when the file sets none) and the result says which agent locked which field. Passing the agent's own value is the same as passing nothing: no notice, and its fallbacks still apply. A resume of a locked field runs on the file's value as it is now, not on what the delegate last ran on. `true` locks the fields the file sets. |
 
-Any other key, such as `max_turns`, `inherit_context`, `run_in_background` or
-a permission policy for another extension, is ignored without a warning and
-left for whatever else reads the file.
+Any other key, such as `max_turns`, `inherit_context` or `run_in_background`,
+is ignored without a warning and left for whatever else reads the file.
+Squire observes only whether `permission:` is a map for the nested-grant warning
+above; it leaves interpretation and enforcement to the permission provider.
 
 **Breaking frontmatter change:** use `auto_exit` instead of `auto-exit`.
 The old `auto-exit` and `extensions` fields are silently ignored, including
@@ -620,12 +697,13 @@ selection is `--no-tools`, which removes MCP tools too. To give a delegate an
 MCP server's tools, name them, for example `mcp__docs__*`. An extension that
 turns tools on at run time can still add only tools the list allows. Top-level tool names
 are not checked against the parent's tools: normal Pi extension discovery
-or `session:launch` customization can provide tools in the child. A nested
-callable-tool ceiling is still required before the unreleased nesting milestone
-can be used in production; this lifecycle slice does not claim isolation.
+or `session:launch` customization can provide tools in the child. Nested launches
+and resumes instead apply the direct parent’s callable-tool ceiling after all
+selection and customization, as described above; this is not filesystem isolation.
 
 - No `tools` field: the delegate gets the parent session's tools as they are
-  when the launch (or resume) starts, the tools active there then, passed as
+  when the launch (or resume) starts: active tools for a top-level launch, or
+  available tools including codemode/deferred operations for a nested one, passed as
   `--tools`, plus the `delegateTools` entries. A parent limited to `read`
   gives such a delegate only `read`.
 - An empty `tools` field, `tools:` or `tools: []`: the delegate gets no tools
@@ -659,7 +737,9 @@ the `delegateTools` setting, in `<agent dir>/squire/settings.json` beside
 
 Each entry, a tool name or `*` pattern, is added to every delegate's tools,
 whether they come from its agent's `tools` or from the parent (after any
-`-name` entries are taken off), and passed to `--tools` unchanged. The setting
+`-name` entries are taken off). Top-level launches pass these to `--tools`
+unchanged; nested launches/resumes resolve and cap them by the direct parent’s
+available tools. The setting
 is empty by default, is read at each launch and resume, and a value that is
 not a list of names, or an entry that holds a comma or starts with `+` or
 `-`, refuses every launch with an error naming the file, before the task is sent or a window
@@ -1218,8 +1298,19 @@ the window is open (see [Resuming a delegation](#resuming-a-delegation)).
 | `chain` | Read-only frozen array of roster agent names ordered root downward, including the current child last; no session ids. |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
-and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
-emitter reads the payload the moment `emit` returns.
+and top-level launches pass both to tmux unchanged. For nested launches and
+resumes, after all listeners return, pi-squire resolves the final tool selection
+and appends an authoritative exact-name `--tools` registration allowlist bounded
+by the direct parent. This limits which tool names the child can register and
+reach, including names provided by hook-added extensions, late registrations
+and MCP. It does not
+limit extension code or implementations registered under allowed names;
+unrelated arguments/environment keys survive. For nested launches and resumes,
+final customized arguments that Pi cannot parse refuse the launch before the
+window opens.
+An empty final set also receives `--no-tools` and an empty allowlist so earlier
+selection flags cannot restore tools. Do all work synchronously: the emitter
+reads the payload the moment `emit` returns.
 
 `cwd`, the trust flag (`--approve` or `--no-approve`), `--session-dir` and the
 session choice (`--session-id` for a new delegate, `--session` for a [resumed](#resuming-a-delegation)

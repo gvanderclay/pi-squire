@@ -71,6 +71,7 @@ export type ResumeDeps = {
 		cwd: string,
 		ctx: ExtensionContext,
 		signal: AbortSignal | undefined,
+		agent: string,
 	): Promise<{ workspace: Workspace; trusted: boolean }>;
 	/** Mail the task to a session id; returns the request id. */
 	sendTask(to: string, task: string): string;
@@ -189,7 +190,7 @@ async function planResume(
 	const { record, agent, session, request } = input;
 	const { thinking, chosen } = await settleModel(deps, input, ctx);
 	const autoExit = request.autoExit ?? record.autoExit === true;
-	const prepared = await deps.prepareDirectory(session.cwd, ctx, signal);
+	const prepared = await deps.prepareDirectory(session.cwd, ctx, signal, agent.name);
 	// A managed worktree keeps its launch facts while the session still runs in it.
 	const workspace = record.workspace?.cwd === prepared.workspace.cwd ? record.workspace : prepared.workspace;
 	return {

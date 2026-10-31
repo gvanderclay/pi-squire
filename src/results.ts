@@ -19,6 +19,7 @@ import {
 	type StartedRecorded,
 	type WorkspaceAttempt,
 } from "./result-types.ts";
+import { ResultsPresentation } from "./results-presentation.ts";
 import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -144,6 +145,10 @@ export type Inbound = {
 };
 
 export type Results = {
+	/** Presentation-only observers; never part of task accounting or the completion barrier. */
+	subscribe(listener: () => void): () => void;
+	/** Keep the legacy count for non-TUI/cap-zero views without replacing any footer. */
+	setCountVisible(visible: boolean): void;
 	/** Rebuild the records from the session's custom entries, as on a resume. */
 	restore(ctx: ExtensionContext): void;
 	/** Record a delegation and show it as running; it supersedes an attempt with the same id. */
@@ -246,9 +251,7 @@ export function createResults(
 	const shown = new Set<string>();
 	/** The latest session context, for the footer and the session directory. */
 	let ctx: ExtensionContext | undefined;
-	/** Whether the footer currently shows the entry, so a clear is sent only when needed. */
-	let footerShown = false;
-	const icon = Math.random() < 0.5 ? "👨" : "👩";
+	const presentation = new ResultsPresentation();
 
 	/**
 	 * A delegation still going: no result, no recorded close, and not resumed.
@@ -276,12 +279,7 @@ export function createResults(
 
 	/** The footer counts the running delegations, and hides itself at zero. */
 	function updateFooter(): void {
-		if (ctx?.hasUI !== true) return;
-		const count = running().length;
-		const visible = count > 0;
-		if (!visible && !footerShown) return;
-		footerShown = visible;
-		ctx.ui.setStatus(STATUS_KEY, visible ? `${icon} ${count} delegate${count === 1 ? "" : "s"} running` : undefined);
+		presentation.update(ctx, running().length);
 	}
 
 	/** Rebuild the records from the session's entries, so a resume still recognises replies. */
@@ -490,6 +488,8 @@ export function createResults(
 	pi.events.on(INBOUND, (data) => takeReply(data as Inbound));
 
 	return {
+		subscribe: presentation.subscribe,
+		setCountVisible: presentation.setCountVisible,
 		restore,
 		recordStart,
 		recordAttempt,

@@ -356,6 +356,67 @@ The values are `companion` (the default when the setting is absent) and
 `current`. The file is read at each launch. Any other value refuses the launch
 with an error naming the file, before the task is sent or a window opens.
 
+## Direct-delegate overview
+
+In interactive Pi, Squire shows a compact **Delegates** tree above the editor.
+It lists this session's running direct delegates first, then finished delegates
+whose windows are still open, newest launch first within each group. A resumed
+delegate keeps one row keyed by its stable Pi session id, not by its new
+delegation id or mutable title. Failed and stopped results keep their actual
+outcome labels; an open window or quiet session is not evidence of success.
+
+Rows show the recorded delegate identity in bold, the current native Pi session
+title when available, and task state. No title is repeated when it matches the
+identity. The recorded launch model (or result model when available) and
+transcript-file age appear when space permits: model is
+dropped first, then file age, before identity/state are compressed. At very
+narrow widths the state glyph remains beside the truncated identity.
+`file … ago` is only a last-active hint from transcript mtime, not live tool
+activity. No activity, descendant summaries, ancestors or keyboard focus are
+added by this overview; use [/delegates](#reaching-delegates) to inspect windows.
+
+Configure it in the existing `<agent dir>/squire/settings.json`, alongside
+`windowPlacement`, worktree and nesting preferences:
+
+```json
+{
+  "delegateWidgetPlacement": "above",
+  "delegateWidgetMaxEntries": 3
+}
+```
+
+- `delegateWidgetPlacement`: `above` (default) or `below` the editor.
+- `delegateWidgetMaxEntries`: nonnegative safe integer, default **3**. Each
+  direct child consumes one slot. `+N more direct delegates` counts hidden
+  eligible direct children, not descendants. **0** hides child rows and restores
+  Squire's running-count footer; zero children never produce an empty heading.
+- These preferences apply equally to roots and coordinators. Interactive views
+  re-read them about once a second; invalid widget preferences warn once per
+  distinct error and use the defaults without changing task state.
+
+Launch/result/close changes refresh promptly; an independent one-second observer
+keeps finished-open rows, window eligibility and later native title changes
+fresh even when the result poll has stopped. Only visible rows resolve titles and
+file metadata; overflow counts still include every eligible child. Closed/gone-only
+history does not keep the observer listing tmux windows. A failed tmux listing is unknown,
+not proof that a window disappeared: running tasks remain eligible, but
+finished rows require a positively open matching window.
+
+Titles come from the latest complete native `session_info` in the delegate's
+known session file, including external /resume-picker renames and explicit
+clears. A small owner-only disposable title mirror under
+`<agent dir>/squire/session-titles/` covers sessions with no persisted title
+(including before the first transcript flush). Naming tools are optional;
+`/name`, `--name` and Pi's native setter work. Persisted metadata takes priority
+over that mirror: an external picker rename may differ temporarily from the
+child's own in-memory name. Files are read incrementally, with bounded work per
+refresh; very large existing transcripts may take several refreshes to catch up.
+
+Squire owns only its widget key and its existing status entries. It does not
+replace your footer/editor, bind navigation keys or move focus, and clears its
+observers/widget on shutdown or reload. JSON/RPC hosts retain the existing
+running-count status rather than receiving a terminal widget.
+
 ## Reaching delegates
 
 Delegate windows sit out of your way, so reach them from the parent. `/delegates`
@@ -786,7 +847,8 @@ add one.
 
 `<agent dir>/squire/` holds the optional parent guidance file and
 `settings.json` (`maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`,
-`windowPlacement`, `worktreeRoot` and `delegateTools`); the
+`windowPlacement`, `worktreeRoot`, `delegateTools`, `delegateWidgetPlacement` and
+`delegateWidgetMaxEntries`); the
 agents live in `<agent dir>/agents/` (see [Agents](#agents)).
 `delegation_prompt.md` is Markdown, inserted unchanged as the
 `squire_parent_delegation` system-prompt section before each new run, including
@@ -1160,9 +1222,11 @@ Delegate session: <session file or id>
   current tool calls, before the next model call. A follow-up would wait
   until the parent had answered, by which time it had often read the
   envelope itself, and the late result cost a second, redundant turn.
-- The footer counts the running delegations (`👨 N delegates running`, with 👨 or 👩
-  picked at random per session), clears one entry per result or close and
-  hides itself at zero.
+- The [direct-delegate overview](#direct-delegate-overview) replaces Squire’s
+  running-count entry in interactive Pi. With its cap set to zero, or in a
+  non-TUI host, the footer counts running delegations (`👨 N delegates running`,
+  with 👨 or 👩 picked at random per session), clears one entry per result or
+  close and hides itself at zero. The own-delegate badge stays separate.
 - Each result and each close is recorded in the parent session, and the
   records are rebuilt synchronously at session start. A resume still
   recognises replies, including one that arrived while the parent was
@@ -1488,7 +1552,8 @@ Other extensions may rely on:
   `<agent dir>/agents/<name>.md` and, in a trusted project,
   `<cwd>/.pi/agents/<name>.md`;
 - the `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`,
-  `windowPlacement` and `worktreeRoot` settings in
+  `windowPlacement`, `worktreeRoot`, `delegateWidgetPlacement` and
+  `delegateWidgetMaxEntries` settings in
   `<agent dir>/squire/settings.json`;
 - the optional `<agent dir>/squire/delegation_prompt.md` file and the
   `squire_parent_delegation` system-prompt section;

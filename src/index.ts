@@ -15,15 +15,13 @@
 // in the parent session; its answer is taken over on `message:inbound` and
 // shown as one result message, so the parent hears back on its own.
 //
-// With auto-exit on (the agent's `auto-exit`, default true, overridden per
+// With auto-exit on (the agent's `auto_exit`, default true, overridden per
 // call) the delegate closes its own window after a normal completion; the
 // delegate's side lives in `child.ts`. With it off the window stays open.
 // An agent's `tools`, or the parent's active tools when it has no `tools`
 // field (less any `-name` entries), goes to the child as `--tools` with the
-// `delegateTools` setting added (`--no-tools` when that leaves nothing), and
-// each of its `extensions` as `-e`, both for the child alone. A tool only the
-// agent's own extensions register is passed only when `tools` or
-// `delegateTools` names it. An agent with no `model` or `thinking` runs
+// `delegateTools` setting added (`--no-tools` when that leaves nothing).
+// An agent with no `model` or `thinking` runs
 // on the parent's.
 //
 // The model gets four tools. `delegate` takes agent, task and optional model
@@ -559,7 +557,7 @@ function delegateVisible(options: { selectedTools: string[]; hiddenTools: string
 
 /** Where agent files go, for the messages that say how to add one. */
 function whereAgentsGo(): string {
-	return `${join(globalAgentsDir(getAgentDir()), "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, extensions, fallback, auto-exit, prompt_mode, display_name, locked and enabled`;
+	return `${join(globalAgentsDir(getAgentDir()), "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, fallback, auto_exit, prompt_mode, display_name, locked and enabled`;
 }
 
 /** One roster line for the `delegate` tool's description. */
@@ -713,10 +711,8 @@ export default function delegate(
 	/**
 	 * The delegate's tools for a launch or resume starting now: the agent's
 	 * named tools, or the parent's active tools at this moment (less any
-	 * `-name` entries), then the `delegateTools` setting. The agent's own
-	 * extensions are never loaded here: a tool only they register is passed
-	 * only when `tools` or `delegateTools` names it. Throws, naming the file,
-	 * on an invalid setting.
+	 * `-name` entries), then the `delegateTools` setting. Throws, naming the
+	 * file, on an invalid setting.
 	 */
 	function childTools(agent: Agent): string[] {
 		return toolSelection(agent, agent.tools === undefined ? pi.getActiveTools() : [], delegateTools(getAgentDir()));
@@ -859,7 +855,6 @@ export default function delegate(
 			start.model,
 			"--thinking",
 			start.thinking,
-			...start.agent.extensions.flatMap((extension) => ["-e", extension]),
 			...toolArgs(tools),
 			"--append-system-prompt",
 			prompt,

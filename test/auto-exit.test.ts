@@ -25,8 +25,8 @@ test("auto-exit is on by default and reaches the child's env and the record", as
 	assert.equal((s.entries[0].data as { autoExit?: boolean }).autoExit, true);
 });
 
-test("an agent's auto-exit: false is its default, and a call beats it either way", async () => {
-	writeAgent("keeper", agentFile({ ...SCOUT, "auto-exit": "false" }));
+test("an agent's auto_exit: false is its default, and a call beats it either way", async () => {
+	writeAgent("keeper", agentFile({ ...SCOUT, auto_exit: "false" }));
 	writeAgent("scout", agentFile(SCOUT));
 	const s = session();
 	await s.start();
@@ -45,13 +45,33 @@ test("an agent's auto-exit: false is its default, and a call beats it either way
 	assert.equal(s.sendCalls[1].body, "do the thing"); // the flag is not part of the task
 });
 
-test("an auto-exit that is not true or false leaves the agent out with a warning", async () => {
-	writeAgent("odd", agentFile({ ...SCOUT, "auto-exit": "sometimes" }));
+test("auto_exit accepts explicit booleans and takes precedence over ignored auto-exit", async () => {
+	writeAgent("on", agentFile({ ...SCOUT, auto_exit: "true", "auto-exit": "false" }));
+	writeAgent("off", agentFile({ ...SCOUT, auto_exit: "false", "auto-exit": "invalid" }));
+	const s = session();
+	await s.start();
+	for (const agent of ["on", "off"]) await s.toolCall("delegate", { agent, task: "go" });
+	assert.deepEqual(
+		s.tmux.opened.map(({ env }) => env.PI_DELEGATE_AUTO_EXIT),
+		["1", "0"],
+	);
+	assert.deepEqual(
+		s.entries.map(({ data }) => data.autoExit),
+		[true, false],
+	);
+	assert.deepEqual(s.warnings, []);
+	assert.deepEqual(s.errors, []);
+	assert.ok(s.tool("delegate").description.includes("auto_exit"));
+	assert.ok(!s.tool("delegate").description.includes("tools, extensions"));
+});
+
+test("an auto_exit that is not true or false leaves the agent out with a warning", async () => {
+	writeAgent("odd", agentFile({ ...SCOUT, auto_exit: "sometimes" }));
 	const s = session();
 	await s.delegate("odd do the thing");
 	assert.deepEqual(s.tmux.opened, []);
 	assert.ok(
-		s.warnings.some((warning) => /auto-exit "sometimes"/.test(warning)),
+		s.warnings.some((warning) => /auto_exit "sometimes"/.test(warning)),
 		s.warnings.join("\n"),
 	);
 });

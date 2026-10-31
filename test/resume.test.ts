@@ -62,11 +62,21 @@ function writeSession(file: string, id: string, cwd: string, model?: string): vo
  * window exit: `gone` removes the window, `exited` leaves it with a dead pane.
  */
 async function exitedDelegate(
-	options: { window?: "gone" | "exited" | "open"; model?: string; fallback?: string; cwd?: string } = {},
+	options: {
+		window?: "gone" | "exited" | "open";
+		model?: string;
+		fallback?: string;
+		cwd?: string;
+		autoExit?: boolean;
+	} = {},
 ): Promise<Exited> {
 	writeAgent(
 		"scout",
-		agentFile({ ...AGENT, ...(options.fallback === undefined ? {} : { fallback: options.fallback }) }),
+		agentFile({
+			...AGENT,
+			...(options.fallback === undefined ? {} : { fallback: options.fallback }),
+			...(options.autoExit === undefined ? {} : { auto_exit: String(options.autoExit) }),
+		}),
 	);
 	const s = session();
 	await s.start();
@@ -142,6 +152,48 @@ test("the resume opens the session file with --session, never --session-id or --
 	assert.equal(launches[0].cwd, realpathSync(d.cwd));
 	assert.match(result.content[0].text, new RegExp(`Resumed delegation ${d.id} as `));
 	assert.match(d.s.notes.join("\n"), /resumed .* as /);
+});
+
+test("resume ignores old fields and keeps recorded auto-exit unless the call overrides it", async () => {
+	for (const autoExit of [undefined, true, false]) {
+		const d = await exitedDelegate({ autoExit });
+		const expected = autoExit ?? true;
+		writeAgent(
+			"scout",
+			agentFile({
+				...AGENT,
+				auto_exit: String(!expected),
+				"auto-exit": "invalid",
+				extensions: "./missing.ts, ~/missing.ts",
+			}),
+		);
+		const result = await resume(d.s, { id: d.id, task: "again" });
+		assert.equal((result.structuredContent as { autoExit: boolean }).autoExit, expected);
+		const window = d.s.tmux.opened[1];
+		assert.equal(window.env.PI_DELEGATE_AUTO_EXIT, expected ? "1" : "0");
+		assert.ok(!window.argv.includes("-e") && !window.argv.includes("--extension"), window.argv.join(" "));
+		assert.deepEqual(d.s.warnings, []);
+		d.s.tmux.windows.delete(window.windowId);
+		// The next resume continues the same Pi session and can override either boolean.
+		const nextId = (result.structuredContent as { id: string }).id;
+		const overridden = await resume(d.s, { id: nextId, task: "once more", auto_exit: !expected });
+		assert.equal((overridden.structuredContent as { autoExit: boolean }).autoExit, !expected);
+	}
+});
+
+test("resume still lets session:launch add extension arguments and environment", async () => {
+	const d = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, extensions: "{ ignored: true }" }));
+	d.s.events.on("session:launch", (payload) => {
+		const launch = payload as { args: string[]; env: Record<string, string> };
+		assert.ok(!launch.args.includes("-e"), "no frontmatter extension arguments");
+		launch.args.push("-e", "/custom/resume.ts");
+		launch.env.CUSTOM_LAUNCH = "resume";
+	});
+	await resume(d.s, { id: d.id, task: "again" });
+	assert.deepEqual(d.s.tmux.opened[1].argv.slice(-2), ["-e", "/custom/resume.ts"]);
+	assert.equal(d.s.tmux.opened[1].env.CUSTOM_LAUNCH, "resume");
+	assert.deepEqual(d.s.warnings, []);
 });
 
 test("the new record has its own id, the old session id, and resumedFrom; mail goes to the session", async () => {
@@ -318,10 +370,10 @@ test("refused: an agent no longer in the roster", async () => {
 
 test("refused: an agent whose file turned invalid, naming the file and reason", async () => {
 	const d = await exitedDelegate();
-	writeAgent("scout", agentFile({ ...AGENT, "auto-exit": "maybe" }));
+	writeAgent("scout", agentFile({ ...AGENT, auto_exit: "maybe" }));
 	assert.match(
 		await resumeError(d.s, { id: d.id, task: "x" }),
-		/agent "scout" is disabled because its file is invalid: .*scout\.md has auto-exit "maybe", not true or false/,
+		/agent "scout" is disabled because its file is invalid: .*scout\.md has auto_exit "maybe", not true or false/,
 	);
 	assert.equal(d.s.tmux.opened.length, 1);
 });

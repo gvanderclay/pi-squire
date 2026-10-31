@@ -7,6 +7,8 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { ChildTasks } from "./child-tasks.ts";
+import type { Identity } from "./identity.ts";
 import { cwdLine, modelLabel, renderMessage, workspaceLine } from "./render.ts";
 import { resultDetails, resultText, resumeDetails } from "./result-message.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
@@ -33,6 +35,8 @@ const INBOUND = "message:inbound";
 
 /** One delegation, as recorded and rebuilt on resume. It holds no task text. */
 export type Delegation = {
+	/** Durable launch identity; older single-level records may lack it. */
+	identity?: Identity;
 	id: string;
 	agent: string;
 	/** The agent's `display_name` at launch, shown instead of `agent`; absent when it had none. */
@@ -156,6 +160,10 @@ export type Results = {
 	list(): Recorded[];
 	/** One delegation by id. */
 	find(id: string): Recorded | undefined;
+	/** No unfinished direct-child task or unprocessed terminal outcome. */
+	completionReady(): boolean;
+	/** Refuse unhealthy local facts; optionally persist a preflight snapshot before launch effects. */
+	checkStorage(write?: boolean): void;
 };
 
 /** What tmux reported for a delegation's window: listed, not listed, or not askable. */
@@ -202,10 +210,23 @@ export function deriveState(record: Recorded, window: WindowState): DelegationSt
 	return "unknown";
 }
 
-export function createResults(pi: ExtensionAPI): Results {
+export function createResults(pi: ExtensionAPI, processesChildren: () => boolean = () => false): Results {
 	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
 	/** Every recorded delegation by its id, in the order recorded. */
 	const byId = new Map<string, Recorded>();
+	const tasks = new ChildTasks();
+	const save = (): void => {
+		try {
+			tasks.save([...byId.values()]);
+		} catch (error) {
+			ctx?.ui.notify(
+				`delegate: could not persist child tasks: ${String(error)}; keep this session open, repair storage and run again. Completion is blocked.`,
+				"error",
+			);
+			throw error;
+		}
+	};
+	let replay: ReturnType<typeof setImmediate> | undefined;
 	/** Started records by their request's envelope id, for matching replies; attempts never match a reply. */
 	const byRequest = new Map<string, StartedRecorded>();
 	/** Reply envelope ids a result message has already been sent for. */
@@ -252,6 +273,7 @@ export function createResults(pi: ExtensionAPI): Results {
 
 	/** Rebuild the records from the session's entries, so a resume still recognises replies. */
 	function restore(context: ExtensionContext): void {
+		if (replay) clearImmediate(replay);
 		ctx = context;
 		byId.clear();
 		byRequest.clear();
@@ -286,6 +308,20 @@ export function createResults(pi: ExtensionAPI): Results {
 				if (typeof data.sessionPath === "string") record.sessionPath = data.sessionPath;
 			}
 		}
+		// Local facts survive even if Pi had not flushed custom entries yet.
+		try {
+			for (const record of tasks.restore(context.sessionManager.getSessionId())) byId.set(record.id, record);
+			for (const record of byId.values())
+				if (isStarted(record)) {
+					byRequest.set(record.requestId, record);
+					if (record.result) shown.add(record.result.replyId);
+				}
+		} catch (error) {
+			context.ui.notify(
+				`delegate: could not restore child tasks: ${String(error)}; task completion is blocked.`,
+				"error",
+			);
+		}
 		// A parent that stopped mid-launch cannot say how far it got; nothing is cleaned up or relaunched.
 		for (const record of byId.values()) {
 			if (isStarted(record)) continue;
@@ -300,6 +336,20 @@ export function createResults(pi: ExtensionAPI): Results {
 			}
 		}
 		updateFooter();
+		// Mail is already claimed; replay only outcomes not processed by a
+		// settled coordinator run. No live worker is recreated.
+		if (tasks.outcomes.length) {
+			const session = context.sessionManager.getSessionId();
+			replay = setImmediate(() => {
+				replay = undefined;
+				if (ctx?.sessionManager.getSessionId() !== session) return;
+				for (const outcome of tasks.outcomes)
+					pi.sendMessage(
+						{ customType: CUSTOM_TYPE, content: outcome.content, details: outcome.details, display: true },
+						{ triggerTurn: true, deliverAs: "steer" },
+					);
+			});
+		}
 	}
 
 	function recordStart(delegation: Delegation, context: ExtensionContext): void {
@@ -308,6 +358,7 @@ export function createResults(pi: ExtensionAPI): Results {
 		const record: StartedRecorded = { ...delegation };
 		byId.set(record.id, record);
 		byRequest.set(record.requestId, record);
+		save();
 		updateFooter();
 	}
 
@@ -315,6 +366,7 @@ export function createResults(pi: ExtensionAPI): Results {
 		ctx = context;
 		pi.appendEntry(CUSTOM_TYPE, attempt);
 		byId.set(attempt.id, { ...attempt });
+		save();
 	}
 
 	function recordClose(id: string): void {
@@ -322,6 +374,7 @@ export function createResults(pi: ExtensionAPI): Results {
 		if (record === undefined || record.closed === true) return;
 		pi.appendEntry(CUSTOM_TYPE, { id, closed: true });
 		record.closed = true;
+		save();
 		updateFooter();
 	}
 
@@ -348,20 +401,18 @@ export function createResults(pi: ExtensionAPI): Results {
 			...(record.workspace === undefined ? {} : { workspace: record.workspace }),
 			windowName: record.windowName,
 		};
+		const content = [
+			`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+			`Working directory: ${cwdLine(record.cwd)}`,
+			...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
+			`Delegate session: ${session ?? sessionIdOf(record)}`,
+			"A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
+		].join("\n");
+		if (processesChildren()) tasks.outcomes.push({ key: `gone:${record.id}`, content, details });
+		save();
 		pi.sendMessage(
-			{
-				customType: CUSTOM_TYPE,
-				details,
-				content: [
-					`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
-					`Working directory: ${cwdLine(record.cwd)}`,
-					...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
-					`Delegate session: ${session ?? sessionIdOf(record)}`,
-					"A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
-				].join("\n"),
-				display: true,
-			},
-			{ triggerTurn: true, deliverAs: "followUp" },
+			{ customType: CUSTOM_TYPE, details, content, display: true },
+			{ triggerTurn: true, deliverAs: processesChildren() ? "steer" : "followUp" },
 		);
 		updateFooter();
 		return true;
@@ -388,11 +439,6 @@ export function createResults(pi: ExtensionAPI): Results {
 		// After the claim above, so a slow or failing inspection cannot let the provider or a duplicate deliver it too.
 		const snapshot = inspectWorkspace(delegation.workspace?.cwd, delegation.workspace?.git);
 		const details = resultDetails(delegation, recordedName(delegation), payload, session, finished, snapshot);
-		// Steer, not follow-up: a busy parent gets the result before its next model call, not after it has answered.
-		pi.sendMessage(
-			{ customType: CUSTOM_TYPE, content: resultText(details), details, display: true },
-			{ triggerTurn: true, deliverAs: "steer" },
-		);
 		const result: Result = {
 			status: reply.status,
 			replyId: reply.id,
@@ -405,9 +451,29 @@ export function createResults(pi: ExtensionAPI): Results {
 			pi.appendEntry(CUSTOM_TYPE, { id: record.id, result });
 			record.result = result;
 		}
+		const content = resultText(details);
+		if (processesChildren()) tasks.outcomes.push({ key: reply.id, content, details });
+		save();
+		// Persist first, then steer. A crash before injection is recovered from
+		// the processing inbox, not from the provider's already-claimed mail.
+		pi.sendMessage(
+			{ customType: CUSTOM_TYPE, content, details, display: true },
+			{ triggerTurn: true, deliverAs: "steer" },
+		);
 		updateFooter();
 	}
 
+	tasks.register(
+		pi,
+		() => [...byId.values()],
+		() => ctx,
+	);
+
+	pi.on("session_shutdown", () => {
+		if (replay) clearImmediate(replay);
+		replay = undefined;
+		ctx = undefined;
+	});
 	pi.events.on(INBOUND, (data) => takeReply(data as Inbound));
 
 	return {
@@ -419,5 +485,11 @@ export function createResults(pi: ExtensionAPI): Results {
 		recordGone,
 		list: () => [...byId.values()],
 		find: (id) => byId.get(id),
+		completionReady: () => !tasks.failed && running().length === 0 && tasks.outcomes.length === 0,
+		checkStorage: (write = false) => {
+			const problem = tasks.storageProblem();
+			if (problem) throw new Error(problem);
+			if (write) save();
+		},
 	};
 }

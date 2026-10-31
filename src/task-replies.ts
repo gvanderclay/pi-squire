@@ -21,7 +21,9 @@ const STARTUP_RETRY_MS = 100;
 
 class Answers {
 	readonly pi: ExtensionAPI;
-	readonly parent: string | undefined;
+	readonly parent: () => string | undefined;
+	readonly canComplete: () => boolean;
+	readonly coordinates: (ctx: ExtensionContext) => boolean;
 	state: TaskState | undefined;
 	path: string | undefined;
 	current: ExtensionContext | undefined;
@@ -31,9 +33,16 @@ class Answers {
 	retry: ReturnType<typeof setImmediate> | undefined;
 	startupRetry: ReturnType<typeof setTimeout> | undefined;
 
-	constructor(pi: ExtensionAPI, parent?: string) {
+	constructor(
+		pi: ExtensionAPI,
+		parent: () => string | undefined,
+		canComplete: () => boolean,
+		coordinates: (ctx: ExtensionContext) => boolean,
+	) {
 		this.pi = pi;
 		this.parent = parent;
+		this.canComplete = canComplete;
+		this.coordinates = coordinates;
 	}
 
 	warn(error: unknown, advice?: string): void {
@@ -118,7 +127,7 @@ class Answers {
 
 	takeover(payload: Inbound): void {
 		const envelope: Inbound["envelope"] = payload?.envelope;
-		const owner: string | undefined = this.state?.parent ?? this.parent;
+		const owner: string | undefined = this.state?.parent ?? this.parent();
 		if (
 			this.unreadable ||
 			this.current === undefined ||
@@ -131,6 +140,18 @@ class Answers {
 		)
 			return;
 		try {
+			// Role lookup can fail on invalid configuration. Wording must not
+			// claim a request without prompting it; launch admission stays strict.
+			let coordinates = false;
+			try {
+				coordinates = this.coordinates(this.current);
+			} catch {
+				/* Keep the original leaf wording. */
+			}
+			const ending: string = coordinates
+				? "Your final task report goes back to it automatically after your child tasks finish and you process their outcomes."
+				: "Your final message this turn goes back to it automatically.";
+			const text: string = `[delegate] Your task, from the session that started you (${owner}). ${ending}\n\n${String(envelope.body ?? "")}`;
 			const base: TaskState = this.state ?? { parent: owner, requests: [], outbox: [] };
 			if (base.requests.some((request) => request.id === envelope.id)) {
 				payload.handled = true;
@@ -138,7 +159,6 @@ class Answers {
 			}
 			this.save({ ...base, requests: [...base.requests, { id: envelope.id, held: false, seen: true }] });
 			payload.handled = true;
-			const text: string = `[delegate] Your task, from the session that started you (${owner}). Your final message this turn goes back to it automatically.\n\n${String(envelope.body ?? "")}`;
 			this.prompt(text, envelope.id);
 		} catch (error) {
 			this.warn(
@@ -174,6 +194,13 @@ class Answers {
 
 	settle(): void {
 		if (this.state === undefined || this.end === undefined) return;
+		// A stop must still mark held requests at intermediate settles. A
+		// failed intermediate run is otherwise discarded, so recovery's final
+		// run (not an earlier failure) determines the answer.
+		if (!this.end.stopped && !this.canComplete()) {
+			this.end = undefined;
+			return;
+		}
 		try {
 			this.save(settleTask(this.state, this.end));
 			this.end = undefined;
@@ -184,13 +211,23 @@ class Answers {
 	}
 
 	handled(): boolean {
-		return !this.failed && (this.state === undefined || this.state.requests.length === 0);
+		return !this.failed && this.canComplete() && (this.state === undefined || this.state.requests.length === 0);
 	}
 }
 
 /** Restore owed answers even when a session is reopened without launch env. */
-export function registerTaskReplies(pi: ExtensionAPI, parent?: string): TaskReplies {
-	const answers: Answers = new Answers(pi, parent);
+export function registerTaskReplies(
+	pi: ExtensionAPI,
+	parent: string | (() => string | undefined) | undefined = undefined,
+	canComplete: () => boolean = () => true,
+	coordinates: (ctx: ExtensionContext) => boolean = () => false,
+): TaskReplies {
+	const answers: Answers = new Answers(
+		pi,
+		typeof parent === "function" ? parent : (): string | undefined => parent,
+		canComplete,
+		coordinates,
+	);
 	pi.on("session_start", (_event, ctx) => answers.start(ctx));
 	pi.on("session_shutdown", () => answers.stop());
 	pi.events.on("message:inbound", (data) => answers.takeover(data as Inbound));

@@ -22,7 +22,41 @@ follows [Semantic Versioning](https://semver.org/).
   variables keep their names. Updated agent-file, auto-exit, delegate, real-Pi
   tool-selection, resume and hook tests for this deliberate contract change.
 
+### Added
+
+- Unreleased nested-worker lifecycle: `maxDepth` (default 1), current-agent
+  `allow_nested_delegation` grants and bypass-resistant launch/resume admission,
+  including trusted project-agent shadowing. Coordinators get all four
+  delegation tools even with an explicit tools list; listing tools alone warns
+  and grants nothing. Nesting remains an incomplete integration milestone:
+  tool ceilings, tree caps/registry, root trust and tree controls must land
+  before production use.
+- Persist parent/root/depth/agent/chain identity and auto-exit state for manual
+  same-session reopening. Expose read-only parent/root/depth/frozen chain on
+  `session:launch`, alongside existing mutable args/env customization.
+- Durable direct-child task completion and result-processing barrier. No
+  intermediate coordinator reply/exit while children run; out-of-order results
+  and rolling fan-out finish only after a later processing run settles. Results
+  arriving during final settlement force processing before completion.
+  Coordinators can recover after fallback exhaustion while workers run; their
+  final run determines success/failure. Confirmed disappearance produces the
+  existing missing-result outcome; unknown tmux state does not release work.
+- Separate coordinator identity/auto-exit and running-child footer keys, retain
+  parent delegation guidance in coordinators, and refuse unresolved nested
+  trust instead of opening unattended UI. Update deliberate single-level-only
+  registration, hook shape, footer and persistence expectations in tests;
+  execute the expanded README hook example and real-mail multi-instance
+  lifecycle coverage.
+
 ### Fixed
+
+- Preserve default leaf task guidance and takeover wording; only effective
+  coordinators receive child-first reporting instructions, including after a
+  current grant change. Refuse unhealthy durable child-task storage before
+  launch/resume effects rather than reporting failure after a child starts.
+  A task-wording lookup failure uses the original leaf wording before ownership
+  is recorded, so invalid depth configuration cannot strand an unprompted task;
+  launch admission still refuses invalid configuration.
 
 - Persist owed delegate task answers and frozen reply retries across reload,
   restart, resume and same-session manual reopening. Bounded startup retries

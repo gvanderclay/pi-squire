@@ -252,6 +252,7 @@ async function targetTrust(
 	ctx: ExtensionContext,
 	agentDir: string,
 	signal: AbortSignal | undefined,
+	nested: boolean,
 ): Promise<boolean> {
 	if (git.kind === "git") {
 		const parent = inspectGit(ctx.cwd);
@@ -264,6 +265,10 @@ async function targetTrust(
 	const saved = savedDecision(store, key);
 	if (saved !== null) return saved;
 	if (!hasTrustRequiringProjectResources(cwd)) return false;
+	if (nested)
+		throw new Error(
+			`nested project trust is unresolved for ${cwd}; root-mediated trust is not available yet. Establish a trust decision in the root before delegating; no unattended dialog was opened.`,
+		);
 	if (!ctx.hasUI) {
 		throw new Error(
 			`cwd ${cwd} has project resources that need trust and no trust decision is saved for ${key}; open Pi in ${key}, answer its trust question, then delegate again`,
@@ -323,11 +328,16 @@ async function askPlannedResourceTrust(
 	ctx: ExtensionContext,
 	store: ProjectTrustStore,
 	signal?: AbortSignal,
+	nested = false,
 ): Promise<{ trusted: boolean; exposure?: { tree: string | undefined; ancestors: boolean } }> {
 	const tree = plannedTreeHasResources(plan.source.checkoutRoot, plan.baseCommit);
 	const ancestors = destinationHasAncestorSkills(plan.destination);
 	const exposure = { tree, ancestors };
 	if (tree === undefined && !ancestors) return { trusted: false, exposure };
+	if (nested)
+		throw new Error(
+			`nested project trust is unresolved for planned worktree ${plan.destination}; establish trust at the root before delegating. Root-mediated trust is not available yet; no unattended dialog was opened.`,
+		);
 	if (!ctx.hasUI)
 		throw new Error(
 			`the planned worktree in ${plan.destination} exposes project resources and has no saved trust decision for ${plan.source.mainRoot}; open Pi and establish trust, then delegate again`,
@@ -352,6 +362,7 @@ export async function trustPlannedWorktree(
 	ctx: ExtensionContext,
 	agentDir: string,
 	signal?: AbortSignal,
+	nested = false,
 ): Promise<PlannedTrust> {
 	const parent = inspectGit(ctx.cwd);
 	const sameRepository = parent.kind === "git" && parent.identity.commonDir === plan.source.commonDir;
@@ -364,7 +375,7 @@ export async function trustPlannedWorktree(
 		const saved = savedDecision(store, plan.source.mainRoot);
 		if (saved !== null) trusted = saved;
 		else {
-			const answer = await askPlannedResourceTrust(plan, ctx, store, signal);
+			const answer = await askPlannedResourceTrust(plan, ctx, store, signal, nested);
 			trusted = answer.trusted;
 			exposure = answer.exposure;
 		}
@@ -399,7 +410,7 @@ export async function trustPlannedWorktree(
  * `ctx.signal` aborts it too.
  */
 export async function prepareDirectory(
-	request: { cwd?: string; signal?: AbortSignal },
+	request: { cwd?: string; signal?: AbortSignal; nested?: boolean },
 	ctx: ExtensionContext,
 	agentDir: string,
 ): Promise<{ workspace: DirectoryWorkspace; trusted: boolean }> {
@@ -414,7 +425,7 @@ export async function prepareDirectory(
 	stopIfAborted(signal);
 	const cwd = resolveDirectory(request.cwd, ctx.cwd);
 	const git = inspectGit(cwd);
-	const trusted = await targetTrust(cwd, git, ctx, agentDir, signal);
+	const trusted = await targetTrust(cwd, git, ctx, agentDir, signal, request.nested === true);
 	stopIfAborted(signal);
 	return { workspace: { mode: "existing", cwd, git }, trusted };
 }

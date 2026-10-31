@@ -25,9 +25,8 @@ import {
 	type ModelRuntime,
 	resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
-
+import { type Identity, writeIdentity } from "./identity.ts";
 import { activeMark, classify, type Response, recordLimit } from "./limits.ts";
-import { STATUS_KEY } from "./results.ts";
 import type { TaskReplies } from "./task-replies.ts";
 
 /** The launch variable that carries the parent's resolved setting. */
@@ -153,33 +152,38 @@ function fallbackReason(last: Message | undefined): Failure | undefined {
 /** This delegate's footer icon, picked once per load. */
 const ICON = Math.random() < 0.5 ? "👦" : "👧";
 
-function showStatus(ctx: ExtensionContext, armed: boolean): void {
+function showStatus(ctx: ExtensionContext, armed: boolean, agent?: string): void {
 	const { theme } = ctx.ui;
-	const agent = process.env[AGENT_ENV];
 	const label = agent === undefined || agent === "" ? "delegate" : `${theme.fg("accent", agent)} delegate`;
 	ctx.ui.setStatus(
-		STATUS_KEY,
+		"delegate-self",
 		armed
 			? `${ICON} ${label} · auto-exit ${theme.fg("success", "on")}`
 			: `${ICON} ${label} · auto-exit ${theme.fg("dim", "off")}`,
 	);
 }
 
-export function registerChild(pi: ExtensionAPI, replies: TaskReplies): void {
+export function registerChild(pi: ExtensionAPI, replies: TaskReplies, identity: () => Identity | undefined): void {
 	const setFailure = registerFallback(pi);
 
-	let armed = process.env[AUTO_EXIT_ENV] === "1";
+	let armed = false;
 	/** Whether the run that just ended finished without the user stopping it. */
 	let completed = false;
 
 	// Reload and session replacement clear extension statuses, then start again.
-	pi.on("session_start", async (_event, ctx) => showStatus(ctx, armed));
+	pi.on("session_start", async (_event, ctx) => {
+		const own = identity();
+		armed = own?.autoExit === true;
+		if (own) showStatus(ctx, armed, own.agent);
+	});
 
 	function disarm(ctx: ExtensionContext): void {
 		if (!armed) return;
 		armed = false;
+		const own = identity();
+		if (own) writeIdentity(ctx.sessionManager.getSessionId(), { ...own, autoExit: false });
 		ctx.ui.notify(OFF_NOTICE, "info");
-		showStatus(ctx, armed);
+		showStatus(ctx, armed, identity()?.agent);
 	}
 
 	// Typed text and RPC input are the user's; a prompt an extension sends is not.
@@ -200,11 +204,8 @@ export function registerChild(pi: ExtensionAPI, replies: TaskReplies): void {
 	// call Pi 0.99.1 ends with an `error` message, and only the signal tells a
 	// stop from a real error. Either way it is the user taking over.
 	pi.on("agent_end", async (event, ctx) => {
-		let last: Message | undefined;
-		for (let i = event.messages.length - 1; i >= 0 && last === undefined; i--) {
-			const message = event.messages[i] as Message;
-			if (message?.role === "assistant") last = message;
-		}
+		const last = event.messages.findLast((message) => message.role === "assistant") as Message | undefined;
+		if (!identity()) return;
 		const stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 		if (stopped) disarm(ctx);
 		if (!stopped && last?.stopReason === "error") recordUsageLimit(last, ctx, response);
@@ -224,9 +225,12 @@ export function registerChild(pi: ExtensionAPI, replies: TaskReplies): void {
 	pi.registerCommand("auto-exit", {
 		description: "Close this delegate after its next normal completion",
 		handler: async (_args, ctx) => {
+			if (!identity()) return ctx.ui.notify("auto-exit is available inside a delegate session", "error");
 			armed = true;
+			const own = identity();
+			if (own) writeIdentity(ctx.sessionManager.getSessionId(), { ...own, autoExit: true });
 			ctx.ui.notify(ON_NOTICE, "info");
-			showStatus(ctx, armed);
+			showStatus(ctx, armed, identity()?.agent);
 		},
 	});
 }

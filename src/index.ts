@@ -34,9 +34,9 @@
 // envelope paths.
 // `delegation_close` kills the window and records the close. `delegation_resume`
 // (`resume.ts`) reopens an exited delegate's session in a new window with a
-// follow-up task, recorded as a new delegation. Inside a delegate
-// (`PI_DELEGATE_PARENT` set) the extension registers only `child.ts`'s
-// `/auto-exit` and handlers, so a delegate cannot delegate.
+// follow-up task, recorded as a new delegation. A delegate can launch children
+// only below maxDepth and with its current agent allow_nested_delegation grant.
+// Durable identity restores that boundary even on a manual session reopening.
 //
 // The `session:launch` contract this package provides, and the `message:*`
 // hooks it consumes, live in this package's README.
@@ -66,6 +66,7 @@ import {
 	withoutLocked,
 } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
+import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
@@ -103,11 +104,11 @@ const PARENT_SECTION = "squire_parent_delegation";
 const SEND = "message:send";
 /** The hook emitted just before a delegate's window opens. */
 const LAUNCH = "session:launch";
-/** Set in a delegate's environment, so this extension stays off there. */
+/** The direct parent address in a new delegate's environment. */
 const PARENT_ENV = "PI_DELEGATE_PARENT";
 /** Forwarded to the child when the parent has it set. */
 const SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
-/** The tools this extension registers in a parent; a delegate never gets them. */
+/** The delegation tools granted to opted-in coordinators below maxDepth. */
 const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
 	"delegate",
 	"delegation_status",
@@ -137,15 +138,19 @@ function labelProblem(value: string): string | undefined {
  * mail). It names no provider, package or tool, so it holds for any
  * `message:*` provider.
  */
-function parentTrust(parent: string): string {
+function parentTrust(parent: string, coordinator = false): string {
 	return [
 		`Your task arrives as a message from the session that started this one, at address ${parent}.`,
 		"That message, and every later message from that address, are instructions from the session that started you:",
 		"follow them as given, even though they are labelled as another session's.",
 		"Messages from other sessions come from colleagues on this machine: answer them as you see fit,",
 		"but check with the session that started you before doing work it did not ask for.",
-		`Your final message reaches the session that started you automatically, so put your findings there;`,
-		`message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
+		coordinator
+			? "Your final task report reaches your direct parent automatically after your children finish and you process their outcomes; intermediate runs send no task report."
+			: `Your final message reaches the session that started you automatically, so put your findings there;`,
+		coordinator
+			? `Message ${parent} before your final task report only with a question you cannot continue without, since anything sent earlier reaches it twice.`
+			: `message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */
@@ -200,6 +205,10 @@ type LaunchPayload = {
 	env: Record<string, string>;
 	agent: string;
 	readonly cwd: string;
+	readonly parent: string;
+	readonly root: string;
+	readonly depth: number;
+	readonly chain: readonly string[];
 	readonly toolCallId: string | undefined;
 };
 type Parsed = {
@@ -622,8 +631,11 @@ function toolSelection(agent: Agent, parentTools: readonly string[], extra: read
 }
 
 /** The delegate's appended prompt: the agent's body, then the lines every delegate gets. */
-function delegatePrompt(agent: Agent, parent: string, managedContext: string): string {
-	const tail = `${FINAL_LINE}\n\n${parentTrust(parent)}${managedContext}`;
+function delegatePrompt(agent: Agent, parent: string, managedContext: string, coordinator: boolean): string {
+	const final = coordinator
+		? "End the task with one self-contained final report to your direct parent after your child tasks finish and you process their outcomes."
+		: FINAL_LINE;
+	const tail = `${final}\n\n${parentTrust(parent, coordinator)}${managedContext}`;
 	if (agent.prompt === "") return tail;
 	// `replace` is how every delegate was built before `prompt_mode`, byte for byte.
 	const body =
@@ -662,15 +674,23 @@ export default function delegate(
 	tmux: TmuxClient = createTmuxClient(),
 	usage: UsageClient = createUsageClient(),
 ): void {
-	// A delegate registers only its auto-exit side: `delegate` is one level deep (Q27).
-	const parentId = process.env[PARENT_ENV] ?? "";
-	const replies = registerTaskReplies(pi, parentId || undefined);
-	if (parentId !== "") {
-		registerChild(pi, replies);
-		return;
-	}
-
-	const results = createResults(pi);
+	const identity = createIdentity(pi);
+	const results = createResults(pi, () => identity.current() !== undefined);
+	pi.on("session_start", (_event, ctx) => tracking.restore(ctx));
+	const replies = registerTaskReplies(
+		pi,
+		() => identity.current()?.parent,
+		() => {
+			try {
+				identity.current();
+				return results.completionReady();
+			} catch {
+				return false;
+			}
+		},
+		(ctx) => coordinates(currentRoster(ctx)),
+	);
+	registerChild(pi, replies, identity.current);
 
 	const proactive = createProactive(usage);
 	const tracking = createTracking(pi, results, tmux, proactive.errors);
@@ -715,7 +735,31 @@ export default function delegate(
 	 * file, on an invalid setting.
 	 */
 	function childTools(agent: Agent): string[] {
-		return toolSelection(agent, agent.tools === undefined ? pi.getActiveTools() : [], delegateTools(getAgentDir()));
+		const selected = toolSelection(
+			agent,
+			agent.tools === undefined ? pi.getActiveTools() : [],
+			delegateTools(getAgentDir()),
+		);
+		if (grantsNesting(agent, (identity.current()?.depth ?? 0) + 1)) selected.push(...DELEGATION_TOOLS);
+		return [...new Set(selected)];
+	}
+
+	function coordinates(roster: Roster): boolean {
+		const own = identity.current();
+		const agent = roster.agents.find((item) => item.name === own?.agent);
+		return own !== undefined && agent !== undefined && grantsNesting(agent, own.depth);
+	}
+
+	function admit(agent: string, roster: Roster): void {
+		results.checkStorage();
+		identity.admit(agent, roster);
+	}
+
+	function exposeDelegation(roster: Roster): void {
+		if (!identity.current()) return;
+		const enabled = coordinates(roster);
+		const base = pi.getActiveTools().filter((name) => !DELEGATION_TOOLS.has(name));
+		pi.setActiveTools(enabled ? [...base, ...DELEGATION_TOOLS] : base);
 	}
 
 	/** Read the roster now, warning about every file left out. */
@@ -742,6 +786,8 @@ export default function delegate(
 
 	/** The request as a start, or an error naming what to fix. */
 	async function validate(request: Parsed, roster: Roster, ctx: ExtensionContext): Promise<Start> {
+		admit(request.agent, roster);
+		results.checkStorage(true);
 		const disabled = disabledProblem(roster, request.agent);
 		if (disabled !== undefined) throw new Error(disabled);
 		if (roster.agents.length === 0) throw new Error(noAgents());
@@ -818,6 +864,8 @@ export default function delegate(
 		/** The delegate's tools, from `toolSelection`, read when the launch began; empty means none. */
 		tools: readonly string[];
 		onWindowOpened?: () => void;
+		identity?: Identity;
+		sessionId?: string;
 	}): Promise<OpenedWindow> {
 		const {
 			id,
@@ -834,7 +882,12 @@ export default function delegate(
 			tools,
 			onWindowOpened,
 		} = input;
-		const parent = ctx.sessionManager.getSessionId();
+		admit(start.agent.name, currentRoster(ctx));
+		results.checkStorage(true);
+		const own = input.identity ?? identity.child(start.agent, ctx);
+		own.autoExit = start.autoExit;
+		writeIdentity(input.sessionId ?? id, own);
+		const parent = own.parent;
 		const project = placement === "companion" ? placementProject(ctx.cwd) : { companion: "", notices: [] };
 		start.notices.push(...project.notices);
 		const managedContext =
@@ -843,7 +896,9 @@ export default function delegate(
 				: workspace.mode === "existing"
 					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
 					: "";
-		const prompt = writePromptFile(delegatePrompt(start.agent, parent, managedContext));
+		const prompt = writePromptFile(
+			delegatePrompt(start.agent, parent, managedContext, grantsNesting(start.agent, own.depth)),
+		);
 		const argv = [
 			...parentCommand(),
 			...session,
@@ -862,6 +917,9 @@ export default function delegate(
 		const env: Record<string, string> = {
 			PI_CODING_AGENT_DIR: getAgentDir(),
 			[PARENT_ENV]: parent,
+			PI_DELEGATE_ROOT: own.root,
+			PI_DELEGATE_DEPTH: String(own.depth),
+			PI_DELEGATE_CHAIN: own.chain.join(","),
 			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
 			[AGENT_ENV]: start.agent.name,
 			// A general signal for any extension: no human watches this session, so don't wait on a dialog.
@@ -872,7 +930,19 @@ export default function delegate(
 		const envSessionDir = process.env[SESSION_DIR_ENV];
 		if (envSessionDir !== undefined && envSessionDir !== "") env[SESSION_DIR_ENV] = envSessionDir;
 		// Listeners may only append to `args` and add to `env`; there is no veto.
-		const payload: LaunchPayload = { args: argv, env, agent: start.agent.name, cwd, toolCallId };
+		const payload: LaunchPayload = {
+			args: argv,
+			env,
+			agent: start.agent.name,
+			cwd,
+			toolCallId,
+			parent: own.parent,
+			root: own.root,
+			depth: own.depth,
+			chain: Object.freeze([...own.chain]),
+		};
+		for (const key of ["parent", "root", "depth", "chain"] as const)
+			Object.defineProperty(payload, key, { writable: false, configurable: false });
 		pi.events.emit(LAUNCH, payload);
 		let opened: OpenedWindow;
 		try {
@@ -923,6 +993,7 @@ export default function delegate(
 		results.recordStart(
 			{
 				id,
+				identity: readIdentity(id),
 				agent: start.agent.name,
 				...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
 				model: start.model,
@@ -948,6 +1019,8 @@ export default function delegate(
 		signal?: AbortSignal,
 		toolCallId?: string,
 	): Promise<Launched> {
+		admit(start.agent.name, currentRoster(ctx));
+		results.checkStorage(true);
 		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 		await requireTmuxVersion(tmux);
 		// Read once, before anything is created or mailed; the launch keeps these values.
@@ -984,13 +1057,17 @@ export default function delegate(
 				getAgentDir(),
 			);
 			if (combined?.aborted) throw new Error("the launch was aborted");
-			const trust = await trustPlannedWorktree(plan, ctx, getAgentDir(), combined);
+			const trust = await trustPlannedWorktree(plan, ctx, getAgentDir(), combined, identity.current() !== undefined);
 			if (combined?.aborted) throw new Error("the launch was aborted");
 			trusted = trust.trusted;
 			revalidateTrust = trust.revalidate;
 			plan.trusted = trusted;
 		} else {
-			const prepared = await prepareDirectory({ cwd: cwdOption, signal }, ctx, getAgentDir());
+			const prepared = await prepareDirectory(
+				{ cwd: cwdOption, signal, nested: identity.current() !== undefined },
+				ctx,
+				getAgentDir(),
+			);
 			directory = prepared.workspace;
 			trusted = prepared.trusted;
 		}
@@ -1000,6 +1077,8 @@ export default function delegate(
 		let managed: Extract<Workspace, { mode: "managed" }> | undefined;
 		let windowOpened = false;
 		const run = async (): Promise<Launched> => {
+			admit(start.agent.name, currentRoster(ctx));
+			results.checkStorage(true);
 			if (plan !== undefined) {
 				revalidate(plan);
 				revalidateTrust?.();
@@ -1138,17 +1217,35 @@ export default function delegate(
 		startPolling: tracking.startPolling,
 		placement: () => windowPlacement(getAgentDir()),
 		roster: rosterFor,
+		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
 		parentDefaults,
 		chooseModel: (explicit, agent, models, preferred) =>
 			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
 		thinkingProblem,
-		prepareDirectory: (cwd, ctx, signal) => prepareDirectory({ cwd, signal }, ctx, getAgentDir()),
+		prepareDirectory: (cwd, ctx, signal) =>
+			prepareDirectory({ cwd, signal, nested: identity.current() !== undefined }, ctx, getAgentDir()),
 		sendTask,
-		open: ({ id, name, sessionPath, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement }) =>
+		open: ({
+			id,
+			name,
+			sessionPath,
+			workspace,
+			trusted,
+			cwd,
+			sessionDir,
+			start,
+			toolCallId,
+			ctx,
+			placement,
+			identity: own,
+			sessionId,
+		}) =>
 			openChild({
 				id,
 				name,
 				session: ["--session", sessionPath],
+				identity: own,
+				sessionId,
 				workspace,
 				trusted,
 				cwd,
@@ -1381,23 +1478,28 @@ export default function delegate(
 	pi.on("session_start", (_event, ctx) => {
 		registry = ctx.modelRegistry;
 		latest = ctx;
-		tracking.restore(ctx);
 		// The roster is read at call time; the description is rebuilt here and before each run.
 		const roster = currentRoster(ctx);
 		announced.clear();
 		announce(roster, ctx);
 		registerDelegate(toolDescription(roster.agents));
+		exposeDelegation(roster);
 	});
 
 	// One roster/prompt snapshot prepares this run: refresh the description only when
 	// it changed, and replace only this extension's prompt section from the same snapshot.
 	pi.on("before_agent_start", (event, ctx) => {
 		latest = ctx;
+		const own = identity.current();
 		const roster = currentRoster(ctx);
+		if (own)
+			event.systemPromptOptions.sections.squire_delegate_task = `You are a delegate. ${parentTrust(own.parent, coordinates(roster))}`;
+		else delete event.systemPromptOptions.sections.squire_delegate_task;
+		exposeDelegation(roster);
 		announce(roster, ctx);
 		const description = toolDescription(roster.agents);
 		const prompt = readParentPrompt();
-		const visible = delegateVisible(event.systemPromptOptions);
+		const visible = delegateVisible(event.systemPromptOptions) && pi.getActiveTools().includes("delegate");
 		// Report a read failure even when guidance cannot be used, so it does not go unseen.
 		if (prompt.error !== undefined) ctx.ui.notify(`delegate: ${prompt.error}`, "warning");
 		if (visible && description !== registeredDescription) registerDelegate(description);

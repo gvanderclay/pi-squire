@@ -10,6 +10,7 @@ import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-
 import { type TObject, Type } from "typebox";
 
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
+import { type Identity, readIdentity } from "./identity.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
@@ -52,6 +53,8 @@ export type ResumeDeps = {
 	/** The window placement for this call; throws on an invalid setting. */
 	placement(): WindowPlacement;
 	roster(ctx: ExtensionContext): Roster;
+	/** Depth/current-parent grant check, before even an exited window is killed. */
+	admit?(agent: string, ctx: ExtensionContext): void;
 	/** The parent's current model and thinking level, which a field the agent locks but does not set keeps. */
 	parentDefaults(ctx: ExtensionContext): { model?: string; thinking: string };
 	chooseModel(
@@ -82,6 +85,8 @@ export type ResumeDeps = {
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
 		placement: WindowPlacement;
+		identity?: Identity;
+		sessionId: string;
 	}): Promise<OpenedWindow>;
 };
 
@@ -230,6 +235,8 @@ async function startResume(
 	const { id: windowId, session: windowSession } = await deps.open({
 		id,
 		name,
+		identity: record.identity ?? readIdentity(sessionId),
+		sessionId,
 		sessionPath: session.path,
 		workspace,
 		trusted: plan.trusted,
@@ -244,6 +251,7 @@ async function startResume(
 	deps.results.recordStart(
 		{
 			id,
+			identity: readIdentity(sessionId) ?? record.identity,
 			agent: start.agent.name,
 			...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
 			model: start.model,
@@ -294,6 +302,8 @@ async function resume(
 	const placement = await preflight(deps); // read once, before the exited window is killed or anything is mailed
 	if (request.task.trim() === "") throw new Error("a task is required");
 	const record = newestStarted(deps.results, request.id);
+	deps.admit?.(record.agent, ctx);
+	deps.results.checkStorage(true);
 	await ensureExited(record, deps.tmux);
 	const { session, agent } = recordCheck(deps, record, ctx);
 	inFlight.add(record.id);

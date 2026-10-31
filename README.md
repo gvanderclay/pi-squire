@@ -142,15 +142,76 @@ temporary folder, not as text on the command line.
   resumes with another storage directory selected. A parent whose session
   directory is not an absolute path refuses to launch, before sending the
   task.
-- Inside a delegate (`PI_DELEGATE_PARENT` set) the extension registers only
-  auto-exit's side, the `/auto-exit` command and its handlers, so a delegate
-  cannot start delegates of its own.
+- Delegates restore their identity and task state at session start. Delegation
+  tools are inactive unless the current agent opts in below `maxDepth`; launch
+  and resume admission enforce that boundary even through commands (see
+  [Nested delegation](#nested-delegation-unreleased)).
 - Without a UI the command and the `delegate` tool still work, except a
   `--cwd` launch whose project trust needs a question (see
   [Project trust](#project-trust)). They need tmux
   and a provider of `message:*`, and refuse with a message when either is
   missing. In print mode (`pi -p`) Pi does not show the refusal notices, so
   the refusal is silent there.
+
+## Nested delegation (unreleased)
+
+This integration is not ready for production nested agents: tool ceilings,
+shared tree caps, root-mediated trust and tree controls are still separate
+required slices. Use only isolated development fixtures until the full nesting
+milestone is integrated and tested.
+
+The default `maxDepth` in `<agent dir>/squire/settings.json` is **1**: root
+(depth 0) → delegate (depth 1), with no grandchildren. Set `maxDepth: 2` for
+root → coordinator → worker. A readable value must be a positive safe integer;
+an absent/unreadable settings file uses the safe depth-1 default.
+
+A coordinator's agent file opts in with
+`allow_nested_delegation: [worker, reviewer]`, or `true` for any current roster
+agent. Absent or an empty list grants no nesting. This slice accepts only true
+or a YAML list of valid agent names; complete grant diagnostics belong to the
+remaining validation slice. Below the limit the grant adds `delegate`,
+`delegation_status`, `delegation_close` and `delegation_resume` even with an
+explicit `tools` list. Merely listing those tools does not opt in and produces
+a roster warning. At the depth limit they are inactive and not passed onward.
+
+Every launch/resume re-reads the direct parent's current grant before side
+effects. A refusal names the permitted agents or depth/setting. Removing an
+agent from the grant blocks future launches/resumes, not existing work.
+Trusted project agents still shadow global definitions. Each launching session
+keeps the existing throttled quota checks and shared reactive usage-limit marks.
+
+A coordinator's task finishes child-first: no final task reply or auto-exit
+while any direct-child task is unfinished. Idle runs and open windows are not
+task completion; a finished `auto_exit: false` child does not hold the barrier.
+Child results steer only their direct parent. The coordinator must receive
+their outcomes in a model request and subsequently settle before reporting
+upstream. A result arriving during final settlement therefore requires another
+processing run, not just decrementing a count. Out-of-order work and rolling
+fan-out are supported; raw grandchild results are not independently forwarded
+to root.
+
+Task takeover and per-run guidance use the same current agent grant/depth check
+as tool exposure. Leaves keep the original final-message wording; only effective
+coordinators receive child-first final-report instructions. Manual reopening and
+grant changes use the current role, not the launch-time role.
+
+Intermediate failures, including exhausted fallbacks, keep the coordinator open
+while workers run. Child results can wake it again; its eventual final run
+determines done/failed. A user stop holds its task through failed runs as before.
+A confirmed vanished worker produces the existing closed-without-result
+outcome, which the coordinator processes without treating it as successful work.
+Unknown tmux state is not disappearance and does not release the barrier.
+
+Identity (direct parent, root, depth, own agent and ordered agent-name chain)
+and child-task facts survive manual reopening of the same Pi session with the
+same agent directory, without launch environment variables. Reopening does not
+adopt another parent's children. Closing/reloading/exiting a parent does not
+terminate its workers. Descendant discovery, duplicate-process arbitration and
+explicit subtree close remain later slices; do not open the same session twice.
+
+Until root trust routing lands, a nested launch/resume needing an unresolved
+trust decision refuses clearly instead of opening unattended UI. Already-decided
+trust, inherited-directory trust and explicit approve/no-approve flags remain.
 
 ## Where delegate windows open
 
@@ -465,6 +526,7 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
 | `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern, or a YAML list entry holding a comma, makes the file invalid. A comma-separated line (`fallback: a, b`) is two entries. |
 | `auto_exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
+| `allow_nested_delegation` | Unreleased: `true` or a YAML list of child agent names; grants nested delegation below `maxDepth` (see [Nested delegation](#nested-delegation-unreleased)). Absent grants none. |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
 | `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate` or a resume that passes a locked field does not get it: the agent's value is used (the parent's when the file sets none) and the result says which agent locked which field. Passing the agent's own value is the same as passing nothing: no notice, and its fallbacks still apply. A resume of a locked field runs on the file's value as it is now, not on what the delegate last ran on. `true` locks the fields the file sets. |
@@ -501,9 +563,11 @@ loadable by `tool_search`, whatever its exposure. Pi filters MCP tools by
 such entry pi-squire adds the entry `mcp__`, which names no tool; an empty
 selection is `--no-tools`, which removes MCP tools too. To give a delegate an
 MCP server's tools, name them, for example `mcp__docs__*`. An extension that
-turns tools on at run time can still add only tools the list allows. Names
+turns tools on at run time can still add only tools the list allows. Top-level tool names
 are not checked against the parent's tools: normal Pi extension discovery
-or `session:launch` customization can provide tools in the child.
+or `session:launch` customization can provide tools in the child. A nested
+callable-tool ceiling is still required before the unreleased nesting milestone
+can be used in production; this lifecycle slice does not claim isolation.
 
 - No `tools` field: the delegate gets the parent session's tools as they are
   when the launch (or resume) starts, the tools active there then, passed as
@@ -522,8 +586,10 @@ or `session:launch` customization can provide tools in the child.
   file invalid, and the agent is disabled (see below).
 
 The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
-`delegation_resume`) are never passed and never available in a delegate:
-pi-squire registers none of them there.
+`delegation_resume`) are removed from ordinary tool selections. An opted-in
+coordinator below `maxDepth` receives them automatically; a leaf has them
+inactive. Commands are still registered but cannot bypass admission. See the
+unreleased [nesting restrictions](#nested-delegation-unreleased).
 
 The delegate's result reaches the parent through the `message:*` provider's
 reply hook when squire settles the task, not through a tool, so a short `tools` list cannot
@@ -584,13 +650,14 @@ add one.
 ## Configuration
 
 `<agent dir>/squire/` holds the optional parent guidance file and
-`settings.json` (`windowPlacement`, `worktreeRoot` and `delegateTools`); the
+`settings.json` (`maxDepth`, `windowPlacement`, `worktreeRoot` and `delegateTools`); the
 agents live in `<agent dir>/agents/` (see [Agents](#agents)).
 `delegation_prompt.md` is Markdown, inserted unchanged as the
 `squire_parent_delegation` system-prompt section before each new run, including
 a run started by an idle delegate result. It is not a conversation or user
 message, is not duplicated in the `delegate` tool description or guidelines,
-and is not sent to the child. The guidance is added only while the `delegate`
+and is not copied into the launched child's prompt. An opted-in coordinator
+reads this same file for its own parent role. The guidance is added only while the `delegate`
 tool is active and not hidden; when delegation is inactive or hidden, the
 section is removed and tool selection is left as it was. A missing or whitespace-only
 file adds no section. Editing the file replaces the section at the next run;
@@ -600,12 +667,21 @@ valid delegation working. The package ships no default delegation or approval
 policy.
 
 Refresh happens before a new run, not before every model request in a tool
-loop, and the extension does not watch the filesystem. `pi-squire` reads no
-environment variable of its own. `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT` are set
-for the child, never read as configuration by the parent. The window starts
-with the tmux server's environment plus only these from the parent:
-`PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` (when the parent has it
-set; `--session-dir` outranks it), `PI_DELEGATE_PARENT` and `PI_DELEGATE_AUTO_EXIT`, and it always gets `PI_UNATTENDED=1`.
+loop, and the extension does not watch the filesystem. `pi-squire` uses launch variables to bootstrap a delegate; durable session
+identity takes precedence when it reopens. The window starts with the tmux
+server's environment plus `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`
+(when set; `--session-dir` outranks it), and these delegate values:
+
+- `PI_DELEGATE_PARENT`: direct parent's session id;
+- `PI_DELEGATE_ROOT`: root session id;
+- `PI_DELEGATE_DEPTH`: child depth as a decimal string;
+- `PI_DELEGATE_AGENT`: this child's roster identity (not display name);
+- `PI_DELEGATE_CHAIN`: comma-separated agent names, root downward, including
+  the child last, e.g. `coordinator,worker`; names label requests, session ids route them;
+- `PI_DELEGATE_AUTO_EXIT`: `1` or `0`;
+- `PI_DELEGATE_FALLBACK`: remaining model candidates, when any.
+
+It always gets `PI_UNATTENDED=1`.
 `PI_UNATTENDED=1` is a general signal, not specific to pi-squire: no human is
 watching this session, even though it runs in a TUI. Other extensions may read
 it to skip a dialog or confirmation instead of waiting on one, and any other
@@ -623,7 +699,8 @@ agent's `auto_exit`.
 ## Tools
 
 The model gets four tools. They share the command's launch path and the
-session's delegation records. None of them is registered inside a delegate.
+session's delegation records. In a delegate they are active only for an
+opted-in coordinator below `maxDepth`; admission also checks every launch/resume.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
@@ -845,10 +922,13 @@ The parent resolves each delegation's auto-exit from the call
   down (`ctx.shutdown()`) on the next event-loop turn, after the settle
   reply has been sent, so its tmux window closes. The session file stays, and
   `pi --session <path>` reopens it (see [Reopening a delegate's session](#reopening-a-delegates-session)).
-- A failed run, such as one ending on a usage limit or another provider
-  error, exits like a normal completion; the parent still gets the failed
+- A failed final run, such as one ending on a usage limit or another provider
+  error after fallbacks are exhausted, exits like a normal completion; the parent still gets the failed
   reply and the session file stays. Only a run the user stopped never exits
   the delegate.
+- A coordinator cannot exit until its child tasks finish and their outcomes
+  are processed in a subsequently settled run. An intermediate failure sends
+  no final task reply and keeps it available for child results.
 - The user taking over turns it off for the rest of the session, with a
   notice: typed or RPC input, or a run the user stopped (Esc).
 - `/auto-exit` inside the delegate turns it on again for the next normal
@@ -856,7 +936,8 @@ The parent resolves each delegation's auto-exit from the call
 - The footer shows that this is a delegate, its agent, and whether auto-exit
   is on: `👦 worker delegate · auto-exit on`, or
   `👦 worker delegate · auto-exit off`, with 👦 or 👧
-  picked at random per session.
+  picked at random per session. Its status key is `delegate-self`; its own
+  running-child count uses `delegate`, so the footers do not overwrite each other.
 
 There is no `subagent_done` tool: auto-exit off only means the window stays.
 
@@ -950,7 +1031,8 @@ Delegate session: <session file or id>
   records are rebuilt synchronously at session start. A resume still
   recognises replies, including one that arrived while the parent was
   closed, and still reports a recorded close as closed. A result is shown
-  once and never again.
+  once for ordinary transport retries. An unprocessed coordinator outcome may
+  be replayed on reopening so it is not lost before a processing run.
 - Plain replies, and requests not taken over as this delegate's task, are left
   to the provider. Squire never answers those ordinary requests.
 
@@ -964,7 +1046,8 @@ gone. A delegation whose window is gone and still has no result after that
 scan is recorded as closed without a result, a record separate from
 `delegation_close`'s, and the parent gets one `[delegate]` message naming the
 delegation, with the delegate session path when one is found, sent as a
-`followUp` with `triggerTurn`. A tick declares nothing when nobody answers
+`followUp` with `triggerTurn` (a coordinator uses `steer` to process the missing
+outcome before its final report). A tick declares nothing when nobody answers
 `message:scan` or when tmux reports an error. A reply that arrives later is
 still delivered and makes the delegation done. A resumed session polls again
 for every delegation it restores as running.
@@ -1060,7 +1143,8 @@ that block.
 
 ### `session:launch`
 
-`pi-squire` provides this hook. It emits `{ args, env, agent, cwd, toolCallId }`
+`pi-squire` provides this hook. It emits
+`{ args, env, agent, cwd, toolCallId, parent, root, depth, chain }`
 just before it opens the delegate's window: for a launch, after the task has
 been sent; for a resume, before it is sent, since a resume mails the task once
 the window is open (see [Resuming a delegation](#resuming-a-delegation)).
@@ -1072,6 +1156,10 @@ the window is open (see [Resuming a delegation](#resuming-a-delegation)).
 | `agent` | the agent's name, as in `<agent dir>/agents/<name>.md` or `<cwd>/.pi/agents/<name>.md` (never its `display_name`); read it, do not change it |
 | `cwd` | the directory the window opens in, the parent's or the resolved `--cwd`; read it, do not change it |
 | `toolCallId` | the ID of the `delegate` or `delegation_resume` tool call that started the launch; absent when started from the `/delegate` or `/delegate-resume` command; read it, do not change it |
+| `parent` | Read-only direct parent session id. |
+| `root` | Read-only root session id; retained on resume. |
+| `depth` | Read-only numeric child depth, root = 0; retained on resume. |
+| `chain` | Read-only frozen array of roster agent names ordered root downward, including the current child last; no session ids. |
 
 Listeners may only append to `args` and add keys to `env`; there is no veto,
 and `pi-squire` passes both to tmux unchanged. Do all work synchronously: the
@@ -1092,6 +1180,11 @@ pi.events.on("session:launch", (payload) => {
   payload.args.push("--auto");
   payload.env.GATE_MODE = "auto";
   payload.env.GATE_ROOT = payload.cwd;
+  payload.env.GATE_CHAIN = payload.chain.join(",");
+  payload.env.GATE_PARENT = payload.parent;
+  assert.equal(payload.chain.at(-1), payload.agent);
+  assert.ok(Number.isSafeInteger(payload.depth));
+  assert.ok(Object.isFrozen(payload.chain));
 });
 ```
 
@@ -1106,7 +1199,8 @@ provider's own README carries the contract.
 
 ### `message:reply`
 
-After the final run settles (including fallback continuations), squire emits
+After the final run settles (including fallback continuations and the durable
+child-first processing barrier), squire emits
 `{ to, inReplyTo, body, status }`: the direct parent's address, the owed request
 ids in batches of at most 50, the exact result text, and `done` or `failed`.
 The provider must synchronously set `envelope` or `error`; neither means no
@@ -1117,8 +1211,24 @@ Task ownership and a frozen final-answer outbox live in
 `<agent dir>/squire/task-replies/<session id>.json`, independently of Pi's
 buffered transcript. Atomic file replacement preserves pending answers over
 reload, restart, squire resume and manual reopening of the same session with
-the same agent directory. Manual reopening without the launch environment
-restores owed-answer handling, not full delegate identity, fallback or auto-exit.
+the same agent directory. Identity and auto-exit state live separately in
+`<agent dir>/squire/identity/<encoded session id>.json`; manual reopening
+restores parent/root/depth/agent/chain and the saved auto-exit setting. The
+launch-time remaining fallback list is not restored by a manual reopen;
+squire resume still supplies its current fallback candidates.
+
+Direct-child facts and pending result/gone outcomes live in
+`<agent dir>/squire/child-tasks/<encoded parent session id>.json`, independently
+of transcript buffering. Starts and terminal outcomes are saved locally before
+result injection. Restoring these facts precedes task handling and mail claims.
+Each model request includes pending outcomes; only those observed by a request
+and followed by a non-stopped settlement are acknowledged. The task reply gate
+requires no unfinished children and no unprocessed outcomes. Storage failures
+block final completion/auto-exit and new launch/resume admission in roots and
+coordinators. Read-only admission checks the restored store health; a write
+preflight persists unchanged task facts before mail, windows, worktree creation
+or killing an exited resume window. Repair unhealthy storage and reload before
+launching again. These local task records are not a shared tree registry.
 
 A failed write produces a visible `delegate: could not handle the task reply`
 error and blocks auto-exit. A frozen answer is retried on the next settled
@@ -1208,7 +1318,8 @@ version and is listed under "Breaking" in [CHANGELOG.md](CHANGELOG.md).
 
 Other extensions may rely on:
 
-- the `session:launch` payload `{ args, env, agent, cwd, toolCallId }`, emitted
+- the `session:launch` payload
+  `{ args, env, agent, cwd, toolCallId, parent, root, depth, chain }`, emitted
   synchronously before the window opens (after the task is sent for a launch,
   before it is sent for a resume), with
   `cwd`, the trust flag and `--session-dir` chosen by `pi-squire` (see
@@ -1227,12 +1338,13 @@ Other extensions may rely on:
 - the agent file's frontmatter keys and its locations,
   `<agent dir>/agents/<name>.md` and, in a trusted project,
   `<cwd>/.pi/agents/<name>.md`;
-- the `delegateTools`, `windowPlacement` and `worktreeRoot` settings in
+- the `maxDepth`, `delegateTools`, `windowPlacement` and `worktreeRoot` settings in
   `<agent dir>/squire/settings.json`;
 - the optional `<agent dir>/squire/delegation_prompt.md` file and the
   `squire_parent_delegation` system-prompt section;
-- the child environment variables `PI_DELEGATE_PARENT`,
-  `PI_DELEGATE_AUTO_EXIT` and `PI_UNATTENDED=1`.
+- the child environment variables `PI_DELEGATE_PARENT`, `PI_DELEGATE_ROOT`,
+  `PI_DELEGATE_DEPTH`, `PI_DELEGATE_AGENT`, `PI_DELEGATE_CHAIN`,
+  `PI_DELEGATE_AUTO_EXIT`, `PI_DELEGATE_FALLBACK` and `PI_UNATTENDED=1`.
 
 A `message:*` provider must:
 

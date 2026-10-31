@@ -148,7 +148,9 @@ test("a record whose model is usage-limited with no fallback is not offered", as
 test("a record with a thinking level that is no longer valid is not offered", async () => {
 	const { s, id } = await exited();
 	(s.entries.at(-1)?.data as { thinking: string }).thinking = "bogus";
-	await s.start(); // the records are rebuilt from the entries
+	// Simulate an imported legacy transcript without a durable local record.
+	rmSync(join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`));
+	await s.start();
 	assert.deepEqual(await offered(s), []);
 	const tool = await s.toolCall("delegation_resume", { id, task: "again" }).then(String, (err: Error) => err.message);
 	assert.match(tool, /thinking/i);

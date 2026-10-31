@@ -16,8 +16,7 @@
 // it as a user prompt, so the task starts through the same path as a typed
 // prompt, labelled `[delegate]`. Pi 1.2.0 already prepares the system prompt
 // for custom-message runs (earendil-works/pi#5581); this takeover remains the
-// package's pinned startup delivery path. The provider still arms the
-// automatic answer for a request a listener took over.
+// package's pinned startup delivery path. task-replies.ts owns the answer.
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
 	type ExtensionAPI,
@@ -29,6 +28,7 @@ import {
 
 import { activeMark, classify, type Response, recordLimit } from "./limits.ts";
 import { STATUS_KEY } from "./results.ts";
+import type { TaskReplies } from "./task-replies.ts";
 
 /** The launch variable that carries the parent's resolved setting. */
 export const AUTO_EXIT_ENV = "PI_DELEGATE_AUTO_EXIT";
@@ -42,8 +42,6 @@ const OFF_NOTICE =
 const ON_NOTICE = "delegate: auto-exit is on; this delegate closes after its next normal completion.";
 
 type Message = { role?: string; stopReason?: unknown; errorMessage?: unknown; provider?: unknown; model?: unknown };
-
-type Inbound = { envelope?: { from?: unknown; kind?: unknown; body?: unknown }; handled?: boolean };
 
 /** A run that ended on a usage-limit error leaves a mark for every Pi session. */
 function recordUsageLimit(last: Message, ctx: ExtensionContext, response?: Response): void {
@@ -107,24 +105,6 @@ async function switchModel(
 	return undefined;
 }
 
-/** Take over the parent's task request and send it as a user prompt. */
-function registerTakeover(pi: ExtensionAPI, parent: string): void {
-	let current: ExtensionContext | undefined;
-	pi.on("session_start", async (_event, ctx) => {
-		current = ctx;
-	});
-	pi.events.on("message:inbound", (data) => {
-		const payload = data as Inbound;
-		const envelope = payload?.envelope;
-		if (payload.handled === true || envelope?.kind !== "request" || envelope.from !== parent) return;
-		payload.handled = true;
-		const text = `[delegate] Your task, from the session that started you (${parent}). Your final message this turn goes back to it automatically.\n\n${String(envelope.body ?? "")}`;
-		Promise.resolve(pi.sendUserMessage(text, { deliverAs: "steer" })).catch((err) =>
-			current?.ui.notify(`delegate: could not start the task: ${(err as Error).message}`, "error"),
-		);
-	});
-}
-
 /**
  * A usage limit or an unavailable endpoint moves the run to the next fallback
  * that is usable and not marked, and continues it in this session; each
@@ -185,8 +165,7 @@ function showStatus(ctx: ExtensionContext, armed: boolean): void {
 	);
 }
 
-export function registerChild(pi: ExtensionAPI, parent: string): void {
-	registerTakeover(pi, parent);
+export function registerChild(pi: ExtensionAPI, replies: TaskReplies): void {
 	const setFailure = registerFallback(pi);
 
 	let armed = process.env[AUTO_EXIT_ENV] === "1";
@@ -235,10 +214,10 @@ export function registerChild(pi: ExtensionAPI, parent: string): void {
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
-		const exit = armed && completed;
+		const exit = armed && completed && replies.handled();
 		completed = false;
 		if (!exit) return;
-		// Later settle handlers (the `message:*` provider's reply among them) run first.
+		// Task settlement and its synchronous reply write have succeeded.
 		setImmediate(() => ctx.shutdown());
 	});
 

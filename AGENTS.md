@@ -20,7 +20,10 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   `git.ts` contains read-only Git identity and path parsing, `worktree.ts`
   plans/creates/rolls back managed worktrees, `worktree-placement.ts` resolves
   call-time placement settings, and `tmux.ts` talks to tmux.
+- `src/task-replies.ts` owns task takeover/retries, `task-settlement.ts` the
+  request settlement wording, and `task-store.ts` the durable answer outbox.
 - Tests and their helpers (`harness.ts`, `fake-tmux.ts`) are in `test/`.
+  `test/mail-harness.ts` runs real-provider instances over an isolated mail root.
   Nothing under `test/` is published; `scripts/check-pack.mjs` enforces that.
 
 ## Checks

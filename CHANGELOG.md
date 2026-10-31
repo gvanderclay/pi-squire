@@ -6,6 +6,24 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- Require pi-session-mail 0.6.0 or another provider of all four message hooks.
+  Upgrade mail and squire together: squire now owns delegate task settlement
+  through `message:reply`; mail no longer automatically answers task requests.
+
+### Fixed
+
+- Persist owed delegate task answers and frozen reply retries across reload,
+  restart, resume and same-session manual reopening. Bounded startup retries
+  tolerate delayed mail initialization; remaining reply write failures are
+  visible and block auto-exit. Stops hold tasks through failed runs; successful
+  recovery, final failure, fallback and no-answer wording are preserved.
+  Updated `test/auto-exit.test.ts` for consumer-owned reply/exit behavior and
+  added real-provider task-reply and correlation regression coverage.
+- Correlate every request id in a batched reply and suppress duplicate final
+  results even when a transport retry writes a fresh reply envelope.
+
 ### Changed
 
 - Default companion placement now groups delegate windows by the owning root

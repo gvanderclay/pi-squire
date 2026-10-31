@@ -105,6 +105,18 @@ test("with auto-exit on, a normal completion shuts the delegate down after the s
 	assert.equal(s.shutdowns(), 1);
 });
 
+test("an owned task cannot auto-exit when no provider handles message:reply", async () => {
+	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
+	await s.start();
+	s.events.emit("message:inbound", {
+		envelope: { id: "owed-task", from: "some-parent", kind: "request", body: "do the task" },
+		handled: false,
+	});
+	await s.run();
+	assert.equal(s.shutdowns(), 0);
+	assert.match(s.errors.join("\n"), /no message:reply provider installed.*answer is retained/);
+});
+
 test("with auto-exit off, a normal completion leaves the delegate running", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "0" });
 	await s.start();
@@ -202,7 +214,10 @@ test("/auto-exit works in a delegate started with auto-exit off", async () => {
 test("the parent's request reaches the delegate as a user prompt; other mail is left to the provider", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
 	await s.start();
-	const task = { envelope: { from: "some-parent", kind: "request", body: "do the thing" }, handled: false };
+	const task = {
+		envelope: { id: "task-id", from: "some-parent", kind: "request", body: "do the thing" },
+		handled: false,
+	};
 	const peer = { envelope: { from: "someone-else", kind: "request", body: "x" }, handled: false };
 	const note = { envelope: { from: "some-parent", kind: "message", body: "y" }, handled: false };
 	for (const payload of [task, peer, note]) s.events.emit("message:inbound", payload);

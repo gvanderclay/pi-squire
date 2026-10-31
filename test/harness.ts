@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
+import { createEventBus, type EventBus, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -214,6 +214,12 @@ let counter = 0;
 export type Entry = { customType: string; data: Record<string, unknown> };
 
 export type SessionOptions = {
+	/** Install a real mail provider instead of the send/scan stubs. */
+	mailProvider?: (pi: ExtensionAPI) => void;
+	/** Exercise the opposite extension load order. */
+	mailProviderLast?: boolean;
+	/** Register an intervening extension before a provider loaded last. */
+	beforeMailProvider?: (pi: ExtensionAPI) => void;
 	/** Whether `ctx.hasUI` is true. */
 	hasUI?: boolean;
 	/** The parent's working directory, `ctx.cwd`; default `root`. */
@@ -408,6 +414,8 @@ export function session(options: SessionOptions = {}) {
 					},
 		cwd: options.cwd ?? root,
 		hasUI: options.hasUI ?? true,
+		mode: "json",
+		isIdle: () => signal === undefined,
 		isProjectTrusted: () => options.projectTrusted ?? false,
 		modelRegistry: registry,
 		get signal() {
@@ -465,6 +473,7 @@ export function session(options: SessionOptions = {}) {
 	// The provider stub runs synchronously on the same bus, as `mailbox` does.
 	const mode = options.send ?? "envelope";
 	events.on("message:send", (data) => {
+		if (options.mailProvider !== undefined) return;
 		const payload = data as SendPayload;
 		sendCalls.push(payload);
 		if (mode === "envelope") payload.envelope = { id: randomUUID() };
@@ -476,6 +485,7 @@ export function session(options: SessionOptions = {}) {
 	const scan = { answering: true, calls: 0, queue: [] as unknown[] };
 	events.on("message:scan", (data) => {
 		scan.calls++;
+		if (options.mailProvider !== undefined) return;
 		if (!scan.answering) return;
 		for (const inbound of scan.queue.splice(0)) events.emit("message:inbound", inbound);
 		(data as { scanned?: boolean }).scanned = true;
@@ -484,7 +494,12 @@ export function session(options: SessionOptions = {}) {
 	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
 	if (options.fallbackEnv !== undefined) process.env.PI_DELEGATE_FALLBACK = options.fallbackEnv;
 	if (options.agentEnv !== undefined) process.env.PI_DELEGATE_AGENT = options.agentEnv;
+	if (!options.mailProviderLast) options.mailProvider?.(pi as never);
 	register(pi as never, tmux, usage);
+	if (options.mailProviderLast) {
+		options.beforeMailProvider?.(pi as never);
+		options.mailProvider?.(pi as never);
+	}
 	const fire = async (name: string, event: object = {}) => {
 		const results: unknown[] = [];
 		for (const handler of handlers[name] ?? []) results.push(await handler({ type: name, ...event }, ctx));

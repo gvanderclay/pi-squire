@@ -21,13 +21,15 @@ You need:
   relative to the pane's session (see [Where delegate windows
   open](#where-delegate-windows-open)), so a client attached elsewhere does
   not matter.
-- A provider of `message:*`;
-  [pi-session-mail](https://github.com/gvanderclay/pi-session-mail) is one
-  example. Without a provider there is no way to send the task or get an
+- A provider of the four `message:*` hooks, including `message:reply`;
+  [pi-session-mail](https://github.com/gvanderclay/pi-session-mail) **0.6.0 or
+  later** supplies them. Without a provider there is no way to send the task or get an
   answer, so `/delegate` refuses rather than start a delegate that cannot
   report back.
 
-With pi-session-mail as the provider, for example, install both from npm:
+Upgrade pi-session-mail and pi-squire together, then restart or reload both
+parent and delegate sessions. Older mail providers are unsupported; there is
+no version negotiation or legacy automatic-answer path. Install both from npm:
 
 ```bash
 pi install npm:pi-session-mail
@@ -519,7 +521,7 @@ The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
 pi-squire registers none of them there.
 
 The delegate's result reaches the parent through the `message:*` provider's
-reply when its run settles, not through a tool, so a short `tools` list cannot
+reply hook when squire settles the task, not through a tool, so a short `tools` list cannot
 stop it answering. To let a delegate message its parent mid-task, whatever its
 `tools`, list the tools your `message:*` provider gives a session for that in
 the `delegateTools` setting, in `<agent dir>/squire/settings.json` beside
@@ -909,10 +911,12 @@ Delegate session: <session file or id>
     5 non-blank lines with heading marks, backticks and bold stripped;
     expanded (Ctrl+O), it shows the result as Markdown, the quoted task, then
     the ids and files, with the home directory shown as `~`.
-- Stopping a delegate's run (Esc) sends no result: the provider holds the
+- Stopping a delegate's run (Esc) sends no result: pi-squire holds the
   task, so the delegation stays running while the user steers it. The next
-  run that completes sends the result, `done`, and its body opens with a note
-  that the user took over partway.
+  run that completes successfully sends the result, `done`, and its body opens
+  with a note that the user took over partway. Failed runs in between do not
+  answer a held task. Asks are different: the mail provider still owns their
+  replies, including `stopped` replies, and does not hold them.
 - A `failed` reply from a delegate that recorded a usage-limit mark (see
   [Usage limits](#usage-limits)) gets one more line right after `Status:`,
   for example `Usage limit: the delegate hit a usage limit on provider
@@ -951,7 +955,8 @@ Delegate session: <session file or id>
   recognises replies, including one that arrived while the parent was
   closed, and still reports a recorded close as closed. A result is shown
   once and never again.
-- Plain replies, and every request, are left to the provider.
+- Plain replies, and requests not taken over as this delegate's task, are left
+  to the provider. Squire never answers those ordinary requests.
 
 While any delegation is running (no result, no close), the parent polls every
 5 seconds; the timer does not keep the process alive and stops when nothing is
@@ -1103,6 +1108,41 @@ and `pi-squire` refuses with a message naming `message:*`. The envelope's `id`
 is kept in the delegation's record, so an answer can be matched to it. The
 provider's own README carries the contract.
 
+### `message:reply`
+
+After the final run settles (including fallback continuations), squire emits
+`{ to, inReplyTo, body, status }`: the direct parent's address, the owed request
+ids in batches of at most 50, the exact result text, and `done` or `failed`.
+The provider must synchronously set `envelope` or `error`; neither means no
+provider. Squire keeps the task owed until the write succeeds and completion
+is recorded. The provider's README owns the transport contract.
+
+Task ownership and a frozen final-answer outbox live in
+`<agent dir>/squire/task-replies/<session id>.json`, independently of Pi's
+buffered transcript. Atomic file replacement preserves pending answers over
+reload, restart, squire resume and manual reopening of the same session with
+the same agent directory. Manual reopening without the launch environment
+restores owed-answer handling, not full delegate identity, fallback or auto-exit.
+
+A failed write produces a visible `delegate: could not handle the task reply`
+error and blocks auto-exit. A frozen answer is retried on the next settled
+run, or on reload/reopen (starting on the next event-loop turn); the next
+run's text does not replace that answer. An async startup handler between
+squire and mail can delay provider initialization past that turn, so a failed
+startup attempt gets two additional reply attempts, 100 ms apart, on an
+unref'd timer. After those attempts, any failure is visible and no ongoing
+retry timer remains. Fix the provider or storage error and reload/reopen to
+retry without a model call. A successful startup retry does not itself close
+the window.
+
+Mail does not deduplicate replies. A crash after the envelope write but before
+completion recording can cause squire to resend the saved outbox. This is
+at-least-once transport, not atomic exactly-once delivery. The parent matches
+every correlated task id, records each as answered, and suppresses further
+final results for those ids even when a retry has a new envelope id. One
+envelope answering several owed tasks is shown once, using its last pending
+delegation for the displayed task quote.
+
 ### `message:inbound`
 
 `pi-squire` consumes this hook for answers: a reply whose `in_reply_to` names a
@@ -1115,8 +1155,10 @@ to the provider.
 Inside a delegate, `pi-squire` also takes over the task: a `request` whose
 `from` is the parent's address. It sets `handled` and sends the task as a user
 prompt labelled `[delegate]`, so the run starts the way a typed prompt does.
-The provider still arms the automatic answer for a request a listener took
-over. Every other message to the delegate is left to the provider. `pi-squire` reads `from` and requires
+Squire durably records its parent and request id before starting the task;
+it owns the answer through `message:reply`. The provider arms no automatic
+request answer. Every other message to the delegate is left to the provider.
+`pi-squire` reads `from` and requires
 it to be the sender's address, which for a delegate is its session id; a reply
 from any other sender is left to the provider, even when it answers a recorded
 request. The provider's README carries the contract.
@@ -1142,7 +1184,12 @@ contract.
 
 ## Testing limits
 
-The automated tests drive the extension through a fake Pi session. They check
+The automated tests drive the extension through fake Pi lifecycles. The
+reusable `test/mail-harness.ts` runs multiple independent extension instances
+with the real, exactly pinned pi-session-mail 0.6.0 over an isolated shared
+mail root. Protocol tests cover correlation, asks, stops, fallback, pending
+answers, retries and duplicate delivery after the write/completion crash
+window. These are not real model runs or real process-crash tests. They check
 the registered tool definitions, the structured prompt options a simulated run
 preparation receives, file handling, visibility gating and the existing launch
 and result paths. They do not prove actual Pi event scheduling, final provider
@@ -1170,7 +1217,7 @@ Other extensions may rely on:
   before it is sent for a resume), with
   `cwd`, the trust flag and `--session-dir` chosen by `pi-squire` (see
   [Hooks](#hooks));
-- the `message:send`, `message:inbound` and `message:scan` hooks, consumed as
+- the `message:send`, `message:reply`, `message:inbound` and `message:scan` hooks, consumed as
   their sections document;
 - the `delegate`, `delegation_status`, `delegation_close` and `delegation_resume` tool names,
   parameters, the recorded `workspace` shape and the `workspaceSnapshot`
@@ -1193,12 +1240,12 @@ Other extensions may rely on:
 
 A `message:*` provider must:
 
-- implement `message:send`, `message:inbound` and `message:scan` as documented
-  under [Hooks](#hooks);
+- implement `message:send`, `message:reply`, `message:inbound` and `message:scan`
+  as documented under [Hooks](#hooks);
 - set a reply's `from` to the sender's address, so the delegate's reply can be
   matched to its task;
-- reply on its own when the delegate's run settles, since that reply is what
-  becomes the result.
+- write explicit request replies through `message:reply`, without automatically
+  answering requests at settle; asks remain separately owned by the provider.
 
 ## Contributing
 

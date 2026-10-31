@@ -372,14 +372,16 @@ export function createResults(pi: ExtensionAPI): Results {
 		const reply = payload?.envelope;
 		if (reply === undefined || !Array.isArray(reply.in_reply_to) || reply.in_reply_to.length === 0) return;
 		// Only the delegate's own reply counts: `from` must be the delegation's session id.
-		const requestId = reply.in_reply_to.find((id) => {
-			const record = byRequest.get(id);
-			return record !== undefined && sessionIdOf(record) === reply.from;
-		});
-		if (requestId === undefined) return;
+		const matches = reply.in_reply_to
+			.map((id) => byRequest.get(id))
+			.filter((record): record is StartedRecorded => record !== undefined && sessionIdOf(record) === reply.from);
+		if (matches.length === 0) return;
 		payload.handled = true;
-		if (shown.has(reply.id)) return;
-		const delegation = byRequest.get(requestId) as StartedRecorded;
+		// Transport retries have fresh envelope ids. Correlate on every task id,
+		// not just the envelope, and never present an already answered task again.
+		const pending = matches.filter((record) => record.result === undefined);
+		if (shown.has(reply.id) || pending.length === 0) return;
+		const delegation = pending.at(-1) as StartedRecorded;
 		shown.add(reply.id);
 		const session = locateSession(delegation, ctx?.sessionManager.getSessionDir());
 		const finished = finishedModel(session);
@@ -399,8 +401,10 @@ export function createResults(pi: ExtensionAPI): Results {
 			...(finished === undefined ? {} : { finishedModel: finished }),
 			workspaceSnapshot: snapshot,
 		};
-		pi.appendEntry(CUSTOM_TYPE, { id: delegation.id, result });
-		delegation.result = result;
+		for (const record of pending) {
+			pi.appendEntry(CUSTOM_TYPE, { id: record.id, result });
+			record.result = result;
+		}
 		updateFooter();
 	}
 

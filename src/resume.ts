@@ -14,6 +14,7 @@ import { type Identity, readIdentity } from "./identity.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
+	assertNoOwner,
 	inFlight,
 	passes,
 	preflight,
@@ -56,6 +57,7 @@ export type ResumeDeps = {
 	roster(ctx: ExtensionContext): Roster;
 	/** Depth/current-parent grant check, before even an exited window is killed. */
 	admit?(agent: string, ctx: ExtensionContext): void;
+	authorize?(id: string, ctx: ExtensionContext): void;
 	reserve(record: StartedRecorded, id: string, ctx: ExtensionContext): Promise<Reservation>;
 	/** The parent's current model and thinking level, which a field the agent locks but does not set keeps. */
 	parentDefaults(ctx: ExtensionContext): { model?: string; thinking: string };
@@ -317,8 +319,10 @@ async function resume(
 ): Promise<Resumed> {
 	const placement = await preflight(deps); // read once, before the exited window is killed or anything is mailed
 	if (request.task.trim() === "") throw new Error("a task is required");
+	deps.authorize?.(request.id, ctx);
 	const record = newestStarted(deps.results, request.id);
 	deps.admit?.(record.agent, ctx);
+	assertNoOwner(record);
 	deps.results.checkStorage(true);
 	const reservation = await deps.reserve(record, randomUUID(), ctx);
 	let acquired = false;
@@ -378,7 +382,7 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 		name: "delegation_resume",
 		label: "Resume delegation",
 		description:
-			"Continue an exited delegate with a follow-up task: reopen its own session, so it keeps the context it built, in a new window. The follow-up is recorded as a new delegation, and its result arrives as a message on its own, like a delegate's. Use it when the next task needs what the delegate already read or decided; for unrelated work, use delegate. It refuses a delegation that is still running (send it a message instead), one whose window is still open, an older delegation of a chain that was already resumed (it names the newest), and one whose working directory is gone, a removed worktree included. A delegate whose window was killed mid-turn can be resumed.",
+			"Only this session’s direct children may be resumed; viewing a descendant does not grant authority, and fork/clone copies must return to the original parent. Current depth, grants, caps, tools and trust are checked again. Continue an exited delegate with a follow-up task: reopen its own session, so it keeps the context it built, in a new window. The follow-up is recorded as a new delegation, and its result arrives as a message on its own, like a delegate's. Use it when the next task needs what the delegate already read or decided; for unrelated work, use delegate. It refuses a delegation that is still running (send it a message instead), one whose window is still open, an older delegation of a chain that was already resumed (it names the newest), and one whose working directory is gone, a removed worktree included. A delegate whose window was killed mid-turn can be resumed.",
 		parameters: Type.Object({
 			id: Type.String({ description: "The delegation to resume, from a delegate result or delegation_status." }),
 			task: Type.String({

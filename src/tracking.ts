@@ -2,11 +2,10 @@
 // and the `delegation_status` and `delegation_close` tools. A delegation's
 // state comes from `results.ts` (`deriveState`); this module only asks tmux
 // about the window and words what it is told.
-import { statSync } from "node:fs";
 
+import { statSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-
 import { type Mark, readMarks } from "./limits.ts";
 import { createPoll } from "./poll.ts";
 import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
@@ -26,6 +25,7 @@ import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } fro
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
 import { ago, autoExitLine, stateLine } from "./tracking-text.ts";
+import { accountingFor } from "./tree-view.ts";
 import type { ReadingError } from "./usage.ts";
 import { listWindows, ownWindow, windowState } from "./windows.ts";
 import { WorkspaceSchema } from "./workspace.ts";
@@ -64,6 +64,14 @@ const STARTED_STATES = ["closed", "done", "gone", "running", "window-closed", "u
 
 /** One started delegation in `delegation_status`'s structured result; `viewDetails` builds it. */
 const StartedSchema = Type.Object({
+	sessionId: Type.String(),
+	parent: Type.Optional(Type.String()),
+	root: Type.Optional(Type.String()),
+	depth: Type.Optional(Type.Number()),
+	accounting: Type.Optional(Type.String()),
+	canResume: Type.Boolean({
+		description: "Direct-parent authority only; current admission and exited-session checks still apply.",
+	}),
 	kind: Type.Literal("started"),
 	id: Type.String(),
 	name: Type.String(),
@@ -152,6 +160,7 @@ type View = {
 	resumedAs: string | undefined;
 	/** The session its window is in now, looked up; undefined when the window is gone or unknown. */
 	windowSession: string | undefined;
+	canResume: boolean;
 };
 
 /** The view of a delegation: its state and the fields the text and details share. */
@@ -173,7 +182,17 @@ function view(
 	}
 	const snapshot = inspectWorkspace(record.workspace?.cwd, record.workspace?.git);
 	const windowSession = windows === undefined ? undefined : ownWindow(windows, record)?.session;
-	return { record, state, name: recordedName(record), sessionPath, lastActive, snapshot, resumedAs, windowSession };
+	return {
+		record,
+		state,
+		name: recordedName(record),
+		sessionPath,
+		lastActive,
+		snapshot,
+		resumedAs,
+		windowSession,
+		canResume: (record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId(),
+	};
 }
 
 /** The text block for one delegation. */
@@ -183,6 +202,8 @@ function viewText({ record, state, name, sessionPath, lastActive, snapshot, resu
 	const lines = [
 		`${record.id} ${record.agent} (${modelLabel(record.model, record.result?.finishedModel)}, thinking ${record.thinking})`,
 		`  name: ${name}`,
+		`  identity: session ${sessionIdOf(record)} · parent ${record.identity?.parent ?? "this session"} · root ${record.identity?.root ?? "this session"} · depth ${record.identity?.depth ?? 1}`,
+		...(accountingFor(record) ? [`  shared accounting: ${accountingFor(record)} (not result processing)`] : []),
 		...(record.resumedFrom === undefined ? [] : [`  resumed from ${record.resumedFrom}`]),
 		...(resumedAs === undefined ? [] : [`  resumed as ${resumedAs}`]),
 		`  state: ${stateLine(state, record)}${seen}`,
@@ -207,9 +228,16 @@ function viewDetails({
 	lastActive,
 	snapshot,
 	windowSession,
+	canResume,
 }: View): Record<string, unknown> {
 	return {
 		kind: "started",
+		sessionId: sessionIdOf(record),
+		parent: record.identity?.parent,
+		root: record.identity?.root,
+		depth: record.identity?.depth,
+		accounting: accountingFor(record),
+		canResume,
 		id: record.id,
 		name,
 		agent: record.agent,
@@ -276,7 +304,7 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"The delegations this session started, each reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Call it to check on a delegation that seems stuck or to find its files; a result arrives as a message on its own, so there is no need to call it to wait for one. Names the delegation id, agent, session name, model, thinking, window, working directory, delegate session path and result envelope path. A running delegation also shows when its session file was last written; a long gap may mean it is stuck but does not prove it. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
+			"This session’s descendant delegations, scoped to its own subtree. Parent/root/depth and stable session ids identify ownership; only a direct parent may resume a child. Shared accounting does not acknowledge result processing. Each delegation is reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Call it to check on a delegation that seems stuck or to find its files; a result arrives as a message on its own, so there is no need to call it to wait for one. Names the delegation id, agent, session name, model, thinking, window, working directory, delegate session path and result envelope path. A running delegation also shows when its session file was last written; a long gap may mean it is stuck but does not prove it. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
 		parameters: Type.Object({
 			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
 		}),
@@ -399,11 +427,12 @@ export function createTracking(
 	results: Results,
 	tmux: TmuxClient,
 	readingErrors: () => ReadingError[] = () => [],
+	views: Results = results,
 ): Tracking {
 	const poll = createPoll(pi, results, tmux);
 	return {
 		registerTools(): void {
-			pi.registerTool(statusTool(results, tmux, readingErrors) as never);
+			pi.registerTool(statusTool(views, tmux, readingErrors) as never);
 			pi.registerTool(closeTool(results, tmux) as never);
 		},
 		startPolling: poll.start,

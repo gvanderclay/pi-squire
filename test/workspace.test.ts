@@ -774,7 +774,8 @@ test("selected-directory facts reach the child prompt, results, status and resum
 	assert.deepEqual(message.details.workspace, record.workspace);
 	assert.ok(message.content.includes(`Workspace: existing directory; Git checkout ${main}`), message.content);
 
-	const resumed = session({ cwd: base, entries: s.entries });
+	await s.shutdown();
+	const resumed = session({ parent: s.parent, cwd: base, entries: s.entries });
 	await resumed.start();
 	const again = await resumed.toolCall("delegation_status", { id: record.id });
 	assert.deepEqual((again.structuredContent as Data).delegations[0].workspace, record.workspace);
@@ -976,7 +977,8 @@ test("completion snapshot stays historical while fresh status changes", async ()
 	assert.ok(expanded.includes(historical.head), expanded);
 
 	// A resume keeps the recorded snapshot and still observes afresh.
-	const resumed = session({ cwd: base, entries: structuredClone(s.entries) });
+	await s.shutdown();
+	const resumed = session({ parent: s.parent, cwd: base, entries: structuredClone(s.entries) });
 	await resumed.start();
 	const again = await statusOf(resumed);
 	assert.ok(itemFor(again.items, launchRecord).workspaceSnapshot.pending.untracked.paths.includes("late.txt"));
@@ -989,7 +991,10 @@ test("completion snapshot stays historical while fresh status changes", async ()
 		delete entry.data.workspace;
 		delete (entry.data.result as Data | undefined)?.workspaceSnapshot;
 	}
-	const old = session({ cwd: main, entries: legacy });
+	await resumed.shutdown();
+	// Model genuine legacy storage without newer durable local facts.
+	rmSync(join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`));
+	const old = session({ parent: s.parent, cwd: main, entries: legacy });
 	await old.start();
 	const legacyItem = itemFor((await statusOf(old)).items, launchRecord);
 	assert.equal(legacyItem.state, "done");

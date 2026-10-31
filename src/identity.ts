@@ -64,25 +64,14 @@ export function createIdentity(pi: ExtensionAPI): {
 	child(agent: Agent, ctx: ExtensionContext): Identity;
 	admit(agent: string, roster: Roster): void;
 } {
-	// Capture once: other sessions in tests and session replacement must not
-	// change this runtime's identity by changing ambient environment later.
-	const parent = process.env.PI_DELEGATE_PARENT;
-	const env: Identity | undefined = parent
-		? {
-				parent,
-				root: process.env.PI_DELEGATE_ROOT || parent,
-				depth: Number(process.env.PI_DELEGATE_DEPTH || 1),
-				agent: process.env.PI_DELEGATE_AGENT || "",
-				chain: (process.env.PI_DELEGATE_CHAIN || process.env.PI_DELEGATE_AGENT || "").split(",").filter(Boolean),
-				autoExit: process.env.PI_DELEGATE_AUTO_EXIT === "1",
-			}
-		: undefined;
+	// Launch writes exact-id identity before spawn. Inherited environment is
+	// labels for integrations, never authority for a new/forked session.
 	let current: Identity | undefined;
 	let problem: unknown;
 	pi.on("session_start", (_event, ctx) => {
 		problem = undefined;
 		try {
-			current = readIdentity(ctx.sessionManager.getSessionId()) ?? env;
+			current = readIdentity(ctx.sessionManager.getSessionId());
 			if (current) writeIdentity(ctx.sessionManager.getSessionId(), current);
 		} catch (error) {
 			problem = error;

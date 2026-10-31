@@ -1,4 +1,4 @@
-import type { Delegation } from "./results.ts";
+import type { Delegation, DelegationState, WindowState } from "./results.ts";
 import type { WorktreePlan } from "./worktree.ts";
 
 /** One started delegation as it stands: what was recorded at its start, plus what came after. */
@@ -33,4 +33,32 @@ export type WorkspaceAttempt = {
 export type Recorded = StartedRecorded | WorkspaceAttempt;
 export function isStarted(record: Recorded): record is StartedRecorded {
 	return !("kind" in record && record.kind === "workspace-attempt");
+}
+
+/** How much of a delegation id a delegate's session name carries. */
+const SHORT_ID = 8;
+
+/**
+ * A delegate's name, used for both its session and its window: its agent and
+ * the label, or the first 8 characters of its id when there is no label.
+ */
+export function delegateName(agent: string, id: string, label?: string): string {
+	return `${agent}-${label ?? id.slice(0, SHORT_ID)}`;
+}
+
+/** The recorded name, or the pre-label name for records from before labels. */
+export function recordedName(record: Recorded): string {
+	return record.name ?? delegateName(record.agent, record.id);
+}
+
+/** A delegation's state: a recorded close, then a result, then a gone record, then the window. */
+export function deriveState(record: Recorded, window: WindowState): DelegationState {
+	if (!isStarted(record)) return record.attempt.phase;
+	if (record.accountingOnly) return "unknown";
+	if (record.closed === true) return "closed";
+	if (record.result !== undefined) return "done";
+	if (record.gone === true) return "gone";
+	if (window === "open") return "running";
+	if (window === "gone") return "window-closed";
+	return "unknown";
 }

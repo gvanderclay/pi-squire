@@ -701,6 +701,7 @@ test("a resumed parent rebuilds its records and still takes a later reply", asyn
 	await first.delegate("scout find the answer");
 	const saved = structuredClone(first.entries);
 
+	await first.shutdown();
 	const resumed = session({ parent: first.parent, entries: saved });
 	await resumed.start();
 	assert.deepEqual(resumed.statuses.at(-1), { key: "delegate", text: "<parent> 1 delegate running" });

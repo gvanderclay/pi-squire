@@ -78,7 +78,7 @@ import { pickResume } from "./resume-picker.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
-import { type WindowPlacement, windowPlacement } from "./window-placement.ts";
+import { placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
 import {
 	normalizeWorkspaceValue,
 	prepareDirectory,
@@ -239,7 +239,7 @@ type Start = {
 /** A candidate model passed over: `why` finishes "<model> is …", `reason` is the long form for a refusal. */
 type Skipped = { model: string; why: string; reason: string };
 /** What opening a delegate's window reads from a request: a `Start`, or the parts of one a resume decides. */
-type ChildStart = Pick<Start, "agent" | "model" | "rest" | "thinking" | "autoExit">;
+type ChildStart = Pick<Start, "agent" | "model" | "rest" | "thinking" | "autoExit" | "notices">;
 /** A delegation that is open in a tmux window. */
 type Launched = {
 	id: string;
@@ -837,6 +837,8 @@ export default function delegate(
 			onWindowOpened,
 		} = input;
 		const parent = ctx.sessionManager.getSessionId();
+		const project = placement === "companion" ? placementProject(ctx.cwd) : { companion: "", notices: [] };
+		start.notices.push(...project.notices);
 		const managedContext =
 			workspace.mode === "managed"
 				? `\n\nYour managed worktree is ${workspace.cwd}, branch ${workspace.createdBranch}, based on commit ${workspace.baseCommit}.`
@@ -877,7 +879,7 @@ export default function delegate(
 		pi.events.emit(LAUNCH, payload);
 		let opened: OpenedWindow;
 		try {
-			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement);
+			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement, project.companion);
 			onWindowOpened?.();
 		} catch (err) {
 			if (err instanceof WindowOpenError) {

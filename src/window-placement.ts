@@ -1,11 +1,29 @@
 // Call-time choice of where delegate windows open. `companion` (the default)
-// opens them in a session of their own, `<parent's session>-squire`; `current`
+// opens them in a shared project session; `current`
 // opens them in the parent's own session, as before. Read from
 // `<agent dir>/squire/settings.json` at every launch, like `worktreeRoot`.
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+
+import { inspectGit } from "./git.ts";
 
 export type WindowPlacement = "companion" | "current";
+
+/** The owning root's project, never the delegate's chosen working directory. */
+export function placementProject(cwd: string): { companion: string; notices: string[] } {
+	const git = inspectGit(cwd);
+	const project = basename(git.kind === "git" ? git.identity.mainRoot : cwd);
+	const normalized = project.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+	return {
+		companion: `${normalized}-delegate-session`,
+		notices:
+			git.kind === "unknown"
+				? [
+						`Could not inspect the root project for companion placement: ${git.reason}. Using the root working-directory basename ${JSON.stringify(basename(cwd))}.`,
+					]
+				: [],
+	};
+}
 
 /**
  * The placement for this call. An unknown value refuses with the file named.

@@ -163,10 +163,10 @@ test("ignored files created during launch prevent rollback", async () => {
 	await s.start();
 	const destination = join(base, "repo-worktrees", "ignored-topic");
 	const open = s.tmux.openWindow.bind(s.tmux);
-	s.tmux.openWindow = async (spec, placement) => {
+	s.tmux.openWindow = async (spec, placement, companion) => {
 		writeFileSync(join(destination, "ignored-secret.txt"), "keep this\\n");
 		s.tmux.failOpen = "known pre-window failure";
-		return open(spec, placement);
+		return open(spec, placement, companion);
 	};
 	const failure = await s.toolCall("delegate", { agent: "scout", task: "inspect", worktree: "ignored/topic" }).then(
 		() => assert.fail("launch should retain ignored data"),

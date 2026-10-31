@@ -152,16 +152,44 @@ temporary folder, not as text on the command line.
 
 ## Where delegate windows open
 
-By default a delegate's window opens in a **companion session** named after
-yours with `-squire` added: from the session `work`, delegates go to
-`work-squire`. Your own session stays as it is, even when its name already
-ends in `-squire`: a session called `pi-squire` gets `pi-squire-squire`.
-pi-squire marks each companion session it creates with the tmux session
-option `@squire-companion`; a parent that runs in a marked session uses it, so
-a delegate that delegates does not make `work-squire-squire`.
+By default a delegate's window opens in a shared **project companion session**
+named `<project>-delegate-session` on your existing tmux server. The owning
+root Pi session's project chooses it, not the parent tmux session or the
+delegate's working directory. Launching into another repository or creating a
+worktree there still uses the root's companion; resuming a delegate does too.
+
+In Git, the project name is the **main checkout's folder name**. Roots in
+repository subdirectories and linked worktrees therefore share the main
+checkout's companion. Outside Git, use the root working directory's folder
+name (a non-Git subdirectory has its own name). If Git inspection fails or
+cannot locate the main checkout identity, the launch reports a notice and
+uses the root working-directory basename instead.
+
+Project names preserve ASCII letters (including case), digits, hyphens and
+underscores. Runs of other characters become one hyphen, edge hyphens are
+trimmed, and an empty name becomes `project`: `Client API` uses
+`Client-API-delegate-session`.
+
+Multiple roots share a companion even across parent tmux sessions. Distinct
+paths with the same basename, separate clones named alike, and names that
+normalize identically intentionally share it. This groups windows only:
+delegation records, task mail, results, limits and close-all remain scoped to
+each root.
+
+pi-squire verifies the tmux session option `@squire-companion` before reusing
+an occupied name. An unmarked session is left untouched; numbered alternatives
+start at `<project>-delegate-session-2`, skipping unmarked alternatives too.
+Later launches reuse an existing managed alternative even if a lower name
+becomes free. Unexpected duplicate managed candidates use the first in numeric
+order, without moving windows or repairing sessions. Existing legacy companions
+and live windows are neither renamed nor migrated; only new launches and
+resumes use project naming.
 
 - The session is created on demand, by the launch that needs it, and tmux
   removes it with its last window, so it does not outlive its delegates.
+- Closing delegates (including close-all) kills only that root's tracked
+  windows. Manually killing the shared tmux companion session terminates
+  **all** its windows, including other roots' delegates.
 - `detach-on-destroy` is set to `off` (and the mark set) on that session only: if you are
   looking at it when its last delegate exits, tmux moves you to your most
   recent other session instead of detaching you. Your sessions and tmux's

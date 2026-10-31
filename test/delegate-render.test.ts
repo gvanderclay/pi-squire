@@ -5,10 +5,12 @@
 
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
-
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { placementProject } from "../src/window-placement.ts";
 
 import { agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
+
+const companion = placementProject(root).companion;
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -86,8 +88,8 @@ test("a long first task line is cut at 100 characters", async () => {
 test("a started row shows ●, the delegate's name, its model and started, then the task line", async () => {
 	const args = { agent: "scout", task: TASK, label: "look" };
 	const { tool, result } = await launched(args);
-	assert.deepEqual(lines(tool.renderResult(result, { expanded: false }, theme, context(args, false))), [
-		"<accent:●> <toolTitle:<bold:scout-look>><dim: in session work-squire (alpha/fast-model) — started>",
+	assert.deepEqual(lines(tool.renderResult(result, { expanded: false }, theme, context(args, false)), 300), [
+		`<accent:●> <toolTitle:<bold:scout-look>><dim: in session ${companion} (alpha/fast-model) — started>`,
 		"<toolOutput:## Look><muted: (5 lines)>",
 	]);
 });
@@ -117,7 +119,7 @@ test("an expanded started row adds the ids, window, thinking and auto-exit", asy
 	])
 		assert.ok(shown.includes(part), `missing ${part}\n${shown.join("\n")}`);
 	assert.ok(
-		shown.some((line) => line.startsWith("<dim:window scout-look (") && line.endsWith(" in session work-squire>")),
+		shown.some((line) => line.startsWith("<dim:window scout-look (") && line.endsWith(` in session ${companion}>`)),
 	);
 });
 

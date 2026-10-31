@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- Agent frontmatter now uses `auto_exit` (boolean, default true).
+  Old `auto-exit` and `extensions` fields are silently ignored, with no
+  warnings or validation. In particular, old `auto-exit: false` now leaves
+  auto-exit on unless `auto_exit` or a call override disables it.
+  Agent-specific extension path resolution and launch arguments are removed
+  for both launch and resume; normal Pi extension loading and `session:launch`
+  customization remain. CLI flags, commands, internal fields and environment
+  variables keep their names. Updated agent-file, auto-exit, delegate, real-Pi
+  tool-selection, resume and hook tests for this deliberate contract change.
+
 ### Changed
 
 - Default companion placement now groups delegate windows by the owning root

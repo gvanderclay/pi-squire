@@ -460,18 +460,29 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. It may hold only ASCII letters, digits, `-` and `_`; any other value (a space, `#`, `.`, a non-ASCII letter, or an empty value) makes the file invalid, so the agent is disabled. |
 | `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
-| `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other, and a tool of the agent's own `extensions` reaches the delegate only when `tools` or `delegateTools` names it. |
-| `extensions` | Extension paths only this agent's delegate loads (see below). |
+| `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
 | `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern, or a YAML list entry holding a comma, makes the file invalid. A comma-separated line (`fallback: a, b`) is two entries. |
-| `auto-exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
+| `auto_exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
 | `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate` or a resume that passes a locked field does not get it: the agent's value is used (the parent's when the file sets none) and the result says which agent locked which field. Passing the agent's own value is the same as passing nothing: no notice, and its fallbacks still apply. A resume of a locked field runs on the file's value as it is now, not on what the delegate last ran on. `true` locks the fields the file sets. |
 
 Any other key, such as `max_turns`, `inherit_context`, `run_in_background` or
 a permission policy for another extension, is ignored without a warning and
-left for whatever else reads the file. `exclude-tools` is no longer read; a
-file that still has it gets a warning (use `tools` instead).
+left for whatever else reads the file.
+
+**Breaking frontmatter change:** use `auto_exit` instead of `auto-exit`.
+The old `auto-exit` and `extensions` fields are silently ignored, including
+malformed values and missing extension paths. In particular, an old
+`auto-exit: false` no longer keeps the delegate open: without `auto_exit: false`
+or a call override, auto-exit defaults to on. Agent-specific extension loading
+has been removed from both launch and resume. Normal Pi extension discovery
+and [`session:launch`](#sessionlaunch) customization remain available.
+The `--auto-exit` / `--no-auto-exit` flags, `/auto-exit` command and
+`PI_DELEGATE_AUTO_EXIT` environment variable are unchanged.
+
+`exclude-tools` is no longer read; a file that still has it gets a warning
+(use `tools` instead).
 
 `tools` lists the delegate's tools as a comma-separated or YAML list
 (`tools: read, grep` or `tools: [read, grep]`). Each entry of a YAML list
@@ -489,8 +500,8 @@ such entry pi-squire adds the entry `mcp__`, which names no tool; an empty
 selection is `--no-tools`, which removes MCP tools too. To give a delegate an
 MCP server's tools, name them, for example `mcp__docs__*`. An extension that
 turns tools on at run time can still add only tools the list allows. Names
-are not checked against the parent's tools, since a tool from one of the
-agent's own `extensions` exists only in the child.
+are not checked against the parent's tools: normal Pi extension discovery
+or `session:launch` customization can provide tools in the child.
 
 - No `tools` field: the delegate gets the parent session's tools as they are
   when the launch (or resume) starts, the tools active there then, passed as
@@ -507,12 +518,6 @@ agent's own `extensions` exists only in the child.
   (`-mcp__docs__*`).
 - A `+name` entry, or tool names and `-name` entries in one list, make the
   file invalid, and the agent is disabled (see below).
-
-The tools the agent's own `extensions` register are never in the parent's
-tools, and pi-squire does not load those extensions in the parent to find
-them. Such a tool reaches the delegate only when a plain `tools` list or the
-`delegateTools` setting names it (or matches it with a `*` pattern); with no
-`tools` field, or only `-name` entries, the delegate does not get it.
 
 The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
 `delegation_resume`) are never passed and never available in a delegate:
@@ -537,14 +542,6 @@ not a list of names, or an entry that holds a comma or starts with `+` or
 `-`, refuses every launch with an error naming the file, before the task is sent or a window
 opens; it does not disable agents one by one.
 
-`extensions` lists extension paths only this agent's delegate loads, as a
-comma-separated or YAML list. Each reaches the child as a repeated
-`-e <absolute path>`, on top of its normal extensions, so pi-squire and the
-`message:*` provider still load and the result still reaches the parent. `~`
-and `~/` expand to the home directory and a relative path resolves against the
-folder holding the agent file. A path that does not exist when the roster is
-read leaves the agent out, with a warning.
-
 A `model` or `fallback` entry that is an exact `provider/id` in Pi's registry
 is checked as before: a model without credentials or with an active
 usage-limit mark is skipped for the next candidate. Anything else, such as an
@@ -567,11 +564,10 @@ the prompt exactly as every delegate was built before `prompt_mode` existed.
 
 An agent file that cannot be used is invalid, and its agent is disabled:
 frontmatter that is not readable YAML or not a set of fields, an `enabled` or
-`auto-exit` that is not `true` or `false`, a `tools` or `extensions` that is
-not a list, a `tools` list with a `+name` entry or with tool names and `-name`
-entries mixed, a `tools` or `fallback` YAML list entry holding a comma, a
-`model` or `fallback` entry with a `*` pattern, or an extension path that
-does not exist. A disabled agent is left
+`auto_exit` that is not `true` or `false`, a `tools` value that is not a list,
+a `tools` list with a `+name` entry or with tool names and `-name`
+entries mixed, a `tools` or `fallback` YAML list entry holding a comma, or a
+`model` or `fallback` entry with a `*` pattern. A disabled agent is left
 out of the roster and of the `delegate` tool's description, so the model never
 picks it, and a warning names the file and the reason when the session starts
 (and before a run, when a file turns invalid while the session runs). A call
@@ -620,7 +616,7 @@ is refused with close matches, and so is a model with no configured
 credentials. An API key that exists only as an environment variable in the
 parent's shell does not reach the delegate, so log in through Pi or make the
 variable part of the tmux server's environment. `--auto-exit` and `--no-auto-exit` override the
-agent's `auto-exit`.
+agent's `auto_exit`.
 
 ## Tools
 
@@ -840,7 +836,7 @@ mark, it changes nothing and lists the active marks. No tool clears marks.
 
 The parent resolves each delegation's auto-exit from the call
 (`auto_exit`, or `--auto-exit` / `--no-auto-exit`), then the agent's
-`auto-exit`, then on, and passes it to the child as `PI_DELEGATE_AUTO_EXIT`
+`auto_exit`, then on, and passes it to the child as `PI_DELEGATE_AUTO_EXIT`
 (`1` or `0`). Inside the delegate:
 
 - While it is on, a run that settles as a normal completion shuts the delegate
@@ -1042,7 +1038,7 @@ and it resumes as the command does.
   field the agent locks is the exception: it runs on the
   agent file's current `model` (then its fallbacks, even when the delegate had
   moved to a fallback) or `thinking`, a value passed for it is not used, with
-  a notice, and passing the file's own value is the same as passing nothing. The agent's prompt, tools and extensions are those of the
+  a notice, and passing the file's own value is the same as passing nothing. The agent's prompt and tools are those of the
   roster now, and an agent without a `tools` field gets the parent's tools as
   they are at the resume.
 - `session:launch` is emitted as for any launch, with the same payload.

@@ -6,6 +6,25 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Default companion placement now groups delegate windows by the owning root
+  project's main-checkout basename (or root working-directory basename outside
+  Git), using `<project>-delegate-session`. Roots, same-named projects and
+  normalization collisions intentionally share managed companions without
+  sharing delegation ownership. Unmarked sessions are left untouched; numbered
+  alternatives are reused, including across parallel launches. Git inspection
+  failures report a basename fallback notice. Launch and resume use the root's
+  project even for cross-project tasks; `current` placement and delegate window
+  names are unchanged. Existing companions and live windows are not migrated.
+  Updated the tmux, window-placement, tools, navigator, delegate-render,
+  workspace, and worktree ticket 04/05 tests for the deliberate placement
+  behavior change; added project-companion and real-tmux regression coverage.
+- Broken `.git` pointers now report Git state as unknown rather than as a
+  confirmed non-Git directory. This shared Git detection applies to workspace
+  records, status, snapshots and worktree-source errors, as well as companion
+  placement fallback notices.
+
 ## [0.15.0] - 2026-10-30
 
 ### Breaking

@@ -31,7 +31,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { inspectGit } from "../src/git.ts";
-import { renderMessage } from "../src/render.ts";
+import { renderMessage, workspaceLine } from "../src/render.ts";
 import { trustPlannedWorktree, type WorktreePlan } from "../src/workspace.ts";
 
 import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
@@ -109,6 +109,34 @@ async function started(options: Parameters<typeof session>[0] = {}) {
 
 // ---------------------------------------------------------------------------
 // Directory resolution
+
+test("a broken .git pointer records unknown Git state, including status, snapshots and worktree refusal", async () => {
+	base = fresh();
+	const broken = join(base, "broken");
+	mkdirSync(broken);
+	writeFileSync(join(broken, ".git"), `gitdir: ${join(base, "absent-git-data")}\n`);
+	const s = await started({ cwd: broken });
+	const result = await call(s, broken);
+	const workspace = (result.structuredContent as Data).workspace;
+	assert.equal(workspace.git.kind, "unknown");
+	assert.match(
+		workspace.git.reason,
+		/git rev-parse failed:.*(?:not a git repository|gitfile does not point to a valid repository)/,
+	);
+	assert.match(workspaceLine(workspace), /Git state unknown/);
+	const status = await s.toolCall("delegation_status", {});
+	const [item] = (status.structuredContent as Data).delegations;
+	assert.equal(item.workspace.git.kind, "unknown");
+	assert.equal(item.workspaceSnapshot.kind, "unknown");
+	assert.match(item.workspaceSnapshot.reason, /(?:not a git repository|gitfile does not point to a valid repository)/);
+	assert.match(status.content[0].text, /Git state unknown/);
+	await assert.rejects(
+		s.toolCall("delegate", { agent: "scout", task: "inspect", worktree: "topic" }),
+		/worktree needs a usable Git checkout:.*(?:not a git repository|gitfile does not point to a valid repository)/,
+	);
+	assert.equal(s.sendCalls.length, 1, "the unusable worktree source sends no second task");
+	assert.equal(s.tmux.opened.length, 1);
+});
 
 test("cwd resolves real paths and preserves existing checkout data", async (t) => {
 	base = fresh();
@@ -1188,13 +1216,13 @@ test("same-repository trust change while queued refuses before second mail or cr
 	const gate = new Promise<void>((resolve) => (release = resolve));
 	const open = s.tmux.openWindow.bind(s.tmux);
 	let first = true;
-	s.tmux.openWindow = async (spec, placement) => {
+	s.tmux.openWindow = async (spec, placement, companion) => {
 		if (first) {
 			first = false;
 			entered();
 			await gate;
 		}
-		return open(spec, placement);
+		return open(spec, placement, companion);
 	};
 	const params = (branch: string) => ({ agent: "scout", task: "inspect", worktree: branch });
 	const firstLaunch = s.toolCall("delegate", params("queue/first"));
@@ -1224,13 +1252,13 @@ test("a saved unrelated-source denial appearing while queued refuses before mail
 	const gate = new Promise<void>((resolve) => (release = resolve));
 	const open = s.tmux.openWindow.bind(s.tmux);
 	let first = true;
-	s.tmux.openWindow = async (spec, placement) => {
+	s.tmux.openWindow = async (spec, placement, companion) => {
 		if (first) {
 			first = false;
 			entered();
 			await gate;
 		}
-		return open(spec, placement);
+		return open(spec, placement, companion);
 	};
 	const params = (branch: string) => ({ agent: "scout", task: "inspect", worktree: branch, worktree_source: source });
 	const firstLaunch = s.toolCall("delegate", params("saved/first"));

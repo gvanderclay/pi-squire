@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { placementProject } from "../src/window-placement.ts";
 
 import {
 	agentDir,
@@ -23,6 +24,8 @@ import {
 	writeDelegationPrompt,
 	writeLegacyAgent,
 } from "./harness.ts";
+
+const companion = placementProject(root).companion;
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -376,7 +379,7 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 	});
 	assert.equal(
 		s.notes.at(-1),
-		`delegate: scout ${id} started in window scout-${id.slice(0, 8)} in session work-squire`,
+		`delegate: scout ${id} started in window scout-${id.slice(0, 8)} in session ${companion}`,
 	);
 });
 
@@ -408,7 +411,7 @@ test("a label names the session and the window, shows in the reply and in delega
 	const { argv, name, windowId } = s.tmux.opened[0];
 	assert.equal(name, "scout-roster");
 	assert.equal(argv[argv.indexOf("--name") + 1], "scout-roster");
-	assert.ok(result.content[0].text.includes("in window scout-roster in session work-squire."), result.content[0].text);
+	assert.ok(result.content[0].text.includes(`in window scout-roster in session ${companion}.`), result.content[0].text);
 	const statusResult = await s.toolCall("delegation_status", {});
 	const status = statusResult.content[0].text;
 	assert.ok(status.includes("name: scout-roster\n"), status);

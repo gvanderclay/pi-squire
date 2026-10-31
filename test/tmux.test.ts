@@ -33,7 +33,7 @@ test("an invalid whole tmux window-id response is unknown", async () => {
 		chmodSync(join(dir, "tmux"), 0o755);
 		process.env.PATH = `${dir}:${oldPath}`;
 		process.env.TMUX = "present";
-		await assert.rejects(createTmuxClient().openWindow({ name: "x", cwd: dir, env: {}, argv: ["pi"] }, "current"), {
+		await assert.rejects(createTmuxClient().openWindow({ name: "x", cwd: dir, env: {}, argv: ["pi"] }, "current", ""), {
 			certainty: "unknown",
 		});
 	} finally {
@@ -44,19 +44,11 @@ test("an invalid whole tmux window-id response is unknown", async () => {
 });
 
 /**
- * Run `body` with a stub `tmux` first on PATH that logs each call, answers
- * `new-window` only once a marker exists, and answers `new-session` as `mode`
- * says: `ok`, `duplicate` (another launch won; the session now exists), `dupgone` (it won, then
- * vanished) or `full`; `made` starts with the session there. A `new-window` whose target is not
- * the exact `=<companion>:` stands for tmux's prefix matching onto another session, `@99`.
+ * A real-client argument stub. The file created by new-session changes the
+ * next ownership read, including managed and unmarked race winners.
  */
-async function withStub(
-	mode: string,
-	body: (log: () => string[]) => Promise<void>,
-	parent = "work",
-	marked = false,
-): Promise<void> {
-	const companion = marked ? parent : `${parent}-squire`;
+async function withStub(mode: string, body: (log: () => string[]) => Promise<void>, parent = "work"): Promise<void> {
+	const base = "project-delegate-session";
 	const dir = mkdtempSync(join(tmpdir(), "squire-tmux-companion-"));
 	const saved = { path: process.env.PATH, tmux: process.env.TMUX, pane: process.env.TMUX_PANE };
 	try {
@@ -65,10 +57,11 @@ async function withStub(
 			`echo "$*" >> '${dir}/log'`,
 			'case "$1" in',
 			'-V) echo "tmux 3.7b";;',
-			`display-message) printf '$1\\t${marked ? "1" : ""}\\t${parent}\\n';;`,
-			"list-windows) printf '@1\\t0\\twork-squire\\ta\\tb\\n@2\\t1\\twork\\tplain\\n';;",
-			`new-window) case "$*" in *'-t $1 '*) echo @8;; *"-t =${companion}: "*) if [ -f '${dir}/made' ]; then echo @8; else echo "can't find session: x" >&2; exit 1; fi;; *) echo @99;; esac;;`,
-			`new-session) case '${mode}' in ok) touch '${dir}/made'; echo @7;; duplicate) touch '${dir}/made'; echo "duplicate session: x" >&2; exit 1;; dupgone) echo "duplicate session: x" >&2; exit 1;; *) echo "no space" >&2; exit 1;; esac;;`,
+			`display-message) printf '$1\\t${parent}\\n';;`,
+			"list-windows) printf '@1\\t0\\tlegacy-squire\\ta\\tb\\n@2\\t1\\twork\\tplain\\n';;",
+			`list-sessions) if [ -f '${dir}/gone' ] && [ '${mode}' = window-gone-read-error ]; then echo "server gone" >&2; exit 1; fi; if [ -f '${dir}/made' ] && [ '${mode}' = duplicate-read-error ]; then echo "server gone" >&2; exit 1; fi; printf '$1\\t\\twork\\n'; if [ -f '${dir}/made' ]; then case '${mode}' in unmarked|duplicate-unmarked) printf '$2\\t\\t${base}\\n';; *) printf '$2\\t1\\t${base}\\n';; esac; fi;;`,
+			`new-window) case '${mode}' in window-gone|window-gone-read-error) rm '${dir}/made'; touch '${dir}/gone'; echo "can't find session: $2" >&2; exit 1;; window-full) echo "no space" >&2; exit 1;; window-malformed) printf 'warning\\n@8\\n'; exit 0;; esac; case "$*" in *'-t $1 '*) echo @8;; *'-t $2 '*) echo @8;; *) echo @99;; esac;;`,
+			`new-session) case '${mode}' in full) echo "no space" >&2; exit 1;; malformed) printf 'warning\\n@7\\n';; duplicate|duplicate-unmarked|duplicate-read-error) if [ -f '${dir}/made' ]; then echo @7; else touch '${dir}/made'; echo "duplicate session: x" >&2; exit 1; fi;; *) touch '${dir}/made'; echo @7;; esac;;`,
 			"esac",
 		].join("\n");
 		writeFileSync(join(dir, "tmux"), `${script}\n`);
@@ -76,7 +69,7 @@ async function withStub(
 		process.env.PATH = `${dir}:${saved.path}`;
 		process.env.TMUX = "present";
 		process.env.TMUX_PANE = "%1";
-		if (mode === "made") writeFileSync(join(dir, "made"), "");
+		if (mode === "made" || mode === "unmarked" || mode.startsWith("window-")) writeFileSync(join(dir, "made"), "");
 		await body(() => readFileSync(join(dir, "log"), "utf8").trim().split("\n"));
 	} finally {
 		process.env.PATH = saved.path;
@@ -88,45 +81,137 @@ async function withStub(
 }
 
 const SPEC = { name: "scout-x", cwd: "/work", env: { A: "1" }, argv: ["pi", "--x"] };
+const BASE = "project-delegate-session";
 
-test("a companion window falls back to one new-session that also sets detach-on-destroy on it alone", async () => {
+test("a fresh companion is created and marked in one command queue, with exact option targets", async () => {
 	await withStub("ok", async (log) => {
-		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion"), { id: "@7", session: "work-squire" });
-		const [, window, session] = log();
-		assert.match(window, /^new-window -d .* -t =work-squire: -- pi --x$/);
-		assert.equal(
-			session,
-			"new-session -d -s work-squire -n scout-x -c /work -e A=1 -P -F #{window_id} -- pi --x ; set-option -t =work-squire: detach-on-destroy off ; set-option -t =work-squire: @squire-companion 1",
-		);
-		assert.equal(log().length, 3);
-	});
-});
-
-test("a companion window that loses the new-session race retries new-window once", async () => {
-	await withStub("duplicate", async (log) => {
-		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion"), { id: "@8", session: "work-squire" });
+		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion", BASE), { id: "@7", session: BASE });
 		assert.deepEqual(
 			log().map((line) => line.split(" ")[0]),
-			["display-message", "new-window", "new-session", "new-window"],
+			["display-message", "list-sessions", "new-session"],
+		);
+		assert.equal(
+			log()[2],
+			"new-session -d -s project-delegate-session -n scout-x -c /work -e A=1 -P -F #{window_id} -- pi --x ; set-option -t =project-delegate-session: @squire-companion 1 ; set-option -t =project-delegate-session: detach-on-destroy off",
 		);
 	});
 });
 
-test("a failed new-session is unknown, since tmux may have created the window", async () => {
-	await withStub("full", async () => {
-		await assert.rejects(createTmuxClient().openWindow(SPEC, "companion"), {
-			certainty: "unknown",
-			message: /no space/,
-		});
+test("a managed companion is opened by its verified session id, not a prefix or the invoking session", async () => {
+	await withStub(
+		"made",
+		async (log) => {
+			assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion", BASE), { id: "@8", session: BASE });
+			assert.match(log()[2], / -t \$2 -- pi --x$/);
+			assert.equal(
+				log().some((line) => line.startsWith("set-option")),
+				false,
+			);
+		},
+		"unrelated ",
+	);
+});
+
+test("a managed companion that vanishes before new-window is reselected and created once", async () => {
+	await withStub("window-gone", async (log) => {
+		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion", BASE), { id: "@7", session: BASE });
+		assert.deepEqual(
+			log().map((line) => line.split(" ")[0]),
+			["display-message", "list-sessions", "new-window", "list-sessions", "new-session"],
+		);
+		assert.equal(log().filter((line) => line.startsWith("new-session")).length, 1);
 	});
 });
 
-test("current placement runs the one new-window it always did, aimed at the pane's session id", async () => {
-	await withStub("made", async (log) => {
-		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "current"), { id: "@8", session: "work" });
-		assert.equal(log().length, 2);
-		assert.match(log()[1], /^new-window -d -P -F #\{window_id\} -n scout-x -c \/work -e A=1 -t \$1 -- pi --x$/);
+test("a definite missing managed target leaves a failed recheck known not-opened", async () => {
+	await withStub("window-gone-read-error", async (log) => {
+		await assert.rejects(createTmuxClient().openWindow(SPEC, "companion", BASE), {
+			certainty: "not-opened",
+			message: /server gone/,
+		});
+		assert.deepEqual(
+			log().map((line) => line.split(" ")[0]),
+			["display-message", "list-sessions", "new-window", "list-sessions"],
+		);
 	});
+});
+
+test("ambiguous managed new-window errors and malformed answers never retry", async () => {
+	for (const mode of ["window-full", "window-malformed"]) {
+		await withStub(mode, async (log) => {
+			await assert.rejects(createTmuxClient().openWindow(SPEC, "companion", BASE), { certainty: "unknown" });
+			assert.deepEqual(
+				log().map((line) => line.split(" ")[0]),
+				["display-message", "list-sessions", "new-window"],
+			);
+		});
+	}
+});
+
+test("an unmarked occupied name is not adopted or configured", async () => {
+	await withStub("unmarked", async (log) => {
+		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion", BASE), { id: "@7", session: `${BASE}-2` });
+		assert.ok(log()[2].startsWith(`new-session -d -s ${BASE}-2 `));
+		assert.equal(
+			log().some((line) => line.startsWith("new-window")),
+			false,
+		);
+	});
+});
+
+test("a duplicate creation rechecks ownership and opens only the managed winner", async () => {
+	await withStub("duplicate", async (log) => {
+		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion", BASE), { id: "@8", session: BASE });
+		assert.deepEqual(
+			log().map((line) => line.split(" ")[0]),
+			["display-message", "list-sessions", "new-session", "list-sessions", "new-window"],
+		);
+	});
+});
+
+test("a failed ownership recheck after a dispatched creation retains unknown certainty", async () => {
+	await withStub("duplicate-read-error", async (log) => {
+		await assert.rejects(createTmuxClient().openWindow(SPEC, "companion", BASE), {
+			certainty: "unknown",
+			message: /server gone/,
+		});
+		assert.equal(log().filter((line) => line.startsWith("new-session")).length, 1);
+	});
+});
+
+test("a duplicate creation by a user selects another name without opening in the winner", async () => {
+	await withStub("duplicate-unmarked", async (log) => {
+		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion", BASE), { id: "@7", session: `${BASE}-2` });
+		assert.deepEqual(
+			log().map((line) => line.split(" ")[0]),
+			["display-message", "list-sessions", "new-session", "list-sessions", "new-session"],
+		);
+	});
+});
+
+test("an ambiguous create error or malformed answer never retries the task", async () => {
+	for (const mode of ["full", "malformed"]) {
+		await withStub(mode, async (log) => {
+			await assert.rejects(createTmuxClient().openWindow(SPEC, "companion", BASE), { certainty: "unknown" });
+			assert.equal(log().filter((line) => line.startsWith("new-session")).length, 1);
+			assert.equal(
+				log().some((line) => line.startsWith("new-window")),
+				false,
+			);
+		});
+	}
+});
+
+test("current placement still targets the pane's own session id, preserving trailing spaces", async () => {
+	await withStub(
+		"made",
+		async (log) => {
+			assert.deepEqual(await createTmuxClient().openWindow(SPEC, "current", ""), { id: "@8", session: "work " });
+			assert.equal(log().length, 2);
+			assert.match(log()[1], / -t \$1 -- pi --x$/);
+		},
+		"work ",
+	);
 });
 
 test("the tmux version is parsed from tmux -V and asked once", async () => {
@@ -136,85 +221,14 @@ test("the tmux version is parsed from tmux -V and asked once", async () => {
 		assert.deepEqual(first, { text: "tmux 3.7b", major: 3, minor: 7 });
 		assert.equal(second, first);
 		await client.version();
-		assert.deepEqual(log(), ["-V"], "concurrent and later calls share one ask");
+		assert.deepEqual(log(), ["-V"]);
 	});
 });
 
-test("a parent session name keeps its trailing space, so its companion is not the one of its trimmed twin", async () => {
-	await withStub(
-		"ok",
-		async (log) => {
-			assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion"), { id: "@7", session: "work -squire" });
-			const [, window, session] = log();
-			assert.match(window, / -t =work -squire: -- pi --x$/);
-			assert.match(session, /^new-session -d -s work -squire -n /);
-			assert.match(
-				session,
-				/ set-option -t =work -squire: detach-on-destroy off ; set-option -t =work -squire: @squire-companion 1$/,
-			);
-		},
-		"work ",
-	);
-	await withStub(
-		"made",
-		async () => {
-			assert.deepEqual(await createTmuxClient().openWindow(SPEC, "current"), { id: "@8", session: "work " });
-		},
-		"work ",
-	);
-});
-
-test("a parent named pi-squire without the mark gets pi-squire-squire; one in a marked session uses its own", async () => {
-	await withStub(
-		"ok",
-		async () => {
-			assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion"), {
-				id: "@7",
-				session: "pi-squire-squire",
-			});
-		},
-		"pi-squire",
-	);
-	await withStub(
-		"made",
-		async (log) => {
-			assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion"), {
-				id: "@8",
-				session: "pi-squire-squire",
-			});
-			assert.deepEqual(
-				log().map((line) => line.split(" ")[0]),
-				["display-message", "new-window"],
-			);
-		},
-		"pi-squire-squire",
-		true,
-	);
-});
-
-test("a companion target is the exact =name: even when another session's name starts with it", async () => {
-	// The stub answers any other target as if tmux had prefix-matched `work-squire-old`.
-	await withStub("ok", async (log) => {
-		assert.deepEqual(await createTmuxClient().openWindow(SPEC, "companion"), { id: "@7", session: "work-squire" });
-		const targets = log().flatMap((line) => line.match(/ -t (\S+)/)?.[1] ?? []);
-		assert.deepEqual(targets.slice(1), ["=work-squire:", "=work-squire:"]);
-	});
-});
-
-test("a failed retry after losing the new-session race is unknown", async () => {
-	await withStub("dupgone", async (log) => {
-		await assert.rejects(createTmuxClient().openWindow(SPEC, "companion"), { certainty: "unknown" });
-		assert.deepEqual(
-			log().map((line) => line.split(" ")[0]),
-			["display-message", "new-window", "new-session", "new-window"],
-		);
-	});
-});
-
-test("listed windows carry their session, and a tab in a window name stays in the name", async () => {
+test("listed windows carry their actual session and preserve tabs in names", async () => {
 	await withStub("ok", async () => {
 		assert.deepEqual(await createTmuxClient().listWindows(), [
-			{ id: "@1", session: "work-squire", name: "a\tb", exited: false },
+			{ id: "@1", session: "legacy-squire", name: "a\tb", exited: false },
 			{ id: "@2", session: "work", name: "plain", exited: true },
 		]);
 	});

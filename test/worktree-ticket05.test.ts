@@ -283,8 +283,8 @@ test("placement ancestors are revalidated if a symlink changes while queued", as
 		releaseOpen = resolve;
 	});
 	const open = s.tmux.openWindow.bind(s.tmux);
-	s.tmux.openWindow = async (spec, placement) => {
-		const id = await open(spec, placement);
+	s.tmux.openWindow = async (spec, placement, companion) => {
+		const id = await open(spec, placement, companion);
 		signalReached();
 		await gate;
 		return id;

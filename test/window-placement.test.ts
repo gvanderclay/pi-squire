@@ -1,4 +1,4 @@
-// Where delegate windows open: the companion session `<parent session>-squire`
+// Where delegate windows open: the shared root-project companion
 // by default, the parent's own session with `windowPlacement: "current"`. The
 // tmux is the harness's fake, which models sessions; the real client is
 // exercised by hand.
@@ -7,9 +7,11 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
-
 import { WindowOpenError } from "../src/tmux.ts";
+import { placementProject } from "../src/window-placement.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+
+const companion = placementProject(root).companion;
 
 beforeEach(() => {
 	resetRoot();
@@ -35,11 +37,11 @@ test("by default the delegate is the first window of a new companion session, wi
 	const s = await started();
 	await call(s, "first");
 	const [window] = s.tmux.opened;
-	assert.equal(window.session, "work-squire");
+	assert.equal(window.session, companion);
 	assert.equal(window.placement, "companion");
-	assert.deepEqual(s.tmux.commands, ["new-window =work-squire:", "new-session work-squire"]);
-	assert.deepEqual([...s.tmux.sessions], [["work-squire", [window.windowId]]]);
-	assert.equal(s.tmux.detachOnDestroy.get("work-squire"), "off");
+	assert.deepEqual(s.tmux.commands, [`new-session ${companion}`]);
+	assert.deepEqual([...s.tmux.sessions], [[companion, [window.windowId]]]);
+	assert.equal(s.tmux.detachOnDestroy.get(companion), "off");
 	assert.equal(s.tmux.sessions.has("work"), false, "nothing is recorded in the parent's session");
 	assert.equal(s.tmux.detachOnDestroy.has("work"), false, "the user's own session keeps its options");
 });
@@ -49,55 +51,51 @@ test("an existing companion session gets a new window", async () => {
 	await call(s, "first");
 	s.tmux.commands.length = 0;
 	await call(s, "second");
-	assert.deepEqual(s.tmux.commands, ["new-window =work-squire:"]);
-	assert.equal(s.tmux.sessions.get("work-squire")?.length, 2);
+	assert.deepEqual(s.tmux.commands, [`new-window =${companion}:`]);
+	assert.equal(s.tmux.sessions.get(companion)?.length, 2);
 });
 
 test("a companion session that vanished is created again by the next launch", async () => {
 	const s = await started();
 	await call(s, "first");
 	await s.tmux.kill(s.tmux.opened[0].windowId);
-	assert.equal(s.tmux.sessions.has("work-squire"), false, "tmux destroys a session with its last window");
+	assert.equal(s.tmux.sessions.has(companion), false, "tmux destroys a session with its last window");
 	s.tmux.commands.length = 0;
 	await call(s, "second");
-	assert.deepEqual(s.tmux.commands, ["new-window =work-squire:", "new-session work-squire"]);
-	assert.equal(s.tmux.opened.at(-1)?.session, "work-squire");
-	assert.equal(s.tmux.detachOnDestroy.get("work-squire"), "off");
+	assert.deepEqual(s.tmux.commands, [`new-session ${companion}`]);
+	assert.equal(s.tmux.opened.at(-1)?.session, companion);
+	assert.equal(s.tmux.detachOnDestroy.get(companion), "off");
 });
 
 test("losing the new-session race retries new-window once", async () => {
 	const s = await started();
 	s.tmux.raceNewSession = true;
 	await call(s, "first");
-	assert.deepEqual(s.tmux.commands, [
-		"new-window =work-squire:",
-		"new-session work-squire",
-		"new-window =work-squire:",
-	]);
+	assert.deepEqual(s.tmux.commands, [`new-session ${companion}`, `new-window =${companion}:`]);
 	assert.equal(s.tmux.opened.length, 1);
-	assert.equal(s.tmux.opened[0].session, "work-squire");
+	assert.equal(s.tmux.opened[0].session, companion);
 });
 
-test("a parent in a marked companion session uses it; its name alone is not the mark", async () => {
+test("the root project still wins when the invoking pane is in a marked companion", async () => {
 	const s = await started();
-	await call(s, "first"); // creates and marks work-squire
-	s.tmux.parentSession = "work-squire";
+	await call(s, "first"); // creates and marks the project companion
+	s.tmux.parentSession = companion;
 	await call(s, "nested");
-	assert.equal(s.tmux.opened[1].session, "work-squire");
-	assert.deepEqual([...s.tmux.sessions.keys()], ["work-squire"]);
+	assert.equal(s.tmux.opened[1].session, companion);
+	assert.deepEqual([...s.tmux.sessions.keys()], [companion]);
 });
 
-test("a user's own session ending in -squire gets a companion of its own", async () => {
+test("the parent tmux session name does not affect project placement", async () => {
 	const s = await started();
 	s.tmux.parentSession = "pi-squire";
 	await call(s, "first");
-	assert.equal(s.tmux.opened[0].session, "pi-squire-squire");
+	assert.equal(s.tmux.opened[0].session, companion);
 	assert.equal(s.tmux.sessions.has("pi-squire"), false);
 	assert.equal(s.tmux.detachOnDestroy.has("pi-squire"), false);
-	// A delegate inside that companion stays there, and does not make pi-squire-squire-squire.
+	// Moving the invoking pane does not change the root project.
 	s.tmux.parentSession = "pi-squire-squire";
 	await call(s, "nested");
-	assert.equal(s.tmux.opened[1].session, "pi-squire-squire");
+	assert.equal(s.tmux.opened[1].session, companion);
 });
 
 test('windowPlacement "current" opens in the parent\'s session and touches no other', async () => {
@@ -120,7 +118,7 @@ test("the setting is read at call time", async () => {
 	await call(s, "two");
 	assert.deepEqual(
 		s.tmux.opened.map((window) => window.session),
-		["work", "work-squire"],
+		["work", companion],
 	);
 });
 
@@ -218,13 +216,13 @@ test("a launch keeps the placement it read first when the settings change before
 	for (const later of [{ windowPlacement: "bad" }, { windowPlacement: "current" }]) {
 		const off = s.events.on("session:launch", () => setSettings(later)); // it comes after the task was mailed
 		const result = await call(s, `late-${s.tmux.opened.length}`);
-		assert.equal((result.structuredContent as { windowSession?: string }).windowSession, "work-squire");
+		assert.equal((result.structuredContent as { windowSession?: string }).windowSession, companion);
 		off();
 		rmSync(settingsFile, { force: true });
 	}
 	assert.deepEqual(
 		s.tmux.opened.map((window) => window.session),
-		["work-squire", "work-squire"],
+		[companion, companion],
 	);
 });
 
@@ -233,7 +231,7 @@ test("a resume keeps the placement it read first when the settings change before
 	d.s.tmux.exit(d.windowId);
 	d.s.events.on("session:launch", () => setSettings({ windowPlacement: "bad" }));
 	const result = await d.s.toolCall("delegation_resume", { id: d.id, task: "more" });
-	assert.equal((result.structuredContent as { windowSession?: string }).windowSession, "work-squire");
+	assert.equal((result.structuredContent as { windowSession?: string }).windowSession, companion);
 	assert.equal(d.s.sendCalls.length, 2, "the task mail went out after a coherent start");
 });
 
@@ -256,7 +254,7 @@ test("a settings file that is malformed, unreadable or not an object falls back 
 	}
 	assert.deepEqual(
 		s.tmux.opened.map((window) => window.session),
-		bad.map(() => "work-squire"),
+		bad.map(() => companion),
 	);
 });
 
@@ -285,23 +283,26 @@ test("a window moved to another session is still resumable once its program exit
 	const result = await d.s.toolCall("delegation_resume", { id: d.id, task: "more" });
 	assert.deepEqual(d.s.tmux.killed, [d.windowId], "the exited window is killed wherever it is");
 	const details = result.structuredContent as { windowSession?: string };
-	assert.equal(details.windowSession, "work-squire", "the resumed window follows the setting");
-	assert.match(result.content[0].text, /in window scout-first in session work-squire\./);
-	assert.match(d.s.notes.at(-1) ?? "", /resumed .* as .*: scout in window scout-first in session work-squire/);
+	assert.equal(details.windowSession, companion, "the resumed window follows the setting");
+	assert.match(result.content[0].text, new RegExp(`in window scout-first in session ${companion}\\.`));
+	assert.match(
+		d.s.notes.at(-1) ?? "",
+		new RegExp(`resumed .* as .*: scout in window scout-first in session ${companion}`),
+	);
 });
 
 test("the start text, the tool result and the status show the session", async () => {
 	const s = await started();
 	const result = await call(s, "first");
 	const id = (result.structuredContent as { id: string }).id;
-	assert.match(result.content[0].text, /in window scout-first in session work-squire\./);
-	assert.equal((result.structuredContent as { windowSession?: string }).windowSession, "work-squire");
-	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-first in session work-squire`);
+	assert.match(result.content[0].text, new RegExp(`in window scout-first in session ${companion}\\.`));
+	assert.equal((result.structuredContent as { windowSession?: string }).windowSession, companion);
+	assert.equal(s.notes.at(-1), `delegate: scout ${id} started in window scout-first in session ${companion}`);
 
 	const status = await s.toolCall("delegation_status", { id });
-	assert.match(status.content[0].text, /window: scout-first \(@\d+\) in session work-squire\n/);
+	assert.match(status.content[0].text, new RegExp(`window: scout-first \\(@\\d+\\) in session ${companion}\\n`));
 	const [row] = (status.structuredContent as { delegations: { windowSession?: string }[] }).delegations;
-	assert.equal(row.windowSession, "work-squire");
+	assert.equal(row.windowSession, companion);
 });
 
 test("the status follows a renamed session and omits the session once the window is gone", async () => {
@@ -329,5 +330,5 @@ test("a known failure before anything was dispatched is not-opened; one after di
 	const unknown = await call(s, "unknown").catch((err: unknown) => err);
 	assert.ok(unknown instanceof WindowOpenError);
 	assert.equal(unknown.certainty, "unknown");
-	assert.deepEqual(s.tmux.commands.slice(-2), ["new-window =work-squire:", "new-session work-squire"]);
+	assert.equal(s.tmux.commands.at(-1), `new-session ${companion}`);
 });

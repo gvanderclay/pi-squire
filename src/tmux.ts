@@ -39,13 +39,23 @@ export async function requireTmuxVersion(tmux: { version(): Promise<TmuxVersion>
 	}
 }
 
-/**
- * The companion session for a parent in `parentSession`: its own when that is
- * a companion session (marked by pi-squire when it made it), else the name
- * plus `-squire`. The name alone says nothing: a user's session may end in it.
- */
-export function companionName(parentSession: string, isCompanion: boolean): string {
-	return isCompanion ? parentSession : `${parentSession}-squire`;
+/** Pick a managed candidate before any free name, in numeric candidate order. */
+export function companionCandidate(base: string, sessions: ReadonlyMap<string, boolean>): string {
+	const candidates = [...sessions.keys()]
+		.filter(
+			(name) =>
+				name === base || (name.startsWith(`${base}-`) && /^[2-9]$|^[1-9][0-9]+$/.test(name.slice(base.length + 1))),
+		)
+		.sort((a, b) => candidateNumber(base, a) - candidateNumber(base, b));
+	const managed = candidates.find((name) => sessions.get(name) === true);
+	if (managed !== undefined) return managed;
+	let number = 1;
+	while (sessions.has(number === 1 ? base : `${base}-${number}`)) number++;
+	return number === 1 ? base : `${base}-${number}`;
+}
+
+function candidateNumber(base: string, name: string): number {
+	return name === base ? 1 : Number(name.slice(base.length + 1));
 }
 
 /**
@@ -73,9 +83,9 @@ export interface TmuxClient {
 	/**
 	 * Open a detached window and return its id (for example `@3`) and session.
 	 * `current` opens it in the parent's session; `companion` in
-	 * `<parent's session>-squire`, created when it does not exist.
+	 * the root project's managed companion, created when it does not exist.
 	 */
-	openWindow(spec: WindowSpec, placement: WindowPlacement): Promise<OpenedWindow>;
+	openWindow(spec: WindowSpec, placement: WindowPlacement, companion: string): Promise<OpenedWindow>;
 	/** Every window on the server, in one tmux call. */
 	listWindows(): Promise<TmuxWindow[]>;
 	/** Kill a window. */
@@ -109,21 +119,21 @@ function runTmux(args: string[], timeout: number): Promise<string> {
 }
 
 type Run = (args: string[]) => Promise<string>;
-type Parent = { id: string; name: string; companion: boolean };
+type Parent = OwnSession;
 
 /** The user option that marks a session pi-squire made for delegate windows. */
 const COMPANION_OPTION = "@squire-companion";
 
-/** The id, name and companion mark of the session the pane in `TMUX_PANE` belongs to, when known. */
+/** The id and name of the session the pane in `TMUX_PANE` belongs to, when known. */
 async function parentSession(run: Run): Promise<Parent | undefined> {
 	const pane = process.env.TMUX_PANE;
 	if (pane === undefined || pane === "") return undefined;
 	// Only the line's terminator goes: trailing spaces are legal in a session name.
-	const format = `#{session_id}\t#{${COMPANION_OPTION}}\t#{session_name}`;
+	const format = "#{session_id}\t#{session_name}";
 	const out = (await run(["display-message", "-p", "-t", pane, "-F", format])).replace(/\r?\n$/, "");
-	// The name comes last, so it is whatever follows the second tab.
-	const [id, marker, ...name] = out.split("\t");
-	return id.trim() === "" ? undefined : { id: id.trim(), name: name.join("\t"), companion: marker === "1" };
+	// The name comes last, so any tabs within it stay in the name.
+	const [id, ...name] = out.split("\t");
+	return id.trim() === "" ? undefined : { id: id.trim(), name: name.join("\t") };
 }
 
 const envArgs = (spec: WindowSpec): string[] =>
@@ -145,46 +155,62 @@ async function create(run: Run, args: string[]): Promise<string> {
 const failedWith = (err: unknown, text: string): boolean =>
 	err instanceof WindowOpenError && err.message.includes(text);
 
+/** Read ownership before choosing a name; exact names are compared in JavaScript. */
+async function companionSessions(
+	run: Run,
+	certainty: "not-opened" | "unknown",
+): Promise<Map<string, { id: string; managed: boolean }>> {
+	let out: string;
+	try {
+		out = await run(["list-sessions", "-F", `#{session_id}\t#{${COMPANION_OPTION}}\t#{session_name}`]);
+	} catch (err) {
+		throw new WindowOpenError((err as Error).message, certainty);
+	}
+	const sessions = new Map<string, { id: string; managed: boolean }>();
+	for (const line of out.replace(/\r?\n$/, "").split("\n")) {
+		const [id, marker, ...name] = line.split("\t");
+		if (id !== "") sessions.set(name.join("\t"), { id, managed: marker === "1" });
+	}
+	return sessions;
+}
+
 /**
- * Open a window in the companion session: `new-window`, then on a missing
- * session one `new-session` that makes the delegate its first window and sets
- * `detach-on-destroy off` and the companion mark on that session only, then `new-window` again when
- * another launch created the session first.
+ * A new-session and its options run in one synchronous tmux command queue.
+ * A duplicate aborts that queue before options run. Re-read ownership after
+ * that race, never treating a duplicate as permission to adopt the winner.
+ * Retry only proven duplicate-name or missing-target failures, not ambiguous task launches.
  */
-async function openCompanion(run: Run, spec: WindowSpec, session: string): Promise<string> {
-	const newWindow = [
-		"new-window",
-		"-d",
-		"-P",
-		"-F",
-		"#{window_id}",
-		"-n",
-		spec.name,
-		"-c",
-		spec.cwd,
-		...envArgs(spec),
-		"-t",
-		`=${session}:`,
-		"--",
-		...spec.argv,
-	];
-	try {
-		return await create(run, newWindow);
-	} catch (err) {
-		// tmux resolves the target before it creates anything, so nothing was dispatched that could create a window.
-		if (!failedWith(err, "can't find session")) throw err;
-		(err as WindowOpenError).certainty = "not-opened";
+async function openCompanion(run: Run, spec: WindowSpec, base: string): Promise<OpenedWindow> {
+	let certainty: "not-opened" | "unknown" = "not-opened";
+	while (true) {
+		const sessions = await companionSessions(run, certainty);
+		const session = companionCandidate(base, new Map([...sessions].map(([name, value]) => [name, value.managed])));
+		const owned = sessions.get(session);
+		if (owned !== undefined) {
+			const args = ["new-window", "-d", "-P", "-F", "#{window_id}", "-n", spec.name, "-c", spec.cwd, ...envArgs(spec)];
+			// Target the verified session's id, so a replacement with the same name cannot be adopted.
+			args.push("-t", owned.id, "--", ...spec.argv);
+			try {
+				return { id: await create(run, args), session };
+			} catch (err) {
+				if (!failedWith(err, "can't find session")) throw err;
+				// Its last window may have exited since the lookup. Target resolution
+				// failed before tmux could open anything, so select placement again.
+				certainty = "not-opened";
+				continue;
+			}
+		}
+		const args = ["new-session", "-d", "-s", session, "-n", spec.name, "-c", spec.cwd, ...envArgs(spec)];
+		args.push("-P", "-F", "#{window_id}", "--", ...spec.argv);
+		args.push(";", "set-option", "-t", `=${session}:`, COMPANION_OPTION, "1");
+		args.push(";", "set-option", "-t", `=${session}:`, "detach-on-destroy", "off");
+		certainty = "unknown";
+		try {
+			return { id: await create(run, args), session };
+		} catch (err) {
+			if (!failedWith(err, "duplicate session")) throw err;
+		}
 	}
-	const newSession = ["new-session", "-d", "-s", session, "-n", spec.name, "-c", spec.cwd, ...envArgs(spec)];
-	newSession.push("-P", "-F", "#{window_id}", "--", ...spec.argv);
-	newSession.push(";", "set-option", "-t", `=${session}:`, "detach-on-destroy", "off");
-	newSession.push(";", "set-option", "-t", `=${session}:`, COMPANION_OPTION, "1");
-	try {
-		return await create(run, newSession);
-	} catch (err) {
-		if (!failedWith(err, "duplicate session")) throw err;
-	}
-	return create(run, newWindow);
 }
 
 /** Open a window in the parent's own session, as delegates always did. */
@@ -247,7 +273,7 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 			return cachedVersion;
 		},
 
-		async openWindow(spec, placement) {
+		async openWindow(spec, placement, companion) {
 			let parent: Parent | undefined;
 			try {
 				parent = await parentSession(run);
@@ -260,8 +286,7 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 			if (known === undefined) {
 				throw new WindowOpenError("could not tell which tmux session this pane is in (TMUX_PANE)", "not-opened");
 			}
-			const session = companionName(known, parent?.companion === true);
-			return { id: await openCompanion(run, spec, session), session };
+			return openCompanion(run, spec, companion);
 		},
 
 		async listWindows() {

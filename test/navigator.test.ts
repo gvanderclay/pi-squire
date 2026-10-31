@@ -8,8 +8,21 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
+import { placementProject } from "../src/window-placement.ts";
 
-import { agentDir, agentFile, cleanup, type KeyScript, keyScript, resetRoot, session, writeAgent } from "./harness.ts";
+import {
+	agentDir,
+	agentFile,
+	cleanup,
+	type KeyScript,
+	keyScript,
+	resetRoot,
+	root,
+	session,
+	writeAgent,
+} from "./harness.ts";
+
+const companion = placementProject(root).companion;
 
 beforeEach(() => {
 	resetRoot();
@@ -96,7 +109,7 @@ test("the panel lists only delegations whose window is open, newest first, and t
 	const [frame] = script.frames;
 	assert.match(frame, /second/);
 	assert.doesNotMatch(frame, /first|third|fourth/);
-	assert.ok(frame.includes(`${second.windowId} in work-squire`), frame);
+	assert.ok(frame.includes(`${second.windowId} in ${companion}`), frame);
 	assert.match(frame, /↑↓ select · enter switch · p peek · x close · n new · esc leave/);
 });
 
@@ -293,7 +306,7 @@ test("/delegate-open switches by default and with --switch, in either session", 
 	assert.equal(s.tmux.switches.length, 1);
 	await s.command("delegate-open", `${here.id} --switch`);
 	assert.equal(s.tmux.switches.length, 2);
-	s.tmux.moveWindow(here.windowId, "work-squire");
+	s.tmux.moveWindow(here.windowId, companion);
 	await s.command("delegate-open", here.id);
 	assert.equal(s.tmux.switches.length, 3);
 	assert.deepEqual(s.tmux.switches.at(-1), { client: "c1", windowId: here.windowId });

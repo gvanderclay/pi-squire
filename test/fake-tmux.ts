@@ -3,11 +3,11 @@
 // the test sets them. It models sessions too: which windows each holds, a
 // companion session created on demand and gone with its last window, and
 // `detach-on-destroy` per session. The model is high level: placement is
-// decided here from the parent and companion session names, not by parsing the
+// decided here from project companion names and ownership, not by parsing the
 // real client's tmux arguments or exact-match targets (`test/tmux.test.ts`
 // covers those against a stub `tmux`). The real tmux is exercised by hand, never here.
 import {
-	companionName,
+	companionCandidate,
 	type OpenedWindow,
 	type OwnSession,
 	parseTmuxVersion,
@@ -54,6 +54,8 @@ export class FakeTmux implements TmuxClient {
 	failOpenCertainty: "not-opened" | "unknown" | undefined;
 	/** When set, a companion `new-session` loses a race: another launch created the session first. */
 	raceNewSession = false;
+	/** Whether a creation race winner is managed, or a user-created unmarked session. */
+	raceWinnerManaged = true;
 	/** When set, the create step fails with this message after it was dispatched. */
 	failAfterDispatch: string | undefined;
 	/** When set with `raceNewSession`, the race winner's session is gone again by the retry. */
@@ -86,7 +88,7 @@ export class FakeTmux implements TmuxClient {
 		return windowId;
 	}
 
-	async openWindow(spec: WindowSpec, placement: WindowPlacement): Promise<OpenedWindow> {
+	async openWindow(spec: WindowSpec, placement: WindowPlacement, companion: string): Promise<OpenedWindow> {
 		if (this.failOpen !== undefined) throw new WindowOpenError(this.failOpen, this.failOpenCertainty ?? "not-opened");
 		const record = (windowId: string, session: string): OpenedWindow => {
 			this.opened.push({ ...spec, argv: [...spec.argv], env: { ...spec.env }, windowId, session, placement });
@@ -100,8 +102,10 @@ export class FakeTmux implements TmuxClient {
 			if (this.failAfterDispatch !== undefined) dispatchFailure();
 			return record(this.add(this.parentSession, spec.name), this.parentSession);
 		}
-		const parentMarked = this.companions.has(this.parentSession) && this.sessions.has(this.parentSession);
-		const session = companionName(this.parentSession, parentMarked);
+		const session = companionCandidate(
+			companion,
+			new Map([...this.sessions.keys()].map((name) => [name, this.companions.has(name)])),
+		);
 		const newWindow = async (afterDispatch: boolean): Promise<OpenedWindow> => {
 			this.commands.push(`new-window =${session}:`);
 			if (!this.sessions.has(session)) {
@@ -111,19 +115,16 @@ export class FakeTmux implements TmuxClient {
 			if (this.failAfterDispatch !== undefined) dispatchFailure();
 			return record(this.add(session, spec.name), session);
 		};
-		try {
-			return await newWindow(false);
-		} catch (err) {
-			if (!(err instanceof WindowOpenError) || !err.message.includes("can't find session")) throw err;
-		}
+		if (this.sessions.has(session)) return newWindow(false);
 		this.commands.push(`new-session ${session}`);
 		if (this.failAfterDispatch !== undefined) dispatchFailure();
 		if (this.raceNewSession) {
 			this.raceNewSession = false;
 			// The winner's window, which this launch knows nothing about.
 			const other = this.add(session, "other-launch");
-			this.companions.add(session);
+			if (this.raceWinnerManaged) this.companions.add(session);
 			if (this.raceWinnerGone) this.windows.delete(other);
+			if (!this.raceWinnerManaged) return this.openWindow(spec, placement, companion);
 			return newWindow(true);
 		}
 		const windowId = this.add(session, spec.name);

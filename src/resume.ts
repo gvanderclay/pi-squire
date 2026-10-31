@@ -78,7 +78,7 @@ export type ResumeDeps = {
 		trusted: boolean;
 		cwd: string;
 		sessionDir: string;
-		start: { agent: Agent; model: string; rest: string[]; thinking: string; autoExit: boolean };
+		start: { agent: Agent; model: string; rest: string[]; thinking: string; autoExit: boolean; notices: string[] };
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
 		placement: WindowPlacement;
@@ -166,7 +166,7 @@ function resultSchema(delegateSchema: TObject): TObject {
 
 /** The model, thinking and auto-exit a resume runs with, and the directory and workspace it opens in. */
 type Plan = {
-	start: { agent: Agent; model: string; rest: string[]; thinking: string; autoExit: boolean };
+	start: { agent: Agent; model: string; rest: string[]; thinking: string; autoExit: boolean; notices: string[] };
 	chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>;
 	workspace: Workspace;
 	trusted: boolean;
@@ -186,7 +186,7 @@ async function planResume(
 	// A managed worktree keeps its launch facts while the session still runs in it.
 	const workspace = record.workspace?.cwd === prepared.workspace.cwd ? record.workspace : prepared.workspace;
 	return {
-		start: { agent, model: chosen.model, rest: chosen.rest, thinking, autoExit },
+		start: { agent, model: chosen.model, rest: chosen.rest, thinking, autoExit, notices: chosen.notices },
 		chosen,
 		workspace,
 		trusted: prepared.trusted,

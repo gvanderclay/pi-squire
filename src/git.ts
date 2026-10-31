@@ -126,7 +126,12 @@ function identify(cwd: string): { identity: GitIdentity } | { launch: GitLaunch 
 	// One question per path, so no output is split on a newline a path may contain.
 	const top = askGit(cwd, ["rev-parse", "--show-toplevel"]);
 	if (!top.ok) {
-		if (top.status === 128 && /not a git repository/i.test(top.message)) return { launch: { kind: "non-git" } };
+		if (
+			top.status === 128 &&
+			/not a git repository [(]or any (?:of the parent directories|parent up to mount point)/i.test(top.message)
+		) {
+			return { launch: { kind: "non-git" } };
+		}
 		return { launch: { kind: "unknown", reason: `git rev-parse failed: ${top.message}` } };
 	}
 	const common = askGit(cwd, ["rev-parse", "--git-common-dir"]);

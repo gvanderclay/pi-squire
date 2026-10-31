@@ -24,6 +24,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Nested launch/resume tools are capped by the direct parent’s actually available
+  operations, including codemode/deferred and active model-only tools. Requested
+  patterns become exact registration grants after `session:launch` customization;
+  neither `delegateTools` nor hook-added extensions can widen them. Launch/resume
+  notices report removed tools and restricted patterns; top-level selection stays
+  unchanged. Real Pi 1.3 execution and isolated CLI launch/resume tests cover the
+  deliberate nested-only behavior.
+- Complete nested-grant validation: false and empty lists grant none, malformed
+  values disable the agent, duplicates are removed, and unavailable child names
+  warn without disabling known entries. An agent with a permission map warns
+  when a listed child lacks one, including `true` grants over the current roster.
+  This heuristic does not compare policies or inherit permission authority;
+  tool restrictions and permission rules do not provide filesystem isolation.
 - Unreleased nested-worker lifecycle: `maxDepth` (default 1), current-agent
   `allow_nested_delegation` grants and bypass-resistant launch/resume admission,
   including trusted project-agent shadowing. Coordinators get all four

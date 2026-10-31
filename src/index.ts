@@ -73,6 +73,7 @@ import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } f
 import { createResults, delegateName, type WorkspaceAttempt } from "./results.ts";
 import { createResume, type ResumeRequest, resumableIds, startedLine } from "./resume.ts";
 import { pickResume } from "./resume-picker.ts";
+import { registerTaskReplies } from "./task-replies.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
@@ -663,8 +664,9 @@ export default function delegate(
 ): void {
 	// A delegate registers only its auto-exit side: `delegate` is one level deep (Q27).
 	const parentId = process.env[PARENT_ENV] ?? "";
+	const replies = registerTaskReplies(pi, parentId || undefined);
 	if (parentId !== "") {
-		registerChild(pi, parentId);
+		registerChild(pi, replies);
 		return;
 	}
 

@@ -8,6 +8,10 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Breaking
 
+- Require pi-session-mail 0.6.0 or another provider of all four message hooks.
+  Upgrade mail and squire together: squire now owns delegate task settlement
+  through `message:reply`; mail no longer automatically answers task requests.
+
 - Agent frontmatter now uses `auto_exit` (boolean, default true).
   Old `auto-exit` and `extensions` fields are silently ignored, with no
   warnings or validation. In particular, old `auto-exit: false` now leaves
@@ -17,6 +21,18 @@ follows [Semantic Versioning](https://semver.org/).
   customization remain. CLI flags, commands, internal fields and environment
   variables keep their names. Updated agent-file, auto-exit, delegate, real-Pi
   tool-selection, resume and hook tests for this deliberate contract change.
+
+### Fixed
+
+- Persist owed delegate task answers and frozen reply retries across reload,
+  restart, resume and same-session manual reopening. Bounded startup retries
+  tolerate delayed mail initialization; remaining reply write failures are
+  visible and block auto-exit. Stops hold tasks through failed runs; successful
+  recovery, final failure, fallback and no-answer wording are preserved.
+  Updated `test/auto-exit.test.ts` for consumer-owned reply/exit behavior and
+  added real-provider task-reply and correlation regression coverage.
+- Correlate every request id in a batched reply and suppress duplicate final
+  results even when a transport retry writes a fresh reply envelope.
 
 ### Changed
 

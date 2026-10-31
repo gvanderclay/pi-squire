@@ -82,10 +82,11 @@ test("an agent defined only under the legacy agents directory is neither listed 
 	assert.deepEqual(s.sendCalls, []);
 });
 
-test("inside a delegate no tools are registered", async () => {
+test("inside a leaf delegate delegation tools are inactive", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session({ parentEnv: "some-parent" });
-	assert.deepEqual(s.tools(), []);
+	await s.start();
+	assert.ok(!s.pi.getActiveTools().includes("delegate"));
 });
 
 // ---------------------------------------------------------------------------
@@ -286,13 +287,18 @@ test("call-time validation reads a newly added agent before the description is r
 	assert.match(s.tool("delegate").description, /researcher/);
 });
 
-test("inside a delegate run preparation adds no parent section and registers no parent tool", async () => {
+test("inside a leaf delegate run preparation removes parent guidance and restores task guidance", async () => {
 	writeDelegationPrompt(GUIDE);
 	const s = session({ parentEnv: "some-parent" });
 	await s.start();
 	const event = await s.prepare({ sections: { [PARENT_SECTION]: "keep" } });
-	assert.deepEqual(event.systemPromptOptions.sections, { [PARENT_SECTION]: "keep" });
-	assert.deepEqual(s.tools(), []);
+	assert.equal(event.systemPromptOptions.sections[PARENT_SECTION], undefined);
+	assert.match(
+		event.systemPromptOptions.sections.squire_delegate_task,
+		/Your final message reaches the session that started you automatically/,
+	);
+	assert.doesNotMatch(event.systemPromptOptions.sections.squire_delegate_task, /children finish|intermediate runs/);
+	assert.ok(!s.pi.getActiveTools().includes("delegate"));
 });
 
 // ---------------------------------------------------------------------------
@@ -363,6 +369,7 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 		customType: "delegate",
 		data: {
 			id,
+			identity: { parent: s.parent, root: s.parent, depth: 1, agent: "scout", chain: ["scout"], autoExit: true },
 			agent: "scout",
 			model: "alpha/fast-model",
 			thinking: "low",

@@ -112,10 +112,12 @@ test("delegation_status shows the auto-exit setting", async () => {
 // ---------------------------------------------------------------------------
 // The delegate: exiting
 
-test("inside a delegate only /auto-exit is registered, never /delegate or the tools", async () => {
+test("inside a leaf delegate commands remain registered but delegation tools are inactive", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
-	assert.deepEqual(s.commands(), ["auto-exit"]);
-	assert.deepEqual(s.tools(), []);
+	await s.start();
+	assert.ok(s.commands().includes("auto-exit"));
+	assert.ok(!s.pi.getActiveTools().includes("delegate"));
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "go" }), /maxDepth/);
 });
 
 test("with auto-exit on, a normal completion shuts the delegate down after the settle", async () => {
@@ -163,8 +165,8 @@ test("a failed run exits like a completion when auto-exit is on, and only then",
 });
 
 test("the delegate's footer shows auto-exit and follows it off and back on", async () => {
-	const on = { key: "delegate", text: "<child> delegate \u00b7 auto-exit on" };
-	const off = { key: "delegate", text: "<child> delegate \u00b7 auto-exit off" };
+	const on = { key: "delegate-self", text: "<child> delegate \u00b7 auto-exit on" };
+	const off = { key: "delegate-self", text: "<child> delegate \u00b7 auto-exit off" };
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
 	await s.start();
 	assert.deepEqual(s.statuses, [on]);
@@ -207,7 +209,7 @@ for (const end of ["aborted", "stopped"] as const) {
 test("the delegate's footer names its agent when the launch gives one", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1", agentEnv: "reviewer" });
 	await s.start();
-	assert.deepEqual(s.statuses, [{ key: "delegate", text: "<child> reviewer delegate \u00b7 auto-exit on" }]);
+	assert.deepEqual(s.statuses, [{ key: "delegate-self", text: "<child> reviewer delegate \u00b7 auto-exit on" }]);
 });
 
 test("/auto-exit turns it back on for the next normal completion", async () => {

@@ -116,6 +116,7 @@ export function recordCheck(
 	record: StartedRecorded,
 	ctx: ExtensionContext,
 ): { session: SessionFile; agent: Agent } {
+	deps.admit?.(record.agent, ctx);
 	const session = sessionFor(record, ctx);
 	const roster = deps.roster(ctx);
 	const disabled = disabledProblem(roster, record.agent);

@@ -246,6 +246,7 @@ test("startup outbox recovery retries actual replies across an async handler bef
 	});
 	const starting = reopened.start();
 	await nextTurn();
+	await nextTurn(); // identity and child-task restoration precede answer restoration
 	assert.equal(attempts, 1, "first real reply precedes the delayed provider's session_start");
 	assert.equal(JSON.parse(readFileSync(taskStatePath(child.parent), "utf8")).outbox.length, 1);
 	gate.resolve();

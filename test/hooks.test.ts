@@ -52,6 +52,8 @@ test("the README's session:launch example adds its flag and env key to the launc
 	assert.equal(opened.argv[opened.argv.indexOf("--thinking") + 1], "low", "the emitter's own args stay");
 	assert.equal(opened.env.GATE_MODE, "auto");
 	assert.equal(opened.env.GATE_ROOT, opened.cwd, "the example reads the cwd the window opens in");
+	assert.equal(opened.env.GATE_CHAIN, "scout");
+	assert.equal(opened.env.GATE_PARENT, s.parent);
 	assert.equal(opened.env.PI_DELEGATE_PARENT, s.parent, "the emitter's own env stays");
 });
 

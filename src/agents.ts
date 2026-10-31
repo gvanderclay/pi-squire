@@ -56,6 +56,8 @@ export type Agent = {
 	thinking?: Thinking;
 	/** Whether the delegate closes itself after a normal completion; `auto_exit`, default true. */
 	autoExit: boolean;
+	/** Current grant: true for the roster, or an explicit list of child identities. */
+	allowNested?: true | string[];
 	/**
 	 * The delegate's complete tool list, from a `tools` line of tool names:
 	 * undefined when the field is absent or holds only `-name` entries (the
@@ -119,6 +121,9 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 	const autoExit = flag(fields.auto_exit);
 	if (autoExit === null)
 		return { invalid: `${path} has auto_exit ${JSON.stringify(fields.auto_exit)}, not true or false`, notes: [] };
+	const nested = fields.allow_nested_delegation;
+	if (!validNested(nested))
+		return { invalid: `${path} has allow_nested_delegation that is not true or a list of agent names`, notes: [] };
 	const launch = toolsField(path, fields);
 	if ("invalid" in launch) return { ...launch, notes: [] };
 	const model = field(fields, "model");
@@ -130,6 +135,16 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 	// A field that cannot be used is dropped with a note; it never costs the agent.
 	const notes: string[] = [];
 	const thinking = thinkingField(path, fields, notes);
+	if (
+		nested !== true &&
+		!(Array.isArray(nested) && nested.length > 0) &&
+		launch.tools?.some((name) =>
+			["delegate", "delegation_status", "delegation_close", "delegation_resume"].includes(name),
+		)
+	)
+		notes.push(
+			`${path} lists delegation tools without allow_nested_delegation; listing tools alone does not grant nesting`,
+		);
 	if (fallback === null)
 		notes.push(`${path} has fallback ${JSON.stringify(fields.fallback)}, not a list of models; ignored`);
 	if (fields["exclude-tools"] !== undefined)
@@ -143,6 +158,7 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 			...(model === undefined ? {} : { model }),
 			...(thinking === undefined ? {} : { thinking }),
 			autoExit: autoExit ?? true,
+			...(nested === undefined ? {} : { allowNested: nested as true | string[] }),
 			...launch,
 			fallback: fallback ?? [],
 			locked: lockedFields(path, fields, { model, thinking }, notes),
@@ -151,6 +167,14 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 			path,
 		},
 	};
+}
+
+function validNested(value: unknown): boolean {
+	return (
+		value === undefined ||
+		value === true ||
+		(Array.isArray(value) && value.every((entry) => typeof entry === "string" && NAME.test(entry)))
+	);
 }
 
 /**

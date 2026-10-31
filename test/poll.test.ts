@@ -282,7 +282,7 @@ test("recorded session directory survives parent resume and gone late reply", as
 	const restored = session({ parent: s.parent, entries: afterGone, sessionDir: laterDir });
 	await restored.start();
 	const restoredAfterGoneItem = await item(restored);
-	assert.equal(restoredAfterGoneItem.state, "gone");
+	assert.equal(restoredAfterGoneItem.state, "done", "durable result outranks an older transcript snapshot");
 	assert.equal(restoredAfterGoneItem.sessionPath, childSessionPath);
 });
 

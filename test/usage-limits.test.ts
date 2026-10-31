@@ -841,7 +841,7 @@ test("a hit after a clear starts at 5 minutes, not an escalated cooldown", async
 	assert.equal(marks()[0].clearsAt, Date.now() + 5 * 60_000);
 });
 
-test("/delegate-clear completes all and the active scopes, and is absent in a delegate", async (t) => {
+test("/delegate-clear completes all and the active scopes, including in a delegate", async (t) => {
 	clock(t);
 	await fail(GO_LIMIT);
 	const p = parent();
@@ -859,7 +859,7 @@ test("/delegate-clear completes all and the active scopes, and is absent in a de
 	const child = session({ parentEnv: "parent-x", parent: "delegation-9" });
 	await child.start();
 	delete process.env.PI_DELEGATE_PARENT;
-	assert.ok(!child.commands().includes("delegate-clear"));
+	assert.ok(child.commands().includes("delegate-clear"));
 	assert.ok(p.commands().includes("delegate-clear"));
 });
 

@@ -146,7 +146,17 @@ test("the resume opens the session file with --session, never --session-id or --
 	const prompt = argv[argv.indexOf("--append-system-prompt") + 1];
 	assert.ok(prompt.endsWith("prompt.md"));
 	assert.equal(launches.length, 1, "the resume emits session:launch");
-	assert.deepEqual(Object.keys(launches[0]).sort(), ["agent", "args", "cwd", "env", "toolCallId"]);
+	assert.deepEqual(Object.keys(launches[0]).sort(), [
+		"agent",
+		"args",
+		"chain",
+		"cwd",
+		"depth",
+		"env",
+		"parent",
+		"root",
+		"toolCallId",
+	]);
 	assert.match(launches[0].toolCallId ?? "", /^call-\d+$/, "the resume passes its delegation_resume call id");
 	assert.equal(launches[0].agent, "scout");
 	assert.equal(launches[0].cwd, realpathSync(d.cwd));

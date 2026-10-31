@@ -50,10 +50,15 @@ export function resetRoot(): void {
 		rmSync(join(agentDir, name), { recursive: true, force: true });
 	}
 	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
+	for (const name of ["identity", "child-tasks"])
+		rmSync(join(agentDir, "squire", name), { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
 	delete process.env.PI_DELEGATE_FALLBACK;
 	delete process.env.PI_DELEGATE_AGENT;
+	delete process.env.PI_DELEGATE_ROOT;
+	delete process.env.PI_DELEGATE_DEPTH;
+	delete process.env.PI_DELEGATE_CHAIN;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
@@ -507,6 +512,7 @@ export function session(options: SessionOptions = {}) {
 	};
 	/** Dispatch one run preparation, with the structured options Pi would pass, and return the event after handlers. */
 	const prepare = async (options: PrepareOptions = {}): Promise<PrepareEvent> => {
+		await ensureStarted();
 		const { messageType = "user", systemPrompt = "", prompt, message, ...promptOptions } = options;
 		const event: PrepareEvent = {
 			type: "before_agent_start",
@@ -539,7 +545,13 @@ export function session(options: SessionOptions = {}) {
 	};
 	let calls = 0;
 	/** `abort` is the call's own signal, as Pi passes a tool; none by default. */
-	const callTool = (name: string, params: unknown, abort?: AbortSignal): Promise<ToolResult> => {
+	const ensureStarted = async (): Promise<void> => {
+		if (bound) return;
+		bound = true;
+		await fire("session_start", { reason: "startup" });
+	};
+	const callTool = async (name: string, params: unknown, abort?: AbortSignal): Promise<ToolResult> => {
+		if (!bound) await ensureStarted();
 		const tool = tools[name];
 		if (tool === undefined) return Promise.reject(new Error(`no tool named ${name} is registered`));
 		return tool.execute(`call-${++calls}`, params as never, abort, undefined, ctx).then((result) => {
@@ -601,7 +613,10 @@ export function session(options: SessionOptions = {}) {
 		modelSets,
 		continuations,
 		/** Type `/<name> <args>` for any command the extension registered. */
-		command: (name: string, args = "") => commands[name].handler(args, ctx),
+		command: async (name: string, args = "") => {
+			await ensureStarted();
+			return commands[name].handler(args, ctx);
+		},
 		/** Ask any registered command for argument completions. */
 		completionsFor: async (name: string, prefix: string) =>
 			(await commands[name].getArgumentCompletions?.(prefix)) as { value: string; label: string }[] | null,
@@ -614,10 +629,12 @@ export function session(options: SessionOptions = {}) {
 		 * error, signal not aborted). Then the next event-loop turns run.
 		 */
 		run: async (end: "completed" | "aborted" | "stopped" | "error" = "completed", failure?: RunFailure) => {
+			await ensureStarted();
 			const controller = new AbortController();
 			signal = controller.signal;
 			const { response: _response, ...errorFields } = failure ?? {};
 			await fire("agent_start");
+			await fire("context", { messages: [] });
 			if (end === "error")
 				for (const response of [failure?.response ?? []].flat()) await fire("after_provider_response", response);
 			if (end === "aborted" || end === "stopped") controller.abort();
@@ -646,7 +663,10 @@ export function session(options: SessionOptions = {}) {
 			await new Promise((resolve) => setImmediate(resolve));
 		},
 		/** Type `/delegate <args>`. */
-		delegate: (args: string) => commands.delegate.handler(args, ctx),
+		delegate: async (args: string) => {
+			await ensureStarted();
+			return commands.delegate.handler(args, ctx);
+		},
 		/** Ask for completions after `/delegate `; the real call has no context. */
 		completions: async (prefix: string) =>
 			(await commands.delegate.getArgumentCompletions?.(prefix)) as { value: string; label: string }[] | null,

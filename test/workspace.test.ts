@@ -119,17 +119,20 @@ test("a broken .git pointer records unknown Git state, including status, snapsho
 	const result = await call(s, broken);
 	const workspace = (result.structuredContent as Data).workspace;
 	assert.equal(workspace.git.kind, "unknown");
-	assert.match(workspace.git.reason, /git rev-parse failed:.*not a git repository/);
+	assert.match(
+		workspace.git.reason,
+		/git rev-parse failed:.*(?:not a git repository|gitfile does not point to a valid repository)/,
+	);
 	assert.match(workspaceLine(workspace), /Git state unknown/);
 	const status = await s.toolCall("delegation_status", {});
 	const [item] = (status.structuredContent as Data).delegations;
 	assert.equal(item.workspace.git.kind, "unknown");
 	assert.equal(item.workspaceSnapshot.kind, "unknown");
-	assert.match(item.workspaceSnapshot.reason, /not a git repository/);
+	assert.match(item.workspaceSnapshot.reason, /(?:not a git repository|gitfile does not point to a valid repository)/);
 	assert.match(status.content[0].text, /Git state unknown/);
 	await assert.rejects(
 		s.toolCall("delegate", { agent: "scout", task: "inspect", worktree: "topic" }),
-		/worktree needs a usable Git checkout:.*not a git repository/,
+		/worktree needs a usable Git checkout:.*(?:not a git repository|gitfile does not point to a valid repository)/,
 	);
 	assert.equal(s.sendCalls.length, 1, "the unusable worktree source sends no second task");
 	assert.equal(s.tmux.opened.length, 1);

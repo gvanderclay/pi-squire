@@ -22,8 +22,24 @@ follows [Semantic Versioning](https://semver.org/).
   variables keep their names. Updated agent-file, auto-exit, delegate, real-Pi
   tool-selection, resume and hook tests for this deliberate contract change.
 
+### Changed
+
+- The interactive direct-delegate overview deliberately replaces only Squire’s
+  running-count entry when its cap is positive, preserving custom footers/editors
+  and the own-delegate badge. Cap zero and non-TUI hosts retain the running count.
+
 ### Added
 
+- Live, passive direct-delegate overview in interactive Pi: running children
+  first, then finished-open children, newest within each group, with stable
+  session keys, mutable native titles and actual failure/stopped outcomes.
+  Native file-backed renames and unflushed title mirrors refresh without naming
+  tools or model calls. Responsive themed tree rows clamp narrow/wide text and
+  omit model then file-age metadata as space shrinks.
+- `delegateWidgetPlacement` (above/below, default above) and
+  `delegateWidgetMaxEntries` (default three) in the existing Squire settings.
+  Independent observation continues after task completion and is cleaned up on
+  reload; no focus keys, activity or tree accounting semantics change.
 - Shared per-root tree registry and atomic cross-process launch reservations.
   `maxConcurrentDelegates` and `maxDelegatesPerRoot` default to 16/64 with
   maxDepth > 1, remain unlimited when absent at depth 1, and accept zero for

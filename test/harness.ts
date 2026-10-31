@@ -50,7 +50,7 @@ export function resetRoot(): void {
 		rmSync(join(agentDir, name), { recursive: true, force: true });
 	}
 	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
-	for (const name of ["identity", "child-tasks", "trees", "trust"])
+	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles"])
 		rmSync(join(agentDir, "squire", name), { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
@@ -230,6 +230,8 @@ export type SessionOptions = {
 	beforeMailProvider?: (pi: ExtensionAPI) => void;
 	/** Whether `ctx.hasUI` is true. */
 	hasUI?: boolean;
+	/** Interactive widget tests opt in; existing JSON-mode tests keep their count footer. */
+	mode?: "tui" | "json" | "rpc";
 	/** The parent's working directory, `ctx.cwd`; default `root`. */
 	cwd?: string;
 	/** What `ctx.isProjectTrusted()` answers; default false. */
@@ -319,6 +321,10 @@ export function session(options: SessionOptions = {}) {
 	const userMessages: { text: string; options: unknown }[] = [];
 	const entries: Entry[] = [...(options.entries ?? [])];
 	const statuses: { key: string; text: string | undefined }[] = [];
+	const widgets = new Map<string, { render(width: number): string[]; invalidate(): void }>();
+	const widgetCalls: { key: string; placement: unknown; renderer: string }[] = [];
+	let renderer = "regular";
+	const widgetTheme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 	const notes: string[] = [];
 	const warnings: string[] = [];
 	const errors: string[] = [];
@@ -377,7 +383,12 @@ export function session(options: SessionOptions = {}) {
 	let bound = false;
 	const registeredTools = options.registeredTools ?? DEFAULT_TOOLS;
 	let activeTools = [...(options.activeTools ?? [...DEFAULT_TOOLS, ...DELEGATION_TOOLS])];
+	let sessionName: string | undefined;
 	const pi = {
+		getSessionName: () => sessionName,
+		setSessionName: (name: string) => {
+			sessionName = name;
+		},
 		getThinkingLevel: () => options.parentThinking ?? "medium",
 		getActiveTools: () => [...activeTools],
 		setActiveTools: (names: string[]) => {
@@ -427,7 +438,7 @@ export function session(options: SessionOptions = {}) {
 					},
 		cwd: options.cwd ?? root,
 		hasUI: options.hasUI ?? true,
-		mode: "json",
+		mode: options.mode ?? "json",
 		isIdle: () => signal === undefined,
 		isProjectTrusted: () => options.projectTrusted ?? false,
 		modelRegistry: registry,
@@ -458,7 +469,35 @@ export function session(options: SessionOptions = {}) {
 					key,
 					text: text?.replace(/^(?:👨|👩) /u, "<parent> ").replace(/^(?:👦|👧) /u, "<child> "),
 				}),
-			theme: { fg: (_color: string, text: string) => text },
+			theme: widgetTheme,
+			setWidget: (
+				key: string,
+				factory:
+					| ((
+							tui: { requestRender(): void },
+							theme: typeof widgetTheme,
+					  ) => { render(width: number): string[]; invalidate(): void })
+					| undefined,
+				placement?: unknown,
+			) => {
+				widgetCalls.push({ key, placement, renderer });
+				if (!factory) {
+					widgets.delete(key);
+					return;
+				}
+				const owner = renderer;
+				widgets.set(
+					key,
+					factory(
+						{
+							requestRender: () => {
+								if (owner !== renderer) throw new Error("render requested on retired renderer");
+							},
+						},
+						widgetTheme,
+					),
+				);
+			},
 			select: async (title: string, options: string[], opts?: { signal?: AbortSignal; timeout?: number }) => {
 				selects.push({ title, options, ...opts });
 				const answer = selectAnswers.shift();
@@ -591,6 +630,12 @@ export function session(options: SessionOptions = {}) {
 		userMessages,
 		entries,
 		statuses,
+		widgets,
+		widgetCalls,
+		switchRenderer: (mode: string) => {
+			renderer = mode;
+			for (const widget of widgets.values()) widget.invalidate();
+		},
 		notes,
 		warnings,
 		errors,

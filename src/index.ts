@@ -92,6 +92,7 @@ import {
 } from "./tree-registry.ts";
 import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
+import { registerDelegateWidget } from "./widget.ts";
 import { placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
 import {
 	normalizeWorkspaceValue,
@@ -735,6 +736,7 @@ export default function delegate(
 	const proactive = createProactive(usage);
 	const tracking = createTracking(pi, results, tmux, proactive.errors);
 	const trustControl = registerTrustControl(pi, identity.current);
+	registerDelegateWidget(pi, results, tmux);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;

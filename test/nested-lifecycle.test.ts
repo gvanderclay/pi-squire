@@ -283,14 +283,14 @@ test("current trusted project coordinator shadows global definition and retains 
 	assert.ok(coordinator.statuses.some(({ key, text }) => key === "delegate" && text?.includes("1 delegate")));
 });
 
-test("unresolved nested directory trust refuses before unattended UI, while decided trust keeps explicit flags", async () => {
+test("unresolved nested directory trust canceled at root opens no unattended UI; decided trust keeps explicit flags", async () => {
 	const { coordinator } = await tree();
 	const target = join(root, "untrusted");
 	mkdirSync(join(target, ".pi"), { recursive: true });
 	writeFileSync(join(target, ".pi", "settings.json"), "{}");
 	await assert.rejects(
 		coordinator.toolCall("delegate", { agent: "worker", task: "go", cwd: target }),
-		/nested project trust is unresolved.*root-mediated trust/i,
+		/trust question.*cancelled/i,
 	);
 	assert.equal(coordinator.selects.length, 0);
 	assert.equal(coordinator.tmux.opened.length, 0);

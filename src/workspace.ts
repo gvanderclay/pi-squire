@@ -12,15 +12,14 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-
 import {
 	type ExtensionContext,
 	hasTrustRequiringProjectResources,
 	ProjectTrustStore,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
 import { askGit, type GitLaunch, inspectGit, PathSummarySchema } from "./git.ts";
+import { localTrust, type TrustDecision, type TrustResolver, trustChoices } from "./trust-prompt.ts";
 import type { ManagedWorkspace } from "./worktree.ts";
 
 export {
@@ -141,32 +140,6 @@ export function resolveDirectory(value: string, base: string): string {
 	return real;
 }
 
-/** The trust dialog's choices, as Pi's own selector offers them. */
-type Choice = { label: string; trusted: boolean; updates: { path: string; decision: boolean | null }[] };
-
-function choices(key: string): Choice[] {
-	const parent = dirname(key);
-	return [
-		{ label: "Trust", trusted: true, updates: [{ path: key, decision: true }] },
-		// The parent folder's approval clears the nearer key, which would otherwise outrank it.
-		...(parent === key
-			? []
-			: [
-					{
-						label: `Trust parent folder (${parent})`,
-						trusted: true,
-						updates: [
-							{ path: parent, decision: true },
-							{ path: key, decision: null },
-						],
-					},
-				]),
-		{ label: "Trust (this session only)", trusted: true, updates: [] },
-		{ label: "Do not trust", trusted: false, updates: [{ path: key, decision: false }] },
-		{ label: "Do not trust (this session only)", trusted: false, updates: [] },
-	];
-}
-
 /** The saved decision for `key` or its closest ancestor; a broken store refuses the launch. */
 function savedDecision(store: ProjectTrustStore, key: string): boolean | null {
 	try {
@@ -178,66 +151,47 @@ function savedDecision(store: ProjectTrustStore, key: string): boolean | null {
 	}
 }
 
-/** The end of the trust dialog queue: one question at a time in this parent, so an answer cannot reach another target. */
-let dialogs: Promise<unknown> = Promise.resolve();
-
 /** Why an aborted launch stopped. */
 const ABORTED = "the launch was aborted; nothing was launched";
-
-/** Run `ask` once every earlier question is settled; an abort while waiting rejects at once and skips `ask`. */
-function oneAtATime<T>(ask: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-	const run = (): Promise<T> => {
-		if (signal?.aborted === true) return Promise.reject(new Error(ABORTED));
-		return ask();
-	};
-	const turn = dialogs.then(run, run);
-	dialogs = turn.catch(() => undefined);
-	if (signal === undefined) return turn;
-	const aborted = new Promise<never>((_, reject) => {
-		signal.addEventListener("abort", () => reject(new Error(ABORTED)), { once: true });
-	});
-	return Promise.race([turn, aborted]);
-}
 
 /** Refuse to go on once the launch's operation is aborted. */
 function stopIfAborted(signal: AbortSignal | undefined): void {
 	if (signal?.aborted === true) throw new Error(ABORTED);
 }
 
-/** Ask the user whether the delegate trusts `cwd`'s project resources, saving only what they chose. */
+/** Apply only an answer returned to this still-live requesting operation. */
 async function askTrust(
-	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 	store: ProjectTrustStore,
 	cwd: string,
 	key: string,
+	resolver: TrustResolver,
 ): Promise<boolean> {
-	// An answer given while this question waited may already settle it.
-	const saved = savedDecision(store, key);
-	if (saved !== null) return saved;
-	const options = choices(key);
-	const title = [
-		"A delegate is about to start in a directory with project resources Pi loads only when trusted.",
-		`Directory: ${cwd}`,
-		...(key === cwd ? [] : [`Main repository: ${key}`]),
-		`"Trust" and "Do not trust" save the decision for ${key}; "Trust parent folder" saves it for the folder named; "this session only" applies to this launch alone.`,
-	].join("\n");
-	const answer = await ctx.ui.select(
-		title,
-		options.map((option) => option.label),
-		{ signal },
-	);
-	stopIfAborted(signal);
-	const choice = options.find((option) => option.label === answer);
-	if (choice === undefined) throw new Error(`the trust question for ${cwd} was cancelled; nothing was launched`);
-	if (choice.updates.length > 0) {
-		try {
-			store.setMany(choice.updates);
-		} catch (err) {
-			throw new Error(`could not save the trust decision for ${key}: ${(err as Error).message}; nothing was launched`);
+	const decision: TrustDecision = await resolver(cwd, key, signal);
+	try {
+		stopIfAborted(signal);
+		decision.assertLive();
+		if ("saved" in decision.answer) {
+			if (savedDecision(store, key) !== decision.answer.saved)
+				throw new Error("the scoped project trust changed while waiting; delegate again");
+			return decision.answer.saved;
 		}
+		const label = decision.answer.label;
+		const choice = trustChoices(key).find((option) => option.label === label);
+		if (choice === undefined) throw new Error(`the trust question for ${cwd} was cancelled; nothing was launched`);
+		if (choice.updates.length > 0) {
+			try {
+				store.setMany(choice.updates);
+			} catch (err) {
+				throw new Error(
+					`could not save the trust decision for ${key}: ${(err as Error).message}; nothing was launched`,
+				);
+			}
+		}
+		return choice.trusted;
+	} finally {
+		decision.release();
 	}
-	return choice.trusted;
 }
 
 /**
@@ -252,7 +206,7 @@ async function targetTrust(
 	ctx: ExtensionContext,
 	agentDir: string,
 	signal: AbortSignal | undefined,
-	nested: boolean,
+	resolver?: TrustResolver,
 ): Promise<boolean> {
 	if (git.kind === "git") {
 		const parent = inspectGit(ctx.cwd);
@@ -265,16 +219,7 @@ async function targetTrust(
 	const saved = savedDecision(store, key);
 	if (saved !== null) return saved;
 	if (!hasTrustRequiringProjectResources(cwd)) return false;
-	if (nested)
-		throw new Error(
-			`nested project trust is unresolved for ${cwd}; root-mediated trust is not available yet. Establish a trust decision in the root before delegating; no unattended dialog was opened.`,
-		);
-	if (!ctx.hasUI) {
-		throw new Error(
-			`cwd ${cwd} has project resources that need trust and no trust decision is saved for ${key}; open Pi in ${key}, answer its trust question, then delegate again`,
-		);
-	}
-	return oneAtATime(() => askTrust(ctx, signal, store, cwd, key), signal);
+	return askTrust(signal, store, cwd, key, resolver ?? localTrust(ctx, agentDir));
 }
 
 const PROTECTED = [
@@ -325,34 +270,26 @@ export type PlannedTrust = { trusted: boolean; revalidate(): void };
 
 async function askPlannedResourceTrust(
 	plan: WorktreePlan,
-	ctx: ExtensionContext,
 	store: ProjectTrustStore,
-	signal?: AbortSignal,
-	nested = false,
+	signal: AbortSignal | undefined,
+	resolver: TrustResolver,
 ): Promise<{ trusted: boolean; exposure?: { tree: string | undefined; ancestors: boolean } }> {
 	const tree = plannedTreeHasResources(plan.source.checkoutRoot, plan.baseCommit);
 	const ancestors = destinationHasAncestorSkills(plan.destination);
 	const exposure = { tree, ancestors };
 	if (tree === undefined && !ancestors) return { trusted: false, exposure };
-	if (nested)
-		throw new Error(
-			`nested project trust is unresolved for planned worktree ${plan.destination}; establish trust at the root before delegating. Root-mediated trust is not available yet; no unattended dialog was opened.`,
-		);
-	if (!ctx.hasUI)
-		throw new Error(
-			`the planned worktree in ${plan.destination} exposes project resources and has no saved trust decision for ${plan.source.mainRoot}; open Pi and establish trust, then delegate again`,
-		);
-	const trusted = await oneAtATime(async () => {
+	const decide = async (): Promise<boolean> => {
 		const savedAtTurn = savedDecision(store, plan.source.mainRoot);
 		if (savedAtTurn !== null) return savedAtTurn;
-		const answer = await askTrust(ctx, signal, store, plan.destination, plan.source.mainRoot);
+		const answer = await askTrust(signal, store, plan.destination, plan.source.mainRoot, resolver);
 		if (
 			(tree !== undefined && plannedTreeHasResources(plan.source.checkoutRoot, plan.baseCommit) !== tree) ||
 			destinationHasAncestorSkills(plan.destination) !== ancestors
 		)
 			throw new Error("the planned resources changed while trust was being decided; delegate again");
 		return answer;
-	}, signal);
+	};
+	const trusted = await decide();
 	return { trusted, exposure };
 }
 
@@ -362,7 +299,7 @@ export async function trustPlannedWorktree(
 	ctx: ExtensionContext,
 	agentDir: string,
 	signal?: AbortSignal,
-	nested = false,
+	resolver?: TrustResolver,
 ): Promise<PlannedTrust> {
 	const parent = inspectGit(ctx.cwd);
 	const sameRepository = parent.kind === "git" && parent.identity.commonDir === plan.source.commonDir;
@@ -375,7 +312,7 @@ export async function trustPlannedWorktree(
 		const saved = savedDecision(store, plan.source.mainRoot);
 		if (saved !== null) trusted = saved;
 		else {
-			const answer = await askPlannedResourceTrust(plan, ctx, store, signal, nested);
+			const answer = await askPlannedResourceTrust(plan, store, signal, resolver ?? localTrust(ctx, agentDir));
 			trusted = answer.trusted;
 			exposure = answer.exposure;
 		}
@@ -410,7 +347,7 @@ export async function trustPlannedWorktree(
  * `ctx.signal` aborts it too.
  */
 export async function prepareDirectory(
-	request: { cwd?: string; signal?: AbortSignal; nested?: boolean },
+	request: { cwd?: string; signal?: AbortSignal; trust?: TrustResolver },
 	ctx: ExtensionContext,
 	agentDir: string,
 ): Promise<{ workspace: DirectoryWorkspace; trusted: boolean }> {
@@ -425,7 +362,7 @@ export async function prepareDirectory(
 	stopIfAborted(signal);
 	const cwd = resolveDirectory(request.cwd, ctx.cwd);
 	const git = inspectGit(cwd);
-	const trusted = await targetTrust(cwd, git, ctx, agentDir, signal, request.nested === true);
+	const trusted = await targetTrust(cwd, git, ctx, agentDir, signal, request.trust);
 	stopIfAborted(signal);
 	return { workspace: { mode: "existing", cwd, git }, trusted };
 }

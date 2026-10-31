@@ -147,7 +147,8 @@ temporary folder, not as text on the command line.
   and resume admission enforce that boundary even through commands (see
   [Nested delegation](#nested-delegation-unreleased)).
 - Without a UI the command and the `delegate` tool still work, except a
-  `--cwd` launch whose project trust needs a question (see
+  top-level launch whose project trust needs a question (a nested launch can
+  ask its attended root; see
   [Project trust](#project-trust)). They need tmux
   and a provider of `message:*`, and refuse with a message when either is
   missing. In print mode (`pi -p`) Pi does not show the refusal notices, so
@@ -156,7 +157,7 @@ temporary folder, not as text on the command line.
 ## Nested delegation (unreleased)
 
 This integration is not ready for production nested agents: tool ceilings,
-shared tree caps, root-mediated trust and tree controls are still separate
+shared tree caps and tree controls are still separate
 required slices. Use only isolated development fixtures until the full nesting
 milestone is integrated and tested.
 
@@ -209,9 +210,9 @@ adopt another parent's children. Closing/reloading/exiting a parent does not
 terminate its workers. Descendant discovery, duplicate-process arbitration and
 explicit subtree close remain later slices; do not open the same session twice.
 
-Until root trust routing lands, a nested launch/resume needing an unresolved
-trust decision refuses clearly instead of opening unattended UI. Already-decided
-trust, inherited-directory trust and explicit approve/no-approve flags remain.
+A nested launch/resume needing an unresolved trust decision asks the attended
+root directly, outside model task mail (see [Project trust](#project-trust)).
+Already-decided trust, inherited-directory trust and explicit approve/no-approve flags remain.
 
 ## Where delegate windows open
 
@@ -463,9 +464,12 @@ command, and nothing acts on it.
 
 ### Project trust
 
-The delegate's trust flag for a `--cwd` directory is decided in the parent,
-before the task is sent or a window opens. A same-repository managed worktree
-uses the parent's current trust for that repository. The model has no trust input.
+The requesting parent resolves the delegate's trust flag before task mail,
+worktree creation or a window opens. Unresolved choices go to the root user,
+not to an intervening model or an unattended delegate UI. A same-repository
+managed worktree uses the requester's current trust for that repository.
+The model has no trust input; every launch/resume still passes explicit
+`--approve` or `--no-approve`.
 
 1. A directory in the parent's own repository, by Git's common directory, so
    including its linked worktrees, gets the parent's current trust, even a
@@ -483,8 +487,9 @@ uses the parent's current trust for that repository. The model has no trust inpu
    (`.pi/settings.json`, extensions, skills and the like, or an
    `.agents/skills` directory above it), the delegate starts with
    `--no-approve` and no question.
-4. Otherwise the parent asks, naming the directory, the main repository when
-   it is the key, and what each answer saves:
+4. Otherwise the root asks, naming the requesting agent chain, requester
+   session id, directory, the main repository when it is the key, and what each
+   answer saves:
    `Trust`, `Trust parent folder (<folder>)` (left out at the filesystem
    root), `Trust (this session only)`, `Do not trust` and
    `Do not trust (this session only)`. The two "this session only" answers
@@ -495,9 +500,52 @@ uses the parent's current trust for that repository. The model has no trust inpu
    the turn or tool call stops a launch that is waiting for or answering a
    question; nothing is saved, sent or opened.
 
-Without a UI a question cannot be asked, so the launch is refused: open Pi in
-that directory and answer its trust question first. A trust store that cannot
-be read or written also refuses the launch; nothing is granted by default.
+An unresolved nested question requires the same root Pi session to be running
+with dialog-capable UI (TUI or RPC), without `PI_UNATTENDED=1`. An absent or
+unavailable root refuses immediately; a disconnected root fails its pending
+launches, rather than waiting for the root to return. Already-resolved trust
+and resource-free targets need no root connection. A root's own trust in a
+different repository never supplies approval. For a top-level launch without UI,
+open Pi in the trust key directory named by the refusal (the source/main checkout
+for a managed worktree), answer its trust question, then delegate again.
+
+Root questions, local and remote together, are serialized, even while the
+root model is busy. Each request has a **10-minute deadline including queue
+wait**. Escape, tool/turn cancellation, requester or root shutdown/reload/session
+replacement, disconnection and expiry cancel that launch and dismiss its
+question; canceled queued requests are skipped. An unrelated root model run's
+abort does not cancel a remote request. Late decisions cannot save trust or
+start the canceled work. A new launch after reopening makes a new request;
+pending requests and decisions are never replayed.
+
+Squire uses an authenticated **127.0.0.1 loopback connection**, not mail or
+`session_mail_ask`, for this control. The root writes its random port and
+per-runtime token to the owner-only
+`<agent dir>/squire/trust/<SHA-256 of root id>.json` descriptor. Only squire
+reads it; no provider files, APIs or tool grants are needed. Unreachable
+endpoints fail at once (connection establishment is bounded to one second).
+A fresh client-nonce/HMAC handshake verifies the root before sending any
+question or secret, so a reused stale port cannot impersonate it. Root restart
+changes the token, invalidating old frames.
+The descriptor is transient and removed on ordinary shutdown; a crash can
+leave a harmless stale descriptor that cannot approve anything. Like the rest
+of squire, this is not an OS boundary against processes running as you.
+
+Only the live **requester** saves a persistent choice in that agent directory's
+Pi `trust.json`, after cancellation/deadline checks and before launch.
+The root holds the queue until the requester has applied the answer or
+disconnected, so queued requests re-read saved decisions. The two session-only
+choices save nothing and apply only to that launch. `Do not trust` launches
+untrusted; Escape cancels instead. A trust store that cannot be read or written
+refuses the launch; nothing is granted by default.
+
+Model questions still use `session_mail_ask` to the direct parent, parent by
+parent. Permission prompts remain with the permission provider, with each
+child's own agent policy: there is **no permission inheritance**. Its bridge
+can label a requester with `PI_DELEGATE_CHAIN` (comma-separated roster names,
+root downward including the current delegate); `session:launch.chain` is the
+corresponding frozen string array. Routing uses separate parent/root session
+ids, not chain names. Squire does not implement that permission bridge.
 
 ## Agents
 

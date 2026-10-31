@@ -21,7 +21,8 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   `snapshot.ts` observes that checkout read-only for results and status,
   `git.ts` contains read-only Git identity and path parsing, `worktree.ts`
   plans/creates/rolls back managed worktrees, `worktree-placement.ts` resolves
-  call-time placement settings, and `tmux.ts` talks to tmux.
+  call-time placement settings, `tool-ceiling.ts` enforces the nested callable-tool
+  ceiling after launch customization, and `tmux.ts` talks to tmux.
 - `src/task-replies.ts` owns task takeover/retries, `task-settlement.ts` the
   request settlement wording, and `task-store.ts` the durable answer outbox.
 - Tests and their helpers (`harness.ts`, `fake-tmux.ts`) are in `test/`.

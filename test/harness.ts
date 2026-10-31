@@ -252,6 +252,8 @@ export type SessionOptions = {
 	ui?: UiAnswers;
 	/** The tool names `pi.getAllTools()` reports once the session has started. */
 	registeredTools?: readonly string[];
+	/** Per-tool exposure metadata, including tools not directly displayed. */
+	toolExposures?: Record<string, "direct" | "model-only" | "codemode" | "deferred" | "hidden">;
 	/** The tool names `pi.getActiveTools()` reports; default `DEFAULT_TOOLS` and the delegation tools. `pi.setActiveTools` changes them. */
 	activeTools?: readonly string[];
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
@@ -382,7 +384,10 @@ export function session(options: SessionOptions = {}) {
 		getAllTools: () => {
 			if (!bound)
 				throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
-			return registeredTools.map((name) => ({ name }));
+			return [...new Set([...registeredTools, ...activeTools, ...Object.keys(tools)])].map((name) => ({
+				name,
+				exposure: options.toolExposures?.[name] ?? "direct",
+			}));
 		},
 		events,
 		on: (name: string, handler: Handler) => (handlers[name] ??= []).push(handler),

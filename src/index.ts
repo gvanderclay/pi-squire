@@ -76,6 +76,7 @@ import { createResume, type ResumeRequest, resumableIds, startedLine } from "./r
 import { pickResume } from "./resume-picker.ts";
 import { registerTaskReplies } from "./task-replies.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
+import { availableTools, enforceToolCeiling } from "./tool-ceiling.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 import { placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
@@ -730,14 +731,14 @@ export default function delegate(
 
 	/**
 	 * The delegate's tools for a launch or resume starting now: the agent's
-	 * named tools, or the parent's active tools at this moment (less any
-	 * `-name` entries), then the `delegateTools` setting. Throws, naming the
-	 * file, on an invalid setting.
+	 * named tools, or the parent's current tools (including indirect callable
+	 * tools when nested, less any `-name` entries), then `delegateTools`.
+	 * Throws, naming the file, on an invalid setting.
 	 */
 	function childTools(agent: Agent): string[] {
 		const selected = toolSelection(
 			agent,
-			agent.tools === undefined ? pi.getActiveTools() : [],
+			agent.tools === undefined ? (identity.current() ? availableTools(pi) : pi.getActiveTools()) : [],
 			delegateTools(getAgentDir()),
 		);
 		if (grantsNesting(agent, (identity.current()?.depth ?? 0) + 1)) selected.push(...DELEGATION_TOOLS);
@@ -944,6 +945,22 @@ export default function delegate(
 		for (const key of ["parent", "root", "depth", "chain"] as const)
 			Object.defineProperty(payload, key, { writable: false, configurable: false });
 		pi.events.emit(LAUNCH, payload);
+		if (identity.current()) {
+			const prefix = parentCommand().length;
+			const args = payload.args.slice(prefix);
+			enforceToolCeiling({
+				args,
+				available: availableTools(pi).filter(
+					(name) => grantsNesting(start.agent, own.depth) || !DELEGATION_TOOLS.has(name),
+				),
+				registered: pi.getAllTools().map((tool) => tool.name),
+				cwd,
+				agentDir: payload.env.PI_CODING_AGENT_DIR,
+				trusted,
+				notices: start.notices,
+			});
+			payload.args.splice(prefix, payload.args.length - prefix, ...args);
+		}
 		let opened: OpenedWindow;
 		try {
 			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement, project.companion);

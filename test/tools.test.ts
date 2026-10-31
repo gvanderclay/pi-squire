@@ -778,7 +778,8 @@ test("delegation_close kills nothing when the recorded id belongs to another win
 	await first.start();
 	await first.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = first.entries[0].data.id as string;
-	const resumed = session({ entries: first.entries });
+	await first.shutdown();
+	const resumed = session({ parent: first.parent, entries: first.entries });
 	resumed.tmux.addWindow(first.tmux.opened[0].windowId, "vim");
 	await resumed.start();
 
@@ -855,6 +856,7 @@ test("a resumed parent still reports a recorded close as closed", async () => {
 	await first.toolCall("delegation_close", { id });
 	const saved = structuredClone(first.entries);
 
+	await first.shutdown();
 	const resumed = session({ parent: first.parent, entries: saved });
 	await resumed.start();
 	assert.deepEqual(resumed.statuses, [], "a closed delegation is not counted as running");

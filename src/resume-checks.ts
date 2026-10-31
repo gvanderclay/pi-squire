@@ -3,17 +3,18 @@
 // prerequisites once, then per record the window, session file, agent, thinking
 // level and model. None of them changes anything; killing an exited window and
 // deciding trust stay with the resume itself.
+
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
 import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
 import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-sessions.ts";
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
+import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
 import { requireTmuxVersion, type TmuxWindow } from "./tmux.ts";
 import { ownWindow, windowState } from "./tracking.ts";
+import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 
 /**
@@ -110,12 +111,22 @@ function lastThinking(record: StartedRecorded, sessionPath: string): string {
 	return level !== undefined && isThinking(level) ? level : record.thinking;
 }
 
+export function assertNoOwner(record: StartedRecorded): void {
+	if (sessionIsOwned(sessionIdOf(record)))
+		throw new Error(
+			`delegation ${record.id} is already open in another process: ${ownerDetails(sessionIdOf(record))}; send it a message instead of resuming it`,
+		);
+}
+
 /** Steps 5 and 6: the session file and the agent, and no resume of the delegation already under way. */
 export function recordCheck(
 	deps: ResumeDeps,
 	record: StartedRecorded,
 	ctx: ExtensionContext,
 ): { session: SessionFile; agent: Agent } {
+	assertResumeAuthority(record, ctx);
+	assertNoOwner(record);
+	deps.authorize?.(record.id, ctx);
 	deps.admit?.(record.agent, ctx);
 	const session = sessionFor(record, ctx);
 	const roster = deps.roster(ctx);

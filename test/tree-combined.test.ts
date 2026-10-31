@@ -93,6 +93,7 @@ test("routed trust, final hook ceiling and shared cap accounting compose on laun
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 1, lifetime: 2 });
 	header(record, target("combined-resume"));
 	owner.tmux.exit(record.windowId);
+	await worker.shutdown();
 	await coordinator.toolCall("delegation_resume", { id: record.id, task: "continue" });
 	assert.equal(owner.selects.length, 2);
 	assert.equal(coordinator.selects.length, 0);

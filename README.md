@@ -236,8 +236,8 @@ Identity (direct parent, root, depth, own agent and ordered agent-name chain)
 and child-task facts survive manual reopening of the same Pi session with the
 same agent directory, without launch environment variables. Reopening does not
 adopt another parent's children. Closing/reloading/exiting a parent does not
-terminate its workers. Descendant discovery, duplicate-process arbitration and
-explicit subtree close remain later slices; do not open the same session twice.
+terminate its workers. Descendant views and exact-session restoration are
+available below; explicit subtree close remains a later integration slice.
 
 A nested launch/resume needing an unresolved trust decision asks the attended
 root directly, outside model task mail (see [Project trust](#project-trust)).
@@ -294,6 +294,68 @@ missing-result notification or late reply. Unknown tmux state releases nothing.
 If neither start nor no-start can be established, the reservation remains
 charged; no timeout guesses it away or relaunches it. No parent-death watcher,
 repair daemon, mailbox scraping or implicit ownership transfer is involved.
+
+## Restoring and inspecting a delegation tree
+
+Reopen the **same Pi session id**, using the same agent directory, to restore its
+identity, direct-child tracking, polling, pending results and owed answers.
+Still-running windows are not recreated. Shared counts survive; reopening a
+historically gone but unfinished coordinator counts it toward concurrency again,
+without charging another lifetime launch. A Squire resume is different: it
+starts another delegation and spends another lifetime launch.
+
+Only one Squire runtime may act for an exact session identity. Process ownership
+uses the same cross-process lock as admission, with a per-runtime token and no
+time lease. A live/paused duplicate is refused and asked to shut down; it cannot
+launch, process outcomes, send final replies or start a trust service. Already-
+claimed matching Squire task/reply input is staged under
+`<agent dir>/squire/owners/<encoded session id>/inbound/` before acknowledgment,
+with an atomic per-envelope file, independent of the ownership lock. Only the
+owner drains it, in provider timestamp/path order, through normal handling;
+callbacks run outside the owner mutex and idle drain checks do not write lock
+files. If staging is unwritable, an active ready owner can process directly.
+A duplicate that cannot retain input reports the claimed path and asks for a
+resend: delivery cannot be lossless without writable storage.
+
+This safeguard covers Squire input, not ordinary mail/asks: a duplicate provider
+can deliver those only in the losing process, not to the owner. Its shutdown can
+also remove the shared running record, making the owner look not running to
+`session_mail_ask` until its next provider announcement (such as `agent_start`).
+Squire does not read or rewrite provider mailbox/running-record internals. Keep
+one Pi process per session. Ownership refusals name the PID and owner file; if
+stale/corrupt, verify the original owner has ended, stop affected Squire runtimes
+and repair only that record. Never remove live lock tickets or force adoption.
+
+Fresh sessions do not adopt earlier trees. At startup a fresh root inspects only
+this agent directory's newest **64** registry files, and only entries using its
+current session-storage directory. It reports at most **10** direct owners with
+positively matched live windows and explains reopening the owning session (or
+returning to its existing owner). Registry-content reads are limited to 1 MiB
+per tree and one **200 ms total cooperative notice budget**, including the tmux
+wait, with registry lock waits capped at the remaining budget or 20 ms. The scan
+yields between trees and reports unavailable tmux, unreadable owner records or
+truncated scope once. Individual filesystem operations cannot be preempted.
+Directory names/mtimes are enumerated, but no recursive
+session search, mailbox search or other agent-directory search occurs. Exact-id
+restoration is not restricted by this notice budget.
+
+Both `delegation_status` and `/delegates` show descendants: a root sees its tree;
+a coordinator sees only its own subtree, not siblings or unrelated roots.
+Hierarchy uses stable Pi session ids, not the new delegation id of a resume.
+Parent/root/depth, launch/result/session paths, workspaces, current verified
+window and resume history remain visible. Shared accounting is labeled separately
+from semantic result state: a finished accounting entry is not proof its direct
+parent received or processed the result. Registry-only rows without a complete
+launch record remain unknown. Views read foreign parents' facts but never inject
+grandchildren's raw results into the root conversation.
+
+Only the **direct parent** may resume a child. Ancestor visibility grants no
+resume authority; forked/cloned/copied history with a new Pi id grants none.
+Return to the original parent. Identity is read from exact-id durable state,
+written before launch; inherited launch environment cannot assign a new session
+to the old tree. Current allowlists, depth, caps, callable-tool ceiling and
+directory/source trust still apply to resume, including its picker. A live
+same-id Squire owner and obsolete local/shared resume chains are refused.
 
 ## Where delegate windows open
 
@@ -359,10 +421,13 @@ with an error naming the file, before the task is sent or a window opens.
 ## Reaching delegates
 
 Delegate windows sit out of your way, so reach them from the parent. `/delegates`
-(or `alt+shift+d`) opens a panel of the delegations whose window is open: running,
-or done with auto-exit off, newest first. Each row shows the delegate's name,
-its agent (the agent's `display_name` when it had one), its state and its
-window. The model has no tool for any of this.
+(or `alt+shift+d`) opens a TUI panel of its descendant hierarchy, including
+closed/history rows. Parents precede their children; resume history stays
+visible. Each row shows the launch name, agent display label, state and window;
+the selected row adds identities, paths, result envelope, workspace and resume
+information. Only a verified live window supports switch/peek; the model has no
+tool that moves the terminal. Descendant subtree close remains unavailable until
+the explicit-close slice; the current direct-child close path is unchanged.
 
 | Key | Does |
 |---|---|
@@ -1167,8 +1232,15 @@ Delegate session: <session file or id>
   records are rebuilt synchronously at session start. A resume still
   recognises replies, including one that arrived while the parent was
   closed, and still reports a recorded close as closed. A result is shown
-  once for ordinary transport retries. An unprocessed coordinator outcome may
-  be replayed on reopening so it is not lost before a processing run.
+  once for ordinary transport retries. Unprocessed coordinator outcomes may
+  be replayed on reopening. A root retains outcomes until processing too: an
+  already-displayed result wakes a recovery turn without displaying the final
+  result again, and pending content is supplied to the next model request.
+  An explicit root user stop is persisted: reopening does not start that work
+  again automatically. Previously held outcomes wait for a later input or a
+  genuinely fresh outcome. New live results still steer/start a turn, and new
+  gone outcomes keep their normal wake delivery; they clear the held replay
+  state. Coordinator held-task semantics stay unchanged.
 - Plain replies, and requests not taken over as this delegate's task, are left
   to the provider. Squire never answers those ordinary requests.
 
@@ -1235,8 +1307,10 @@ and it resumes as the command does.
   opened would reach the next resume as a second task. The reopened delegate
   receives it once its mailbox starts. If the send fails, the new window is
   killed and nothing is recorded.
-- A chain resumes from its newest delegation; resuming an older one is refused,
-  naming the newest.
+- Only its direct parent may resume it, preserving the original root/depth.
+  The current parent grant, depth/cap/tool-ceiling/trust checks are reapplied.
+  A chain resumes from its newest local/shared delegation; older records and
+  copied fork/clone history are refused, naming the owner or newest record.
 - It is refused, before anything is sent or opened, unless: the delegation is a
   started one (not a workspace attempt); it is not `running` (mail a running
   delegate instead) and tmux can be asked; no window with its id and name still
@@ -1367,15 +1441,19 @@ squire resume still supplies its current fallback candidates.
 Direct-child facts and pending result/gone outcomes live in
 `<agent dir>/squire/child-tasks/<encoded parent session id>.json`, independently
 of transcript buffering. Starts and terminal outcomes are saved locally before
-result injection. Restoring these facts precedes task handling and mail claims.
+result injection. Restoring these facts precedes Squire task handling. If mail
+claims before that restoration (including delayed startup or a duplicate
+process), matching Squire input is staged durably for the sole owner.
 Each model request includes pending outcomes; only those observed by a request
 and followed by a non-stopped settlement are acknowledged. The task reply gate
-requires no unfinished children and no unprocessed outcomes. Storage failures
+requires no unfinished children and no unprocessed outcomes. Storage failures, including incomplete transcript/child-identity restoration,
 block final completion/auto-exit and new launch/resume admission in roots and
 coordinators. Read-only admission checks the restored store health; a write
 preflight persists unchanged task facts before mail, windows, worktree creation
 or killing an exited resume window. Repair unhealthy storage and reload before
-launching again. These local task records remain the result-processing authority;
+launching again. An incomplete-restore latch also refuses incidental saves, so
+partial in-memory records cannot replace known pending obligations. These local
+task records remain the result-processing authority;
 the shared [tree registry](#tree-wide-launch-budgets) indexes their durable
 lifecycle facts without copying task bodies or processing outcomes.
 

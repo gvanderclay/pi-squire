@@ -40,7 +40,7 @@ const setPlacement = (value: string): void => {
 
 /** A started session; each `launch` adds a delegation and returns its id and window. */
 async function started(options: Options = {}): Promise<Session> {
-	const s = session(options);
+	const s = session({ mode: "tui", ...options });
 	await s.start();
 	return s;
 }
@@ -94,7 +94,7 @@ test("the extension registers /delegates, /delegate-open and the alt+shift+d sho
 	assert.deepEqual(s.shortcuts(), ["alt+shift+d"]);
 });
 
-test("the panel lists only delegations whose window is open, newest first, and the shortcut opens it", async () => {
+test("the panel retains closed/history rows and verified open windows, and the shortcut opens it", async () => {
 	const s = await started();
 	const first = await launch(s, "first");
 	const second = await launch(s, "second");
@@ -108,12 +108,14 @@ test("the panel lists only delegations whose window is open, newest first, and t
 	await s.shortcut("alt+shift+d");
 	const [frame] = script.frames;
 	assert.match(frame, /second/);
-	assert.doesNotMatch(frame, /first|third|fourth/);
+	assert.match(frame, /first.*window-closed/);
+	assert.match(frame, /third.*window-closed/);
+	assert.match(frame, /fourth.*closed/);
 	assert.ok(frame.includes(`${second.windowId} in ${companion}`), frame);
 	assert.match(frame, /↑↓ select · enter switch · p peek · x close · n new · esc leave/);
 });
 
-test("the list is newest first and a finished delegation with auto-exit off stays listed", async () => {
+test("the hierarchy preserves parent-first history and a finished open delegation stays listed", async () => {
 	const s = await started();
 	const first = await launch(s, "alpha-one");
 	await launch(s, "beta-two");
@@ -121,7 +123,7 @@ test("the list is newest first and a finished delegation with auto-exit off stay
 	const script = keyScript(["escape"]);
 	await panel(s, script);
 	const [frame] = script.frames;
-	assert.ok(frame.indexOf("beta-two") < frame.indexOf("alpha-one"), frame);
+	assert.ok(frame.indexOf("alpha-one") < frame.indexOf("beta-two"), frame);
 	assert.match(frame, /alpha-one · scout · done/);
 	assert.match(frame, /beta-two · scout · running/);
 });

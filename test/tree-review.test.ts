@@ -273,7 +273,7 @@ for (const certainty of ["not-opened", "unknown"] as const)
 		assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 1, lifetime: 1 });
 	});
 
-test("missing task context retains mandatory terminal publication instead of emitting/dequeueing the answer", async () => {
+test("stale settlement after shutdown cannot freeze or emit an answer; reopen retains the owed task", async () => {
 	const { parent } = await setup("root");
 	const record = await launch(parent);
 	const worker = await child(parent, record);
@@ -282,11 +282,13 @@ test("missing task context retains mandatory terminal publication instead of emi
 	});
 	await worker.shutdown();
 	await worker.fire("agent_settled");
-	assert.equal(readTaskState(taskStatePath(record.id))?.outbox.length, 1);
+	assert.equal(readTaskState(taskStatePath(record.id))?.outbox.length, 0);
+	assert.equal(readTaskState(taskStatePath(record.id))?.requests.length, 1);
 	assert.equal(envelopes(parent.parent, "new").filter((mail) => mail.in_reply_to.length).length, 0);
 	assert.equal(treeCounts(readTree(parent.parent)).concurrent, 1);
 	const reopened = instance({ parent: record.id, tmux: parent.tmux });
 	await reopened.start();
+	await reopened.run();
 	await nextTurn();
 	scan(parent);
 	assert.equal(readTaskState(taskStatePath(record.id))?.outbox.length, 0);

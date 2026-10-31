@@ -10,7 +10,8 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
 - The extension is the `.ts` files in `src/`. `src/index.ts` is the entry Pi
   loads; `child.ts` is what a delegate itself registers, `agents.ts` reads
   the roster and the `delegateTools` setting, `results.ts` handles replies and works out a delegation's
-  state (`result-message.ts` words the result), `render.ts` draws the
+  state (`result-message.ts` words the result; `result-restore.ts` restores
+  semantic records fail-closed), `render.ts` draws the
   delegate messages, `tracking.ts` holds the status and close
   tools, `poll.ts` the poll (with `windows.ts`), `navigator.ts`
   the `/delegates` panel and `/delegate-open`, `new-delegate.ts` the new-delegate
@@ -27,7 +28,10 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   request settlement wording, and `task-store.ts` the durable answer outbox.
 - `src/tree-registry.ts` owns shared per-root structural facts and admission;
   `tree-types.ts` its schema, `tree-settings.ts` call-time caps, and `tree-lock.ts`
-  cross-process arbitration. Local result processing stays in `child-tasks.ts`.
+  cross-process arbitration. `session-owner.ts` owns exact-session process
+  arbitration and staged Squire ingress; `tree-view.ts` projects descendants
+  read-only and `tree-notice.ts` bounds fresh-session discovery. Local result
+  processing stays in `child-tasks.ts`.
   `test/tree-process-harness.ts` and `test/fixtures/tree-coordinator.ts` provide
   isolated separate-process contention/crash controls for caps and close tests.
 - Tests and their helpers (`harness.ts`, `fake-tmux.ts`) are in `test/`.

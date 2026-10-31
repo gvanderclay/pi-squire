@@ -11,11 +11,13 @@ import { ChildTasks } from "./child-tasks.ts";
 import type { Identity } from "./identity.ts";
 import { cwdLine, modelLabel, renderMessage, workspaceLine } from "./render.ts";
 import { resultDetails, resultText, resumeDetails } from "./result-message.ts";
+import { restoreRecords } from "./result-restore.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
 import {
 	type AttemptState,
 	isStarted,
 	type Recorded,
+	recordedName,
 	type StartedRecorded,
 	type WorkspaceAttempt,
 } from "./result-types.ts";
@@ -35,6 +37,8 @@ const INBOUND = "message:inbound";
 
 /** One delegation, as recorded and rebuilt on resume. It holds no task text. */
 export type Delegation = {
+	/** Read-only registry projection with no authoritative launch/result record. Never local tracking. */
+	accountingOnly?: boolean;
 	/** Durable launch identity; older single-level records may lack it. */
 	identity?: Identity;
 	id: string;
@@ -183,37 +187,13 @@ export type DelegationState =
 	| "unknown"
 	| AttemptState["phase"];
 
-/** How much of a delegation id a delegate's session name carries. */
-const SHORT_ID = 8;
-
-/**
- * A delegate's name, used for both its session and its window: its agent and
- * the label, or the first 8 characters of its id when there is no label.
- */
-export function delegateName(agent: string, id: string, label?: string): string {
-	return `${agent}-${label ?? id.slice(0, SHORT_ID)}`;
-}
-
-/** The recorded name, or the pre-label name for records from before labels. */
-export function recordedName(record: Recorded): string {
-	return record.name ?? delegateName(record.agent, record.id);
-}
-
-/** A delegation's state: a recorded close, then a result, then a gone record, then the window. */
-export function deriveState(record: Recorded, window: WindowState): DelegationState {
-	if (!isStarted(record)) return record.attempt.phase;
-	if (record.closed === true) return "closed";
-	if (record.result !== undefined) return "done";
-	if (record.gone === true) return "gone";
-	if (window === "open") return "running";
-	if (window === "gone") return "window-closed";
-	return "unknown";
-}
+export { delegateName, deriveState, recordedName } from "./result-types.ts";
 
 export function createResults(
 	pi: ExtensionAPI,
 	processesChildren: () => boolean = () => false,
 	publish: (ctx: ExtensionContext, records: Recorded[]) => void = () => {},
+	active: () => boolean = () => true,
 ): Results {
 	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
 	/** Every recorded delegation by its id, in the order recorded. */
@@ -291,76 +271,28 @@ export function createResults(
 		byId.clear();
 		byRequest.clear();
 		shown.clear();
-		for (const entry of context.sessionManager.getEntries()) {
-			if (entry.type !== "custom" || entry.customType !== CUSTOM_TYPE) continue;
-			const data = entry.data as
-				| Partial<Delegation & { kind: string; result: Result; closed: boolean; gone: boolean }>
-				| undefined;
-			if (data === undefined || typeof data.id !== "string") continue;
-			// An attempt may carry a real request id; it is checked before the legacy start rule below.
-			if (data.kind === "workspace-attempt") {
-				const existing = byId.get(data.id);
-				if (existing === undefined || !isStarted(existing)) {
-					byId.set(data.id, { ...(data as unknown as WorkspaceAttempt) });
-				}
-			} else if (typeof data.requestId === "string") {
-				const record: StartedRecorded = { ...(data as Delegation) };
-				byId.set(record.id, record);
+		for (const record of restoreRecords(context, tasks)) {
+			byId.set(record.id, record);
+			if (isStarted(record)) {
 				byRequest.set(record.requestId, record);
-			} else if (typeof data.result?.replyId === "string") {
-				shown.add(data.result.replyId);
-				const record = startedById(data.id);
-				if (record !== undefined) record.result = data.result;
-			} else if (data.closed === true) {
-				const record = startedById(data.id);
-				if (record !== undefined) record.closed = true;
-			} else if (data.gone === true) {
-				const record = startedById(data.id);
-				if (record === undefined) continue;
-				record.gone = true;
-				if (typeof data.sessionPath === "string") record.sessionPath = data.sessionPath;
+				if (record.result) shown.add(record.result.replyId);
 			}
 		}
-		// Local facts survive even if Pi had not flushed custom entries yet.
-		try {
-			for (const record of tasks.restore(context.sessionManager.getSessionId())) byId.set(record.id, record);
-			for (const record of byId.values())
-				if (isStarted(record)) {
-					byRequest.set(record.requestId, record);
-					if (record.result) shown.add(record.result.replyId);
-				}
-		} catch (error) {
+		if (tasks.storageProblem())
 			context.ui.notify(
-				`delegate: could not restore child tasks: ${String(error)}; task completion is blocked.`,
+				`delegate: could not restore child tasks: ${tasks.storageProblem()}; task completion is blocked.`,
 				"error",
 			);
-		}
-		// A parent that stopped mid-launch cannot say how far it got; nothing is cleaned up or relaunched.
-		for (const record of byId.values()) {
-			if (isStarted(record)) continue;
-			const { phase, resources } = record.attempt;
-			if (phase === "planned" || phase === "created") {
-				record.attempt = {
-					phase: "interrupted",
-					resources,
-					lastPhase: phase,
-					reason: `the parent session ended while the launch was ${phase}; whether anything was created is unknown`,
-				};
-			}
-		}
 		updateFooter();
 		// Mail is already claimed; replay only outcomes not processed by a
 		// settled coordinator run. No live worker is recreated.
-		if (tasks.outcomes.length) {
+		if (!tasks.failed && tasks.outcomes.length) {
 			const session = context.sessionManager.getSessionId();
 			replay = setImmediate(() => {
 				replay = undefined;
-				if (ctx?.sessionManager.getSessionId() !== session) return;
-				for (const outcome of tasks.outcomes)
-					pi.sendMessage(
-						{ customType: CUSTOM_TYPE, content: outcome.content, details: outcome.details, display: true },
-						{ triggerTurn: true, deliverAs: "steer" },
-					);
+				if (!active() || ctx?.sessionManager.getSessionId() !== session) return;
+				tasks.replay(pi, processesChildren());
+				save();
 			});
 		}
 	}
@@ -421,12 +353,15 @@ export function createResults(
 			`Delegate session: ${session ?? sessionIdOf(record)}`,
 			"A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
 		].join("\n");
-		if (processesChildren()) tasks.outcomes.push({ key: `gone:${record.id}`, content, details });
+		tasks.paused = false; // A fresh outcome is new work, not replay of the stopped turn.
+		tasks.outcomes.push({ key: `gone:${record.id}`, content, details });
 		save();
 		pi.sendMessage(
 			{ customType: CUSTOM_TYPE, details, content, display: true },
 			{ triggerTurn: true, deliverAs: processesChildren() ? "steer" : "followUp" },
 		);
+		tasks.delivered(`gone:${record.id}`);
+		save();
 		updateFooter();
 		return true;
 	}
@@ -465,7 +400,8 @@ export function createResults(
 			record.result = result;
 		}
 		const content = resultText(details);
-		if (processesChildren()) tasks.outcomes.push({ key: reply.id, content, details });
+		tasks.paused = false; // Only old replay is held by a root stop, not a new live result.
+		tasks.outcomes.push({ key: reply.id, content, details });
 		save();
 		// Persist first, then steer. A crash before injection is recovered from
 		// the processing inbox, not from the provider's already-claimed mail.
@@ -473,6 +409,8 @@ export function createResults(
 			{ customType: CUSTOM_TYPE, content, details, display: true },
 			{ triggerTurn: true, deliverAs: "steer" },
 		);
+		tasks.delivered(reply.id);
+		save();
 		updateFooter();
 	}
 
@@ -480,6 +418,7 @@ export function createResults(
 		pi,
 		() => [...byId.values()],
 		() => ctx,
+		processesChildren,
 	);
 
 	pi.on("session_shutdown", () => {

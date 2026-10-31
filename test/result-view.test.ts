@@ -4,21 +4,21 @@
 // file in the session directory and a reply on `message:inbound`.
 
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
 
 type Session = ReturnType<typeof session>;
 
-async function started(entries?: Session["entries"]) {
+async function started(entries?: Session["entries"], parent?: string) {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
-	const s = session(entries === undefined ? {} : { entries });
+	const s = session(entries === undefined ? {} : { entries, parent });
 	await s.start();
 	if (entries === undefined) await s.delegate("scout look into it");
 	return s;
@@ -93,7 +93,8 @@ test("the finishing model survives a resume", async () => {
 	const s = await started();
 	writeDelegateSession(s, [assistant("beta", "slow-model")]);
 	deliver(s);
-	const resumed = await started(s.entries);
+	await s.shutdown();
+	const resumed = await started(s.entries, s.parent);
 	assert.match((await statusTool(resumed)).content[0].text, /alpha\/fast-model → beta\/slow-model/);
 });
 
@@ -181,7 +182,10 @@ test("result and gone messages name the recorded cwd, and a legacy record's cwd 
 	const legacy = structuredClone(s.entries.slice(0, 1));
 	delete legacy[0].data.cwd;
 	delete legacy[0].data.sessionDir;
-	const resumed = await started(legacy);
+	await s.shutdown();
+	// Deliberately simulate pre-durable legacy records, not overwrite newer local facts.
+	rmSync(join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`));
+	const resumed = await started(legacy, s.parent);
 	resumed.tmux.windows.clear();
 	for (let j = 0; j < 4; j++) {
 		t.mock.timers.tick(5000);

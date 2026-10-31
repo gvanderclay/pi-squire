@@ -7,9 +7,9 @@ export class TreeProcess {
 	private sequence = 0;
 	private readonly waiting = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
 	readonly ready: Promise<void>;
-	constructor(agentDir: string) {
-		this.child = fork(fileURLToPath(new URL("./fixtures/tree-coordinator.ts", import.meta.url)), [], {
-			env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+	constructor(agentDir: string, fixture = "./fixtures/tree-coordinator.ts") {
+		this.child = fork(fileURLToPath(new URL(fixture, import.meta.url)), [], {
+			env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, SQUIRE_TEST_AGENT_DIR: agentDir },
 			stdio: ["ignore", "pipe", "pipe", "ipc"],
 		});
 		this.ready = new Promise((resolve, reject) => {

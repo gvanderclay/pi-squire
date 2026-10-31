@@ -24,6 +24,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Nested unresolved project trust goes directly to the attended root's squire,
+  outside model questions and task mail, with agent-chain, requester and
+  directory/source context. Root-local and remote prompts share a serialized
+  queue, including while the root is busy. Preserve scoped/source-worktree
+  resolution and explicit approval/denial flags on launch and resume.
+- Bound ordinary trust requests to ten minutes including queue wait. Cancellation,
+  disconnect, expiry and either runtime's replacement stop the pending launch
+  and dismiss its question; late approvals and old requests after restart cannot
+  save trust or revive work. Persistent choices are saved only by a live
+  requester; launch-only choices remain unsaved. Unavailable/unattended roots
+  refuse without opening delegate UI. Squire uses owner-token loopback control,
+  without provider internals, permission inheritance or pending-request replay.
+  Deliberately replace the interim nested-trust refusal tests with root-choice
+  behavior, real-provider isolation and separate-process kill/restart coverage.
 - Nested launch/resume tools are capped by the direct parent’s actually available
   operations, including codemode/deferred and active model-only tools. Requested
   patterns become exact registration grants after `session:launch` customization;
@@ -42,7 +56,7 @@ follows [Semantic Versioning](https://semver.org/).
   including trusted project-agent shadowing. Coordinators get all four
   delegation tools even with an explicit tools list; listing tools alone warns
   and grants nothing. Nesting remains an incomplete integration milestone:
-  tool ceilings, tree caps/registry, root trust and tree controls must land
+  tool ceilings, tree caps/registry and tree controls must land
   before production use.
 - Persist parent/root/depth/agent/chain identity and auto-exit state for manual
   same-session reopening. Expose read-only parent/root/depth/frozen chain on
@@ -55,8 +69,8 @@ follows [Semantic Versioning](https://semver.org/).
   final run determines success/failure. Confirmed disappearance produces the
   existing missing-result outcome; unknown tmux state does not release work.
 - Separate coordinator identity/auto-exit and running-child footer keys, retain
-  parent delegation guidance in coordinators, and refuse unresolved nested
-  trust instead of opening unattended UI. Update deliberate single-level-only
+  parent delegation guidance in coordinators, and keep trust questions out of
+  unattended UI. Update deliberate single-level-only
   registration, hook shape, footer and persistence expectations in tests;
   execute the expanded README hook example and real-mail multi-instance
   lifecycle coverage.

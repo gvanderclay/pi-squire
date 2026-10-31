@@ -42,7 +42,7 @@ function git(cwd: string, args: string[]): void {
 	assert.equal(result.status, 0, result.stderr);
 }
 
-test("unresolved managed-worktree trust in a coordinator refuses before creation or unattended UI", async () => {
+test("managed-worktree trust canceled at root refuses before creation or unattended UI", async () => {
 	const session = await coordinator();
 	const source = protectedDirectory("untrusted-source");
 	git(source, ["init", "-q"]);
@@ -55,7 +55,7 @@ test("unresolved managed-worktree trust in a coordinator refuses before creation
 			worktree: "nested-trust",
 			worktree_source: source,
 		}),
-		/nested project trust is unresolved for planned worktree/,
+		/trust question.*cancelled/,
 	);
 	assert.equal(session.selects.length, 0);
 	assert.equal(session.tmux.opened.length, 0);
@@ -63,7 +63,7 @@ test("unresolved managed-worktree trust in a coordinator refuses before creation
 	assert.notEqual(branch.status, 0, "no branch was created");
 });
 
-test("unresolved resume trust uses the same nested refusal instead of unattended UI", async () => {
+test("resume trust canceled at root opens no unattended UI", async () => {
 	const session = await coordinator();
 	await session.toolCall("delegate", { agent: "worker", task: "go" });
 	const record = session.entries[0].data as { id: string; windowId: string };
@@ -76,7 +76,7 @@ test("unresolved resume trust uses the same nested refusal instead of unattended
 	session.tmux.windows.delete(record.windowId);
 	await assert.rejects(
 		session.toolCall("delegation_resume", { id: record.id, task: "again" }),
-		/nested project trust is unresolved/,
+		/trust question.*cancelled/,
 	);
 	assert.equal(session.selects.length, 0);
 	assert.equal(session.tmux.opened.length, 1, "only the original launch opened a window");

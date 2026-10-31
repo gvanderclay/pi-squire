@@ -25,6 +25,8 @@ follows [Semantic Versioning](https://semver.org/).
   records, status, snapshots and worktree-source errors, as well as companion
   placement fallback notices.
 
+## [0.15.0] - 2026-10-30
+
 ### Breaking
 
 - Agents move to one file per agent in the agents folders Pi agent tooling
@@ -675,7 +677,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/gvanderclay/pi-squire/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/gvanderclay/pi-squire/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/gvanderclay/pi-squire/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/gvanderclay/pi-squire/compare/v0.12.0...v0.13.0

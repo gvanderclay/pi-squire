@@ -2,8 +2,8 @@
 // the parent session when it starts, and again when it is closed; when the
 // provider claims a reply that answers a recorded task, this listener takes
 // the message over, shows the parent one delegate result and records the
-// result. The records are the one source of truth for a delegation's state,
-// for the footer, `delegation_status` and `delegation_close`.
+// result. Local records own result processing; the shared tree registry owns
+// cross-process admission accounting.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -210,7 +210,11 @@ export function deriveState(record: Recorded, window: WindowState): DelegationSt
 	return "unknown";
 }
 
-export function createResults(pi: ExtensionAPI, processesChildren: () => boolean = () => false): Results {
+export function createResults(
+	pi: ExtensionAPI,
+	processesChildren: () => boolean = () => false,
+	publish: (ctx: ExtensionContext, records: Recorded[]) => void = () => {},
+): Results {
 	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
 	/** Every recorded delegation by its id, in the order recorded. */
 	const byId = new Map<string, Recorded>();
@@ -219,11 +223,20 @@ export function createResults(pi: ExtensionAPI, processesChildren: () => boolean
 		try {
 			tasks.save([...byId.values()]);
 		} catch (error) {
+			tasks.failed = true;
 			ctx?.ui.notify(
 				`delegate: could not persist child tasks: ${String(error)}; keep this session open, repair storage and run again. Completion is blocked.`,
 				"error",
 			);
 			throw error;
+		}
+		try {
+			if (ctx) publish(ctx, [...byId.values()]);
+		} catch (error) {
+			ctx?.ui.notify(
+				`delegate: could not publish shared accounting: ${String(error)}. Local child facts are saved; the next admission reconciles them before checking caps.`,
+				"warning",
+			);
 		}
 	};
 	let replay: ReturnType<typeof setImmediate> | undefined;

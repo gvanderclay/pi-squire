@@ -24,12 +24,26 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Shared per-root tree registry and atomic cross-process launch reservations.
+  `maxConcurrentDelegates` and `maxDelegatesPerRoot` default to 16/64 with
+  maxDepth > 1, remain unlimited when absent at depth 1, and accept zero for
+  unlimited. Settings changes affect subsequent launches/resumes; refusals
+  report count/limit without queues or killing existing work. Resumes spend
+  new launches; completed open windows free concurrency, not lifetime count.
+- Publish worker terminal accounting independently of the parent's process,
+  retaining 03's local result-processing authority and durable reply retries.
+  Preserve failed-versus-uncertain launch/resume handling, recover child window
+  locators after lost tmux responses, reconcile disappeared workers and retain
+  ambiguous reservations until positive evidence exists. Counts survive
+  ordinary root/coordinator restarts. Separate Node-process contention/crash
+  fixtures are reusable by the later subtree-close slice.
+
 - Unreleased nested-worker lifecycle: `maxDepth` (default 1), current-agent
   `allow_nested_delegation` grants and bypass-resistant launch/resume admission,
   including trusted project-agent shadowing. Coordinators get all four
   delegation tools even with an explicit tools list; listing tools alone warns
   and grants nothing. Nesting remains an incomplete integration milestone:
-  tool ceilings, tree caps/registry, root trust and tree controls must land
+  tool ceilings, root trust and tree controls must land
   before production use.
 - Persist parent/root/depth/agent/chain identity and auto-exit state for manual
   same-session reopening. Expose read-only parent/root/depth/frozen chain on
@@ -49,6 +63,23 @@ follows [Semantic Versioning](https://semver.org/).
   lifecycle coverage.
 
 ### Fixed
+
+- Keep durable local result/gone delivery, coordinator wakes and close tracking
+  working when shared fact publication fails; warn and reconcile those saved
+  facts at the next admission. Worker frozen-terminal publication remains
+  mandatory before transport. A confirmed window open stays successful and
+  locally tracked even if accounting publication fails, and refund failures
+  preserve the original tmux certainty/error. A refused concurrent resume no
+  longer releases another call\'s in-flight guard.
+- Retain frozen answers when task context is unavailable rather than bypassing
+  terminal accounting, and skip failure-cleanup transactions after successful
+  resumes. Clarify malformed-settings behavior and unresolved-launch refusals.
+
+- Refuse launches/resumes on malformed, unreadable or non-object shared squire
+  settings instead of silently losing configured cap limits. Deliberately
+  update window-placement/worktree-setting tests that previously allowed
+  inherited/cwd launches with an unreadable settings file; readable unrelated
+  creation settings still do not affect those launches.
 
 - Preserve default leaf task guidance and takeover wording; only effective
   coordinators receive child-first reporting instructions, including after a

@@ -22,6 +22,11 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   call-time placement settings, and `tmux.ts` talks to tmux.
 - `src/task-replies.ts` owns task takeover/retries, `task-settlement.ts` the
   request settlement wording, and `task-store.ts` the durable answer outbox.
+- `src/tree-registry.ts` owns shared per-root structural facts and admission;
+  `tree-types.ts` its schema, `tree-settings.ts` call-time caps, and `tree-lock.ts`
+  cross-process arbitration. Local result processing stays in `child-tasks.ts`.
+  `test/tree-process-harness.ts` and `test/fixtures/tree-coordinator.ts` provide
+  isolated separate-process contention/crash controls for caps and close tests.
 - Tests and their helpers (`harness.ts`, `fake-tmux.ts`) are in `test/`.
   `test/mail-harness.ts` runs real-provider instances over an isolated mail root.
   Nothing under `test/` is published; `scripts/check-pack.mjs` enforces that.

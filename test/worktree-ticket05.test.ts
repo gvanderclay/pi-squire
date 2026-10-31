@@ -134,7 +134,7 @@ test("placement settings are call-time main-repository overrides", async () => {
 	assert.equal(git(linked, "symbolic-ref", "--short", "HEAD"), "linked/source");
 });
 
-test("invalid creation settings refuse before mail but do not affect inherited or cwd launches", async () => {
+test("invalid creation keys do not affect inherited/cwd launches, but unreadable shared settings refuse all", async () => {
 	resetRoot();
 	const base = mkdtempSync(join(root, "bad-placement-"));
 	const source = makeRepo(join(base, "repo"));
@@ -174,6 +174,10 @@ test("invalid creation settings refuse before mail but do not affect inherited o
 	assert.deepEqual(s.tmux.opened, []);
 	assert.deepEqual(readFileSync(join(source, ".git", "index")), indexBefore);
 
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "blocked inherited" }), /tree caps/);
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "blocked cwd", cwd: plain }), /tree caps/);
+	rmSync(settingsPath(), { recursive: true });
+	setSettings({ worktreeRoot: 3 }); // invalid creation key, but readable cap settings
 	const inherited = await s.toolCall("delegate", { agent: "scout", task: "ordinary inherited launch" });
 	const existing = await s.toolCall("delegate", { agent: "scout", task: "ordinary cwd launch", cwd: plain });
 	assert.equal((inherited.structuredContent as Data).cwd, source);

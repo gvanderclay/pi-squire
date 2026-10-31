@@ -50,7 +50,7 @@ export function resetRoot(): void {
 		rmSync(join(agentDir, name), { recursive: true, force: true });
 	}
 	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
-	for (const name of ["identity", "child-tasks"])
+	for (const name of ["identity", "child-tasks", "trees"])
 		rmSync(join(agentDir, "squire", name), { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
@@ -219,6 +219,8 @@ let counter = 0;
 export type Entry = { customType: string; data: Record<string, unknown> };
 
 export type SessionOptions = {
+	/** Shared server for multi-instance tree accounting tests. */
+	tmux?: FakeTmux;
 	/** Install a real mail provider instead of the send/scan stubs. */
 	mailProvider?: (pi: ExtensionAPI) => void;
 	/** Exercise the opposite extension load order. */
@@ -358,7 +360,7 @@ export function session(options: SessionOptions = {}) {
 			return baseUrl === undefined ? undefined : { baseUrl };
 		},
 	};
-	const tmux = new FakeTmux();
+	const tmux = options.tmux ?? new FakeTmux();
 	const usage = options.usage ?? new FakeUsage();
 	/** The current run's abort signal, as `ctx.signal` reports it; cleared when the run settles. */
 	let signal: AbortSignal | undefined;

@@ -11,17 +11,14 @@
 // holding a comma, makes the file invalid; absent `model` means the parent's),
 // `thinking` (absent or unknown means the parent's level), `tools` (the
 // delegate's complete tool list; absent means the parent's tools, empty means
-// none; a list entry holding a comma makes the file invalid), `extensions`
-// (extra extension paths for the delegate only; `~` expands, relative paths resolve against the agent file's folder, and a
-// missing path leaves the agent out), `auto-exit` (default true),
+// none; a list entry holding a comma makes the file invalid), `auto_exit` (default true),
 // `prompt_mode` (`append`, the default, or `replace`), `enabled` (false leaves
 // the agent out) and `locked` (true, or a list of `model` and `thinking`). Any
 // other key is ignored, left for whatever else reads the file. The body is the
 // delegate's instructions. A file that cannot be read as an agent is disabled:
 // left out, with a warning, and a call naming it is refused with the reason.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
@@ -57,7 +54,7 @@ export type Agent = {
 	model?: string;
 	/** Undefined means the parent's level. */
 	thinking?: Thinking;
-	/** Whether the delegate closes itself after a normal completion; `auto-exit`, default true. */
+	/** Whether the delegate closes itself after a normal completion; `auto_exit`, default true. */
 	autoExit: boolean;
 	/**
 	 * The delegate's complete tool list, from a `tools` line of tool names:
@@ -67,8 +64,6 @@ export type Agent = {
 	tools?: string[];
 	/** The names or `*` patterns a `tools` line of only `-name` entries takes off the parent's tools; empty otherwise. */
 	toolsExcept: string[];
-	/** Absolute paths of extra extensions the delegate loads, from `extensions`; empty when absent. */
-	extensions: string[];
 	/** Models to try, in order, when `model` is usage-limited; from `fallback`, empty when absent. */
 	fallback: string[];
 	/** The fields a call cannot override, from `locked`. */
@@ -121,10 +116,10 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 	if (enabled === null)
 		return { invalid: `${path} has enabled ${JSON.stringify(fields.enabled)}, not true or false`, notes: [] };
 	if (enabled === false) return { notes: [] };
-	const autoExit = flag(fields["auto-exit"]);
+	const autoExit = flag(fields.auto_exit);
 	if (autoExit === null)
-		return { invalid: `${path} has auto-exit ${JSON.stringify(fields["auto-exit"])}, not true or false`, notes: [] };
-	const launch = launchFields(path, fields);
+		return { invalid: `${path} has auto_exit ${JSON.stringify(fields.auto_exit)}, not true or false`, notes: [] };
+	const launch = toolsField(path, fields);
 	if ("invalid" in launch) return { ...launch, notes: [] };
 	const model = field(fields, "model");
 	const fallback = toolList(fields.fallback);
@@ -275,31 +270,6 @@ function toolsField(
 	const bare = minus.find((name) => name.slice(1).trim() === "");
 	if (bare !== undefined) return { invalid: `${path} has tools entry ${JSON.stringify(bare)}, which names no tool` };
 	return { toolsExcept: minus.map((name) => name.slice(1).trim()) };
-}
-
-/** The `tools` and `extensions` fields, or why the agent is invalid. */
-function launchFields(
-	path: string,
-	frontmatter: Record<string, unknown>,
-): { tools?: string[]; toolsExcept: string[]; extensions: string[] } | { invalid: string } {
-	const tools = toolsField(path, frontmatter);
-	if ("invalid" in tools) return tools;
-	const paths = toolList(frontmatter.extensions);
-	if (paths === null)
-		return {
-			invalid: `${path} has extensions ${JSON.stringify(frontmatter.extensions)}, not a comma-separated list of paths`,
-		};
-	const extensions = (paths ?? []).map((entry) => resolveExtension(entry, dirname(path)));
-	const absent = extensions.find((entry) => !existsSync(entry));
-	if (absent !== undefined) return { invalid: `${path} has extension ${absent}, which does not exist` };
-	return { ...tools, extensions };
-}
-
-/** An extension path as an absolute one: `~` is the home directory, a relative path is against the agent file's folder. */
-function resolveExtension(entry: string, dir: string): string {
-	if (entry === "~") return homedir();
-	if (entry.startsWith("~/")) return join(homedir(), entry.slice(2));
-	return isAbsolute(entry) ? entry : resolve(dir, entry);
 }
 
 /** A list of names (tools or models), comma-separated or a YAML list of names; undefined when absent, null when it is neither. */

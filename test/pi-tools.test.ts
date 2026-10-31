@@ -123,7 +123,7 @@ test("the parent's tools, with no tools field, reach the child exactly: MCP tool
 	);
 });
 
-test("an agent's own extension tools reach the child only when its tools list or delegateTools names them", async () => {
+test("ignored agent extensions never load in real Pi, even when tools or delegateTools name their tools", async () => {
 	mkdirSync(rosterDir, { recursive: true });
 	writeFileSync(
 		join(rosterDir, "own.ts"),
@@ -136,10 +136,10 @@ test("an agent's own extension tools reach the child only when its tools list or
 	writeAgent("named", agentFile({ ...SCOUT, extensions: "./own.ts", tools: "read, own_tool" }));
 	const own = (seen: { all: string[] }) => seen.all.filter((name) => name.startsWith("own_"));
 	const inherit = await inPi(await launchArgs("inherit", ["read", "bash", "delegate"]));
-	assert.deepEqual(own(inherit), ["own_shared"]);
+	assert.deepEqual(own(inherit), []);
 	const less = await inPi(await launchArgs("less", ["read", "bash", "delegate"]));
-	assert.deepEqual(own(less), ["own_shared"]);
+	assert.deepEqual(own(less), []);
 	const named = await inPi(await launchArgs("named", ["read", "bash", "delegate"]));
-	assert.deepEqual(own(named), ["own_shared", "own_tool"]);
-	assert.ok(named.active.includes("own_tool") && named.all.includes("read"), named.all.join(", "));
+	assert.deepEqual(own(named), []);
+	assert.ok(!named.active.includes("own_tool") && named.all.includes("read"), named.all.join(", "));
 });

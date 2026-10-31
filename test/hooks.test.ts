@@ -55,6 +55,21 @@ test("the README's session:launch example adds its flag and env key to the launc
 	assert.equal(opened.env.PI_DELEGATE_PARENT, s.parent, "the emitter's own env stays");
 });
 
+test("session:launch can still add an extension after agent-specific loading was removed", async () => {
+	writeAgent("scout", agentFile({ model: "alpha/fast-model", extensions: "./ignored.ts" }));
+	const s = session();
+	s.events.on("session:launch", (payload) => {
+		const launch = payload as { args: string[]; env: Record<string, string> };
+		assert.ok(!launch.args.includes("-e"), "no frontmatter extension arguments");
+		launch.args.push("-e", "/custom/launch.ts");
+		launch.env.CUSTOM_LAUNCH = "new";
+	});
+	await s.delegate("scout go");
+	assert.deepEqual(s.tmux.opened[0].argv.slice(-2), ["-e", "/custom/launch.ts"]);
+	assert.equal(s.tmux.opened[0].env.CUSTOM_LAUNCH, "new");
+	assert.deepEqual(s.warnings, []);
+});
+
 test("the payload a session:launch listener sees names the agent", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();

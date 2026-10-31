@@ -207,7 +207,7 @@ test("a model without credentials is refused, per call and as the agent default"
 
 test("a malformed agent file is warned about at call time and left out of the roster", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
-	writeAgent("broken", "---\ndescription: bad auto-exit\nauto-exit: maybe\n---\n\nDo it.\n");
+	writeAgent("broken", "---\ndescription: bad auto-exit\nauto_exit: maybe\n---\n\nDo it.\n");
 	writeAgent("unreadable", "---\ndescription: [unclosed\nmodel: alpha/fast-model\nthinking: low\n---\n\nDo it.\n");
 	const s = session();
 	await s.delegate("scout do the thing");

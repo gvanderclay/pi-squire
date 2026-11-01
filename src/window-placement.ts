@@ -9,6 +9,14 @@ import { inspectGit } from "./git.ts";
 
 export type WindowPlacement = "companion" | "current";
 
+/** A preferred base, never a selected numbered companion or a tmux locator. */
+export function assertRootPlacement(value: unknown): asserts value is string {
+	if (typeof value !== "string" || !/^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?-delegate-session$/.test(value))
+		throw new Error(
+			"invalid or missing rootPlacement in delegation identity; original root companion preference is required",
+		);
+}
+
 /** The owning root's project, never the delegate's chosen working directory. */
 export function placementProject(cwd: string): { companion: string; notices: string[] } {
 	const git = inspectGit(cwd);

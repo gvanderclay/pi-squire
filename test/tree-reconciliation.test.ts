@@ -22,7 +22,15 @@ import { agentDir, cleanup, resetRoot } from "./harness.ts";
 const intent = (id: string, parent = "root", depth = 1): TreeIntent => ({
 	id,
 	sessionId: id,
-	identity: { parent, root: "root", depth, agent: id, chain: [id], autoExit: false },
+	identity: {
+		parent,
+		root: "root",
+		rootPlacement: "project-delegate-session",
+		depth,
+		agent: id,
+		chain: [id],
+		autoExit: false,
+	},
 });
 beforeEach(resetRoot);
 after(cleanup);

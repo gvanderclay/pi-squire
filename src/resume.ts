@@ -26,6 +26,7 @@ import {
 import type { OpenedWindow, TmuxClient } from "./tmux.ts";
 import { listWindows, type ToolDef, toolResult } from "./tracking.ts";
 import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
+import { recordedIdentity } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -90,7 +91,7 @@ export type ResumeDeps = {
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
 		placement: WindowPlacement;
-		identity?: Identity;
+		identity: Identity;
 		sessionId: string;
 	}): Promise<OpenedWindow>;
 };
@@ -234,7 +235,7 @@ function publishResumeRequest(token: Reservation, requestId: string, windowId: s
 async function startResume(
 	deps: ResumeDeps,
 	input: {
-		record: StartedRecorded;
+		record: StartedRecorded & { identity: Identity };
 		session: SessionFile;
 		plan: Plan;
 		task: string;
@@ -252,7 +253,7 @@ async function startResume(
 	const { id: windowId, session: windowSession } = await deps.open({
 		id,
 		name,
-		identity: record.identity ?? readIdentity(sessionId),
+		identity: record.identity,
 		sessionId,
 		sessionPath: session.path,
 		workspace,
@@ -310,6 +311,13 @@ async function startResume(
 	};
 }
 
+/** Resolve once before any exited-window kill; never reconstruct a lost root from cwd. */
+function requiredIdentity(record: StartedRecorded): Identity {
+	const own = recordedIdentity(record);
+	if (!own) throw new Error(`delegation ${record.id} has no original root placement identity; resume refused`);
+	return own;
+}
+
 /** Resume `request.id`: every eligibility check in order, then the launch. */
 async function resume(
 	deps: ResumeDeps,
@@ -320,7 +328,8 @@ async function resume(
 	const placement = await preflight(deps); // read once, before the exited window is killed or anything is mailed
 	if (request.task.trim() === "") throw new Error("a task is required");
 	deps.authorize?.(request.id, ctx);
-	const record = newestStarted(deps.results, request.id);
+	const found = newestStarted(deps.results, request.id);
+	const record = { ...found, identity: requiredIdentity(found) };
 	deps.admit?.(record.agent, ctx);
 	assertNoOwner(record);
 	deps.results.checkStorage(true);

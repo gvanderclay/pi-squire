@@ -65,6 +65,7 @@ async function start(command: Command): Promise<void> {
 		writeIdentity(requester, {
 			parent: root,
 			root,
+			rootPlacement: "project-delegate-session",
 			depth: 1,
 			agent: "coordinator",
 			chain: ["coordinator"],

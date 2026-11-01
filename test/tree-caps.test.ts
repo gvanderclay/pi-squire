@@ -226,7 +226,15 @@ test("unknown resume open and send/kill failure remain charged, not pre-start re
 });
 
 test("corrupt registry cannot become a fresh empty budget; explicit release is idempotent", () => {
-	const own = { parent: "p", root: "root", depth: 1, chain: ["worker"], agent: "worker", autoExit: false };
+	const own = {
+		parent: "p",
+		root: "root",
+		rootPlacement: "project-delegate-session",
+		depth: 1,
+		chain: ["worker"],
+		agent: "worker",
+		autoExit: false,
+	};
 	const token = reserveTree({ id: "one", sessionId: "one", identity: own });
 	failedTree(token);
 	failedTree(token);

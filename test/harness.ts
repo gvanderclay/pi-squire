@@ -477,6 +477,7 @@ export function session(options: SessionOptions = {}) {
 		sessionManager: {
 			getSessionId: () => parent,
 			getSessionDir: () => options.sessionDir ?? sessionDir,
+			getSessionFile: () => undefined,
 			getHeader: () => ({ type: "session", id: parent, cwd: options.cwd ?? root, ...options.sessionHeader }),
 			getEntries: () =>
 				entries.map((entry, index) => ({

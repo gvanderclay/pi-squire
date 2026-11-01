@@ -1,6 +1,7 @@
-/** Compact-list state only. Stable session keys never confer action authority. */
+/** Compact-list state only. Stable keys never confer action authority. */
 export class WidgetSelection {
 	private keys: readonly string[] = [];
+	private ancestors = 0;
 	private cap = 0;
 	private index = 0;
 	private start = 0;
@@ -9,25 +10,26 @@ export class WidgetSelection {
 	get selectedKey(): string | undefined {
 		return this.keys[this.index];
 	}
-
 	get offset(): number {
 		return this.start;
 	}
 
-	update(keys: readonly string[], cap: number): void {
+	update(children: readonly string[], cap: number, ancestors: readonly string[] = []): void {
 		const selected: string | undefined = this.selectedKey;
+		const keys: readonly string[] = [...ancestors, ...(cap > 0 ? children : [])];
 		this.keys = keys;
+		this.ancestors = ancestors.length;
 		this.cap = cap;
 		const retained: number = selected === undefined ? -1 : keys.indexOf(selected);
 		this.index = retained >= 0 ? retained : Math.max(0, Math.min(this.index, keys.length - 1));
-		if (!keys.length || cap === 0) this.leave();
+		if (!keys.length) this.leave();
 		this.scroll();
 	}
 
 	enter(): boolean {
-		if (!this.keys.length || this.cap === 0) return false;
+		if (!this.keys.length) return false;
 		this.active = true;
-		this.index = 0;
+		this.index = Math.max(0, this.ancestors - 1);
 		this.scroll();
 		return true;
 	}
@@ -44,12 +46,13 @@ export class WidgetSelection {
 	}
 
 	private scroll(): void {
-		if (!this.active) {
+		const child: number = this.index - this.ancestors;
+		if (!this.active || child < 0 || this.cap === 0) {
 			this.start = 0;
 			return;
 		}
-		if (this.index < this.start) this.start = this.index;
-		if (this.index >= this.start + this.cap) this.start = this.index - this.cap + 1;
-		this.start = Math.max(0, Math.min(this.start, this.keys.length - this.cap));
+		if (child < this.start) this.start = child;
+		if (child >= this.start + this.cap) this.start = child - this.cap + 1;
+		this.start = Math.max(0, Math.min(this.start, this.keys.length - this.ancestors - this.cap));
 	}
 }

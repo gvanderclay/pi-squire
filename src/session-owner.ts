@@ -30,6 +30,11 @@ export function ownerDetails(session: string): string {
 		return `${path} (unreadable: ${String(error)})`;
 	}
 }
+/** Observation only: matches the elected incarnation, never grants action authority. */
+export function matchesSessionOwner(session: string, pid: number, token: string): boolean {
+	const saved: OwnerRecord | undefined = ownerRecord(session);
+	return saved?.pid === pid && saved.token === token;
+}
 export function sessionIsOwned(session: string): boolean {
 	const saved: OwnerRecord | undefined = ownerRecord(session);
 	return saved !== undefined && processAlive(saved.pid);

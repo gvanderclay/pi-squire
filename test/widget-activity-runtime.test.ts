@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
 import { DELEGATE_WIDGET_KEY } from "../src/widget.ts";
-import { LIVE_LAUNCH_ENV, LiveActivityReader, liveSessionDir } from "../src/widget-live.ts";
+import { LIVE_LAUNCH_ENV, LiveActivityPublisher, LiveActivityReader, liveSessionDir } from "../src/widget-live.ts";
+import { FakeTmux } from "./fake-tmux.ts";
 import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
 type Session = ReturnType<typeof session>;
@@ -80,6 +81,89 @@ test("all modes register factual collector, reject thinking/results, clear on me
 	await live("runtime", "launch", "command call…");
 	assert.equal(s.widgets.size, 0, "non-TUI collector does not require a widget");
 });
+test("locator ticks keep observing without unchanged rewrites, publish rename/move/clear and reset per session/generation", async (t) => {
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	const original = LiveActivityPublisher.prototype.publishLocator;
+	const drains: Promise<void>[] = [];
+	let observations = 0;
+	t.mock.method(
+		LiveActivityPublisher.prototype,
+		"publishLocator",
+		function (this: LiveActivityPublisher, ...args: Parameters<LiveActivityPublisher["publishLocator"]>): void {
+			original.apply(this, args);
+			observations++;
+			drains.push(this.flush());
+		},
+	);
+	const tmux = new FakeTmux();
+	tmux.ownPane = "%1";
+	tmux.addWindow("@1", "original");
+	tmux.panes.set("%1", { windowId: "@1" });
+	const inspect = t.mock.method(tmux, "inspectPane");
+	const s = create("locator-ticks", "launch", { tmux });
+	await s.start();
+	await until(async () => observations > 0, "initial locator observation");
+	await Promise.all(drains.splice(0));
+	const read = async (id = "locator-ticks") => {
+		const files = (await readdir(liveSessionDir(id))).filter((name) => name.endsWith(".json"));
+		assert.equal(files.length, 1);
+		return readFile(join(liveSessionDir(id), files[0]), "utf8");
+	};
+	const initial = await read();
+	const initialGeneration = JSON.parse(initial).generation;
+	const tick = async (): Promise<void> => {
+		const before = observations;
+		t.mock.timers.tick(1000);
+		await until(async () => observations > before, "fresh positive pane observation");
+		await Promise.all(drains.splice(0));
+	};
+	const initialInspects = inspect.mock.callCount();
+	for (let n = 0; n < 3; n++) {
+		await tick();
+		assert.equal(await read(), initial, "identical observed locator does not advance revision or rewrite snapshot");
+	}
+	assert.equal(inspect.mock.callCount(), initialInspects + 3, "deduplication never stops fresh positive reads");
+	tmux.addWindow("@1", "renamed");
+	await tick();
+	assert.equal(JSON.parse(await read()).locator.windowName, "renamed");
+	tmux.addWindow("@8", "moved");
+	tmux.panes.set("%1", { windowId: "@8" });
+	await tick();
+	assert.equal(JSON.parse(await read()).locator.windowId, "@8");
+	tmux.panes.delete("%1");
+	await tick();
+	const cleared = await read();
+	assert.equal(JSON.parse(cleared).locator, undefined);
+	await tick();
+	assert.equal(await read(), cleared, "repeated absent-pane observations do not rewrite");
+	await tool(s);
+	await live("locator-ticks", "launch", "reading…");
+	const active = await read();
+	assert.equal(JSON.parse(active).activity.text, "reading…");
+	await tick();
+	assert.equal(await read(), active, "locator deduplication leaves activity publication untouched");
+	await s.fire("session_start", { reason: "reload" });
+	await Promise.all(drains.splice(0));
+	await until(async () => {
+		const files = (await readdir(liveSessionDir("locator-ticks"))).filter((name) => name.endsWith(".json"));
+		if (files.length !== 1) return false;
+		return (
+			JSON.parse(await readFile(join(liveSessionDir("locator-ticks"), files[0]), "utf8")).generation !==
+			initialGeneration
+		);
+	}, "replacement generation");
+	const replacement = JSON.parse(await read());
+	assert.equal(replacement.activity, null);
+	assert.ok(replacement.ownerToken);
+	const second = create("locator-new-session", undefined, { tmux });
+	await second.start();
+	await Promise.all(drains.splice(0));
+	const switched = JSON.parse(await read("locator-new-session"));
+	assert.notEqual(switched.generation, replacement.generation);
+	assert.notEqual(switched.ownerToken, replacement.ownerToken);
+	assert.equal(switched.activity, null);
+});
+
 test("manual reopen/switch mismatches cannot borrow a launch; seed is captured per factory", async () => {
 	const s = create("stable", "launch");
 	await s.start();

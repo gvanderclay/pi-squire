@@ -1,6 +1,7 @@
 // Read-only direct-child adapter. Results remains the task/result authority.
 // Rows are keyed by native session id, never by a mutable title or launch id.
 import { isStarted, locateSession, type Results, recordedName, type StartedRecorded, sessionIdOf } from "./results.ts";
+import { sessionIsOwned } from "./session-owner.ts";
 import type { TmuxWindow } from "./tmux.ts";
 import type { Activity } from "./widget-activity.ts";
 import { WidgetTitleMirrors } from "./widget-title.ts";
@@ -20,6 +21,7 @@ export type DelegateRow = {
 	/** Transcript mtime is a last-active hint, not proof of tool activity. */
 	lastActive: number | undefined;
 	activity?: Activity;
+	summary?: string;
 };
 
 /** All eligible rows remain available; only this viewport incurs metadata I/O. */
@@ -40,7 +42,7 @@ function candidates(results: Results): StartedRecorded[] {
 		sessions.delete(key);
 		sessions.set(key, record);
 	}
-	return [...sessions.values()].reverse().filter((record) => !record.closed && (!record.gone || record.result));
+	return [...sessions.values()].reverse().filter((record) => !record.closed);
 }
 
 /** Independently refreshable metadata cache, with no writes to Results or shared accounting. */
@@ -64,7 +66,14 @@ export class DirectDelegateView {
 	}
 
 	needsWindows(results: Results): boolean {
-		return candidates(results).length > 0;
+		return candidates(results).some((record) => {
+			if (!record.gone || record.result) return true;
+			try {
+				return sessionIsOwned(sessionIdOf(record));
+			} catch {
+				return false;
+			}
+		});
 	}
 
 	read(
@@ -72,13 +81,18 @@ export class DirectDelegateView {
 		windows: TmuxWindow[] | undefined,
 		sessionDir: string | undefined,
 		viewport: MetadataViewport = { offset: 0, limit: 3 },
+		currentWindows: ReadonlyMap<string, { windowId: string; windowName: string }> = new Map(),
 	): DelegateRow[] {
 		const running: Set<string> = new Set(results.running().map((record) => record.id));
 		const entries: Entry[] = [];
-		for (const record of candidates(results)) {
-			const window = windowState(windows, record);
+		for (const saved of candidates(results)) {
+			const current = currentWindows.get(saved.id);
+			const record: StartedRecorded = current ? { ...saved, ...current } : saved;
+			if (record.gone && !record.result && !current) continue;
+			// A verified exact live pane wins over list-windows pane_dead for another active pane.
+			const window = current ? "open" : windowState(windows, record);
 			const working: boolean = running.has(record.id);
-			if (window === "gone" || (!working && (!record.result || window !== "open"))) continue;
+			if (window === "gone" || (!working && ((!record.result && !current) || window !== "open"))) continue;
 			entries.push({ record, row: this.row(record, working, window) });
 		}
 		const ordered: Entry[] = [
@@ -100,7 +114,7 @@ export class DirectDelegateView {
 			identity: recordedName(record),
 			title: undefined,
 			lastActive: undefined,
-			state: running ? "running" : (record.result?.status ?? "unknown"),
+			state: running ? "running" : (record.result?.status ?? (record.gone ? "missing" : "unknown")),
 			running,
 			window,
 			model: record.result?.finishedModel ?? record.model,

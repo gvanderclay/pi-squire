@@ -777,11 +777,17 @@ export default function delegate(
 	const tracking = createTracking(pi, results, tmux, proactive.errors, viewResults, () => owner.assert());
 	const trustControl = registerTrustControl(pi, identity.current);
 	// Factual lifecycle observation survives failed action processing; only creation needs ownership.
-	registerActivityRuntime(host, () => owner.active());
-	registerDelegateWidget(pi, results, tmux, async (ctx, sessionId) => {
-		owner.assert();
-		await navigator.panel(ctx, sessionId);
-	});
+	registerActivityRuntime(host, () => owner.active(), tmux, owner.token);
+	registerDelegateWidget(
+		pi,
+		results,
+		tmux,
+		async (ctx, sessionId) => {
+			owner.assert();
+			await navigator.panel(ctx, sessionId);
+		},
+		() => owner.assert(),
+	);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;

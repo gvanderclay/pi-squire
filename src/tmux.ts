@@ -75,6 +75,17 @@ export class WindowOpenError extends Error {
 /** The session the parent's pane is in: its id (`$N`) and name. */
 export type OwnSession = { id: string; name: string };
 
+/** A positively inspected pane on one server incarnation; names are not routing identity. */
+export type PaneLocator = {
+	socket: string;
+	serverPid: number;
+	serverStarted: string;
+	paneId: string;
+	windowId: string;
+	windowName: string;
+	exited: boolean;
+};
+
 export interface TmuxClient {
 	/** Whether this process runs in a tmux pane. */
 	insideTmux(): boolean;
@@ -88,6 +99,8 @@ export interface TmuxClient {
 	openWindow(spec: WindowSpec, placement: WindowPlacement, companion: string): Promise<OpenedWindow>;
 	/** This process's pane window, for recovering an ambiguous launch at child startup. */
 	currentWindow?(): Promise<{ id: string; name: string } | undefined>;
+	/** Inspect exactly a pane on this client's server; omitted pane means this process's TMUX_PANE. */
+	inspectPane?(paneId?: string): Promise<PaneLocator | undefined>;
 	/** Every window on the server, in one tmux call. */
 	listWindows(): Promise<TmuxWindow[]>;
 	/** Kill a window. */
@@ -253,6 +266,32 @@ function navigation(run: Run): Pick<TmuxClient, "ownSession" | "clientFor" | "sw
 	};
 }
 
+async function inspectPane(run: Run, paneId = process.env.TMUX_PANE): Promise<PaneLocator | undefined> {
+	if (!paneId || !/^%[0-9]+$/.test(paneId)) return undefined;
+	const format = "#{socket_path}\t#{pid}\t#{start_time}\t#{pane_id}\t#{window_id}\t#{pane_dead}\t#{window_name}";
+	const out = (await run(["display-message", "-p", "-t", paneId, "-F", format])).replace(/\r?\n$/, "");
+	const [socket, pid, started, pane, window, dead, ...name] = out.split("\t");
+	if (
+		!socket ||
+		!/^\d+$/.test(pid) ||
+		!/^\d+$/.test(started) ||
+		pane !== paneId ||
+		!/^@[0-9]+$/.test(window) ||
+		!["0", "1"].includes(dead) ||
+		!name.length
+	)
+		return undefined;
+	return {
+		socket,
+		serverPid: Number(pid),
+		serverStarted: started,
+		paneId: pane,
+		windowId: window,
+		windowName: name.join("\t"),
+		exited: dead === "1",
+	};
+}
+
 /**
  * The real client. A window is opened relative to the session of the pane in
  * `TMUX_PANE`, not whatever session a client happens to have attached, so it
@@ -290,6 +329,8 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 			}
 			return openCompanion(run, spec, companion);
 		},
+
+		inspectPane: (paneId) => inspectPane(run, paneId),
 
 		async currentWindow() {
 			const pane = process.env.TMUX_PANE;

@@ -168,7 +168,7 @@ test("cap zero preserves count and own badge; placement and settings refresh use
 	configure({ maxDepth: 2, delegateWidgetPlacement: "below", delegateWidgetMaxEntries: 0 });
 	await s.delegate("worker inspect");
 	await settle();
-	assert.equal(frame(s), "");
+	assert.match(frame(s), /^↑ root \(parent\)$/);
 	assert.ok(s.statuses.some(({ key, text }) => key === "delegate" && text?.includes("1 delegate running")));
 	assert.ok(s.statuses.some(({ key }) => key === "delegate-self"));
 	configure({ maxDepth: 2, delegateWidgetPlacement: "below", delegateWidgetMaxEntries: 1 });

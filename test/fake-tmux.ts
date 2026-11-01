@@ -10,6 +10,7 @@ import {
 	companionCandidate,
 	type OpenedWindow,
 	type OwnSession,
+	type PaneLocator,
 	parseTmuxVersion,
 	type TmuxClient,
 	type TmuxVersion,
@@ -73,6 +74,23 @@ export class FakeTmux implements TmuxClient {
 	/** When set, the matching navigation call rejects with this message. */
 	fail: { clientFor?: string; switchTo?: string; capture?: string } = {};
 	private next = 0;
+	ownPane: string | undefined;
+	readonly panes = new Map<string, { windowId: string; exited?: boolean }>();
+	scope = { socket: "fake-socket", serverPid: 1, serverStarted: "1" };
+
+	async inspectPane(paneId = this.ownPane): Promise<PaneLocator | undefined> {
+		if (!paneId) return undefined;
+		const pane = this.panes.get(paneId);
+		const window = pane ? this.windows.get(pane.windowId) : undefined;
+		if (!pane || !window) return undefined;
+		return {
+			...this.scope,
+			paneId,
+			windowId: pane.windowId,
+			windowName: window.name,
+			exited: pane.exited ?? window.exited,
+		};
+	}
 
 	insideTmux(): boolean {
 		return this.inside;

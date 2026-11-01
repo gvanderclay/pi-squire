@@ -31,6 +31,11 @@ afterEach(async () => {
 });
 after(cleanup);
 
+async function frameMatches(value: Session, pattern: RegExp): Promise<void> {
+	const deadline = Date.now() + 5000;
+	while (!pattern.test(frame(value)) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+	assert.match(frame(value), pattern);
+}
 async function settle(): Promise<void> {
 	for (let n = 0; n < 4; n++) await nextTurn();
 }
@@ -71,14 +76,12 @@ test("nested status views never broaden direct widget rows, completion barrier o
 	assert.equal(envelopes(owner.parent, "new").filter((mail) => mail.in_reply_to.length).length, 0);
 	await worker.run();
 	scan(coordinator);
-	await settle();
-	assert.match(frame(coordinator), /worker-grandchild.*done/);
+	await frameMatches(coordinator, /worker-grandchild.*done/);
 	assert.doesNotMatch(frame(owner), /worker-grandchild/);
 	assert.equal(owner.sent.length, 0, "raw descendant reports remain at their direct parent");
 	await coordinator.run();
 	scan(owner);
-	await settle();
-	assert.match(frame(owner), /coordinator-direct.*done/);
+	await frameMatches(owner, /coordinator-direct.*done/);
 	assert.equal(owner.sent.length, 1);
 	// Keep a new descendant running after the root's only direct task is done.
 	const later = await launch(coordinator, "worker", "later-descendant");

@@ -1,6 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { AncestorRow } from "./widget-ancestors.ts";
 import type { DelegateRow } from "./widget-data.ts";
 
 export type WidgetTheme = Pick<Theme, "fg" | "bold">;
@@ -57,7 +58,7 @@ function entry(row: DelegateRow, width: number, connector: string, theme: Widget
 	return truncateToWidth(`${prefix}${theme.bold(identity)}${description}${suffix}${theme.fg("dim", extra)}`, width);
 }
 
-/** One secondary line; a future factual descendant summary takes priority when both do not fit. */
+/** One secondary line; descendant task counts take priority when both do not fit. */
 export function activityLine(
 	row: DelegateRow,
 	width: number,
@@ -77,7 +78,13 @@ export function activityLine(
 	return truncateToWidth(theme.fg("dim", prefix + text), width);
 }
 
-export type WidgetRenderOptions = { offset?: number; selectedKey?: string; focused?: boolean };
+export type WidgetRenderOptions = {
+	offset?: number;
+	selectedKey?: string;
+	focused?: boolean;
+	ancestors?: readonly AncestorRow[];
+	ancestryError?: string;
+};
 
 function selectableEntry(
 	row: DelegateRow,
@@ -92,8 +99,57 @@ function selectableEntry(
 	return marker + entry(row, width - visibleWidth(marker), last ? "└─" : "├─", theme, now);
 }
 
+function ancestorLines(ancestors: readonly AncestorRow[], options: WidgetRenderOptions, theme: WidgetTheme): string[] {
+	return ancestors.map((ancestor, index) => {
+		const gutter: string = options.focused ? "  " : "";
+		const marker: string = options.focused && ancestor.key === options.selectedKey ? theme.fg("accent", "▸ ") : gutter;
+		const connector: string = index ? `${"  ".repeat(index - 1)}└─ ` : "";
+		return (
+			marker +
+			connector +
+			"↑ " +
+			theme.bold(widgetText(ancestor.identity)) +
+			(ancestor.parent ? " (parent)" : "") +
+			(ancestor.title ? `  ${widgetText(ancestor.title)}` : "")
+		);
+	});
+}
+
 function more(count: number): string {
 	return `${count} more direct delegate${count === 1 ? "" : "s"}`;
+}
+
+function childLines(
+	rows: readonly DelegateRow[],
+	cap: number,
+	width: number,
+	theme: WidgetTheme,
+	now: number,
+	options: WidgetRenderOptions,
+): string[] {
+	const depth: number = options.ancestors?.length ?? 0;
+	const indent: string = "  ".repeat(depth);
+	const gutter: string = options.focused ? "  " : "";
+	const branch: string = depth ? `${"  ".repeat(depth - 1)}└─ ` : "";
+	const lines: string[] = [gutter + branch + theme.fg("accent", theme.bold("Delegates"))];
+	const start: number = Math.max(0, Math.min(options.offset ?? 0, rows.length - cap));
+	const visible: readonly DelegateRow[] = rows.slice(start, start + cap);
+	const hidden: number = rows.length - start - visible.length;
+	if (start) lines.push(gutter + indent + theme.fg("dim", `├─ ↑ ${more(start)}`));
+	for (const [index, row] of visible.entries()) {
+		const last: boolean = index === visible.length - 1 && hidden === 0;
+		lines.push(indent + selectableEntry(row, width - indent.length, last, theme, now, options));
+		const secondary: string | undefined = activityLine(
+			row,
+			width - gutter.length - indent.length,
+			last,
+			theme,
+			row.summary,
+		);
+		if (secondary) lines.push(gutter + indent + secondary);
+	}
+	if (hidden) lines.push(gutter + indent + theme.fg("dim", `└─ +${more(hidden)}`));
+	return lines;
 }
 
 /** Pure layout: the cap counts child entries, not physical lines or hidden children. */
@@ -105,20 +161,21 @@ export function renderDelegateWidget(
 	now: number = Date.now(),
 	options: WidgetRenderOptions = {},
 ): string[] {
-	if (cap === 0 || rows.length === 0 || width <= 0) return [];
-	const start: number = Math.max(0, Math.min(options.offset ?? 0, rows.length - cap));
-	const visible: readonly DelegateRow[] = rows.slice(start, start + cap);
-	const hidden: number = rows.length - start - visible.length;
+	if (width <= 0) return [];
+	const ancestors: readonly AncestorRow[] = options.ancestors ?? [];
+	if (!ancestors.length && (cap === 0 || !rows.length) && !options.ancestryError) return [];
 	const gutter: string = options.focused ? "  " : "";
-	const lines: string[] = [gutter + theme.fg("accent", theme.bold("Delegates"))];
-	if (start) lines.push(gutter + theme.fg("dim", `├─ ↑ ${more(start)}`));
-	for (const [index, row] of visible.entries()) {
-		const last: boolean = index === visible.length - 1 && hidden === 0;
-		lines.push(selectableEntry(row, width, last, theme, now, options));
-		const secondary: string | undefined = activityLine(row, width - gutter.length, last, theme);
-		if (secondary) lines.push(gutter + secondary);
-	}
-	if (hidden) lines.push(gutter + theme.fg("dim", `└─ +${more(hidden)}`));
-	if (options.focused) lines.push(theme.fg("dim", "↑↓ select · enter details · esc prompt"));
+	const lines: string[] = ancestorLines(ancestors, options, theme);
+	if (options.ancestryError) lines.push(gutter + theme.fg("warning", widgetText(options.ancestryError)));
+	if (cap > 0 && rows.length) lines.push(...childLines(rows, cap, width, theme, now, options));
+	if (options.focused)
+		lines.push(
+			theme.fg(
+				"dim",
+				ancestors.some((ancestor) => ancestor.key === options.selectedKey)
+					? "↑↓ select · enter switch · esc prompt"
+					: "↑↓ select · enter details · esc prompt",
+			),
+		);
 	return lines.map((line) => truncateToWidth(line, width));
 }

@@ -36,7 +36,8 @@ export const delegationPromptPath = join(agentDir, "squire", "delegation_prompt.
 /** The session directory the fake `sessionManager` reports. */
 export const sessionDir = join(agentDir, "sessions");
 process.env.PI_CODING_AGENT_DIR = agentDir;
-export const cleanup = () => rmSync(root, { recursive: true, force: true });
+// Retries cover late async writes from a test's sessions landing while the root is removed.
+export const cleanup = () => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 
 /** A frontmatter block and body, the way an agent file is written. */
 export function agentFile(fields: Record<string, string>, body = "Do the task and report back."): string {

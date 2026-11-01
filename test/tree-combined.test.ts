@@ -1,4 +1,4 @@
-// Merge-seam regressions for 03b ceiling + 04 accounting + 05 routed trust.
+// Merge-seam regressions for launch hooks + 04 accounting + 05 routed trust.
 // Released mail, isolated loopback trust and one shared FakeTmux; no models.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -71,7 +71,7 @@ afterEach(async () => {
 });
 after(cleanup);
 
-test("routed trust, final hook ceiling and shared cap accounting compose on launch and resume", async () => {
+test("routed trust, launch hook arguments and shared cap accounting compose on launch and resume", async () => {
 	const { owner, coordinator } = await tree({ ui: { select: ["Do not trust", "Trust (this session only)"] } });
 	let hooks = 0;
 	coordinator.events.on("session:launch", (payload: unknown) => {
@@ -82,7 +82,7 @@ test("routed trust, final hook ceiling and shared cap accounting compose on laun
 	assert.equal(owner.selects.length, 1);
 	assert.equal(coordinator.selects.length, 0);
 	assert.match(owner.selects[0].title, /Agent chain: coordinator → worker/);
-	assert.deepEqual(parseArgs([...owner.tmux.opened.at(-1)!.argv]).tools, ["read", "mcp__"]);
+	assert.deepEqual(parseArgs([...owner.tmux.opened.at(-1)!.argv]).tools, ["read", "write", "child_only"]);
 	assert.ok(owner.tmux.opened.at(-1)!.argv.includes("--no-approve"));
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 2, lifetime: 2 });
 	const worker = instance({ parent: record.id, tmux: owner.tmux });
@@ -97,7 +97,7 @@ test("routed trust, final hook ceiling and shared cap accounting compose on laun
 	await coordinator.toolCall("delegation_resume", { id: record.id, task: "continue" });
 	assert.equal(owner.selects.length, 2);
 	assert.equal(coordinator.selects.length, 0);
-	assert.deepEqual(parseArgs([...owner.tmux.opened.at(-1)!.argv]).tools, ["read", "mcp__"]);
+	assert.deepEqual(parseArgs([...owner.tmux.opened.at(-1)!.argv]).tools, ["read", "write", "child_only"]);
 	assert.ok(owner.tmux.opened.at(-1)!.argv.includes("--approve"));
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 2, lifetime: 3 });
 	const mail = envelopes(coordinator.parent, "sent").length;
@@ -105,27 +105,4 @@ test("routed trust, final hook ceiling and shared cap accounting compose on laun
 	assert.equal(hooks, 2);
 	assert.equal(envelopes(coordinator.parent, "sent").length, mail);
 	assert.equal(envelopes(owner.parent, "cur").filter((message) => message.in_reply_to.length).length, 0);
-});
-
-test("post-hook ceiling refusal precedes dispatch and refunds launch/resume reservations", async () => {
-	const { owner, coordinator } = await tree();
-	let malformed = true;
-	coordinator.events.on("session:launch", (payload: unknown) => {
-		if (malformed) (payload as { args: string[] }).args.push("--tools");
-	});
-	await assert.rejects(launch(coordinator, "worker"), /nested tool ceiling/);
-	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 1, lifetime: 1 });
-	assert.equal(readTree(owner.parent).entries.at(-1)?.phase, "not-started");
-	malformed = false;
-	const record = await launch(coordinator, "worker");
-	header(record, root);
-	owner.tmux.windows.delete(record.windowId);
-	malformed = true;
-	await assert.rejects(
-		coordinator.toolCall("delegation_resume", { id: record.id, task: "continue" }),
-		/nested tool ceiling/,
-	);
-	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 1, lifetime: 2 });
-	assert.equal(readTree(owner.parent).entries.at(-1)?.phase, "not-started");
-	assert.equal(owner.tmux.opened.length, 2);
 });

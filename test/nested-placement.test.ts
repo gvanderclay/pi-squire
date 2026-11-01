@@ -169,7 +169,7 @@ test("Git A main/subdirectory/linked root → B → C uses A and keeps independe
 		assert.deepEqual(treeCounts(state), { concurrent: 2, lifetime: 2 });
 		assert.ok(tmux.opened.at(-2)!.argv.includes("--no-approve"));
 		assert.ok(tmux.opened.at(-1)!.argv.includes("--approve"));
-		assert.equal(tmux.opened.at(-1)!.argv[tmux.opened.at(-1)!.argv.lastIndexOf("--tools") + 1], "read,mcp__");
+		assert.equal(tmux.opened.at(-1)!.argv[tmux.opened.at(-1)!.argv.lastIndexOf("--tools") + 1], "read,write,mcp__");
 		assert.deepEqual(child.selects, []);
 		assert.equal(owner.sent.filter(({ message }) => message.customType === "delegate").length, 0);
 	}
@@ -260,7 +260,7 @@ test("closed subtree resumes in original root preference with placement consiste
 	const resumedW = await restored.toolCall("delegation_resume", { id: worker.id, task: "continue worker" });
 	assert.equal((resumedW.details as { windowSession: string }).windowSession, selected);
 	assert.ok(tmux.opened.at(-1)!.argv.includes("--no-approve"), "resume re-resolves C's changed trust");
-	assert.equal(tmux.opened.at(-1)!.argv[tmux.opened.at(-1)!.argv.lastIndexOf("--tools") + 1], "read,mcp__");
+	assert.equal(tmux.opened.at(-1)!.argv[tmux.opened.at(-1)!.argv.lastIndexOf("--tools") + 1], "read,write,mcp__");
 	assert.equal(readIdentity(worker.id)?.rootPlacement, preferred);
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 2, lifetime: 4 });
 	for (const entry of readTree(owner.parent).entries) assert.equal(entry.identity.rootPlacement, preferred);

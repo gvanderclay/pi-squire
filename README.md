@@ -177,7 +177,7 @@ a path-specific warning. Unknown or unavailable names warn and cannot launch;
 known entries remain usable, and later roster changes apply normally.
 Below the limit the grant adds `delegate`,
 `delegation_status`, `delegation_close` and `delegation_resume` even with an
-explicit `tools` list, subject to the nested tool ceiling. Merely listing those
+explicit `tools` list. Merely listing those
 tools (including by pattern) does not opt in and produces
 a roster warning. At the depth limit they are inactive and not passed onward.
 
@@ -187,15 +187,12 @@ agent from the grant blocks future launches/resumes, not existing work.
 Trusted project agents still shadow global definitions. Each launching session
 keeps the existing throttled quota checks and shared reactive usage-limit marks.
 
-A nested launch or resume resolves its requested tools, `delegateTools` additions
-and automatic nesting grants, then restricts them to operations available to its
-direct parent. This includes active model-only operations and registered
-codemode/deferred tools, not just displayed schemas. Inactive direct tools and
-hidden tools are excluded. Patterns become exact names; removed tools and
-restricted patterns are reported in the launch/resume notice. The final
-registration allowlist is enforced after synchronous `session:launch`
-customization, so additions cannot register or reach tool names outside the
-direct parent’s ceiling. Top-level launch selection is unchanged.
+A nested child's tools are worked out as at top level, from its own agent file:
+its `tools` list, or, with no `tools` field, its direct parent's available
+tools (active ones plus codemode/deferred operations), plus `delegateTools` and
+the automatic nesting grant. They are not cut back to the parent's tools. The
+`allow_nested_delegation` list is the boundary: a coordinator that must not
+start a child with more tools lists only children whose agent files give fewer.
 
 Each agent keeps its own permission policy; squire does not inherit or compare
 effective policies. A granting agent with a `permission:` map (even `{}`) warns
@@ -203,7 +200,7 @@ when a listed child lacks one; `true` checks all applicable roster agents.
 This is only a heuristic warning, not authorization or proof of lesser privilege.
 Permission policy parsing/enforcement remains the permission provider’s job.
 Tool-name restrictions and configuration permission rules are not filesystem
-isolation: tools such as bash can write files or start processes. The ceiling
+isolation: tools such as bash can write files or start processes. A tool list
 bounds tool names, not arbitrary extension code or the implementation an
 extension registers under an allowed name. Rules asking
 before changes to agent/squire configuration cannot promise interception of
@@ -354,7 +351,7 @@ Only the **direct parent** may resume a child. Ancestor visibility grants no
 resume authority; forked/cloned/copied history with a new Pi id grants none.
 Return to the original parent. Identity is read from exact-id durable state,
 written before launch; inherited launch environment cannot assign a new session
-to the old tree. Current allowlists, depth, caps, callable-tool ceiling and
+to the old tree. Current allowlists, depth, caps and
 directory/source trust still apply to resume, including its picker. A live
 same-id Squire owner and obsolete local/shared resume chains are refused.
 
@@ -932,10 +929,10 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. It may hold only ASCII letters, digits, `-` and `_`; any other value (a space, `#`, `.`, a non-ASCII letter, or an empty value) makes the file invalid, so the agent is disabled. |
 | `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
-| `tools` | The delegate's tools (see below): tool names for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
+| `tools` | The delegate's tools (see below): tool names and `$bundle` entries for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
 | `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern, or a YAML list entry holding a comma, makes the file invalid. A comma-separated line (`fallback: a, b`) is two entries. |
 | `auto_exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
-| `allow_nested_delegation` | Unreleased: `true` or a YAML list of exact child agent names; grants nested delegation below `maxDepth`, subject to the parent tool ceiling (see [Nested delegation](#nested-delegation-unreleased)). Absent, false or an empty list grants none. Malformed values disable the agent; unavailable names warn. |
+| `allow_nested_delegation` | Unreleased: `true` or a YAML list of exact child agent names; grants nested delegation below `maxDepth` (see [Nested delegation](#nested-delegation-unreleased)). Absent, false or an empty list grants none. Malformed values disable the agent; unavailable names warn. |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
 | `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate` or a resume that passes a locked field does not get it: the agent's value is used (the parent's when the file sets none) and the result says which agent locked which field. Passing the agent's own value is the same as passing nothing: no notice, and its fallbacks still apply. A resume of a locked field runs on the file's value as it is now, not on what the delegate last ran on. `true` locks the fields the file sets. |
@@ -973,11 +970,10 @@ loadable by `tool_search`, whatever its exposure. Pi filters MCP tools by
 such entry pi-squire adds the entry `mcp__`, which names no tool; an empty
 selection is `--no-tools`, which removes MCP tools too. To give a delegate an
 MCP server's tools, name them, for example `mcp__docs__*`. An extension that
-turns tools on at run time can still add only tools the list allows. Top-level tool names
-are not checked against the parent's tools: normal Pi extension discovery
-or `session:launch` customization can provide tools in the child. Nested launches
-and resumes instead apply the direct parent’s callable-tool ceiling after all
-selection and customization, as described above; this is not filesystem isolation.
+turns tools on at run time can still add only tools the list allows. Tool names
+are not checked against the parent's tools, at top level or nested: normal Pi
+extension discovery or `session:launch` customization can provide tools in the
+child.
 
 - No `tools` field: the delegate gets the parent session's tools as they are
   when the launch (or resume) starts: active tools for a top-level launch, or
@@ -988,13 +984,31 @@ selection and customization, as described above; this is not filesystem isolatio
   except the `delegateTools` entries. With none of those either, it starts
   with `--no-tools`.
 - A `tools` list of tool names: exactly those tools, plus the
-  `delegateTools` entries.
+  `delegateTools` entries. A `$name` entry stands for the tools of that
+  bundle in the `toolBundles` setting (see below).
 - A `tools` list of only `-name` entries (`tools: -bash, -write`): the
   parent's tools, as with no `tools` field, less those, plus the
   `delegateTools` entries. A `-name` entry may be a `*` pattern
   (`-mcp__docs__*`).
-- A `+name` entry, or tool names and `-name` entries in one list, make the
-  file invalid, and the agent is disabled (see below).
+- A `+name` entry, a `-$name` entry, a `$name` entry naming no bundle, or
+  tool names and `-name` entries in one list, make the file invalid, and the
+  agent is disabled (see below).
+
+`toolBundles` in `<agent dir>/squire/settings.json` names tool lists that
+several agents share:
+
+```json
+{ "toolBundles": { "readonly": ["read", "grep", "find", "ls"] } }
+```
+
+An agent then writes `tools: [$readonly, pstack_models]`, which reads as
+`read, grep, find, ls, pstack_models`; a name listed twice counts once. A
+bundle name is letters, digits, `_` or `-`; each entry is one tool name or
+`*` pattern, with no comma and no leading `+`, `-` or `$`, so bundles do not
+nest. A bundle carries tools only, not permission rules. The setting is read
+with the roster. A setting that is not an object of such lists disables every
+agent that uses a bundle, with the reason; agents without bundles are
+unaffected. (`$`, unlike `@`, may start a plain YAML value.)
 
 The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
 `delegation_resume`) are removed from ordinary tool selections. An opted-in
@@ -1015,9 +1029,7 @@ the `delegateTools` setting, in `<agent dir>/squire/settings.json` beside
 
 Each entry, a tool name or `*` pattern, is added to every delegate's tools,
 whether they come from its agent's `tools` or from the parent (after any
-`-name` entries are taken off). Top-level launches pass these to `--tools`
-unchanged; nested launches/resumes resolve and cap them by the direct parent’s
-available tools. The setting
+`-name` entries are taken off), and passed to `--tools` unchanged. The setting
 is empty by default, is read at each launch and resume, and a value that is
 not a list of names, or an entry that holds a comma or starts with `+` or
 `-`, refuses every launch with an error naming the file, before the task is sent or a window
@@ -1064,8 +1076,8 @@ add one.
 
 `<agent dir>/squire/` holds the optional parent guidance file and
 `settings.json` (`maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`,
-`windowPlacement`, `worktreeRoot`, `delegateTools`, `delegateWidgetPlacement` and
-`delegateWidgetMaxEntries`); the
+`windowPlacement`, `worktreeRoot`, `delegateTools`, `toolBundles`,
+`delegateWidgetPlacement` and `delegateWidgetMaxEntries`); the
 agents live in `<agent dir>/agents/` (see [Agents](#agents)).
 `delegation_prompt.md` is Markdown, inserted unchanged as the
 `squire_parent_delegation` system-prompt section before each new run, including
@@ -1274,8 +1286,8 @@ success or cancellation envelope.
 
 Once the explicit operation is complete, a legitimate direct-parent resume can
 supersede that session's completed fence as a **new lifetime-counted delegation**.
-It still passes current authority/owner, chain, depth, grants, caps, tool-ceiling
-and trust checks. Failed pre-dispatch resumes leave the old fence effective.
+It still passes current authority/owner, chain, depth, grants, caps and trust
+checks. Failed pre-dispatch resumes leave the old fence effective.
 Closed descendants remain canceled; resuming a coordinator does not revive them.
 An unresolved active close cannot be bypassed by resume.
 
@@ -1584,7 +1596,7 @@ and it resumes as the command does.
   receives it once its mailbox starts. If the send fails, the new window is
   killed and nothing is recorded.
 - Only its direct parent may resume it, preserving the original root/depth.
-  The current parent grant, depth/cap/tool-ceiling/trust checks are reapplied.
+  The current parent grant, depth/cap/trust checks are reapplied.
   A chain resumes from its newest local/shared delegation; older records and
   copied fork/clone history are refused, naming the owner or newest record.
 - It is refused, before anything is sent or opened, unless: the delegation is a
@@ -1954,7 +1966,7 @@ Other extensions may rely on:
 - the agent file's frontmatter keys and its locations,
   `<agent dir>/agents/<name>.md` and, in a trusted project,
   `<cwd>/.pi/agents/<name>.md`;
-- the `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`,
+- the `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`, `toolBundles`,
   `windowPlacement`, `worktreeRoot`, `delegateWidgetPlacement` and
   `delegateWidgetMaxEntries` settings in
   `<agent dir>/squire/settings.json`;

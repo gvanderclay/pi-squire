@@ -14,7 +14,7 @@ import {
 	type ToolExposure,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { availableTools, enforceToolCeiling } from "../src/tool-ceiling.ts";
+import { availableTools } from "../src/tool-names.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
 const exposures: Record<string, ToolExposure> = {
@@ -220,11 +220,8 @@ test("nested inherited tools retain codemode/deferred and model-only operations;
 	assert.equal((await child.probe()).outcomes.deferred_tool, true, "deactivation does not withdraw indirect reach");
 });
 
-test("explicit lists and delegateTools resolve to exact parent names with removed-tool notices", async () => {
-	writeAgent(
-		"worker",
-		agentFile({ tools: "probe_driver, plain, child_only, hidden_tool, inactive", model: "alpha/fast-model" }),
-	);
+test("a nested child's explicit tools and delegateTools pass as given, even names its parent cannot reach", async () => {
+	writeAgent("worker", agentFile({ tools: "probe_driver, plain, child_only, inactive", model: "alpha/fast-model" }));
 	writeFileSync(
 		join(agentDir, "squire", "settings.json"),
 		JSON.stringify({
@@ -234,34 +231,36 @@ test("explicit lists and delegateTools resolve to exact parent names with remove
 	);
 	const { parent } = await coordinator();
 	const result = await parent.toolCall("delegate", { agent: "worker", task: "probe" });
-	const names = selected(parent.tmux.opened[0].argv);
-	assert.ok(names.includes("script_tool") && names.includes("mcp__fake__echo"));
-	assert.ok(!names.some((name) => name.includes("*")));
-	const notices = (result.structuredContent as { notices: string[] }).notices.join(" ");
-	for (const name of ["child_only", "hidden_tool", "inactive", "late_only"]) assert.ok(notices.includes(name), notices);
+	assert.deepEqual(selected(parent.tmux.opened[0].argv), [
+		"probe_driver",
+		"plain",
+		"child_only",
+		"inactive",
+		"script_tool",
+		"mcp__fake__*",
+		"late_only",
+	]);
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
 	const seen = await (await runtime(parent.tmux.opened[0].argv)).probe();
-	assert.equal(seen.outcomes.child_only, false);
-	assert.equal(seen.outcomes.late_only, false);
-	assert.equal(seen.outcomes.script_tool, true);
+	for (const name of ["child_only", "inactive", "late_only", "script_tool", "mcp__fake__echo"])
+		assert.equal(seen.outcomes[name], true, name);
+	assert.equal(seen.outcomes.deferred_tool, false, "a tool the list leaves out stays out");
 });
 
-test("automatic nesting grants are individually capped even with an explicit tools list", async () => {
+test("a granted nested child gets every delegation tool, whatever its parent has", async () => {
 	writeAgent(
 		"worker",
 		agentFile({ tools: "probe_driver", allow_nested_delegation: "[worker]", model: "alpha/fast-model" }),
 	);
 	const { parent } = await coordinator();
-	// The real extension cannot activate missing CLI registrations; model that
-	// state after lifecycle exposure for this intentionally limited parent.
 	parent.pi.setActiveTools(["probe_driver", "delegate"]);
-	const result = await parent.toolCall("delegate", { agent: "worker", task: "probe" });
+	await parent.toolCall("delegate", { agent: "worker", task: "probe" });
 	const names = selected(parent.tmux.opened[0].argv);
-	assert.ok(names.includes("delegate"));
-	for (const name of ["delegation_close", "delegation_status", "delegation_resume"]) assert.ok(!names.includes(name));
-	assert.match((result.structuredContent as { notices: string[] }).notices.join(" "), /delegation_resume/);
+	for (const name of ["delegate", "delegation_close", "delegation_status", "delegation_resume"])
+		assert.ok(names.includes(name), name);
 });
 
-test("post-hook plain/wildcard requests, aliases, exclusions and extensions cannot widen the final registration ceiling on launch/resume", async () => {
+test("session:launch additions reach a nested child unchanged on launch and resume", async () => {
 	const { parent } = await coordinator();
 	parent.events.on("session:launch", (data) => {
 		const payload = data as { args: string[]; env: Record<string, string> };
@@ -269,28 +268,31 @@ test("post-hook plain/wildcard requests, aliases, exclusions and extensions cann
 		payload.env.ISOLATED_MARK = "yes";
 	});
 	const launched = await parent.toolCall("delegate", { agent: "worker", task: "probe" });
-	assert.equal(parent.tmux.opened[0].env.ISOLATED_MARK, "yes");
-	assert.ok(parent.tmux.opened[0].argv.includes("/isolated/custom.ts"));
-	const first = await (await runtime(parent.tmux.opened[0].argv)).probe();
+	const opened = parent.tmux.opened[0];
+	assert.equal(opened.env.ISOLATED_MARK, "yes");
+	const added = opened.argv.lastIndexOf("-e");
+	assert.deepEqual(opened.argv.slice(added, added + 7), [
+		"-e",
+		"/isolated/custom.ts",
+		"-t",
+		"*",
+		"-xt",
+		"plain",
+		"--verbose",
+	]);
+	const first = await (await runtime(opened.argv)).probe();
 	assert.equal(first.outcomes.plain, false);
-	assert.equal(first.outcomes.child_only, false);
-	assert.equal(first.outcomes.late_only, false);
-	assert.equal(first.outcomes.deferred_tool, true);
+	assert.equal(first.outcomes.child_only, true);
 	const id = (launched.structuredContent as { id: string }).id;
 	sessionFile(id);
 	parent.tmux.windows.clear();
-	// Current parent availability and child definition, not the launch-time set.
-	parent.pi.setActiveTools(["probe_driver", "delegate", "delegation_resume"]);
-	writeAgent("worker", agentFile({ tools: "probe_driver, plain, child_only", model: "alpha/fast-model" }));
+	writeAgent("worker", agentFile({ tools: "probe_driver, child_only", model: "alpha/fast-model" }));
 	const resumed = await parent.toolCall("delegation_resume", { id, task: "again" });
-	const second = await (await runtime(parent.tmux.opened[1].argv)).probe();
-	assert.equal(second.outcomes.plain, false);
-	assert.equal(second.outcomes.child_only, false);
-	assert.equal(second.outcomes.deferred_tool, true);
-	assert.match((resumed.structuredContent as { notices: string[] }).notices.join(" "), /Nested tool ceiling/);
+	assert.ok(parent.tmux.opened[1].argv.includes("/isolated/custom.ts"));
+	assert.deepEqual((resumed.structuredContent as { notices: string[] }).notices, []);
 });
 
-test("nested command resume resolves current child tools and additions and reports removed names", async () => {
+test("nested command resume uses the child's current tools and delegateTools", async () => {
 	const { parent } = await coordinator();
 	writeAgent("worker", agentFile({ tools: "probe_driver, plain", model: "alpha/fast-model" }));
 	const result = await parent.toolCall("delegate", { agent: "worker", task: "probe" });
@@ -309,22 +311,17 @@ test("nested command resume resolves current child tools and additions and repor
 	await parent.command("delegate-resume", `${id} again`);
 	assert.deepEqual(parent.errors, []);
 	const seen = await (await runtime(parent.tmux.opened[1].argv)).probe();
-	for (const name of ["plain", "child_only", "late_only"]) assert.equal(seen.outcomes[name], false, name);
-	for (const name of ["script_tool", "deferred_tool"]) assert.equal(seen.outcomes[name], true, name);
-	assert.match(parent.notes.join(" "), /child_only, late_only/);
+	assert.equal(seen.outcomes.plain, false);
+	for (const name of ["script_tool", "deferred_tool", "child_only", "late_only"])
+		assert.equal(seen.outcomes[name], true, name);
 });
 
-test("empty nested selections cannot be resurrected by a previous --tools and a hook; command notices include removed tools", async () => {
+test("an empty nested selection launches with --no-tools", async () => {
 	writeAgent("worker", agentFile({ tools: "[]", model: "alpha/fast-model" }));
 	const { parent } = await coordinator();
-	parent.events.on("session:launch", (data) => {
-		(data as { args: string[] }).args.push("--tools", "child_only");
-	});
 	await parent.delegate("worker probe");
-	const names = selected(parent.tmux.opened[0].argv);
-	assert.deepEqual(names, []);
+	assert.deepEqual(selected(parent.tmux.opened[0].argv), []);
 	assert.ok(parent.tmux.opened[0].argv.includes("--no-tools"));
-	assert.match(parent.notes.join(" "), /child_only/);
 	const child = await runtime(parent.tmux.opened[0].argv);
 	assert.deepEqual(child.api.getAllTools(), []);
 });
@@ -342,20 +339,4 @@ test("no-MCP selection keeps the sentinel and tools inherited with exclusions st
 	assert.equal(seen.outcomes.mcp__fake__echo, false);
 	assert.equal(seen.outcomes.list_mcp_resources, false);
 	assert.equal(seen.outcomes.script_tool, false);
-});
-
-test("a -- token used as an option value cannot swallow the final ceiling", () => {
-	const args = ["--tools", "*", "--system-prompt", "--"];
-	enforceToolCeiling({ args, available: ["read"], cwd: root, agentDir, trusted: false, notices: [] });
-	assert.deepEqual(selected(args), ["read", "mcp__"]);
-	assert.equal(parseArgs(args).systemPrompt, "--");
-});
-
-test("finalizer handles modifier customization using trusted Pi defaults, and inserts the ceiling before --", () => {
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools: ["probe_driver", "plain"] }));
-	const args = ["--tools", "read", "-t", "+child_only,-plain", "--", "task"];
-	const notices: string[] = [];
-	enforceToolCeiling({ args, available: ["probe_driver", "plain"], cwd: root, agentDir, trusted: false, notices });
-	assert.deepEqual(selected(args), ["probe_driver", "mcp__"]);
-	assert.match(notices.join(" "), /child_only/);
 });

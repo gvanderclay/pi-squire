@@ -270,7 +270,7 @@ test("closing a running delegate asks first; no leaves it open, yes kills it and
 		delegations: { state: string }[];
 	};
 	assert.equal(status.delegations[0].state, "closed");
-	assert.ok(s.notes.some((note) => note.includes(`Closed delegation ${one.id}`)));
+	assert.ok(s.notes.some((note) => note.includes(`Closed delegation subtree ${one.id}`)));
 });
 
 test("closing a finished delegate does not ask", async () => {

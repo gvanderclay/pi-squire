@@ -192,7 +192,7 @@ test("a window id that now belongs to a differently named window is closed witho
 	assert.equal(closedMessages(resumed).length, 1, "told once");
 	const id = (first.entries[0].data as { id: string }).id;
 	const closed = await resumed.toolCall("delegation_close", { id });
-	assert.match(closed.content[0].text, /was already gone/);
+	assert.match(closed.content[0].text, /: absent/);
 	assert.deepEqual(resumed.tmux.killed, []);
 });
 

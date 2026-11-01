@@ -237,7 +237,8 @@ and child-task facts survive manual reopening of the same Pi session with the
 same agent directory, without launch environment variables. Reopening does not
 adopt another parent's children. Closing/reloading/exiting a parent does not
 terminate its workers. Descendant views and exact-session restoration are
-available below; explicit subtree close remains a later integration slice.
+available below, including explicit ancestor-scoped subtree close. Full integrated
+real-model/permission-forwarding validation is still required before production use.
 
 A nested launch/resume needing an unresolved trust decision asks the attended
 root directly, outside model task mail (see [Project trust](#project-trust)).
@@ -426,15 +427,17 @@ closed/history rows. Parents precede their children; resume history stays
 visible. Each row shows the launch name, agent display label, state and window;
 the selected row adds identities, paths, result envelope, workspace and resume
 information. Only a verified live window supports switch/peek; the model has no
-tool that moves the terminal. Descendant subtree close remains unavailable until
-the explicit-close slice; the current direct-child close path is unchanged.
+tool that moves the terminal. Any ancestor can explicitly close a selected
+subtree. The root also has a confirmed close-all action; shared companion names
+never grant control over another root.
 
 | Key | Does |
 |---|---|
 | `↑` / `↓` | select a delegation; `esc` leaves the panel |
 | `enter` | switch your tmux client to the window |
 | `p` | peek: a snapshot of the window's pane (`capture-pane`) in an overlay; `r` refreshes, `enter` switches, `esc` returns to the list |
-| `x` | close the delegation as `delegation_close` does; asks first only while it is running |
+| `x` | explicitly close the selected subtree as `delegation_close` does; confirms running work |
+| `a` | root only: confirm closing all recorded descendant subtrees, including absent coordinators |
 | `n` | new delegate: the same form `/delegate` opens with no arguments (see [First use](#first-use)) |
 
 Switch acts on the most recently active tmux client attached to the parent's
@@ -907,7 +910,7 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 | --- | --- | --- |
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
-| `delegation_close` | `id` | Kills the window through tmux and records the close, so `delegation_status` reports it closed. |
+| `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
 | `delegation_resume` | `id`, `task`, optional `model`, `thinking` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
 
 The `delegate` tool's description lists the current roster, one line per agent:
@@ -1011,10 +1014,63 @@ even when no delegation is recorded. The details gain a `marks` array of
 `{ scope, source, reason, clearsAt }` and a `readingErrors` array (see
 [Usage limits](#usage-limits)).
 
-`delegation_close` kills the window and records the close even when the
-result has already arrived. When the window is already gone it only records
-the close. An unknown or already closed id returns a message and kills
-nothing. The delegate's session file and result envelope stay on disk.
+## Explicit subtree close
+
+`delegation_close` and the `/delegates` close actions enumerate persistent
+records and close the selected session and all its descendants, including work
+whose coordinator is offline. Any ancestor may close; unrelated trees, siblings
+outside the selected subtree and user windows remain untouched. Only the root
+has the panel's `a` close-all action. Close-all fences new root admissions too;
+neither action kills a companion tmux session wholesale.
+
+Admission is fenced under the shared tree lock **before** window effects.
+Already-reserved pre-dispatch launches cannot dispatch; an already-dispatched
+create stays charged and fenced until its outcome/current locator is known.
+The explicit call makes at most three passes, with two 25 ms waits for late
+locator publication, and otherwise returns partial. It never infers no-start
+from a timeout, dead opener, finished accounting or an empty tmux listing.
+There is no automatic close-repair daemon. Retry the explicit operation after
+positive create/window evidence becomes available; unknown launches are not
+refunded or relaunched speculatively.
+
+Only a window matching the **current recorded id and name** is killed, even
+if its program has exited or its tmux session moved. A same-id manually reopened
+coordinator can have a newer shared locator than its parent's launch history;
+close uses that locator. An already absent verified window records a close.
+Individual tmux or persistence errors do not erase successful members. A failed
+initial registry read/fence refuses before any kill; a post-kill publication
+failure reports the side effect and uncertainty, not successful completion.
+
+The tool's `details` and `structuredContent` match its output schema:
+`{id, windowId?, windowName?, closed, complete, alreadyClosed, killed, members,
+error?}`. Each member has `{id, sessionId, windowId?, windowName?, outcome,
+closed, killed, error?}`; outcome is `killed`, `absent`, `already-closed`,
+`not-started`, `pending` or `error`. Aggregate `closed/complete` is true only
+when every captured member is resolved; partial returns `isError:true` while
+retaining structured details. Repeat close visits unresolved descendants even
+if the selected coordinator alone was already closed. Unknown/out-of-scope
+ids and obsolete resumed records refuse without window effects.
+
+Confirmed shared closes are control/accounting facts, not fabricated worker
+results. The sole direct-parent owner imports them into its own durable
+child-task inbox as canceled/missing work, then processes them in a model run
+before finishing upstream. An offline coordinator does this on same-id reopen;
+the ancestor never writes its semantic state or emits raw grandchild reports.
+A stopped root retains its previous replay hold on reopen. Fresh live close
+outcomes wake normally, like other new outcomes. Real replies arriving before,
+during or after close are retained and correlated normally, not replaced by a
+success or cancellation envelope.
+
+Once the explicit operation is complete, a legitimate direct-parent resume can
+supersede that session's completed fence as a **new lifetime-counted delegation**.
+It still passes current authority/owner, chain, depth, grants, caps, tool-ceiling
+and trust checks. Failed pre-dispatch resumes leave the old fence effective.
+Closed descendants remain canceled; resuming a coordinator does not revive them.
+An unresolved active close cannot be bypassed by resume.
+
+Quit, crash, reload, session switch and auto-exit do **not** cascade. Close never
+removes worktrees, branches, session files or result envelopes. Existing narrow
+rollback of pristine resources on a known failed launch is unchanged.
 
 ## Usage limits
 
@@ -1319,7 +1375,8 @@ and it resumes as the command does.
   file's header still exists; its agent is still in the roster and not disabled
   (a disabled agent's refusal names its file and the reason); and no other
   resume of it is under way. A delegate whose window was killed mid-turn can be
-  resumed.
+  resumed after a completed close; an unresolved active subtree close refuses
+  resume until positively resolved by an explicit retry.
 - A removed working directory, a removed managed worktree included, makes a
   delegation not resumable: Pi runs a reopened session in its stored directory.
   The window opens in that directory, with project trust decided again for it as

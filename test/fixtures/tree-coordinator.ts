@@ -2,6 +2,7 @@
 // provider mailbox or real tmux server is opened by this fixture.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { beginTreeClose, closeTree } from "../../src/tree-close.ts";
 import { withTreeLock } from "../../src/tree-lock.ts";
 import {
 	bindTree,
@@ -30,8 +31,13 @@ type Command = {
 	windows?: { id: string; name: string; exited: boolean; session: string }[];
 	path?: string;
 	unknown?: boolean;
+	actor?: string;
+	id?: string;
+	failKill?: string;
+	gated?: boolean;
 };
 const wait = new Int32Array(new SharedArrayBuffer(4));
+let releaseClose: (() => void) | undefined;
 process.on("message", (command: Command) => {
 	void execute(command).then(
 		(result) => process.send?.({ key: command.key, result }),
@@ -41,6 +47,39 @@ process.on("message", (command: Command) => {
 async function execute(command: Command): Promise<unknown> {
 	const token = command.token ?? { root: command.root, id: command.intent?.id ?? "missing" };
 	switch (command.op) {
+		case "fence":
+			return beginTreeClose(command.root, command.actor ?? command.root, command.id);
+		case "release-close":
+			releaseClose?.();
+			return true;
+		case "close": {
+			if (command.gated) {
+				beginTreeClose(command.root, command.actor ?? command.root, command.id);
+				await new Promise<void>((resolve) => {
+					releaseClose = resolve;
+					process.send?.({ key: 0, closeGated: true });
+				});
+			}
+			const tmux = new FakeTmux();
+			for (const window of command.windows ?? []) {
+				tmux.addWindow(window.id, window.name, window.session);
+				if (window.exited) tmux.exit(window.id);
+			}
+			if (command.unknown) tmux.failList = "unknown";
+			const kill = tmux.kill.bind(tmux);
+			tmux.kill = async (id) => {
+				if (id === command.failKill) throw new Error("injected kill failure");
+				await kill(id);
+			};
+			const result = await closeTree({
+				root: command.root,
+				actor: command.actor ?? command.root,
+				id: command.id,
+				tmux,
+				assertActive: () => {},
+			});
+			return { ...result, killed: tmux.killed };
+		}
 		case "reserve":
 			return reserveTree(command.intent!);
 		case "dispatch":

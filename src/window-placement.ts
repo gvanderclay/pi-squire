@@ -9,6 +9,7 @@ import { inspectGit } from "./git.ts";
 
 export type WindowPlacement = "companion" | "current";
 
+const DEFAULT_SUFFIX = "delegates";
 const safeName = /^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?$/;
 const numberedEnding = /(^|-)[0-9]+$/;
 
@@ -21,7 +22,7 @@ export function assertRootPlacement(value: unknown): asserts value is string {
 }
 
 /** The owning root's project, never the delegate's chosen working directory. */
-export function placementProject(cwd: string, suffix = "delegates"): { companion: string; notices: string[] } {
+export function placementProject(cwd: string, suffix = DEFAULT_SUFFIX): { companion: string; notices: string[] } {
 	const git = inspectGit(cwd);
 	const project = basename(git.kind === "git" ? git.identity.mainRoot : cwd);
 	const normalized = project.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
@@ -47,11 +48,14 @@ export function windowSettings(agentDir: string): { placement: WindowPlacement; 
 	try {
 		parsed = JSON.parse(readFileSync(file, "utf8"));
 	} catch {
-		return { placement: "companion", companionSuffix: "delegates" };
+		return { placement: "companion", companionSuffix: DEFAULT_SUFFIX };
 	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-		return { placement: "companion", companionSuffix: "delegates" };
-	const { windowPlacement: placement = "companion", companionSuffix = "delegates" } = parsed as Record<string, unknown>;
+		return { placement: "companion", companionSuffix: DEFAULT_SUFFIX };
+	const { windowPlacement: placement = "companion", companionSuffix = DEFAULT_SUFFIX } = parsed as Record<
+		string,
+		unknown
+	>;
 	if (placement !== "companion" && placement !== "current")
 		throw new Error(
 			`invalid window placement settings ${file}: windowPlacement must be "companion" or "current", not ${JSON.stringify(placement)}`,

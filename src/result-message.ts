@@ -1,6 +1,6 @@
 // The text and details of the one message the parent receives for a settled delegation.
 import { readMarks } from "./limits.ts";
-import { cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
+import { cwdLine, modelLabel, snapshotLines } from "./render.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import type { StartedRecorded } from "./result-types.ts";
 import type { Inbound, MessageDetails, TaskQuote } from "./results.ts";
@@ -88,29 +88,21 @@ export function resultDetails(
 	};
 }
 
-/** The snapshot lines of the result text: a heading line, then its path lists indented. */
 function checkoutText(snapshot: WorkspaceSnapshot): string[] {
-	const [first, ...rest] = snapshotLines(snapshot);
-	return [`Checkout when the result arrived: ${first}`, ...rest.map((line) => `  ${line}`)];
+	const [first] = snapshotLines(snapshot);
+	return [`Checkout when the result arrived: ${first}`];
 }
 
 /** The one message the parent model reads for a settled delegation. */
 export function resultText(details: ResultDetails): string {
 	const { task } = details;
-	const quote =
-		"note" in task
-			? task.note
-			: `Task, quoted from ${task.path}:\n${task.text
-					.split("\n")
-					.map((line) => `> ${line}`)
-					.join("\n")}`;
+	const taskLine = "note" in task ? task.note : `Task: ${task.path}`;
 	return [
 		`[delegate] Result from ${details.agent} (${modelLabel(details.model, details.finishedModel)}), delegation ${details.id}${details.resumedFrom === undefined ? "" : ` (resumed from ${details.resumedFrom})`}, request ${details.requestId}.`,
 		`Status: ${details.status}`,
 		...(details.limit === undefined ? [] : [details.limit]),
-		quote,
+		taskLine,
 		`Working directory: ${cwdLine(details.cwd)}`,
-		...(details.workspace === undefined ? [] : [`Workspace: ${workspaceLine(details.workspace)}`]),
 		...(details.workspaceSnapshot === undefined ? [] : checkoutText(details.workspaceSnapshot)),
 		`Envelope: ${details.envelopePath}`,
 		`Delegate session: ${details.sessionPath ?? details.sessionId ?? details.id}`,

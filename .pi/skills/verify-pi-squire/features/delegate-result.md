@@ -1,6 +1,6 @@
 # Delegate and result
 
-A user types `/delegate <agent> <task>` in a Pi session running in tmux. A delegate starts in a new tmux window, does the task, and its answer arrives in the parent as one `[delegate]` result message quoting the task. With auto-exit on (the default) the delegate then closes its own window.
+A user types `/delegate <agent> <task>` in a Pi session running in tmux. A delegate starts in a new tmux window, does the task, and its answer arrives in the parent as one `[delegate]` result message linking the task copy. With auto-exit on (the default) the delegate then closes its own window.
 
 ## Sub-features
 

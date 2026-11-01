@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- New root companion sessions deliberately default to `<project>-delegates`
+  instead of `<project>-delegate-session`. Set `companionSuffix` in
+  `<agent dir>/squire/settings.json` to use another suffix, such as `playpen`.
+  Existing companions and saved identities keep their names, including for
+  nested launches and resumes.
+
 ## [0.17.0] - 2026-11-01
 
 ### Breaking

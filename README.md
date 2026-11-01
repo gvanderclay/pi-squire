@@ -358,14 +358,14 @@ same-id Squire owner and obsolete local/shared resume chains are refused.
 ## Where delegate windows open
 
 By default a delegate's window opens in a shared **project companion session**
-named `<project>-delegate-session` on your existing tmux server. The owning
+named `<project>-delegates` on your existing tmux server. The owning
 root Pi session's project chooses it, not the parent tmux session or the
 delegate's working directory. Launching into another repository or creating a
 worktree there still uses the root's companion; resuming a delegate does too.
 
 Nested launches inherit the original root project: A → coordinator in B →
 worker in C all select A's companion. The preferred base name (for example,
-`A-delegate-session`) is saved as `rootPlacement` in the existing durable
+`A-delegates`) is saved as `rootPlacement` in the existing durable
 delegation identity and shared tree records, not recomputed from B/C or the
 containing tmux session. Reopening the **same** coordinator session without its
 launch environment restores that preference; it can launch or directly resume
@@ -384,7 +384,7 @@ uses the root working-directory basename instead.
 Project names preserve ASCII letters (including case), digits, hyphens and
 underscores. Runs of other characters become one hyphen, edge hyphens are
 trimmed, and an empty name becomes `project`: `Client API` uses
-`Client-API-delegate-session`.
+`Client-API-delegates`.
 
 Multiple roots share a companion even across parent tmux sessions. Distinct
 paths with the same basename, separate clones named alike, and names that
@@ -394,12 +394,13 @@ each root.
 
 pi-squire verifies the tmux session option `@squire-companion` before reusing
 an occupied name. An unmarked session is left untouched; numbered alternatives
-start at `<project>-delegate-session-2`, skipping unmarked alternatives too.
+start at `<project>-<suffix>-2`, skipping unmarked alternatives too.
 Later launches reuse an existing managed alternative even if a lower name
 becomes free. Unexpected duplicate managed candidates use the first in numeric
-order, without moving windows or repairing sessions. Existing legacy companions
-and live windows are neither renamed nor migrated; only new launches and
-resumes use project naming.
+order, without moving windows or repairing sessions. Existing companions,
+live windows and saved identities keep their names, including the former
+`<project>-delegate-session` default. Nested launches and resumes retain the
+saved preference; companions are not renamed or migrated.
 
 - The session is created on demand, by the launch that needs it, and tmux
   removes it with its last window, so it does not outlive its delegates.
@@ -415,6 +416,22 @@ resumes use project naming.
   optional `windowSession`; they keep that name. `delegation_status` looks it
   up each time, so it follows a window you move to another session, which is
   still found, closed and resumed.
+
+To use a different suffix, set `companionSuffix` in
+`<agent dir>/squire/settings.json`:
+
+```json
+{ "companionSuffix": "playpen" }
+```
+
+This names a new root's companion `<project>-playpen`. The default suffix is
+`delegates`. A suffix must contain 1 to 32 ASCII letters, digits, underscores
+or hyphens, with no leading or trailing hyphen. It cannot be entirely numeric
+or end in a hyphen followed by digits, such as `2` or `x-10`, because those
+names overlap with numbered alternatives. An invalid suffix refuses the launch
+with an error naming the file, before the task is sent or a window opens.
+The suffix is read with `windowPlacement` at launch. It does not replace a
+saved root preference for nested launches or resumes.
 
 To open windows in your own session, as before, set `windowPlacement` in
 `<agent dir>/squire/settings.json`, beside `worktreeRoot`:
@@ -1076,7 +1093,7 @@ add one.
 
 `<agent dir>/squire/` holds the optional parent guidance file and
 `settings.json` (`maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`,
-`windowPlacement`, `worktreeRoot`, `delegateTools`, `toolBundles`,
+`windowPlacement`, `companionSuffix`, `worktreeRoot`, `delegateTools`, `toolBundles`,
 `delegateWidgetPlacement` and `delegateWidgetMaxEntries`); the
 agents live in `<agent dir>/agents/` (see [Agents](#agents)).
 `delegation_prompt.md` is Markdown, inserted unchanged as the
@@ -1967,7 +1984,7 @@ Other extensions may rely on:
   `<agent dir>/agents/<name>.md` and, in a trusted project,
   `<cwd>/.pi/agents/<name>.md`;
 - the `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`, `toolBundles`,
-  `windowPlacement`, `worktreeRoot`, `delegateWidgetPlacement` and
+  `windowPlacement`, `companionSuffix`, `worktreeRoot`, `delegateWidgetPlacement` and
   `delegateWidgetMaxEntries` settings in
   `<agent dir>/squire/settings.json`;
 - the optional `<agent dir>/squire/delegation_prompt.md` file and the

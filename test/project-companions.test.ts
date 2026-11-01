@@ -67,11 +67,11 @@ test("non-Git project names normalize exactly, without error notices", () => {
 		["a... b", "a-b"],
 		["___", "___"],
 	]) {
-		assert.deepEqual(placementProject(directory(name)), { companion: `${expected}-delegate-session`, notices: [] });
+		assert.deepEqual(placementProject(directory(name)), { companion: `${expected}-delegates`, notices: [] });
 	}
 	const drafts = join(directory("reports"), "drafts");
 	mkdirSync(drafts);
-	assert.equal(placementProject(drafts).companion, "drafts-delegate-session");
+	assert.equal(placementProject(drafts).companion, "drafts-delegates");
 });
 
 test("Git main checkout, repository subdirectories and linked worktrees use the main basename", () => {
@@ -81,14 +81,14 @@ test("Git main checkout, repository subdirectories and linked worktrees use the 
 	const linked = join(directory("linked-parent"), "different-leaf");
 	git(main, "worktree", "add", "-qb", "feature", linked);
 	for (const cwd of [main, sub, linked]) {
-		assert.deepEqual(placementProject(cwd), { companion: "Main-Project-delegate-session", notices: [] });
+		assert.deepEqual(placementProject(cwd), { companion: "Main-Project-delegates", notices: [] });
 	}
 });
 
 test("failed Git inspection and unavailable main-checkout identity fall back with a notice", () => {
 	const bad = directory("broken-git");
 	writeFileSync(join(bad, ".git"), "gitdir: /missing/pi-squire-test-repository\n");
-	assert.equal(placementProject(bad).companion, "broken-git-delegate-session");
+	assert.equal(placementProject(bad).companion, "broken-git-delegates");
 	assert.match(placementProject(bad).notices[0], /Could not inspect.*root working-directory basename/);
 	// The existing Git identity code deliberately cannot name the main checkout
 	// of a linked worktree with a separate common Git directory.
@@ -98,7 +98,7 @@ test("failed Git inspection and unavailable main-checkout identity fall back wit
 	git(main, "commit", "--allow-empty", "-qm", "initial");
 	const linked = join(directory("parent"), "unlocated-main");
 	git(main, "worktree", "add", "-qb", "feature", linked);
-	assert.equal(placementProject(linked).companion, "unlocated-main-delegate-session");
+	assert.equal(placementProject(linked).companion, "unlocated-main-delegates");
 	assert.match(placementProject(linked).notices[0], /main checkout.*cannot be located/);
 });
 
@@ -113,7 +113,7 @@ test("Git unavailable still launches into the root basename and reports the fall
 	process.env.PATH = `${bin}:${saved}`;
 	try {
 		const result = await launch(s, { cwd: target });
-		assert.equal(result.windowSession, "fallback-root-delegate-session");
+		assert.equal(result.windowSession, "fallback-root-delegates");
 		assert.match(result.notices.join("\n"), /Git unavailable.*root working-directory basename/);
 	} finally {
 		process.env.PATH = saved;
@@ -129,9 +129,9 @@ test("different root projects in one parent session separate; same basename and 
 	const windows = await Promise.all([launch(a), launch(b), launch(c), launch(d)]);
 	assert.deepEqual(
 		windows.map((value) => value.windowSession),
-		["api-one-delegate-session", "other-delegate-session", "api-one-delegate-session", "api-one-delegate-session"],
+		["api-one-delegates", "other-delegates", "api-one-delegates", "api-one-delegates"],
 	);
-	assert.equal(a.tmux.sessions.get("api-one-delegate-session")?.length, 3);
+	assert.equal(a.tmux.sessions.get("api-one-delegates")?.length, 3);
 });
 
 test("cross-project cwd and worktree_source never choose placement; roots in other tmux parents reuse", async () => {
@@ -143,7 +143,7 @@ test("cross-project cwd and worktree_source never choose placement; roots in oth
 	const first = await launch(a, { cwd: target });
 	a.tmux.parentSession = "another-parent";
 	const second = await launch(b, { worktree: "task/topic", worktree_source: target });
-	assert.equal(first.windowSession, "owning-project-delegate-session");
+	assert.equal(first.windowSession, "owning-project-delegates");
 	assert.equal(second.windowSession, first.windowSession);
 	assert.equal(a.tmux.opened[0].cwd, target);
 	assert.notEqual(a.tmux.opened[1].cwd, main);
@@ -151,7 +151,7 @@ test("cross-project cwd and worktree_source never choose placement; roots in oth
 
 test("unmarked base and numbered names stay untouched; a managed alternative wins over a newly freed base", async () => {
 	const s = await start(directory("collision"));
-	const base = "collision-delegate-session";
+	const base = "collision-delegates";
 	s.tmux.addWindow("@100", "user-base", base);
 	s.tmux.addWindow("@101", "user-numbered", `${base}-2`);
 	const first = await launch(s);
@@ -166,12 +166,12 @@ test("unmarked base and numbered names stay untouched; a managed alternative win
 
 test("new placement leaves a legacy companion and its existing windows untouched", async () => {
 	const s = await start(directory("new-project"));
-	s.tmux.addWindow("@100", "legacy-delegate", "work-squire");
-	s.tmux.companions.add("work-squire");
+	s.tmux.addWindow("@100", "legacy-delegate", "new-project-delegate-session");
+	s.tmux.companions.add("new-project-delegate-session");
 	const result = await launch(s);
-	assert.equal(result.windowSession, "new-project-delegate-session");
-	assert.equal(s.tmux.windows.get("@100")?.session, "work-squire");
-	assert.equal(s.tmux.detachOnDestroy.has("work-squire"), false);
+	assert.equal(result.windowSession, "new-project-delegates");
+	assert.equal(s.tmux.windows.get("@100")?.session, "new-project-delegate-session");
+	assert.equal(s.tmux.detachOnDestroy.has("new-project-delegate-session"), false);
 });
 
 test("an unmarked creation race is rechecked and never adopted", async () => {
@@ -179,14 +179,14 @@ test("an unmarked creation race is rechecked and never adopted", async () => {
 	s.tmux.raceNewSession = true;
 	s.tmux.raceWinnerManaged = false;
 	const result = await launch(s);
-	assert.equal(result.windowSession, "race-delegate-session-2");
+	assert.equal(result.windowSession, "race-delegates-2");
 	assert.equal(s.tmux.opened.length, 1);
-	assert.equal(s.tmux.detachOnDestroy.has("race-delegate-session"), false);
-	assert.equal(s.tmux.companions.has("race-delegate-session"), false);
+	assert.equal(s.tmux.detachOnDestroy.has("race-delegates"), false);
+	assert.equal(s.tmux.companions.has("race-delegates"), false);
 });
 
 test("duplicate managed candidates select numeric order deterministically without repair", () => {
-	const base = "project-delegate-session";
+	const base = "project-delegates";
 	const candidates = new Map([
 		[`${base}-10`, true],
 		[`${base}-3`, true],
@@ -241,6 +241,6 @@ test("ordinary root restart and resume retain root placement, not the delegate c
 	await restarted.start();
 	const resumed = (await restarted.toolCall("delegation_resume", { id: first.id, task: "more" }))
 		.structuredContent as Started;
-	assert.equal(resumed.windowSession, "resume-owner-delegate-session");
+	assert.equal(resumed.windowSession, "resume-owner-delegates");
 	assert.equal(original.tmux.opened.at(-1)?.cwd, target);
 });

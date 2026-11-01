@@ -19,7 +19,7 @@ export type ResumePickerDeps = {
 const optionFor = (record: StartedRecorded): string =>
 	`${recordedName(record)} · ${record.agent} · ${record.id.slice(0, 8)}`;
 
-export async function pickResume(ctx: ExtensionContext, deps: ResumePickerDeps): Promise<void> {
+export async function pickResume(ctx: ExtensionContext, deps: ResumePickerDeps, id?: string): Promise<void> {
 	const unavailable = deps.unavailable();
 	if (unavailable !== undefined) {
 		ctx.ui.notify(`delegate: ${unavailable}`, "error");
@@ -37,7 +37,14 @@ export async function pickResume(ctx: ExtensionContext, deps: ResumePickerDeps):
 		return;
 	}
 	const options = records.map(optionFor);
-	const picked = await ctx.ui.select("Resume which delegation?", options);
+	const picked =
+		id === undefined
+			? await ctx.ui.select("Resume which delegation?", options)
+			: options[records.findIndex((record) => record.id === id)];
+	if (id !== undefined && picked === undefined) {
+		ctx.ui.notify("delegate: selected delegation cannot be resumed now", "warning");
+		return;
+	}
 	const record = records[options.indexOf(picked ?? "")];
 	if (record === undefined) return;
 	const task = await ctx.ui.editor(`Follow-up for ${recordedName(record)}`);

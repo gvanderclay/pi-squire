@@ -8,7 +8,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createEventBus, type EventBus, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	CustomEditor,
+	createEventBus,
+	type EventBus,
+	type ExtensionAPI,
+	type TerminalInputHandler,
+} from "@earendil-works/pi-coding-agent";
 
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -330,6 +336,20 @@ export function session(options: SessionOptions = {}) {
 	const widgetCalls: { key: string; placement: unknown; renderer: string }[] = [];
 	let renderer = "regular";
 	const widgetTheme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+	const inputHandlers = new Set<TerminalInputHandler>();
+	let editorText = "";
+	let autocomplete = false;
+	let customEditor = false;
+	const promptEditor = Object.create(CustomEditor.prototype) as CustomEditor;
+	promptEditor.isShowingAutocomplete = () => autocomplete;
+	let focusedComponent: unknown = promptEditor;
+	const widgetTui = {
+		get mode() {
+			return renderer;
+		},
+		getFocusedComponent: () => focusedComponent,
+		requestRender: () => {},
+	};
 	const notes: string[] = [];
 	const warnings: string[] = [];
 	const errors: string[] = [];
@@ -476,11 +496,19 @@ export function session(options: SessionOptions = {}) {
 					text: text?.replace(/^(?:👨|👩) /u, "<parent> ").replace(/^(?:👦|👧) /u, "<child> "),
 				}),
 			theme: widgetTheme,
+			getEditorText: () => editorText,
+			getEditorComponent: () => (customEditor ? () => promptEditor : undefined),
+			onTerminalInput: (handler: TerminalInputHandler) => {
+				inputHandlers.add(handler);
+				return () => {
+					inputHandlers.delete(handler);
+				};
+			},
 			setWidget: (
 				key: string,
 				factory:
 					| ((
-							tui: { requestRender(): void },
+							tui: typeof widgetTui,
 							theme: typeof widgetTheme,
 					  ) => { render(width: number): string[]; invalidate(): void })
 					| undefined,
@@ -491,18 +519,7 @@ export function session(options: SessionOptions = {}) {
 					widgets.delete(key);
 					return;
 				}
-				const owner = renderer;
-				widgets.set(
-					key,
-					factory(
-						{
-							requestRender: () => {
-								if (owner !== renderer) throw new Error("render requested on retired renderer");
-							},
-						},
-						widgetTheme,
-					),
-				);
+				widgets.set(key, factory(widgetTui, widgetTheme));
 			},
 			select: async (title: string, options: string[], opts?: { signal?: AbortSignal; timeout?: number }) => {
 				selects.push({ title, options, ...opts });
@@ -527,7 +544,15 @@ export function session(options: SessionOptions = {}) {
 			},
 			confirm: async (title: string, message: string) => {
 				confirms.push({ title, message });
-				return confirmAnswers.shift() ?? false;
+				const previous: unknown = focusedComponent;
+				focusedComponent = {};
+				await fire("ui_prompt_start", { kind: "confirm" });
+				try {
+					return confirmAnswers.shift() ?? false;
+				} finally {
+					focusedComponent = previous;
+					await fire("ui_prompt_end", { kind: "confirm" });
+				}
 			},
 			input: async (title: string, placeholder?: string) => {
 				inputs.push({ title, placeholder });
@@ -537,7 +562,15 @@ export function session(options: SessionOptions = {}) {
 				customs.push(factory);
 				customOptions.push(uiOptions);
 				const answer = customAnswers.shift();
-				return isKeyScript(answer) ? runKeyScript(factory, answer) : answer;
+				const previous: unknown = focusedComponent;
+				focusedComponent = {};
+				await fire("ui_prompt_start", { kind: "custom" });
+				try {
+					return isKeyScript(answer) ? await runKeyScript(factory, answer) : answer;
+				} finally {
+					focusedComponent = previous;
+					await fire("ui_prompt_end", { kind: "custom" });
+				}
 			},
 		},
 	};
@@ -648,6 +681,26 @@ export function session(options: SessionOptions = {}) {
 		entries,
 		statuses,
 		widgets,
+		terminalKey: (key: string) => {
+			for (const handler of inputHandlers) {
+				const result = handler(KEY_DATA[key] ?? key);
+				if (result?.consume) return true;
+			}
+			return false;
+		},
+		terminalListeners: () => inputHandlers.size,
+		editorText: (text: string) => {
+			editorText = text;
+		},
+		editorCompletion: (value: boolean) => {
+			autocomplete = value;
+		},
+		customEditor: (value: boolean) => {
+			customEditor = value;
+		},
+		promptFocus: (component: unknown = promptEditor) => {
+			focusedComponent = component;
+		},
 		widgetCalls,
 		switchRenderer: (mode: string) => {
 			renderer = mode;

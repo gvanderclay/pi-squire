@@ -435,8 +435,7 @@ dropped first, then file age, before identity/state are compressed. At very
 narrow widths the state glyph remains beside the truncated identity.
 `file … ago` is only a last-active hint from transcript mtime, not live tool
 activity. When available, a second line shows factual live activity (below).
-Descendant summaries, ancestors and keyboard focus are not added by this
-overview; use [/delegates](#reaching-delegates) to inspect windows.
+Descendant summaries and ancestor rows are not added by this overview.
 
 Configure it in the existing `<agent dir>/squire/settings.json`, alongside
 `windowPlacement`, worktree and nesting preferences:
@@ -510,28 +509,56 @@ in non-TUI delegates and with the list hidden.
 One child-entry slot may occupy two physical lines; there is no empty secondary
 line or tool-use counter.
 
+### Navigation
+
+At an **empty built-in prompt**, press **Down** to select the first child.
+Up/Down move through all eligible children, scrolling within the configured cap;
+hidden-above/below counts refer to direct children. Selection follows stable
+session identity through renames, reordering and resumes. Enter opens that
+child's details in the **same dashboard** as /delegates. Escape returns to the
+compact list, then Escape again returns to the prompt; Up past the first row
+also leaves the list. A short hint appears only while the list owns these keys.
+Typing or any unrelated key leaves list navigation and passes that key through.
+While a widget-opened dashboard is loading or re-listing between actions, keys
+are absorbed only if the exact empty built-in prompt still owns focus: Escape
+cannot abort a run and action letters cannot leak into that prompt. Once a
+real dashboard, dialog, completion menu or unknown component owns input, its
+keys pass through normally.
+Cap zero never creates invisible selectable children; /delegates still works.
+
 Squire owns only its widget key and its existing status entries. It does not
-replace your footer/editor, bind navigation keys or move focus, and clears its
-observers/widget on shutdown or reload. JSON/RPC hosts retain the existing
-running-count status rather than receiving a terminal widget.
+replace your footer or editor, and cleans up observers/input listeners on
+shutdown or reload. Automatic navigation deliberately passes through custom
+editors, autocomplete, dialogs, permission questions and unrelated dashboards.
+It relies on **Pi TUI internals**, isolated in a small compatibility adapter:
+the concrete focus getter and exact built-in editor identity. Compatibility was
+tested with the installed **Pi 1.4.0 bundled CLI**, including regular/fullscreen
+mode changes. Unknown focus/editor/completion capabilities disable key capture
+rather than guessing; /delegates remains available. This is not a generic
+custom-editor integration or a supported Pi focus hook. JSON/RPC hosts retain
+the running-count status rather than receiving a terminal widget.
 
 ## Reaching delegates
 
 Delegate windows sit out of your way, so reach them from the parent. `/delegates`
-(or `alt+shift+d`) opens a TUI panel of its descendant hierarchy, including
+(or `alt+shift+d`) opens the same dashboard used by widget Enter, at the overall
+view of its descendant hierarchy, including
 closed/history rows. Parents precede their children; resume history stays
 visible. Each row shows the launch name, agent display label, state and window;
-the selected row adds identities, paths, result envelope, workspace and resume
-information. Only a verified live window supports switch/peek; the model has no
+Enter opens selected details with identities, paths, result envelope, workspace
+and resume information. Lists and details scroll within the available screen.
+Only a verified live window supports switch/peek; the model has no
 tool that moves the terminal. Descendant subtree close remains unavailable until
 the explicit-close slice; the current direct-child close path is unchanged.
 
 | Key | Does |
 |---|---|
-| `↑` / `↓` | select a delegation; `esc` leaves the panel |
-| `enter` | switch your tmux client to the window |
+| `↑` / `↓` | select a delegation in the list; scroll in details |
+| `enter` | open selected details; from details, switch your tmux client to its verified window |
+| `esc` | details → overall list → prompt; widget-opened details return directly to the compact list |
 | `p` | peek: a snapshot of the window's pane (`capture-pane`) in an overlay; `r` refreshes, `enter` switches, `esc` returns to the list |
 | `x` | close the delegation as `delegation_close` does; asks first only while it is running |
+| `r` | resume the selected eligible direct child, collecting a follow-up through the existing resume flow; descendants without authority are refused |
 | `n` | new delegate: the same form `/delegate` opens with no arguments (see [First use](#first-use)) |
 
 Switch acts on the most recently active tmux client attached to the parent's

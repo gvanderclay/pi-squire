@@ -6,6 +6,7 @@ import { type Identity, maxDepth, readIdentity } from "./identity.ts";
 import { isStarted, type Recorded, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import { descendants, readTree, type TreeEntry } from "./tree-registry.ts";
+import { assertRootPlacement } from "./window-placement.ts";
 
 export function recordedIdentity(record: StartedRecorded): Identity | undefined {
 	const durable: Identity | undefined = readIdentity(sessionIdOf(record));
@@ -14,10 +15,13 @@ export function recordedIdentity(record: StartedRecorded): Identity | undefined 
 		record.identity &&
 		(durable.parent !== record.identity.parent ||
 			durable.root !== record.identity.root ||
+			durable.rootPlacement !== record.identity.rootPlacement ||
 			durable.depth !== record.identity.depth)
 	)
 		throw new Error(`conflicting ownership for delegation ${record.id}`);
-	return durable ?? record.identity;
+	const own: Identity | undefined = durable ?? record.identity;
+	if (own) assertRootPlacement(own.rootPlacement);
+	return own;
 }
 export function belongsTo(record: Recorded, ctx: ExtensionContext): boolean {
 	if (!isStarted(record)) return record.parentId === ctx.sessionManager.getSessionId();
@@ -35,10 +39,14 @@ export function assertResumeAuthority(record: StartedRecorded, ctx: ExtensionCon
 		throw new Error(
 			`only direct parent ${child?.parent ?? "(original session)"} may resume delegation ${record.id}; reopen that parent session`,
 		);
-	if (!child) return;
+	if (!child) throw new Error(`delegation ${record.id} has no original root placement identity; resume refused`);
 	const parent: Identity | undefined = readIdentity(ctx.sessionManager.getSessionId());
-	if (child.root !== (parent?.root ?? ctx.sessionManager.getSessionId()) || child.depth !== (parent?.depth ?? 0) + 1)
-		throw new Error(`delegation ${record.id} has inconsistent root/depth ownership; resume refused`);
+	if (
+		child.root !== (parent?.root ?? ctx.sessionManager.getSessionId()) ||
+		child.depth !== (parent?.depth ?? 0) + 1 ||
+		(parent && child.rootPlacement !== parent.rootPlacement)
+	)
+		throw new Error(`delegation ${record.id} has inconsistent root/depth or rootPlacement ownership; resume refused`);
 	if (child.depth > maxDepth())
 		throw new Error(
 			`delegation ${record.id} depth ${child.depth} exceeds maxDepth ${maxDepth()} in squire/settings.json`,

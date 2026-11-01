@@ -7,6 +7,7 @@ import type { Delegation, StartedRecorded } from "../src/results.ts";
 import { readTaskState, taskStatePath } from "../src/task-store.ts";
 import { WindowOpenError } from "../src/tmux.ts";
 import { failedTree, readTree, reserveTree, treeCounts, treePath } from "../src/tree-registry.ts";
+import { placementProject } from "../src/window-placement.ts";
 import {
 	agentDir,
 	agentFile,
@@ -83,6 +84,7 @@ function reserveReplacement(owner: Session, parent: Session): void {
 		identity: {
 			parent: parent.parent,
 			root: owner.parent,
+			rootPlacement: placementProject(root).companion,
 			depth: parent === owner ? 1 : 2,
 			agent: "worker",
 			chain: parent === owner ? ["worker"] : ["coordinator", "worker"],

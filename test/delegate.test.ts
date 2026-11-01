@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { placementProject } from "../src/window-placement.ts";
 
 import {
 	agentDir,
@@ -510,7 +511,15 @@ test("the delegation is recorded with no task text, and the parent gets a notice
 			customType: "delegate",
 			data: {
 				id,
-				identity: { parent: s.parent, root: s.parent, depth: 1, agent: "scout", chain: ["scout"], autoExit: true },
+				identity: {
+					parent: s.parent,
+					root: s.parent,
+					rootPlacement: placementProject(root).companion,
+					depth: 1,
+					agent: "scout",
+					chain: ["scout"],
+					autoExit: true,
+				},
 				agent: "scout",
 				model: "alpha/fast-model",
 				thinking: "low",

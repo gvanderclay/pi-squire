@@ -9,7 +9,15 @@ import { TreeProcess } from "./tree-process-harness.ts";
 const intent = (id: string, parent = "coordinator-a", root = "root"): TreeIntent => ({
 	id,
 	sessionId: id,
-	identity: { parent, root, depth: 2, agent: "worker", chain: ["coordinator", "worker"], autoExit: false },
+	identity: {
+		parent,
+		root,
+		rootPlacement: "project-delegate-session",
+		depth: 2,
+		agent: "worker",
+		chain: ["coordinator", "worker"],
+		autoExit: false,
+	},
 });
 async function isolated(body: (dir: string, a: TreeProcess, b: TreeProcess) => Promise<void>): Promise<void> {
 	const dir = mkdtempSync(join(tmpdir(), "squire-tree-process-"));

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { readIdentity } from "../src/identity.ts";
 import type { Delegation } from "../src/results.ts";
+import { placementProject } from "../src/window-placement.ts";
 import {
 	agentDir,
 	agentFile,
@@ -101,7 +102,12 @@ test("allowed depth-2 launch grants four tools with explicit tools and persists 
 		depth: 2,
 		chain: ["coordinator", "worker"],
 	});
-	assert.deepEqual(readIdentity(worker.parent), { ...(metadata as object), agent: "worker", autoExit: false });
+	assert.deepEqual(readIdentity(worker.parent), {
+		...(metadata as object),
+		rootPlacement: placementProject(root).companion,
+		agent: "worker",
+		autoExit: false,
+	});
 	assert.equal(coordinator.tmux.opened[0].env.PI_DELEGATE_CHAIN, "coordinator,worker");
 	assert.equal(coordinator.tmux.opened[0].env.PI_DELEGATE_ROOT, rootSession.parent);
 	assert.equal(coordinator.tmux.opened[0].env.CUSTOM, "ok");
@@ -334,6 +340,7 @@ test("allowed nested resume preserves original root/depth and uses the current c
 	assert.deepEqual(resumed.identity, {
 		parent: coordinator.parent,
 		root: rootSession.parent,
+		rootPlacement: placementProject(root).companion,
 		depth: 2,
 		agent: "worker",
 		chain: ["coordinator", "worker"],

@@ -7,13 +7,14 @@ const items = Array.from({ length: 12 }, (_, index) => ({
 	label: `worker-${index}`,
 	details: Array.from({ length: 20 }, (_v, n) => `line ${n}`),
 }));
-function screen(detailBack: "list" | "exit" = "list", detail = false, root = false) {
+function screen(detailBack: "list" | "exit" = "list", detail = false, root = false, branch?: string) {
 	const position: DashboardPosition = { id: "0", detail, offset: 0 };
 	const results: DashboardIntent[] = [];
 	const dashboard = new Dashboard({
 		items,
 		position,
 		root,
+		branch,
 		detailBack,
 		theme: { fg: (_color, text) => text, bold: (text) => text },
 		done: (result) => results.push(result),
@@ -36,6 +37,27 @@ test("one presentation enters details from overall list; widget-target details r
 	widget.dashboard.handleInput("\x1b");
 	assert.deepEqual(widget.results, [undefined], "no competing extra panel between details and compact list");
 });
+test("explicit branch list preserves initial Escape and worker details return to that same list", () => {
+	const initial = screen("exit", true, true, "branch-session");
+	assert.match(initial.dashboard.render(220).join("\n"), /b branch list.*a close ALL ROOT subtrees/);
+	initial.dashboard.handleInput("b");
+	assert.equal(initial.position.detail, false);
+	assert.equal(initial.position.branchList, true);
+	assert.match(initial.dashboard.render(220).join("\n"), /Delegate branch: branch-session/);
+	initial.dashboard.handleInput("\x1b[B");
+	assert.equal(initial.position.id, "1");
+	initial.dashboard.handleInput("\r");
+	assert.equal(initial.position.detail, true);
+	initial.dashboard.handleInput("\x1b");
+	assert.equal(initial.position.detail, false);
+	assert.deepEqual(initial.results, []);
+	initial.dashboard.handleInput("\x1b");
+	assert.deepEqual(initial.results, [undefined]);
+	const overall = screen();
+	overall.dashboard.handleInput("b");
+	assert.equal(overall.position.branchList, undefined);
+});
+
 test("actions are opaque intents, position persists through reconstructed screens", () => {
 	const f = screen();
 	for (let n = 0; n < 10; n++) f.dashboard.handleInput("\x1b[B");

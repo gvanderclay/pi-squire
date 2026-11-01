@@ -555,9 +555,13 @@ delegate session, or the first child at root. Up/Down traverse ancestors and
 eligible children in display order; only children scroll within the configured cap;
 hidden-above/below counts refer to direct children. Selection follows stable
 session identity through renames, reordering and resumes. Enter opens that
-child's details in the **same dashboard** as /delegates. Escape returns to the
-compact list, then Escape again returns to the prompt; Up past the first row
-also leaves the list. A short hint appears only while the list owns these keys.
+child's details in the **same dashboard** as /delegates, scoped to that child's
+branch (including descendant and resume history, not its siblings). Press **b**
+for the branch list to select and inspect its workers. Initial details Escape
+returns directly to the compact list; details opened from the branch list return
+to that branch list first. Branch-list Escape returns to the compact list, then
+Escape again returns to the prompt; Up past the first compact row also leaves
+the list. A short hint appears only while the list owns these keys.
 Typing or any unrelated key leaves list navigation and passes that key through.
 While a widget-opened dashboard is loading or re-listing between actions, keys
 are absorbed only if the exact empty built-in prompt still owns focus: Escape
@@ -604,9 +608,15 @@ Delegate windows sit out of your way, so reach them from the parent. `/delegates
 (or `alt+shift+d`) opens the same dashboard used by widget Enter, at the overall
 view of its descendant hierarchy, including
 closed/history rows. Parents precede their children; resume history stays
-visible. Each row shows the launch name, agent display label, state and window;
+visible. Each row shows stable launch identity, the available current native Pi
+title, agent display label, semantic state/outcome and verified window availability.
 Enter opens selected details with identities, paths, result envelope, workspace
-and resume information. Lists and details scroll within the available screen.
+and resume information. Historical launch windows are labeled separately from
+current verified windows. Lists and details scroll within the available screen.
+Widget entry uses the same screen for only its selected branch; `b` exposes that
+branch's list without widening its scope. A title change never changes routing.
+Metadata is refreshed when opening/reopening the screen after an action; the
+compact overview remains the live activity/summary view.
 Only a verified live window supports switch/peek; the model has no
 tool that moves the terminal. Any ancestor can explicitly close a selected
 subtree. The root also has a confirmed close-all action; shared companion names
@@ -616,12 +626,13 @@ never grant control over another root.
 |---|---|
 | `↑` / `↓` | select a delegation in the list; scroll in details |
 | `enter` | open selected details; from details, switch your tmux client to its verified window |
-| `esc` | details → overall list → prompt; widget-opened details return directly to the compact list |
+| `esc` | details → overall list → prompt; initial widget details → compact list; branch-list details → branch list → compact list |
+| `b` | widget entry only: show the selected branch list, preserving its target and history |
 | `p` | peek: a snapshot of the window's pane (`capture-pane`) in an overlay; `r` refreshes, `enter` switches, `esc` returns to the list |
-| `x` | explicitly close the selected subtree as `delegation_close` does; confirms running work |
-| `a` | root only: confirm closing all recorded descendant subtrees, including absent coordinators |
+| `x` | explicitly close the selected subtree as `delegation_close` does; confirms running work and verified live navigation rows |
+| `a` | root only: confirm closing **all root** descendant subtrees, including absent coordinators, even when viewing one branch |
 | `r` | resume the selected eligible direct child, collecting a follow-up through the existing resume flow; descendants without authority are refused |
-| `n` | new delegate: the same form `/delegate` opens with no arguments (see [First use](#first-use)) |
+| `n` | new child of the invoking session, not of the selected remote row: the same form `/delegate` opens with no arguments (see [First use](#first-use)) |
 
 Switch acts on the most recently active tmux client attached to the parent's
 session. With none attached it refuses with a notice; peek and close still
@@ -633,6 +644,22 @@ often rebound); the notice after a switch says so.
 `/delegate-open <id> [--switch|--peek]` does one of these on one delegation
 without the panel: with no flag or with `--switch`, it switches; `--peek` opens
 the peek overlay. Ids complete from the open delegations.
+
+Dashboard switch/peek and `/delegate-open` share current-locator verification.
+For the latest known launch of a stable session, a positively observed current
+runtime supersedes its old launch window; a later lost/changed locator refuses
+rather than falling back to an old still-open window. Exact Pi pane liveness
+allows navigation even if a different active pane has exited, and peek captures
+that verified Pi pane. Legacy tracked windows still require matching id and
+name. Reattached process visibility does not rewrite historical gone/closed/
+result facts, invent task activity, or grant resume authority. Current telemetry
+is navigation evidence only: close still uses the existing shared control
+runner's durable locators/fences and reports partial failures honestly. A live
+reattached navigation window may remain open when it differs from the durable
+control locator; confirmation warns about that distinction. Current-locator
+supersession memory lasts only for this navigator runtime: after a restart,
+before the first positive live observation, a legacy id+name-verified historical
+window can still be offered.
 
 ## Working directory
 

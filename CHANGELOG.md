@@ -41,6 +41,24 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Complete branch-focused widget entry in the same dashboard: initial details
+  retain their Escape-to-compact-list behavior, while `b` opens only the selected
+  branch's descendant/resume history and worker details return to that list.
+  Overall `/delegates` stays scoped to the invoking session's whole subtree.
+  Root close-all remains explicitly all root subtrees, not only displayed rows.
+- Dashboard switch/peek and `/delegate-open` now reuse positively verified
+  current pane/server/owner locators for reattached latest sessions, without
+  rewriting historical launch/result facts or changing close authority.
+  A lost or replaced current locator never falls back to an old still-open
+  window; peek captures the exact verified Pi pane. Details distinguish launch
+  and current windows and reflect native session titles and actual outcomes.
+  Verified live latest rows remain navigable even before historical disappearance
+  is polled. Closing live navigation rows confirms the separate durable control
+  scope; telemetry never retargets a kill, and reattached windows may remain open.
+  Post-switch ownership loss reports the completed switch honestly.
+  Add `test/navigator-current.test.ts`, extend `test/dashboard.test.ts` and
+  `test/widget-nesting-final.test.ts` for deliberate branch-list behavior,
+  current-window races, title composition and direct-parent resume refusal.
 - Compose the shared widget/dashboard actions with context-aware subtree close:
   selected close reports aggregate partial errors, and the root retains confirmed
   `a` close-all from the same dashboard, including empty/history views. Keep

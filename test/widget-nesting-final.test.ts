@@ -147,6 +147,45 @@ test("widget details close the entire subtree and dashboard resume inherits orig
 	assert.equal(tmux.windows.has("@user"), true);
 });
 
+test("widget branch browsing excludes siblings, keeps title/ancestors, and grandchild resume remains direct-parent-only", async () => {
+	const { owner, coordinator, c, w, tmux } = await tree();
+	const sibling = await launch(owner, "worker", "sibling");
+	// Native metadata is read from the session file; no new naming transport.
+	mkdirSync(sessionDir, { recursive: true });
+	writeFileSync(
+		join(sessionDir, `saved_${c.id}.jsonl`),
+		[
+			JSON.stringify({ type: "session", id: c.id, cwd: coordinator.context.cwd }),
+			JSON.stringify({ type: "session_info", name: "Renamed branch" }),
+			"",
+		].join("\n"),
+	);
+	await until(() => frame(owner).includes("Renamed branch"));
+	assert.match(frame(coordinator), /root \(parent\)/);
+	owner.terminalKey("down"); // Newer sibling first.
+	owner.terminalKey("down");
+	const branch = keyScript(["b", "down", "enter", "r"], 220);
+	owner.queueCustom(branch);
+	owner.queueCustom(keyScript(["escape"], 220));
+	owner.terminalKey("enter");
+	await until(() => branch.frames.some((text) => text.includes("Delegate: worker-nested")));
+	assert.match(branch.frames[0], /Delegate: coordinator-branch.*Renamed branch/);
+	assert.match(branch.frames[1], /Delegate branch:/);
+	assert.match(branch.frames[1], /worker-nested/);
+	assert.doesNotMatch(branch.frames[1], /worker-sibling/);
+	await until(() =>
+		[...owner.warnings, ...owner.notes].some((text) => /cannot be resumed|no delegation can be resumed/.test(text)),
+	);
+	await owner.command("delegate-resume", `${w.id} retry`);
+	assert.ok(owner.errors.some((text) => text.includes("only direct parent")));
+	assert.equal(tmux.opened.length, 3);
+	const overall = await panel(owner, ["escape"]);
+	assert.match(overall.frames[0], /worker-sibling/);
+	assert.match(overall.frames[0], /worker-nested/);
+	assert.equal(tmux.windows.has(sibling.windowId), true);
+	assert.equal(local(coordinator, w.id).closed, undefined);
+});
+
 test("dashboard subtree close preserves successful members and reports partial errors before explicit retry", async () => {
 	const { owner, coordinator, c, w, tmux } = await tree({ ui: { confirm: [true, true] } });
 	const kill = tmux.kill.bind(tmux);

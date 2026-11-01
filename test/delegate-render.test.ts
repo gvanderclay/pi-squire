@@ -109,7 +109,11 @@ test("an expanded started row adds the ids, window, thinking and auto-exit", asy
 	const args = { agent: "scout", task: TASK, label: "look" };
 	const { tool, result } = await launched(args);
 	const id = (result.details as { id: string }).id;
-	const shown = lines(tool.renderResult(result, { expanded: true }, theme, context(args, true)));
+	// This asserts full metadata, not wrapping; temporary roots may be longer under isolated validation.
+	const shown = lines(
+		tool.renderResult(result, { expanded: true }, theme, context(args, true)),
+		Math.max(120, root.length + 40),
+	);
 	for (const part of [
 		`<dim:delegation ${id}>`,
 		"<dim:thinking low, auto-exit on>",

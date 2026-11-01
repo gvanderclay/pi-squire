@@ -66,6 +66,7 @@ import {
 	withoutLocked,
 } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
+import { registerCompletionHost } from "./completion-holds.ts";
 import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
@@ -700,6 +701,7 @@ export default function delegate(
 	host.on("session_start", (_event, ctx) => owner.start(ctx));
 	host.events.on("message:inbound", (payload) => owner.receive(payload as import("./results.ts").Inbound));
 	const pi = ownedAPI(host, owner);
+	const externalReady = registerCompletionHost(pi);
 	const identity = createIdentity(pi);
 	const results = createResults(
 		pi,
@@ -724,7 +726,7 @@ export default function delegate(
 			try {
 				owner.assert();
 				identity.current();
-				return results.completionReady();
+				return results.completionReady() && externalReady();
 			} catch {
 				return false;
 			}

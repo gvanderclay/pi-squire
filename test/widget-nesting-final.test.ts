@@ -165,8 +165,9 @@ test("widget branch browsing excludes siblings, keeps title/ancestors, and grand
 	owner.terminalKey("down"); // Newer sibling first.
 	owner.terminalKey("down");
 	const branch = keyScript(["b", "down", "enter", "r"], 220);
+	const back = keyScript(["escape"], 220);
 	owner.queueCustom(branch);
-	owner.queueCustom(keyScript(["escape"], 220));
+	owner.queueCustom(back);
 	owner.terminalKey("enter");
 	await until(() => branch.frames.some((text) => text.includes("Delegate: worker-nested")));
 	assert.match(branch.frames[0], /Delegate: coordinator-branch.*Renamed branch/);
@@ -176,6 +177,8 @@ test("widget branch browsing excludes siblings, keeps title/ancestors, and grand
 	await until(() =>
 		[...owner.warnings, ...owner.notes].some((text) => /cannot be resumed|no delegation can be resumed/.test(text)),
 	);
+	// The widget's dashboard must consume its own escape before the next panel queues scripts.
+	await until(() => back.frames.length > 1);
 	await owner.command("delegate-resume", `${w.id} retry`);
 	assert.ok(owner.errors.some((text) => text.includes("only direct parent")));
 	assert.equal(tmux.opened.length, 3);

@@ -119,6 +119,20 @@ follows [Semantic Versioning](https://semver.org/).
   `delegateWidgetMaxEntries` (default three) in the existing Squire settings.
   Independent observation continues after task completion and is cleaned up on
   reload; no focus keys or tree accounting semantics change.
+
+- Provider-neutral process-local completion holds: active exact-session Squire
+  runtimes advertise support in the versioned `pi.completion-holds.v1` data
+  table. External holds gate new final task replies, tree completion and
+  auto-exit until every current-session entry is ready. Host registrations are
+  runtime-owned and removed on every shutdown; provider holds survive reload
+  but are not durable across process restart.
+
+- Synchronous `squire:identity` lifecycle notification with a frozen,
+  exact-session root/delegate/invalid observation, emitted after identity
+  restoration and persistence and before later asynchronous startup work.
+  Consumers can observe ordinary reopen and runtime replacement without
+  treating launch environment variables as identity authority.
+
 - Explicit ancestor-scoped subtree close and root-only confirmed panel close-all.
   Shared admission/own-entry dispatch fences precede effects, including root
   reservations. Already-dispatched unknown creates remain charged/fenced and

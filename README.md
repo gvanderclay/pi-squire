@@ -1686,6 +1686,116 @@ pi.events.on("session:launch", (payload) => {
 });
 ```
 
+### `squire:identity`
+
+`pi-squire` emits this synchronous, read-only notification from its identity
+restore handler in `session_start`, before its later asynchronous startup work.
+The payload is `{ sessionId, status, identity? }` for the active exact session id:
+
+- `status: "delegate"`: its saved identity passed Squire's validation and was
+  successfully persisted again. `identity` contains only
+  `{ parent, root, agent, chain, depth }`, with the same meanings as
+  `session:launch`.
+- `status: "root"`: no identity record exists for that exact id. This is absence
+  of Squire delegate identity, not proof that the session is an original root.
+- `status: "invalid"`: reading, validating or persisting its identity failed.
+  No prior identity or raw error is included; Squire's existing restore error
+  and launch/completion refusal remain in effect.
+
+The payload, identity projection and copied `chain` array are frozen. Internal
+placement and auto-exit state are not exposed. Environment variables, display
+labels and copied transcript entries are not identity authority.
+
+Pi 1.3 and 1.4 recreate the extension runtime and dispatch `session_start`
+after new, fork/clone and session switch/import; reload also dispatches it.
+Each restore reads only the destination's exact id, so a new/forked session
+without its own record reports `root`, not the source's delegate identity.
+This event does not adopt sessions or migrate records.
+
+Register listeners before Squire loads and do all observation synchronously.
+The bus does not replay notifications, await asynchronous listeners, acknowledge
+listener success or veto later startup; listener exceptions are reported by Pi.
+Consumers own resetting their state at session shutdown/replacement, matching
+`sessionId` to their current context, and handling missing or invalid
+notifications. A consumer that must initialize before another extension's
+`session_start` must load its listener before Squire, and Squire before that
+extension. This is an observation seam, not an authorization gate or a provider
+integration.
+
+```js squire:identity
+pi.events.on("squire:identity", (snapshot) => {
+  assert.ok(Object.isFrozen(snapshot));
+  assert.equal(typeof snapshot.sessionId, "string");
+  assert.ok(["root", "delegate", "invalid"].includes(snapshot.status));
+  if (snapshot.status === "delegate") {
+    assert.ok(Object.isFrozen(snapshot.identity));
+    assert.ok(Object.isFrozen(snapshot.identity.chain));
+    assert.equal(typeof snapshot.identity.root, "string");
+    assert.equal("rootPlacement" in snapshot.identity, false);
+  } else {
+    assert.equal("identity" in snapshot, false);
+  }
+});
+```
+
+### Process-local completion holds (v1)
+
+Squire composes external work with its existing completion predicate through a
+provider-neutral data table at `globalThis[Symbol.for("pi.completion-holds.v1")]`:
+
+```ts
+{
+  version: 1,
+  hosts: Map<sessionId, Map<hostName, runtimeToken>>,
+  holds: Map<sessionId, Map<holdId, { provider: string, ready: boolean }>>
+}
+```
+
+An active Squire runtime registers `"pi-squire"` with a fresh string runtime token
+only during its exact session's `session_start`, after process ownership is
+acquired. A losing duplicate does not advertise support. Every
+`session_shutdown`, including reload, removes only that runtime's matching host
+token. Stale shutdown cannot remove a replacement's registration.
+
+Providers must check for a well-formed, nonempty host map for the current exact
+session before promising a hold. Register a unique hold id with `ready:false`
+atomically before launching the work; refund only that provisional entry if
+launch fails. Keep accepted entries across reload, including while the provider
+is unavailable. Set `ready:true` only after the terminal result has been observed
+and successfully processed; the provider owns that decision and its normal-run
+commit, before Squire reads readiness at `agent_settled`. Squire neither observes
+external output nor decides whether an operation succeeded.
+
+All current-session holds must be well formed and ready before Squire sends a
+new final task reply, marks its tree entry finished, or auto-exits. An absent
+table or no holds preserves normal completion. A malformed table/version or
+malformed current-session host/hold entry blocks completion; Squire does not
+overwrite it to repair storage. Other sessions' holds do not block this session.
+An absent host does not invalidate already-ready entries; it refuses promises
+of new holds. Providers clear only their own holds at non-reload teardown;
+Squire never removes provider entries.
+
+This is trusted in-process extension data, not a model-callable release API,
+cross-process registry, durable reopen block, or authorization boundary. There
+are no callbacks in the table, fake child tasks, polling/continuation loops, or
+automatic model calls to keep a session alive. Ordinary shutdown cancels the
+provider's work; reopening does not recover these holds. Already-frozen reply
+outboxes retain their existing retry semantics.
+
+This executable observer loads after Squire and checks only the host contract:
+
+```js completion-holds:v1
+pi.on("session_start", (_event, ctx) => {
+  const table = globalThis[Symbol.for("pi.completion-holds.v1")];
+  assert.equal(table.version, 1);
+  assert.ok(table.hosts instanceof Map);
+  assert.ok(table.holds instanceof Map);
+  const hosts = table.hosts.get(ctx.sessionManager.getSessionId());
+  assert.ok(hosts instanceof Map);
+  assert.equal(typeof hosts.get("pi-squire"), "string");
+});
+```
+
 ### `message:send`
 
 `pi-squire` consumes this hook to write the task; the provider writes the

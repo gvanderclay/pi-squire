@@ -51,6 +51,10 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   a file under `src/`. Every `.ts` file under `src/` must be packed. It also
   packs the bundle and loads it into the project's Pi, so run `pnpm install`
   first.
+- To prove a change in a real Pi, use the `verify-pi-squire` skill in
+  `.pi/skills/verify-pi-squire/`. It drives this checkout with
+  pi-session-mail in a private tmux server on a cheap model, and needs
+  `OPENCODE_API_KEY`.
 - `biome.json` relaxes some rules for the files that predate this repository
   (one override per file). New files get the full rules; do not add a file to
   an override to get past a rule.

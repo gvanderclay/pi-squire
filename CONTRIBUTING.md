@@ -18,7 +18,8 @@ The package has no runtime dependencies and no build step. The tests under
 adding a file under `src/`, run `node scripts/check-pack.mjs`: it checks the
 file list `npm pack` would publish, then loads the packed bundle into Pi, so run
 `pnpm install` first. To try a change in Pi, load your checkout:
-`pi -e <path to this checkout>`.
+`pi -e <path to this checkout>`. To prove one end to end in a real Pi, follow
+`.pi/skills/verify-pi-squire/SKILL.md`; it needs `OPENCODE_API_KEY`.
 
 ## Pull requests
 

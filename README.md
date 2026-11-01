@@ -438,7 +438,9 @@ no identity migration, directory relocation/rename tracking or companion repair.
 The file is read at each launch. Any other value refuses the launch
 with an error naming the file, before the task is sent or a window opens.
 
-## Direct-delegate overview
+<a id="direct-delegate-overview"></a>
+
+## Delegate overview
 
 In interactive Pi, Squire shows a compact **Delegates** tree above the editor.
 It lists this session's running direct delegates first, then finished delegates
@@ -455,7 +457,21 @@ dropped first, then file age, before identity/state are compressed. At very
 narrow widths the state glyph remains beside the truncated identity.
 `file … ago` is only a last-active hint from transcript mtime, not live tool
 activity. When available, a second line shows factual live activity (below).
-Descendant summaries and ancestor rows are not added by this overview.
+Each coordinator row summarizes **all descendant tasks**, at every depth,
+including tasks whose windows have exited. Counts are per delegation/launch id,
+not per stable session: a failed task and its resumed successor both count, so
+a retry cannot erase a known failure. Actual replies supply done/failed/stopped;
+saved gone/closed-without-result tasks count as missing. Shared registry
+finished/closed/closing flags are not successful replies or proof another
+parent processed an outcome. Missing parent facts or tree coverage are labeled
+unknown/partial/unavailable, never all done. Summary and activity share one
+secondary line; when both do not fit, the task summary wins.
+
+Delegates also see their ancestors vertically, root to direct parent, with the
+direct parent marked `(parent)` (including `root (parent)`). A connected
+**Delegates** branch contains only the current session's direct children.
+There is no current-session row or empty child heading; leaves show ancestors
+only. Ancestor rows and secondary lines do not consume child-entry slots.
 
 Configure it in the existing `<agent dir>/squire/settings.json`, alongside
 `windowPlacement`, worktree and nesting preferences:
@@ -471,7 +487,8 @@ Configure it in the existing `<agent dir>/squire/settings.json`, alongside
 - `delegateWidgetMaxEntries`: nonnegative safe integer, default **3**. Each
   direct child consumes one slot. `+N more direct delegates` counts hidden
   eligible direct children, not descendants. **0** hides child rows and restores
-  Squire's running-count footer; zero children never produce an empty heading.
+  Squire's running-count footer while preserving ancestor rows/navigation;
+  zero children never produce an empty heading.
 - These preferences apply equally to roots and coordinators. Interactive views
   re-read them about once a second; invalid widget preferences warn once per
   distinct error and use the defaults without changing task state.
@@ -480,7 +497,9 @@ Launch/result/close changes refresh promptly; an independent one-second observer
 keeps finished-open rows, window eligibility and later native title changes
 fresh even when the result poll has stopped. Only visible rows resolve titles and
 file metadata and live activity; overflow counts still include every eligible child. Closed/gone-only
-history does not keep the observer listing tmux windows. A failed tmux listing is unknown,
+history without a live reattached session does not keep the observer listing
+windows. A positively reopened gone coordinator may appear at its current window
+with its missing-outcome history intact; reopening does not make its task running. A failed tmux listing is unknown,
 not proof that a window disappeared: running tasks remain eligible, but
 finished rows require a positively open matching window.
 
@@ -531,8 +550,9 @@ line or tool-use counter.
 
 ### Navigation
 
-At an **empty built-in prompt**, press **Down** to select the first child.
-Up/Down move through all eligible children, scrolling within the configured cap;
+At an **empty built-in prompt**, press **Down** to select the direct parent in a
+delegate session, or the first child at root. Up/Down traverse ancestors and
+eligible children in display order; only children scroll within the configured cap;
 hidden-above/below counts refer to direct children. Selection follows stable
 session identity through renames, reordering and resumes. Enter opens that
 child's details in the **same dashboard** as /delegates. Escape returns to the
@@ -544,7 +564,27 @@ are absorbed only if the exact empty built-in prompt still owns focus: Escape
 cannot abort a run and action letters cannot leak into that prompt. Once a
 real dashboard, dialog, completion menu or unknown component owns input, its
 keys pass through normally.
-Cap zero never creates invisible selectable children; /delegates still works.
+Cap zero never creates invisible selectable children; ancestors remain selectable
+and /delegates still works.
+
+Enter on an ancestor switches directly to its verified **current live tmux
+window**, not to the dashboard or a historical launch window. Root and leaf
+processes publish their own positive pane/window observation in the same
+disposable generation snapshot used for activity. The reader checks the elected
+exact-session owner, process incarnation, tmux server socket/PID/start identity,
+exact pane and window id **and** name. Current window placement is read from tmux;
+cwd, companion names and rootPlacement are never used to guess a root window.
+Own-pane observations refresh about once a second even while quiet or cap zero.
+A rename/move before the owner refreshes fails closed; a later positive update
+makes the new locator available. This navigates to the window, not a specific
+pane's keyboard focus.
+
+An exact-id manual reopen can supply a new locator without launch environment,
+while old task history stays unchanged. It still cannot supply launch-correlated
+task activity. Missing/unreadable/ambiguous metadata, a different server, a dead
+pane or no attached client reports an unavailable target. Navigation never
+adopts, recreates, kills or implicitly resumes an ancestor. New/forked session ids
+do not inherit ancestor authority from copied history.
 
 Squire owns only its widget key and its existing status entries. It does not
 replace your footer or editor, and cleans up observers/input listeners on

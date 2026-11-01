@@ -4,6 +4,8 @@ import { existsSync } from "node:fs";
 import { mkdir, open, opendir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { matchesSessionOwner } from "./session-owner.ts";
+import type { PaneLocator } from "./tmux.ts";
 import { type Activity, activityText } from "./widget-activity.ts";
 import { type Liveness, processLiveness, processStart } from "./widget-live-process.ts";
 
@@ -11,7 +13,17 @@ export const LIVE_LAUNCH_ENV = "PI_SQUIRE_LIVE_LAUNCH";
 export const LIVE_MAX_BYTES = 8192;
 export const LIVE_MAX_GENERATIONS = 16;
 type Seed = { version: 1; sessionId: string; launchId: string };
+export type LiveLocator = {
+	locator: PaneLocator;
+	generation: string;
+	ownerToken: string;
+	pid: number;
+	sessionFile?: string;
+};
 type Snapshot = {
+	ownerToken?: string;
+	locator?: PaneLocator;
+	sessionFile?: string;
 	version: 1;
 	sessionId: string;
 	launchId?: string;
@@ -57,8 +69,27 @@ function validActivity(value: unknown): value is Activity | null {
 	);
 }
 
+function validLocator(value: PaneLocator | undefined): boolean {
+	if (value === undefined) return true;
+	return (
+		!!value &&
+		validString(value.socket) &&
+		Number.isSafeInteger(value.serverPid) &&
+		value.serverPid > 0 &&
+		validString(value.serverStarted) &&
+		/^%[0-9]+$/.test(value.paneId) &&
+		/^@[0-9]+$/.test(value.windowId) &&
+		typeof value.windowName === "string" &&
+		Buffer.byteLength(value.windowName) <= 512 &&
+		typeof value.exited === "boolean"
+	);
+}
+
 function validSnapshot(value: Partial<Snapshot>, sessionId: string, generation: string): value is Snapshot {
 	return (
+		validLocator(value.locator) &&
+		(value.ownerToken === undefined || validString(value.ownerToken)) &&
+		(value.sessionFile === undefined || validString(value.sessionFile)) &&
 		value.version === 1 &&
 		value.sessionId === sessionId &&
 		value.generation === generation &&
@@ -93,6 +124,13 @@ async function readSnapshot(path: string, sessionId: string, generation: string)
 	return;
 }
 
+function uniqueSnapshot(live: Snapshot[], uncertain: boolean): Snapshot | undefined {
+	return !uncertain && live.length === 1 ? live[0] : undefined;
+}
+function snapshotFile(name: string, file: boolean): boolean {
+	return file && /^[a-f0-9-]{36}\.json$/.test(name);
+}
+
 type Probe = (owner: { pid: number; processStart: string }) => Promise<Liveness>;
 
 export class LiveActivityReader {
@@ -108,13 +146,38 @@ export class LiveActivityReader {
 		try {
 			// Cheap absence fast path preserves prompt initial rows; never negatively cache first publication.
 			if (!existsSync(liveSessionDir(sessionId, this.agentDir))) return;
-			return await this.readSession(sessionId, launchId);
+			const value: Snapshot | undefined = await this.readSession(sessionId);
+			return value ? this.project(value, launchId) : undefined;
 		} catch {
 			return;
 		}
 	}
 
-	private async readSession(sessionId: string, launchId: string): Promise<Activity | undefined> {
+	/** Stable-session navigation is independent of launch-correlated task activity. */
+	async locator(sessionId: string): Promise<LiveLocator | undefined> {
+		try {
+			if (!existsSync(liveSessionDir(sessionId, this.agentDir))) return;
+			const value: Snapshot | undefined = await this.readSession(sessionId);
+			if (
+				!value?.locator ||
+				!value.ownerToken ||
+				value.locator.exited ||
+				!matchesSessionOwner(sessionId, value.pid, value.ownerToken)
+			)
+				return;
+			return {
+				locator: value.locator,
+				generation: value.generation,
+				ownerToken: value.ownerToken,
+				pid: value.pid,
+				sessionFile: value.sessionFile,
+			};
+		} catch {
+			return;
+		}
+	}
+
+	private async readSession(sessionId: string): Promise<Snapshot | undefined> {
 		const dir: string = liveSessionDir(sessionId, this.agentDir);
 		const directory = await opendir(dir);
 		const live: Snapshot[] = [];
@@ -122,7 +185,7 @@ export class LiveActivityReader {
 		let uncertain = false;
 		for await (const entry of directory) {
 			if (++entries > LIVE_MAX_GENERATIONS) return;
-			if (!entry.isFile() || !/^[a-f0-9-]{36}\.json$/.test(entry.name)) continue;
+			if (!snapshotFile(entry.name, entry.isFile())) continue;
 			const generation: string = entry.name.slice(0, -5);
 			const path: string = join(dir, entry.name);
 			const value: Snapshot | undefined = await readSnapshot(path, sessionId, generation);
@@ -135,8 +198,7 @@ export class LiveActivityReader {
 			else if (verdict === "live") live.push(value);
 			else uncertain = true;
 		}
-		if (uncertain || live.length !== 1) return;
-		return this.project(live[0], launchId);
+		return uniqueSnapshot(live, uncertain);
 	}
 
 	private project(value: Snapshot, launchId: string): Activity | undefined {
@@ -162,6 +224,10 @@ export class LiveActivityPublisher {
 	private readonly start: Promise<string | undefined>;
 	private readonly replace: typeof rename;
 	private activity: Activity | null = null;
+	private locator: PaneLocator | undefined;
+	private locatorKey: string | undefined;
+	private ownerToken: string | undefined;
+	private sessionFile: string | undefined;
 	private revision = 0;
 	private observedAt = Date.now();
 	private dirty = false;
@@ -181,6 +247,16 @@ export class LiveActivityPublisher {
 			() => undefined,
 		);
 		this.replace = options.rename ?? rename;
+	}
+
+	publishLocator(locator: PaneLocator | undefined, ownerToken: string, sessionFile?: string): void {
+		const key: string = JSON.stringify([locator, ownerToken, sessionFile]);
+		if (this.stopped || key === this.locatorKey) return;
+		this.locatorKey = key;
+		this.locator = locator ? { ...locator } : undefined;
+		this.ownerToken = ownerToken;
+		this.sessionFile = sessionFile;
+		this.publish(this.activity ?? undefined);
 	}
 
 	publish(activity: Activity | undefined, immediate = true): void {
@@ -254,6 +330,9 @@ export class LiveActivityPublisher {
 				revision: this.revision,
 				observedAt: this.observedAt,
 				activity: this.activity,
+				locator: this.locator,
+				ownerToken: this.ownerToken,
+				sessionFile: this.sessionFile,
 			};
 			await this.write(snapshot);
 		}
@@ -267,6 +346,8 @@ export class LiveActivityPublisher {
 			await writeFile(this.temporary, json, { mode: 0o600 });
 			if (!this.stopped) await this.replace(this.temporary, this.path);
 		} catch {
+			// A newer queued revision owns its key and already has a pending write.
+			if (snapshot.revision === this.revision) this.locatorKey = undefined;
 			await remove(this.path);
 		} finally {
 			await remove(this.temporary);

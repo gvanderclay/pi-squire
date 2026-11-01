@@ -1,13 +1,54 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { matchesSessionOwner } from "./session-owner.ts";
+import type { TmuxClient } from "./tmux.ts";
 import { ActivityCollector } from "./widget-activity.ts";
 import { LIVE_LAUNCH_ENV, LiveActivityPublisher, liveLaunch } from "./widget-live.ts";
 
+function observeLocator(
+	publisher: LiveActivityPublisher,
+	id: string,
+	token: string,
+	tmux: TmuxClient,
+	ctx: ExtensionContext,
+): ReturnType<typeof setInterval> {
+	let reading = false;
+	const refresh = async (): Promise<void> => {
+		if (reading) return;
+		reading = true;
+		try {
+			const locator = await tmux.inspectPane?.().catch(() => undefined);
+			if (matchesSessionOwner(id, process.pid, token))
+				publisher.publishLocator(locator, token, ctx.sessionManager.getSessionFile());
+		} catch {
+			/* Optional observation cannot block task processing. */
+		} finally {
+			reading = false;
+		}
+	};
+	void refresh();
+	const timer: ReturnType<typeof setInterval> = setInterval(() => {
+		void refresh();
+	}, 1000);
+	timer.unref();
+	return timer;
+}
+
 /** Observe raw lifecycle after a positive startup owner gate; never grants task/action authority. */
-export function registerActivityRuntime(pi: ExtensionAPI, canPublish: () => boolean): () => void {
+export function registerActivityRuntime(
+	pi: ExtensionAPI,
+	canPublish: () => boolean,
+	tmux?: TmuxClient,
+	ownerToken?: string,
+): () => void {
 	const seed: string | undefined = process.env[LIVE_LAUNCH_ENV];
 	let collector: ActivityCollector | undefined;
 	let publisher: LiveActivityPublisher | undefined;
+	let timer: ReturnType<typeof setInterval> | undefined;
+
 	const stop = (): void => {
+		if (timer) clearInterval(timer);
+		timer = undefined;
+
 		collector?.clear();
 		collector = undefined;
 		publisher?.stop();
@@ -25,6 +66,7 @@ export function registerActivityRuntime(pi: ExtensionAPI, canPublish: () => bool
 		collector = new ActivityCollector();
 		publisher = new LiveActivityPublisher(id, liveLaunch(seed, id));
 		publish();
+		if (tmux && ownerToken) timer = observeLocator(publisher, id, ownerToken, tmux, ctx);
 	});
 	pi.on("tool_execution_start", (event) => {
 		collector?.start(event.toolCallId, event.toolName, event.parentToolCallId);

@@ -73,27 +73,48 @@ function newestSuccessor(entries: TreeEntry[], id: string): TreeEntry | undefine
 		current = next.id;
 	}
 }
+export type VisibleFact = { record: Recorded; semantic?: Recorded; entry?: TreeEntry };
+export type VisibleFacts = { records: Recorded[]; facts: VisibleFact[]; complete: boolean };
+
 export function visibleRecords(results: Results, ctx: ExtensionContext): Recorded[] {
+	return visibleRecordFacts(results, ctx).records;
+}
+
+/** Same scoped projection, with unoverlaid parent facts and explicit coverage for read-only summaries. */
+export function visibleRecordFacts(
+	results: Results,
+	ctx: ExtensionContext,
+	timeoutMs = 5000,
+	notify = true,
+): VisibleFacts {
 	const session: string = ctx.sessionManager.getSessionId();
 	const root: string = readIdentity(session)?.root ?? session;
 	const records: Map<string, Recorded> = new Map(results.list().map((record) => [record.id, record]));
+	const semantic: Map<string, Recorded> = new Map(records);
 	const parents: Map<string, Recorded[]> = new Map();
+	let complete = true;
 	let entries: TreeEntry[];
 	try {
-		entries = descendants(readTree(root), session).filter((entry) => entry.phase !== "not-started");
+		entries = descendants(readTree(root, timeoutMs), session).filter((entry) => entry.phase !== "not-started");
 	} catch (error) {
-		ctx.ui.notify(
-			`delegate: descendant accounting unavailable: ${String(error)}; showing saved local children only.`,
-			"warning",
-		);
-		return [...records.values()];
+		if (notify)
+			ctx.ui.notify(
+				`delegate: descendant accounting unavailable: ${String(error)}; showing saved local children only.`,
+				"warning",
+			);
+		return {
+			records: [...records.values()],
+			facts: [...records.values()].map((record) => ({ record, semantic: record })),
+			complete: false,
+		};
 	}
 	for (const entry of entries) {
-		if (!parents.has(entry.identity.parent))
-			parents.set(entry.identity.parent, parentRecords(entry.identity.parent, ctx));
-		const local: Recorded | undefined = parents.get(entry.identity.parent)?.find((record) => record.id === entry.id);
+		const local: Recorded | undefined = cachedParent(parents, entry.identity.parent, ctx, notify).find(
+			(record) => record.id === entry.id,
+		);
+		if (rememberSemantic(semantic, entry.id, local)) complete = false;
 		const record: Recorded = local ?? entry.launch ?? registryView(entry);
-		if (entry.gone && !entry.finished && sessionIsOwned(entry.sessionId) && isStarted(record)) {
+		if (reattached(entry, record) && isStarted(record)) {
 			records.set(entry.id, {
 				...record,
 				identity: entry.identity,
@@ -102,7 +123,36 @@ export function visibleRecords(results: Results, ctx: ExtensionContext): Recorde
 			});
 		} else if (!records.has(entry.id)) records.set(entry.id, { ...record, identity: entry.identity });
 	}
-	return hierarchy(withCloses(records, entries), session);
+	const ordered: Recorded[] = hierarchy(withCloses(records, entries), session);
+	return {
+		records: ordered,
+		facts: ordered.map((record) => ({
+			record,
+			semantic: semantic.get(record.id),
+			entry: entries.find((entry) => entry.id === record.id),
+		})),
+		complete,
+	};
+}
+function cachedParent(
+	parents: Map<string, Recorded[]>,
+	parent: string,
+	ctx: ExtensionContext,
+	notify: boolean,
+): Recorded[] {
+	let records: Recorded[] | undefined = parents.get(parent);
+	if (!records) {
+		records = parentRecords(parent, ctx, notify);
+		parents.set(parent, records);
+	}
+	return records;
+}
+function rememberSemantic(semantic: Map<string, Recorded>, id: string, local: Recorded | undefined): boolean {
+	if (local && !semantic.has(id)) semantic.set(id, local);
+	return !semantic.has(id);
+}
+function reattached(entry: TreeEntry, record: Recorded): boolean {
+	return entry.gone === true && !entry.finished && sessionIsOwned(entry.sessionId) && isStarted(record);
 }
 function withCloses(records: Map<string, Recorded>, entries: TreeEntry[]): Recorded[] {
 	for (const entry of entries) {
@@ -111,14 +161,15 @@ function withCloses(records: Map<string, Recorded>, entries: TreeEntry[]): Recor
 	}
 	return [...records.values()];
 }
-function parentRecords(parent: string, ctx: ExtensionContext): Recorded[] {
+function parentRecords(parent: string, ctx: ExtensionContext, notify: boolean): Recorded[] {
 	try {
 		return readChildRecords(parent);
 	} catch (error) {
-		ctx.ui.notify(
-			`delegate: child facts for ${parent} unavailable: ${String(error)}; showing registry metadata only.`,
-			"warning",
-		);
+		if (notify)
+			ctx.ui.notify(
+				`delegate: child facts for ${parent} unavailable: ${String(error)}; showing registry metadata only.`,
+				"warning",
+			);
 		return [];
 	}
 }

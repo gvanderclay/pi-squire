@@ -67,6 +67,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Nested delegate overview: root-to-parent ancestor rows with direct live-window
+  navigation, parent-first Down and cap-zero ancestor navigation plus the existing
+  direct-child count. Same-id reopens use owner-correlated current pane/server/
+  window metadata, independent of strict task activity launch correlation.
+- All-depth descendant **task/launch-id** summaries beneath direct coordinator
+  rows, preserving failed/stopped/missing outcomes and failures across resumes.
+  Read-only semantic provenance and coverage keep registry accounting distinct
+  from actual replies; unknown/partial coverage is explicit. Summaries share one
+  secondary line with factual activity and take priority at narrow widths.
+  The former cap-zero empty-widget assertion deliberately changes for delegates;
+  async ancestor metadata tests now wait for the observable refreshed frame.
+  Corrupt descendant owner facts show unavailable counts without freezing fresh
+  ancestors/direct rows. Hidden/empty child views skip locator I/O, and unchanged
+  positive locator observations do not rewrite telemetry snapshots.
+  No task/control policy, result barrier, provider contract or second tree index.
 - Factual live direct-delegate activity from actual concurrent/nested tool-call
   ids and bounded assistant response text, propagated across Pi processes by
   disposable owner-only snapshots. Launch correlation separates resumed tasks

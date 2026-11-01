@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
+import type { PaneLocator } from "../src/tmux.ts";
 import { LIVE_MAX_BYTES, LiveActivityPublisher, LiveActivityReader, liveSessionDir } from "../src/widget-live.ts";
 import { processStart } from "../src/widget-live-process.ts";
 import { titleMirrorPath } from "../src/widget-title.ts";
@@ -212,6 +213,179 @@ test("text publication coalesces to four writes per second and lifecycle clears 
 	assert.equal(writes, 3);
 	assert.equal(JSON.parse(await readFile(path, "utf8")).activity, null);
 });
+test("unchanged locator tuples skip disk writes while fresh reads, changes, activity and new generations remain independent", async () => {
+	let writes = 0;
+	const p = publisher("locator-dedup", "launch", {
+		rename: async (a, b) => {
+			writes++;
+			await rename(a, b);
+		},
+	});
+	const pane: PaneLocator = {
+		socket: "private",
+		serverPid: 1,
+		serverStarted: "1",
+		paneId: "%1",
+		windowId: "@1",
+		windowName: "original",
+		exited: false,
+	};
+	await mkdir(join(agentDir, "squire", "owners"), { recursive: true });
+	const ownerPath = join(agentDir, "squire", "owners", "locator-dedup.json");
+	await writeFile(ownerPath, JSON.stringify({ pid: process.pid, token: "owner" }));
+	p.publish({ kind: "tools", text: "reading…" });
+	await p.flush();
+	p.publishLocator(pane, "owner", "/session");
+	await p.flush();
+	const path = join(liveSessionDir("locator-dedup"), `${p.generation}.json`);
+	const initial = await readFile(path, "utf8");
+	for (let n = 0; n < 10; n++) {
+		p.publishLocator({ ...pane }, "owner", "/session");
+		await p.flush();
+	}
+	assert.equal(writes, 2);
+	assert.equal(await readFile(path, "utf8"), initial);
+	const reader = new LiveActivityReader();
+	assert.equal((await reader.locator("locator-dedup"))?.locator.windowName, "original");
+	await writeFile(ownerPath, JSON.stringify({ pid: process.pid, token: "replacement" }));
+	assert.equal(await reader.locator("locator-dedup"), undefined, "unchanged publication never caches owner liveness");
+	await writeFile(ownerPath, JSON.stringify({ pid: process.pid, token: "owner" }));
+	assert.equal((await reader.locator("locator-dedup"))?.generation, p.generation);
+	// Changing a reused input object must not mutate the publisher's saved comparison state.
+	pane.windowName = "renamed";
+	p.publishLocator(pane, "owner", "/session");
+	await p.flush();
+	assert.equal(writes, 3);
+	assert.equal((await reader.locator("locator-dedup"))?.locator.windowName, "renamed");
+	pane.windowId = "@8";
+	p.publishLocator(pane, "owner", "/session");
+	await p.flush();
+	assert.equal(writes, 4);
+	assert.equal((await reader.locator("locator-dedup"))?.locator.windowId, "@8");
+	p.publishLocator(undefined, "owner", "/session");
+	await p.flush();
+	assert.equal(writes, 5);
+	assert.equal(await reader.locator("locator-dedup"), undefined);
+	assert.equal((await reader.read("locator-dedup", "launch"))?.text, "reading…");
+	p.publishLocator(undefined, "owner", "/session");
+	await p.flush();
+	assert.equal(writes, 5);
+	p.publishLocator(undefined, "changed-token", "/session");
+	await p.flush();
+	assert.equal(writes, 6);
+	p.publishLocator(undefined, "changed-token", "/changed-session");
+	await p.flush();
+	assert.equal(writes, 7);
+	p.publish({ kind: "tools", text: "editing…" });
+	await p.flush();
+	assert.equal(writes, 8);
+	p.publishLocator(undefined, "changed-token", "/changed-session");
+	await p.flush();
+	assert.equal(writes, 8);
+	p.stop();
+	await p.closed();
+	p.publishLocator(pane, "owner", "/session");
+	await p.flush();
+	assert.equal(writes, 8);
+	for (const id of ["locator-dedup", "new-session"]) {
+		const next = publisher(id);
+		next.publishLocator(undefined, "changed-token", "/changed-session");
+		await next.flush();
+		const value = JSON.parse(await readFile(join(liveSessionDir(id), `${next.generation}.json`), "utf8"));
+		assert.equal(value.ownerToken, "changed-token");
+		assert.equal(value.sessionFile, "/changed-session");
+		assert.equal(value.activity, null);
+		assert.notEqual(value.generation, p.generation);
+	}
+});
+
+test("a failed locator write retries on the next unchanged observation without a retry loop", async () => {
+	let attempts = 0;
+	const p = publisher("locator-write-retry", "launch", {
+		rename: async (a, b) => {
+			if (++attempts === 1) throw Error("fail first locator write");
+			await rename(a, b);
+		},
+	});
+	const pane: PaneLocator = {
+		socket: "private",
+		serverPid: 1,
+		serverStarted: "1",
+		paneId: "%1",
+		windowId: "@1",
+		windowName: "retry",
+		exited: false,
+	};
+	p.publishLocator(pane, "owner", "/session");
+	await p.flush();
+	assert.equal(attempts, 1, "failure does not schedule an autonomous retry");
+	assert.deepEqual(await readdir(liveSessionDir("locator-write-retry")), []);
+	p.publishLocator({ ...pane }, "owner", "/session"); // Next ordinary locator tick observes identical facts.
+	await p.flush();
+	assert.equal(attempts, 2, "unchanged locator must be eligible again after failed persistence");
+	const path = join(liveSessionDir("locator-write-retry"), `${p.generation}.json`);
+	const saved = JSON.parse(await readFile(path, "utf8"));
+	assert.deepEqual(saved.locator, pane);
+	assert.equal(saved.ownerToken, "owner");
+	assert.equal(saved.sessionFile, "/session");
+	p.publishLocator({ ...pane }, "owner", "/session");
+	await p.flush();
+	assert.equal(attempts, 2, "successful persistence restores unchanged-value suppression");
+});
+
+test("an older failed in-flight write preserves queued locator dedupe, and a failed latest write can retry", async () => {
+	for (const failQueued of [false, true]) {
+		let attempts = 0;
+		let entered!: () => void, release!: () => void;
+		const ready = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const id = `locator-write-queued-${failQueued}`;
+		const p = publisher(id, "launch", {
+			rename: async (a, b) => {
+				attempts++;
+				if (attempts === 1) {
+					entered();
+					await gate;
+					throw Error("old in-flight failure");
+				}
+				if (failQueued && attempts === 2) throw Error("queued locator failure");
+				await rename(a, b);
+			},
+		});
+		const pane: PaneLocator = {
+			socket: "private",
+			serverPid: 1,
+			serverStarted: "1",
+			paneId: "%1",
+			windowId: "@1",
+			windowName: "old",
+			exited: false,
+		};
+		p.publishLocator(pane, "owner", "/session");
+		const writing = p.flush();
+		await ready;
+		const newer = { ...pane, windowId: "@8", windowName: "newer" };
+		p.publishLocator(newer, "owner", "/session");
+		release();
+		await writing;
+		await p.flush(); // Persist the already-queued latest revision, without another observation.
+		assert.equal(attempts, 2);
+		p.publishLocator({ ...newer }, "owner", "/session");
+		await p.flush();
+		const expected = failQueued ? 3 : 2;
+		assert.equal(attempts, expected, "only a failed latest snapshot invalidates its dedupe key");
+		const saved = JSON.parse(await readFile(join(liveSessionDir(id), `${p.generation}.json`), "utf8"));
+		assert.deepEqual(saved.locator, newer, "old failure cannot suppress or replace newer locator data");
+		p.publishLocator({ ...newer }, "owner", "/session");
+		await p.flush();
+		assert.equal(attempts, expected);
+	}
+});
+
 test("failed replacement removes its old snapshot without retry loops or task errors", async () => {
 	let fail = false;
 	const p = publisher("write-failure", "launch", {

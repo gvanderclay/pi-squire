@@ -49,6 +49,19 @@ follows [Semantic Versioning](https://semver.org/).
   `delegateWidgetMaxEntries` (default three) in the existing Squire settings.
   Independent observation continues after task completion and is cleaned up on
   reload; no focus keys or tree accounting semantics change.
+- Restore exact-session delegation trees without recreating live workers,
+  including offline child/coordinator replies, pending result processing and
+  concurrency for a manually reopened unfinished coordinator. Shared registry
+  ancestry drives descendant status/navigation; each direct parent's local
+  results/outcome inbox remains authoritative.
+- Single Squire process owner per Pi identity, using the existing bakery lock.
+  Already-claimed Squire input is durably staged for the sole owner across
+  duplicate scans and delayed startup. Losing/stale runtimes cannot act or
+  clear a replacement token; ordinary parent exit never closes children.
+- Bounded fresh-session notices explain reopening direct owners without
+  adoption: current agent/session directory, newest 64 registry files, at most
+  10 owners, 1 MiB per tree, one 200 ms cooperative notice budget, and explicit
+  unavailable/truncated scope.
 - Shared per-root tree registry and atomic cross-process launch reservations.
   `maxConcurrentDelegates` and `maxDelegatesPerRoot` default to 16/64 with
   maxDepth > 1, remain unlimited when absent at depth 1, and accept zero for
@@ -116,9 +129,40 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Keep factual activity end/settlement observation live when Squire task-owner
+  processing fails or owner-record reads are unavailable, without granting action
+  authority. Check publication ownership only at startup, not on each text delta.
 - Normalize process-start observation to C locale and UTC for live activity and
   native-title mirrors, so differing parent/delegate time zones or locales do not
   hide metadata or falsely delete a live activity snapshot.
+- Incomplete transcript/child-identity restoration now fails closed for both
+  completion and admission, retains known own child obligations and refuses
+  incidental saves until repair/reopen. Foreign copied history stays excluded.
+- Stage matching input atomically without waiting for a contended owner lock;
+  only the token owner drains, with callbacks outside that mutex. Preserve
+  timestamp/path order, avoid idle lock writes, and report unpersistable input
+  explicitly instead of silently falling through to plain mail. Ready owners
+  can use normal direct processing when staging alone is unwritable.
+- Always run runtime shutdown cleanup after input/owner failures, closing old
+  trust controls/timers before replacement. Persist explicit root user stops
+  without automatic replay on reopen; fresh live results/gone outcomes still
+  wake normally and clear that replay hold. Ordinary crash recovery remains.
+  Root continuations use response wording rather than coordinator task reports.
+- Ownership errors name the PID/file; discovery reports owner-read/tmux failures
+  once and shares one total latency budget. Document ordinary-mail/ask and
+  shared running-record consequences of duplicate provider processes.
+
+- Restrict resume execution and picker authority to the original direct parent,
+  retaining root/depth, live-session/obsolete-chain protections and current
+  grants, caps, tool ceiling and trust resolver. Fork/clone copies are history,
+  not authority; inherited launch environment no longer assigns identity.
+- Deliberately change the delegates panel to retain hierarchical history and
+  details rather than only open windows; only verified windows support
+  navigation. Descendant close stays with the separate explicit-close slice.
+  Reattachment tests now reopen the same id after shutdown rather than copying
+  starts into a fresh/live duplicate session. Root outcomes retain processing
+  durability with a non-displaying recovery wake instead of a repeated final.
+
 - Keep durable local result/gone delivery, coordinator wakes and close tracking
   working when shared fact publication fails; warn and reconcile those saved
   facts at the next admission. Worker frozen-terminal publication remains

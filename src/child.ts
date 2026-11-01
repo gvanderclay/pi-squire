@@ -163,7 +163,18 @@ function showStatus(ctx: ExtensionContext, armed: boolean, agent?: string): void
 	);
 }
 
-export function registerChild(pi: ExtensionAPI, replies: TaskReplies, identity: () => Identity | undefined): void {
+function shutdownWhenActive(ctx: ExtensionContext, active: () => boolean): void {
+	setImmediate(() => {
+		if (active()) ctx.shutdown();
+	});
+}
+
+export function registerChild(
+	pi: ExtensionAPI,
+	replies: TaskReplies,
+	identity: () => Identity | undefined,
+	active: () => boolean = () => true,
+): void {
 	const setFailure = registerFallback(pi);
 
 	let armed = false;
@@ -219,7 +230,7 @@ export function registerChild(pi: ExtensionAPI, replies: TaskReplies, identity: 
 		completed = false;
 		if (!exit) return;
 		// Task settlement and its synchronous reply write have succeeded.
-		setImmediate(() => ctx.shutdown());
+		shutdownWhenActive(ctx, active);
 	});
 
 	pi.registerCommand("auto-exit", {

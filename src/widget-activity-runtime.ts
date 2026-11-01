@@ -2,8 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ActivityCollector } from "./widget-activity.ts";
 import { LIVE_LAUNCH_ENV, LiveActivityPublisher, liveLaunch } from "./widget-live.ts";
 
-/** Publishes in every mode, independent of list focus, task delivery or completion. */
-export function registerActivityRuntime(pi: ExtensionAPI): () => void {
+/** Observe raw lifecycle after a positive startup owner gate; never grants task/action authority. */
+export function registerActivityRuntime(pi: ExtensionAPI, canPublish: () => boolean): () => void {
 	const seed: string | undefined = process.env[LIVE_LAUNCH_ENV];
 	let collector: ActivityCollector | undefined;
 	let publisher: LiveActivityPublisher | undefined;
@@ -20,6 +20,7 @@ export function registerActivityRuntime(pi: ExtensionAPI): () => void {
 	};
 	pi.on("session_start", (_event, ctx) => {
 		stop();
+		if (!canPublish()) return;
 		const id: string = ctx.sessionManager.getSessionId();
 		collector = new ActivityCollector();
 		publisher = new LiveActivityPublisher(id, liveLaunch(seed, id));

@@ -71,13 +71,15 @@ import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
-import { createResults, delegateName, sessionIdOf, type WorkspaceAttempt } from "./results.ts";
+import { createResults, delegateName, isStarted, sessionIdOf, type WorkspaceAttempt } from "./results.ts";
 import { createResume, type ResumeRequest, resumableIds, startedLine } from "./resume.ts";
 import { pickResume } from "./resume-picker.ts";
+import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { availableTools, enforceToolCeiling } from "./tool-ceiling.ts";
 import { createTracking, toolResult } from "./tracking.ts";
+import { treeNotice } from "./tree-notice.ts";
 import {
 	bindTree,
 	claimTree,
@@ -90,9 +92,11 @@ import {
 	reconcileTree,
 	reserveTree,
 } from "./tree-registry.ts";
+import { assertResumeAuthority, historicalRecord, visibleRecords } from "./tree-view.ts";
 import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 import { registerDelegateWidget } from "./widget.ts";
+import { registerActivityRuntime } from "./widget-activity-runtime.ts";
 import { placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
 import {
 	normalizeWorkspaceValue,
@@ -685,10 +689,15 @@ function toolDescription(agents: readonly Agent[]): string {
  * passes only `pi`, so they are not part of the package's documented contract.
  */
 export default function delegate(
-	pi: ExtensionAPI,
+	api: ExtensionAPI,
 	tmux: TmuxClient = createTmuxClient(),
 	usage: UsageClient = createUsageClient(),
 ): void {
+	const owner = new SessionOwner();
+	const host = api;
+	host.on("session_start", (_event, ctx) => owner.start(ctx));
+	host.events.on("message:inbound", (payload) => owner.receive(payload as import("./results.ts").Inbound));
+	const pi = ownedAPI(host, owner);
 	const identity = createIdentity(pi);
 	const results = createResults(
 		pi,
@@ -699,6 +708,7 @@ export default function delegate(
 				ctx.sessionManager.getSessionId(),
 				records,
 			),
+		() => owner.active(),
 	);
 	pi.on("session_start", (_event, ctx) => tracking.restore(ctx));
 	const replies = registerTaskReplies(
@@ -706,6 +716,7 @@ export default function delegate(
 		() => identity.current()?.parent,
 		() => {
 			try {
+				owner.assert();
 				identity.current();
 				return results.completionReady();
 			} catch {
@@ -714,17 +725,21 @@ export default function delegate(
 		},
 		(ctx) => coordinates(currentRoster(ctx)),
 		(ctx, ids) => {
+			owner.assert();
 			const own = identity.current();
 			if (own) finishTree(own.root, ctx.sessionManager.getSessionId(), ids);
 		},
 	);
-	registerChild(pi, replies, identity.current);
+	registerChild(pi, replies, identity.current, () => owner.active());
+	host.on("session_start", () => owner.arm());
 	// Restore answers synchronously before this potentially slow tmux read.
 	pi.on("session_start", async (_event, ctx) => {
 		try {
 			const own = identity.current();
 			if (!own) return;
-			claimTree(own.root, ctx.sessionManager.getSessionId(), await tmux.currentWindow?.());
+			const window = await tmux.currentWindow?.();
+			owner.assert();
+			claimTree(own.root, ctx.sessionManager.getSessionId(), window);
 		} catch (error) {
 			ctx.ui.notify(
 				`delegate: could not publish startup accounting: ${String(error)}; uncertain reservations remain charged.`,
@@ -734,8 +749,29 @@ export default function delegate(
 	});
 
 	const proactive = createProactive(usage);
-	const tracking = createTracking(pi, results, tmux, proactive.errors);
+	let viewContext: ExtensionContext | undefined;
+	pi.on("session_start", (_event, ctx) => {
+		viewContext = ctx;
+	});
+	pi.on("session_start", async (_event, ctx) => {
+		if (!identity.current() && results.list().length === 0) {
+			try {
+				await treeNotice(ctx, tmux, () => owner.active());
+			} catch (error) {
+				ctx.ui.notify(`delegate: owner discovery unavailable: ${String(error)}`, "warning");
+			}
+		}
+	});
+	const viewResults = {
+		...results,
+		list: () => (viewContext ? visibleRecords(results, viewContext) : results.list()),
+		find: (id: string) =>
+			viewContext ? visibleRecords(results, viewContext).find((record) => record.id === id) : results.find(id),
+	};
+	const tracking = createTracking(pi, results, tmux, proactive.errors, viewResults);
 	const trustControl = registerTrustControl(pi, identity.current);
+	// Factual lifecycle observation survives failed action processing; only creation needs ownership.
+	registerActivityRuntime(host, () => owner.active());
 	registerDelegateWidget(pi, results, tmux);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
@@ -794,6 +830,7 @@ export default function delegate(
 	}
 
 	function admit(agent: string, roster: Roster): void {
+		owner.assert();
 		results.checkStorage();
 		identity.admit(agent, roster);
 	}
@@ -927,6 +964,8 @@ export default function delegate(
 		} = input;
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
+		if (input.sessionId && sessionIsOwned(input.sessionId))
+			throw new Error(`delegate session ${input.sessionId} is already open; resume refused before spawn`);
 		const own = input.identity ?? identity.child(start.agent, ctx);
 		own.autoExit = start.autoExit;
 		writeIdentity(input.sessionId ?? id, own);
@@ -1320,6 +1359,12 @@ export default function delegate(
 		placement: () => windowPlacement(getAgentDir()),
 		roster: rosterFor,
 		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
+		authorize: (id, ctx) => {
+			owner.assert();
+			results.checkStorage();
+			const record = results.find(id) ?? viewResults.find(id) ?? historicalRecord(id, ctx);
+			if (record && isStarted(record)) assertResumeAuthority(record, ctx);
+		},
 		reserve: async (record, id, ctx) => {
 			let own = record.identity ?? readIdentity(sessionIdOf(record));
 			if (!own) {
@@ -1638,6 +1683,7 @@ export default function delegate(
 	pi.on("session_shutdown", () => {
 		tracking.stop();
 	});
+	host.on("session_shutdown", () => owner.stop());
 
 	/** Agent names, flags, model ids and thinking levels, at the cursor's token. */
 	function completions(prefix: string): { value: string; label: string }[] | null {
@@ -1681,7 +1727,7 @@ export default function delegate(
 		handler: resumeCommand,
 	});
 
-	const navigator = createNavigator(results, tmux, tracking, (ctx: ExtensionContext) =>
+	const navigator = createNavigator(viewResults, tmux, tracking, (ctx: ExtensionContext) =>
 		startNewDelegate(ctx, newDelegateDeps),
 	);
 

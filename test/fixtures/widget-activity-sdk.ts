@@ -130,7 +130,7 @@ async function start(): Promise<string> {
 		noContextFiles: true,
 		extensionFactories: [
 			(pi) => {
-				stop = registerActivityRuntime(pi);
+				stop = registerActivityRuntime(pi, () => true);
 				pi.registerProvider("widget-fixture", {
 					api: "widget-fixture-api",
 					baseUrl: "http://never-used.invalid",

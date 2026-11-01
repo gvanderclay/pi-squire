@@ -2,7 +2,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Results } from "./results.ts";
 import type { TmuxClient } from "./tmux.ts";
 import { joinActivities } from "./widget-activity-join.ts";
-import { registerActivityRuntime } from "./widget-activity-runtime.ts";
 import { type DelegateRow, DirectDelegateView } from "./widget-data.ts";
 import { renderDelegateWidget } from "./widget-render.ts";
 import { DEFAULT_WIDGET_SETTINGS, type WidgetSettings, widgetSettings } from "./widget-settings.ts";
@@ -141,7 +140,6 @@ class Overview {
 
 /** Minimal index seam. Register after direct restore without altering startup/settle ordering. */
 export function registerDelegateWidget(pi: ExtensionAPI, results: Results, tmux: TmuxClient): void {
-	registerActivityRuntime(pi);
 	let overview: Overview | undefined;
 	let publisher: ReturnType<typeof titlePublisher> | undefined;
 	const stop = (): void => {

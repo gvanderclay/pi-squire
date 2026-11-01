@@ -296,6 +296,7 @@ test("a late reply to the old request settles the old record only, also after a 
 	const d = await exitedDelegate();
 	await resume(d.s, { id: d.id, task: "again" });
 	const [, record] = starts(d.s) as { id: string; requestId: string; windowId: string; windowName: string }[];
+	await d.s.shutdown();
 	const restored = session({ parent: d.s.parent, entries: structuredClone(d.s.entries) as Entry[] });
 	restored.tmux.addWindow(record.windowId, record.windowName);
 	await restored.start();
@@ -346,7 +347,7 @@ test("refused: an unknown id and a workspace attempt", async () => {
 		plan: {},
 		attempt: { phase: "rolled-back", resources: { kind: "none" }, cause: "x" },
 	};
-	const s = session({ entries: [{ customType: "delegate", data: attempt }] });
+	const s = session({ parent: "p", entries: [{ customType: "delegate", data: attempt }] });
 	await s.start();
 	assert.match(await resumeError(s, { id: "attempt-1", task: "x" }), /is a workspace attempt/);
 	assert.equal(s.tmux.opened.length, 0);

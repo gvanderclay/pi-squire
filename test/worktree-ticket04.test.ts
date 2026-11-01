@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: fixture assertions narrow runtime record fields.
 type Data = Record<string, any>;
@@ -212,7 +212,10 @@ test("ambiguous open retains attempt and close has no window side effects", asyn
 	assert.deepEqual(s.tmux.killed, []);
 	const planned = s.entries.find((entry) => entry.data.kind === "workspace-attempt")?.data;
 	assert.ok(planned);
-	const resumed = session({ cwd: source, entries: [{ customType: "delegate", data: planned }] });
+	await s.shutdown();
+	// Simulate the earlier crash point without a later durable retained fact.
+	rmSync(join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`));
+	const resumed = session({ parent: s.parent, cwd: source, entries: [{ customType: "delegate", data: planned }] });
 	await resumed.start();
 	const status = await resumed.toolCall("delegation_status", { id: attempt.id });
 	const item = (status.structuredContent as Data).delegations[0];

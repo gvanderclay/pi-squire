@@ -8,6 +8,7 @@ import { readChildRecords } from "./child-tasks.ts";
 import { readState, writeState } from "./local-state.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Recorded } from "./result-types.ts";
+import { sessionIsOwned } from "./session-owner.ts";
 import { readTaskState, taskStatePath } from "./task-store.ts";
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import { processAlive, withTreeLock } from "./tree-lock.ts";
@@ -83,14 +84,21 @@ export function treeTransaction<T>(root: string, work: (state: TreeState) => T):
 		return result;
 	});
 }
-export function readTree(root: string): TreeState {
-	return withTreeLock(`${treePath(root)}.lock`, () => load(root));
+export function readTree(root: string, timeoutMs = 5000): TreeState {
+	return withTreeLock(`${treePath(root)}.lock`, () => load(root), timeoutMs);
 }
 export function treeCounts(state: TreeState): TreeCounts {
 	const charged: TreeEntry[] = state.entries.filter((entry) => entry.phase !== "not-started");
 	return {
 		lifetime: charged.length,
-		concurrent: charged.filter((entry) => !entry.finished && !entry.gone && !entry.closed).length,
+		concurrent: charged.filter(
+			(entry) =>
+				!entry.finished &&
+				!entry.closed &&
+				(!entry.gone ||
+					(!state.entries.some((next) => next.resumedFrom === entry.id && next.phase !== "not-started") &&
+						sessionIsOwned(entry.sessionId))),
+		).length,
 	};
 }
 
@@ -173,8 +181,8 @@ export function claimTree(root: string, session: string, window: { id: string; n
 				entry.sessionId === session &&
 				(entry.phase === "dispatched" || entry.phase === "started") &&
 				!entry.finished &&
-				!entry.gone &&
-				!entry.closed,
+				!entry.closed &&
+				!state.entries.some((next) => next.resumedFrom === entry.id && next.phase !== "not-started"),
 		);
 		if (candidates.length !== 1) return;
 		const entry: TreeEntry | undefined = candidates[0];
@@ -203,8 +211,12 @@ function applyRecord(entry: TreeEntry, record: Recorded): void {
 	delete (entry.launch as Partial<typeof record>).gone;
 	delete (entry.launch as Partial<typeof record>).closed;
 	entry.phase = "started";
-	entry.windowId = record.windowId;
-	entry.windowName = record.windowName;
+	// A same-id manual reopen can positively locate a newer window. Historical
+	// parent facts must not overwrite that current locator at the next admission.
+	if (!entry.gone || !sessionIsOwned(entry.sessionId) || !entry.windowId) {
+		entry.windowId = record.windowId;
+		entry.windowName = record.windowName;
+	}
 	entry.requestId = record.requestId;
 	entry.cwd = record.cwd;
 	entry.workspace = record.workspace;

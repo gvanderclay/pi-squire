@@ -383,7 +383,16 @@ test("crash after envelope write before completion persistence resends, but pare
 	await nextTurn();
 	scan(restoredParent);
 	assert.equal(envelopes(parent.parent, "cur").length, 2, "mail transport is at-least-once, not deduplicating");
-	assert.equal(restoredParent.sent.length, 0, "correlated task already has its final result");
+	assert.equal(
+		restoredParent.sent.filter((sent) => sent.message.customType === "delegate").length,
+		0,
+		"correlated task already has its final result",
+	);
+	assert.equal(
+		restoredParent.sent.filter((sent) => sent.message.customType === "delegate-recovery").length,
+		1,
+		"pending processing wakes without displaying the final twice",
+	);
 });
 
 test("resume's new task and all held task ids are answered in batches no larger than 50", async () => {

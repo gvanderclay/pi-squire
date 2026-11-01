@@ -234,7 +234,8 @@ test("ordinary root restart and resume retain root placement, not the delegate c
 			"\n",
 	);
 	original.tmux.exit(first.windowId);
-	const restarted = session({ cwd, entries: original.entries });
+	await original.shutdown();
+	const restarted = session({ parent: original.parent, cwd, entries: original.entries });
 	shareServer(original, restarted);
 	original.tmux.parentSession = "unrelated-invoking-session";
 	await restarted.start();

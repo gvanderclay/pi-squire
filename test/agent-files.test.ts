@@ -758,7 +758,7 @@ test("a locked field the file leaves unset keeps the parent's value, and a call'
 
 test("display_name names the window and the /delegates row; the agent's name still reaches session:launch", async () => {
 	writeAgent("reviewer", agentFile({ ...SCOUT, display_name: "Code_Reviewer-2" }));
-	const s = session();
+	const s = session({ mode: "tui" });
 	await s.start();
 	const launches: { agent: string; env: Record<string, string> }[] = [];
 	s.events.on("session:launch", (data) => launches.push(data as { agent: string; env: Record<string, string> }));

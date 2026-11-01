@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-11-01
+
 ### Changed
 
 - Model-facing delegate completion messages link the task copy instead of
@@ -1058,7 +1060,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.18.2...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.18.3...HEAD
+[0.18.3]: https://github.com/gvanderclay/pi-squire/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/gvanderclay/pi-squire/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/gvanderclay/pi-squire/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/gvanderclay/pi-squire/compare/v0.17.0...v0.18.0

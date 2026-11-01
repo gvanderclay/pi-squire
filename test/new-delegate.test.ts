@@ -46,7 +46,7 @@ const CLEAR = "\x15";
 
 const style = { fg: (_color: string, text: string) => text } as never;
 
-function form(overrides: Partial<Agent> = {}, cwd = root) {
+function form(overrides: Partial<Agent> = {}, cwd = root, width = 100) {
 	let result: FormResult | undefined | "pending" = "pending";
 	const agent = { name: "scout", model: "gamma/big", thinking: "xhigh", autoExit: true, ...overrides } as Agent;
 	const screen = new SettingsForm({
@@ -63,7 +63,7 @@ function form(overrides: Partial<Agent> = {}, cwd = root) {
 		for (const key of data) screen.handleInput(key);
 	};
 	const type = (text: string) => keys(...text.split(""));
-	const text = () => screen.render(100).join("\n");
+	const text = () => screen.render(width).join("\n");
 	return { screen, keys, type, text, result: () => result };
 }
 
@@ -74,7 +74,7 @@ const goto = (f: ReturnType<typeof form>, row: number) => {
 };
 
 test("every row starts at the agent's default and Start returns no change", () => {
-	const f = form();
+	const f = form({}, root, Math.max(100, root.length + 24));
 	const text = f.text();
 	assert.match(text, /Start/);
 	assert.match(text, /Model\s+gamma\/big/);
@@ -162,7 +162,7 @@ test("a row set back to the default is not returned", () => {
 });
 
 test("the working directory is validated as --cwd", () => {
-	const f = form();
+	const f = form({}, root, Math.max(100, root.length + 24));
 	goto(f, ROW.cwd);
 	f.keys(ENTER, CLEAR);
 	f.type("/nowhere/dir");
@@ -184,7 +184,7 @@ test("a changed working directory is returned", () => {
 });
 
 test("a worktree refuses a changed working directory, and the other way round", () => {
-	const first = form();
+	const first = form({}, root, Math.max(100, root.length + 24));
 	goto(first, ROW.worktree);
 	first.keys(ENTER);
 	first.type("feature-x");

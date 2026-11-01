@@ -8,10 +8,11 @@ export type DashboardIntent =
 	| { action: "new" }
 	| { action: "close-all" }
 	| undefined;
-export type DashboardPosition = { id?: string; detail: boolean; offset: number };
+export type DashboardPosition = { id?: string; detail: boolean; offset: number; branchList?: boolean };
 type DashboardOptions = {
 	items: readonly DashboardRow[];
 	root?: boolean;
+	branch?: string;
 	position: DashboardPosition;
 	detailBack: "list" | "exit";
 	theme: WidgetTheme;
@@ -48,10 +49,14 @@ export class Dashboard implements Component {
 		if (isKeyRelease(data)) return;
 		const { position, done } = this.options;
 		if (matchesKey(data, "escape")) {
-			if (position.detail && this.options.detailBack === "list") {
+			if (position.detail && (this.options.detailBack === "list" || position.branchList)) {
 				position.detail = false;
 				position.offset = 0;
 			} else done(undefined);
+		} else if (matchesKey(data, "b") && this.options.branch !== undefined) {
+			position.branchList = true;
+			position.detail = false;
+			position.offset = 0;
 		} else if (matchesKey(data, "n")) done({ action: "new" });
 		else if (matchesKey(data, "a") && this.options.root) done({ action: "close-all" });
 		else if (matchesKey(data, "up")) this.move(-1);
@@ -95,7 +100,7 @@ export class Dashboard implements Component {
 		const fit = (text: string): string => truncateToWidth(text, Math.max(0, width));
 		const item: DashboardRow | undefined = this.selected();
 		if (!item)
-			return [theme.bold("Delegates"), "", `No open delegates · n new · esc close${this.closeAllHint()}`].map(fit);
+			return [theme.bold(this.heading()), "", `No open delegates · n new · esc close${this.closeAllHint()}`].map(fit);
 		if (position.detail) return this.details(item).map(fit);
 		const index: number = items.indexOf(item);
 		const start: number = Math.max(0, index - this.height() + 1);
@@ -103,7 +108,7 @@ export class Dashboard implements Component {
 			.slice(start, start + this.height())
 			.map((row) => (row.id === item.id ? theme.fg("accent", `▸ ${label(row)}`) : `  ${label(row)}`));
 		return [
-			theme.bold("Delegates"),
+			theme.bold(this.heading()),
 			"",
 			...rows,
 			`${index + 1}/${items.length}`,
@@ -114,8 +119,13 @@ export class Dashboard implements Component {
 		].map(fit);
 	}
 
+	private heading(): string {
+		return this.options.branch === undefined ? "Delegates" : `Delegate branch: ${widgetText(this.options.branch)}`;
+	}
+
 	private closeAllHint(): string {
-		return this.options.root ? " · a close all subtrees" : "";
+		if (!this.options.root) return "";
+		return this.options.branch === undefined ? " · a close all subtrees" : " · a close ALL ROOT subtrees";
 	}
 
 	private details(item: DashboardRow): string[] {
@@ -127,7 +137,7 @@ export class Dashboard implements Component {
 			"",
 			theme.fg(
 				"dim",
-				`↑↓ scroll · enter switch · p peek · x close · r resume · n new · esc back${this.closeAllHint()}`,
+				`↑↓ scroll · enter switch · p peek · x close · r resume · n new · esc back${this.options.branch === undefined ? "" : " · b branch list"}${this.closeAllHint()}`,
 			),
 		];
 	}

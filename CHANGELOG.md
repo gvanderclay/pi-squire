@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-11-01
+
 ### Fixed
 
 - Agents without a `tools:` field inherit available deferred and codemode tools
@@ -1047,7 +1049,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.18.2...HEAD
+[0.18.2]: https://github.com/gvanderclay/pi-squire/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/gvanderclay/pi-squire/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/gvanderclay/pi-squire/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/gvanderclay/pi-squire/compare/v0.16.0...v0.17.0

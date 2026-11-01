@@ -8,11 +8,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Breaking
 
+- `delegation_close` now closes a persistent descendant subtree rather than one
+  local window. Its structured result adds `complete` and per-member outcomes;
+  partial failures return `isError:true` with details rather than discarding
+  successful members in a thrown tmux error. Close requires a readable shared
+  fence before kills. Old single-window wording/schema, direct-close-on-corrupt-
+  registry, panel/poll/placement text assertions deliberately change; local
+  genuine result publication remains warning-only. Unknown/foreign/obsolete
+  target ids refuse before effects. Canceling unfinished children now requires
+  direct-parent processing rather than silently releasing the task barrier.
 - Delegations recorded without the required original-root placement identity
   can no longer be resumed after this update, including pre-nesting and
   identity-less records even when reopened by their original root. Resume tools,
   commands and picker refuse before trust, mail, exited-window kill, reservation
   or spawn effects. No legacy identity synthesis or migration is provided.
+  The subtree-close identity-less resume fixture now asserts this refusal when
+  composed with root placement; its earlier fallback expectation is superseded.
 
 - Require pi-session-mail 0.6.0 or another provider of all four message hooks.
   Upgrade mail and squire together: squire now owns delegate task settlement
@@ -29,6 +40,19 @@ follows [Semantic Versioning](https://semver.org/).
   tool-selection, resume and hook tests for this deliberate contract change.
 
 ### Added
+
+- Explicit ancestor-scoped subtree close and root-only confirmed panel close-all.
+  Shared admission/own-entry dispatch fences precede effects, including root
+  reservations. Already-dispatched unknown creates remain charged/fenced and
+  partial; bounded explicit retries never guess no-start. Current verified
+  id+name locators include manually reattached same-id coordinators. Per-member
+  errors preserve successful closes; shared companions, branches and worktrees
+  are retained, and ordinary runtime exit never cascades.
+- Confirmed closes are imported only by the direct-parent semantic owner as
+  durable canceled/missing child outcomes. Offline restoration and settlement
+  retain the processing barrier, root replay-stop behavior and genuine
+  mid-close/late worker replies. Completed fences allow a new authorized,
+  lifetime-counted direct-parent resume without reviving canceled descendants.
 
 - Restore exact-session delegation trees without recreating live workers,
   including offline child/coordinator replies, pending result processing and
@@ -90,7 +114,7 @@ follows [Semantic Versioning](https://semver.org/).
   including trusted project-agent shadowing. Coordinators get all four
   delegation tools even with an explicit tools list; listing tools alone warns
   and grants nothing. Nesting remains an incomplete integration milestone:
-  tree controls must land
+  full integrated real-model and permission-forwarding validation remains required
   before production use.
 - Persist parent/root/depth/agent/chain identity and auto-exit state for manual
   same-session reopening. Expose read-only parent/root/depth/frozen chain on

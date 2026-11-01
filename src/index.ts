@@ -709,6 +709,10 @@ export default function delegate(
 				records,
 			),
 		() => owner.active(),
+		(ctx) =>
+			readTree(identity.current()?.root ?? ctx.sessionManager.getSessionId())
+				.entries.filter((entry) => entry.identity.parent === ctx.sessionManager.getSessionId() && entry.closed)
+				.map((entry) => entry.id),
 	);
 	pi.on("session_start", (_event, ctx) => tracking.restore(ctx));
 	const replies = registerTaskReplies(
@@ -768,7 +772,7 @@ export default function delegate(
 		find: (id: string) =>
 			viewContext ? visibleRecords(results, viewContext).find((record) => record.id === id) : results.find(id),
 	};
-	const tracking = createTracking(pi, results, tmux, proactive.errors, viewResults);
+	const tracking = createTracking(pi, results, tmux, proactive.errors, viewResults, () => owner.assert());
 	const trustControl = registerTrustControl(pi, identity.current);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */

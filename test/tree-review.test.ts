@@ -173,18 +173,19 @@ for (const role of ["root", "coordinator"] as const) {
 		assert.equal(readTree(owner.parent).entries.find((entry) => entry.id === record.id)?.gone, true);
 	});
 
-	test(`${role}: explicit close remains locally recorded when shared publication fails`, async () => {
+	test(`${role}: explicit subtree close requires readable structural fencing before any kill`, async () => {
 		const { owner, parent } = await setup(role);
 		const record = await launch(parent);
 		const path = treePath(owner.parent),
 			saved = readFileSync(path, "utf8");
 		writeFileSync(path, "null");
-		const closed = await parent.toolCall("delegation_close", { id: record.id });
-		assert.equal((closed.details as { closed: boolean }).closed, true);
-		assert.equal(local(parent, record).closed, true);
-		assertPublicationWarning(parent);
+		await assert.rejects(parent.toolCall("delegation_close", { id: record.id }), /invalid tree registry/);
+		assert.equal(local(parent, record).closed, undefined);
+		assert.equal(parent.tmux.killed.length, 0);
 		writeFileSync(path, saved);
-		reserveReplacement(owner, parent);
+		const closed = await parent.toolCall("delegation_close", { id: record.id });
+		assert.equal((closed.details as { complete: boolean }).complete, true);
+		assert.equal(local(parent, record).closed, true);
 		assert.equal(readTree(owner.parent).entries.find((entry) => entry.id === record.id)?.closed, true);
 	});
 

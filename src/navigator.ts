@@ -4,7 +4,7 @@
 // moves the user's terminal.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-
+import { readIdentity } from "./identity.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -17,6 +17,7 @@ import {
 } from "./results.ts";
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import { listWindows, ownWindow, type Tracking } from "./tracking.ts";
+import { descendants, readTree } from "./tree-registry.ts";
 
 /** What `/delegate-open` does; switch is what enter does in the panel. */
 export type OpenMode = "switch" | "peek";
@@ -37,7 +38,11 @@ type OpenDelegate = {
 };
 
 /** What the panel hands back: the action the user chose on one delegation, or none. */
-type PanelResult = { action: "switch" | "close" | "peek"; id: string } | { action: "new" } | undefined;
+type PanelResult =
+	| { action: "switch" | "close" | "peek"; id: string }
+	| { action: "new" }
+	| { action: "close-all" }
+	| undefined;
 
 /** What the peek hands back: switch to the delegate, or nothing. */
 type PeekResult = { action: "switch" } | undefined;
@@ -70,13 +75,16 @@ class Panel implements Component {
 	private readonly theme: PanelTheme;
 	private readonly done: (result: PanelResult) => void;
 	private readonly redraw: () => void;
+	private readonly root: boolean;
 
 	constructor(parts: {
+		root: boolean;
 		items: readonly OpenDelegate[];
 		theme: PanelTheme;
 		done: (result: PanelResult) => void;
 		redraw: () => void;
 	}) {
+		this.root = parts.root;
 		this.items = parts.items;
 		this.theme = parts.theme;
 		this.done = parts.done;
@@ -90,6 +98,7 @@ class Panel implements Component {
 		const count = this.items.length;
 		if (matchesKey(data, "escape")) this.done(undefined);
 		else if (matchesKey(data, "n")) this.done({ action: "new" });
+		else if (matchesKey(data, "a") && this.root) this.done({ action: "close-all" });
 		else if (item === undefined) return;
 		else if (matchesKey(data, "up")) this.selected = (this.selected + count - 1) % count;
 		else if (matchesKey(data, "down")) this.selected = (this.selected + 1) % count;
@@ -101,7 +110,8 @@ class Panel implements Component {
 
 	render(width: number): string[] {
 		const fit = (text: string): string => truncateToWidth(text, Math.max(1, width));
-		if (this.items.length === 0) return [this.theme.bold("Delegates"), "", EMPTY].map(fit);
+		if (this.items.length === 0)
+			return [this.theme.bold("Delegates"), "", EMPTY, ...(this.root ? ["a close all subtrees"] : [])].map(fit);
 		const baseDepth = Math.min(...this.items.map((item) => item.record.identity?.depth ?? 1));
 		const lines = this.items.map((item, index) => {
 			const where = item.window.session === "" ? item.window.id : `${item.window.id} in ${item.window.session}`;
@@ -111,7 +121,15 @@ class Panel implements Component {
 		});
 		const selected = this.items[this.selected];
 		const detail = selected ? detailLines(selected) : [];
-		return [this.theme.bold("Delegates"), "", ...lines, "", ...detail, "", this.theme.fg("dim", HINT)].map(fit);
+		return [
+			this.theme.bold("Delegates"),
+			"",
+			...lines,
+			"",
+			...detail,
+			"",
+			this.theme.fg("dim", HINT + (this.root ? " · a close all subtrees" : "")),
+		].map(fit);
 	}
 }
 
@@ -208,7 +226,7 @@ export function openCompletions(prefix: string, ids: readonly string[]): { value
 	return hits.length > 0 ? hits.map((value) => ({ value: head + value, label: value })) : null;
 }
 
-type Env = { results: Results; tmux: TmuxClient; tracking: Pick<Tracking, "close"> };
+type Env = { results: Results; tmux: TmuxClient; tracking: Pick<Tracking, "close" | "closeAll"> };
 
 /** The open delegations, newest first, from the records and one listing; undefined when tmux cannot be asked. */
 async function openDelegates({ results, tmux }: Env, history = false): Promise<OpenDelegate[] | undefined> {
@@ -299,19 +317,26 @@ async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Pr
 	);
 }
 
-/** Close through the `delegation_close` path, asking first only while the delegate runs. */
-async function close(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
-	if (item.record.identity && item.record.identity.parent !== ctx.sessionManager.getSessionId())
-		return ctx.ui.notify(
-			"delegate: descendant subtree close is not available until the explicit-close slice; no window was killed.",
-			"warning",
+function runningDescendants(item: OpenDelegate): boolean {
+	if (!item.record.identity) return false;
+	try {
+		return descendants(readTree(item.record.identity.root), sessionIdOf(item.record)).some(
+			(entry) => !entry.closed && !entry.finished && entry.phase !== "not-started",
 		);
-	if (item.state === "running") {
-		const message = `${item.name} is still running. Close it and kill its window?`;
+	} catch {
+		return true; // Unavailable descendant state is not proof that closing is harmless.
+	}
+}
+
+/** Close through the shared control path, confirming running/unknown descendant work. */
+async function close(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
+	if (item.state === "running" || runningDescendants(item)) {
+		const message = `${item.name} is still running. Close its entire recorded subtree and kill its verified windows?`;
 		if (!(await ctx.ui.confirm("Close delegate", message))) return;
 	}
 	try {
-		ctx.ui.notify(`delegate: ${(await env.tracking.close(item.id)).text}`, "info");
+		const result = await env.tracking.close(item.id, ctx);
+		ctx.ui.notify(`delegate: ${result.text}`, result.details.complete ? "info" : "error");
 	} catch (err) {
 		ctx.ui.notify(`delegate: ${(err as Error).message}`, "error");
 	}
@@ -323,6 +348,7 @@ function show(ctx: ExtensionContext, items: readonly OpenDelegate[]): Promise<Pa
 		(tui, theme, _keybindings, done): Panel =>
 			new Panel({
 				items,
+				root: readIdentity(ctx.sessionManager.getSessionId()) === undefined,
 				theme: theme as unknown as PanelTheme,
 				done,
 				redraw: (): void => tui.requestRender(),
@@ -353,6 +379,22 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 const noUi = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: this needs an interactive session", "error");
 const noTmux = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: could not ask tmux for its windows", "error");
 
+async function closeAll(env: Env, ctx: ExtensionContext): Promise<void> {
+	if (
+		!(await ctx.ui.confirm(
+			"Close all delegate subtrees",
+			"Close every recorded descendant of this root? Worktrees and branches are retained.",
+		))
+	)
+		return;
+	try {
+		const closed = await env.tracking.closeAll(ctx);
+		ctx.ui.notify(`delegate: ${closed.text}`, closed.details.complete ? "info" : "error");
+	} catch (error) {
+		ctx.ui.notify(`delegate: ${String(error)}`, "error");
+	}
+}
+
 /** Carry out what the panel returned; true when the panel should open again. */
 async function act(
 	env: Env,
@@ -365,6 +407,10 @@ async function act(
 	if (result.action === "new") {
 		await startNew(ctx);
 		return false;
+	}
+	if (result.action === "close-all") {
+		await closeAll(env, ctx);
+		return true;
 	}
 	const item = items.find((candidate) => candidate.id === result.id);
 	if (item === undefined) return false;
@@ -403,7 +449,7 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 export function createNavigator(
 	results: Results,
 	tmux: TmuxClient,
-	tracking: Pick<Tracking, "close">,
+	tracking: Pick<Tracking, "close" | "closeAll">,
 	startNew: (ctx: ExtensionContext) => Promise<void> | void,
 ): Navigator {
 	const env: Env = { results, tmux, tracking };

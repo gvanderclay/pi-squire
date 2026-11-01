@@ -26,6 +26,7 @@ function declareGone(pi: ExtensionAPI, results: Results, windows: TmuxWindow[] |
 /** One sweep: claim waiting replies, declare gone every delegation whose window is missing or exited with still no result. */
 async function sweep(pi: ExtensionAPI, results: Results, tmux: TmuxClient, live: () => boolean): Promise<void> {
 	if (results.running().length > 0) {
+		results.syncCloses();
 		const scan: { scanned?: boolean } = {};
 		pi.events.emit(SCAN, scan);
 		// No message:* provider: a waiting reply cannot be ruled out, so nothing is declared gone.

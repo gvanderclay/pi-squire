@@ -102,7 +102,14 @@ export function visibleRecords(results: Results, ctx: ExtensionContext): Recorde
 			});
 		} else if (!records.has(entry.id)) records.set(entry.id, { ...record, identity: entry.identity });
 	}
-	return hierarchy([...records.values()], session);
+	return hierarchy(withCloses(records, entries), session);
+}
+function withCloses(records: Map<string, Recorded>, entries: TreeEntry[]): Recorded[] {
+	for (const entry of entries) {
+		const record: Recorded | undefined = records.get(entry.id);
+		if (entry.closed && record && isStarted(record)) records.set(entry.id, { ...record, closed: true });
+	}
+	return [...records.values()];
 }
 function parentRecords(parent: string, ctx: ExtensionContext): Recorded[] {
 	try {
@@ -172,8 +179,9 @@ export function accountingFor(record: StartedRecorded): string | undefined {
 		return "unavailable";
 	}
 	if (!entry) return undefined;
-	if (entry.finished) return "finished";
 	if (entry.closed) return "closed";
+	if (entry.closing) return "closing";
+	if (entry.finished) return "finished";
 	if (entry.gone) return sessionIsOwned(entry.sessionId) ? "reattached" : "gone";
 	return entry.phase;
 }

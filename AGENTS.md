@@ -28,7 +28,9 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   request settlement wording, and `task-store.ts` the durable answer outbox.
 - `src/tree-registry.ts` owns shared per-root structural facts and admission;
   `tree-types.ts` its schema, `tree-settings.ts` call-time caps, and `tree-lock.ts`
-  cross-process arbitration. `session-owner.ts` owns exact-session process
+  cross-process arbitration. `tree-close.ts` is the shared explicit subtree-close
+  runner and `tree-fence.ts` composes close/resume admission; `result-close.ts`
+  words missing/canceled work for the direct parent's processing inbox. `session-owner.ts` owns exact-session process
   arbitration and staged Squire ingress; `tree-view.ts` projects descendants
   read-only and `tree-notice.ts` bounds fresh-session discovery. Local result
   processing stays in `child-tasks.ts`.

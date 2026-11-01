@@ -7,8 +7,9 @@ import { devNull } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { readChildRecords } from "../src/child-tasks.ts";
 import { readIdentity } from "../src/identity.ts";
-import type { Delegation } from "../src/results.ts";
+import { type Delegation, isStarted } from "../src/results.ts";
 import { sessionIsOwned } from "../src/session-owner.ts";
 import type { TmuxWindow, WindowSpec } from "../src/tmux.ts";
 import { readTree, treeCounts, treePath } from "../src/tree-registry.ts";
@@ -172,6 +173,98 @@ test("Git A main/subdirectory/linked root → B → C uses A and keeps independe
 		assert.deepEqual(child.selects, []);
 		assert.equal(owner.sent.filter(({ message }) => message.customType === "delegate").length, 0);
 	}
+});
+
+test("closed subtree resumes in original root preference with placement consistency, current trust and cap checks", async () => {
+	const a = repository("CloseRoot"),
+		b = resolvedProject("CloseB", false),
+		c = resolvedProject("CloseC", true);
+	const preferred = "CloseRoot-delegate-session";
+	const selected = `${preferred}-2`;
+	const tmux = new FakeTmux();
+	tmux.addWindow("@user", "unmarked", preferred);
+	const { owner, child, c: coordinatorRecord } = await coordinator(a, b, tmux);
+	const worker = await launch(child, "worker", { cwd: c });
+	header(coordinatorRecord);
+	header(worker);
+	tmux.addWindow("@anchor", "other-tree", selected);
+	const closed = await owner.toolCall("delegation_close", { id: coordinatorRecord.id });
+	assert.equal((closed.details as { complete: boolean }).complete, true);
+	assert.equal(tmux.windows.has("@anchor"), true);
+	for (const entry of readTree(owner.parent).entries) {
+		assert.equal(entry.closed, true);
+		assert.equal(entry.identity.rootPlacement, preferred);
+		assert.equal(entry.launch?.identity?.rootPlacement, preferred);
+	}
+	assert.equal(readChildRecords(owner.parent).filter(isStarted)[0].identity?.rootPlacement, preferred);
+	await child.shutdown();
+	await owner.shutdown();
+	tmux.windows.delete("@user");
+	tmux.parentSession = "different-root-pane";
+	const reopenedRoot = await instance({ parent: owner.parent, cwd: directory("DifferentRoot"), tmux });
+	const original = readIdentity(coordinatorRecord.id)!;
+	writeFileSync(
+		identityFile(coordinatorRecord.id),
+		JSON.stringify({ ...original, rootPlacement: "wrong-delegate-session" }),
+	);
+	rmSync(join(agentDir, "trust.json"), { force: true });
+	await assert.rejects(
+		reopenedRoot.toolCall("delegation_resume", { id: coordinatorRecord.id, task: "blocked" }),
+		/conflicting/,
+	);
+	assert.deepEqual(reopenedRoot.selects, [], "post-close placement conflict refuses before unresolved trust");
+	assert.equal(existsSync(join(agentDir, "trust.json")), false);
+	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 0, lifetime: 2 });
+	writeFileSync(identityFile(coordinatorRecord.id), JSON.stringify(original));
+	new ProjectTrustStore(agentDir).set(b, true);
+	const resumedC = await reopenedRoot.toolCall("delegation_resume", {
+		id: coordinatorRecord.id,
+		task: "continue coordinator",
+	});
+	assert.equal((resumedC.details as { windowSession: string }).windowSession, selected);
+	assert.ok(tmux.opened.at(-1)!.argv.includes("--approve"), "resume re-resolves B's changed trust");
+	const restored = await instance({
+		parent: child.parent,
+		cwd: b,
+		tmux,
+		entries: [],
+		activeTools: ["read", "delegate", "delegation_status", "delegation_close", "delegation_resume"],
+	});
+	scan(restored);
+	assert.equal(
+		readChildRecords(child.parent)
+			.filter(isStarted)
+			.find((record) => record.id === worker.id)?.closed,
+		true,
+	);
+	assert.equal(
+		readChildRecords(child.parent)
+			.filter(isStarted)
+			.find((record) => record.id === worker.id)?.identity?.rootPlacement,
+		preferred,
+	);
+	assert.equal(readIdentity(child.parent)?.rootPlacement, preferred);
+	settings();
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ maxDepth: 2, maxConcurrentDelegates: 1 }));
+	const opens = tmux.opened.length,
+		kills = tmux.killed.length;
+	await assert.rejects(
+		restored.toolCall("delegation_resume", { id: worker.id, task: "cap blocked" }),
+		/maxConcurrentDelegates/,
+	);
+	assert.equal(tmux.opened.length, opens);
+	assert.equal(tmux.killed.length, kills);
+	assert.deepEqual(reopenedRoot.selects, [], "cap refusal precedes unresolved C trust");
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ maxDepth: 2, maxConcurrentDelegates: 2 }));
+	new ProjectTrustStore(agentDir).set(c, false);
+	const resumedW = await restored.toolCall("delegation_resume", { id: worker.id, task: "continue worker" });
+	assert.equal((resumedW.details as { windowSession: string }).windowSession, selected);
+	assert.ok(tmux.opened.at(-1)!.argv.includes("--no-approve"), "resume re-resolves C's changed trust");
+	assert.equal(tmux.opened.at(-1)!.argv[tmux.opened.at(-1)!.argv.lastIndexOf("--tools") + 1], "read,mcp__");
+	assert.equal(readIdentity(worker.id)?.rootPlacement, preferred);
+	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 2, lifetime: 4 });
+	for (const entry of readTree(owner.parent).entries) assert.equal(entry.identity.rootPlacement, preferred);
+	assert.equal(tmux.windows.has("@anchor"), true);
 });
 
 test("C worktree_source and root-absent coordinator reopen inherit A without launch env or transcript", async () => {

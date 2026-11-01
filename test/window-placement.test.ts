@@ -271,7 +271,7 @@ test("a window moved to another session is still matched by status and closed by
 	assert.match(status, /state: running/);
 	assert.ok(status.includes(`window: scout-first (${d.windowId}) in session elsewhere`), status);
 	const result = await d.s.toolCall("delegation_close", { id: d.id });
-	assert.match(result.content[0].text, /killed window scout-first/);
+	assert.match(result.content[0].text, /killed scout-first/);
 	assert.deepEqual(d.s.tmux.killed, [d.windowId]);
 });
 

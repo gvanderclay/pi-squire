@@ -11,7 +11,8 @@
 // holding a comma, makes the file invalid; absent `model` means the parent's),
 // `thinking` (absent or unknown means the parent's level), `tools` (the
 // delegate's complete tool list; absent means the parent's tools, empty means
-// none; a list entry holding a comma makes the file invalid), `auto_exit` (default true),
+// none; a list entry holding a comma makes the file invalid; a `$name` entry
+// stands for that `toolBundles` bundle's tools), `auto_exit` (default true),
 // `prompt_mode` (`append`, the default, or `replace`), `enabled` (false leaves
 // the agent out) and `locked` (true, or a list of `model` and `thinking`). Any
 // other key is ignored, left for whatever else reads the file. The body is the
@@ -21,7 +22,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { toolMatches } from "./tool-ceiling.ts";
+import { type Bundles, expandBundles, toolBundles } from "./tool-bundles.ts";
+import { toolMatches } from "./tool-names.ts";
 
 /** The levels `pi --thinking` accepts. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -106,7 +108,7 @@ const field = (frontmatter: Record<string, unknown>, key: string): string | unde
 type Parsed = { agent?: Agent; invalid?: string; notes: string[] };
 
 /** Parse one agent file; no agent, with why it is invalid when it is, when it cannot be an agent or is disabled. */
-function parseAgent(name: string, path: string, text: string): Parsed {
+function parseAgent(name: string, path: string, text: string, bundles: Bundles): Parsed {
 	let frontmatter: unknown;
 	let body: string;
 	try {
@@ -130,7 +132,7 @@ function parseAgent(name: string, path: string, text: string): Parsed {
 			invalid: `${path} has allow_nested_delegation that is not true, false or a list of agent names`,
 			notes: [],
 		};
-	const launch = toolsField(path, fields);
+	const launch = toolsField(path, fields, bundles);
 	if ("invalid" in launch) return { ...launch, notes: [] };
 	const model = field(fields, "model");
 	const fallback = toolList(fields.fallback);
@@ -272,14 +274,15 @@ function lockedFields(
 }
 
 /**
- * The `tools` field: tool names (`*` patterns allowed) are the whole list;
- * only `-name` entries take those off the parent's tools. A `+name` entry,
- * names and `-name` entries mixed, or a YAML list entry holding a comma make
- * the file invalid.
+ * The `tools` field: tool names (`*` patterns allowed) and `$bundle` entries
+ * are the whole list; only `-name` entries take those off the parent's tools.
+ * A `+name` entry, names and `-name` entries mixed, an unknown bundle, or a
+ * YAML list entry holding a comma make the file invalid.
  */
 function toolsField(
 	path: string,
 	frontmatter: Record<string, unknown>,
+	bundles: Bundles,
 ): { tools?: string[]; toolsExcept: string[] } | { invalid: string } {
 	// `tools:` with no value is YAML null: present and empty, unlike an absent field.
 	const tools = Object.hasOwn(frontmatter, "tools") && frontmatter.tools === null ? [] : toolList(frontmatter.tools);
@@ -298,8 +301,13 @@ function toolsField(
 		return {
 			invalid: `${path} has tools entry ${JSON.stringify(plus)}: +name entries are not accepted; list every tool by name, or only -name entries to take tools off the parent's`,
 		};
+	const minusBundle = tools.find((name) => name.startsWith("-$"));
+	if (minusBundle !== undefined)
+		return {
+			invalid: `${path} has tools entry ${JSON.stringify(minusBundle)}: a bundle cannot be taken off; take its tools off by name`,
+		};
 	const minus = tools.filter((name) => name.startsWith("-"));
-	if (minus.length === 0) return { tools, toolsExcept: [] };
+	if (minus.length === 0) return expandBundles(path, tools, bundles);
 	if (minus.length < tools.length)
 		return {
 			invalid: `${path} has tools that mix tool names with -name entries; list every tool by name, or only -name entries to take tools off the parent's`,
@@ -371,6 +379,7 @@ export function readRoster(agentDir: string, projectDir?: string): Roster {
 	const agents: Agent[] = [];
 	const disabled: Disabled[] = [];
 	const warnings: string[] = [];
+	const bundles = toolBundles(agentDir);
 	const retired = join(agentDir, "squire", "agents");
 	if (existsSync(retired))
 		warnings.push(
@@ -393,7 +402,7 @@ export function readRoster(agentDir: string, projectDir?: string): Roster {
 			disable(name, path, `${path} could not be read (${(err as Error).message})`);
 			continue;
 		}
-		const { agent, invalid, notes } = parseAgent(name, path, text);
+		const { agent, invalid, notes } = parseAgent(name, path, text, bundles);
 		warnings.push(...notes);
 		if (agent !== undefined) agents.push(agent);
 		else if (invalid !== undefined) disable(name, path, invalid);

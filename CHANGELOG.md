@@ -6,6 +6,23 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- Nested launches and resumes no longer cap a child's tools to its direct
+  parent's. A nested child gets the tools its own agent file gives, as at top
+  level, and `session:launch` additions are no longer cut back afterwards; the
+  `allow_nested_delegation` list is the boundary. A read-only child started by
+  a writable parent now keeps tools such as `grep` that the parent lacks. The
+  "Nested tool ceiling" notices are gone. Tests that pinned the ceiling now pin
+  the new behaviour.
+
+### Added
+
+- `toolBundles` in `squire/settings.json` names shared tool lists; an agent's
+  `tools` field uses one as `$name`, for example `tools: [$readonly, pstack_models]`.
+  An unknown bundle, a `-$name` entry or an invalid setting disables the agent
+  that uses it.
+
 ## [0.16.0] - 2026-11-01
 
 ### Breaking

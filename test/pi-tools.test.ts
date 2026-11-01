@@ -103,7 +103,7 @@ async function launchArgs(agent: string, activeTools: readonly string[]): Promis
 
 const MCP = ["list_mcp_resources", "mcp__fake__echo", "mcp__fake__other"];
 
-test("nested launch and resume CLI enforce exact registration after hook-added extensions and wildcard tool flags", async () => {
+test("nested launch and resume keep hook-added extensions and tool flags; the child's list is not cut to the parent's", async () => {
 	mkdirSync(join(agentDir, "squire"), { recursive: true });
 	writeFileSync(join(agentDir, "squire", "settings.json"), '{"maxDepth":3}');
 	writeAgent("coordinator", agentFile({ ...SCOUT, allow_nested_delegation: "[worker]" }));
@@ -147,13 +147,11 @@ test("nested launch and resume CLI enforce exact registration after hook-added e
 		await s.toolCall("delegation_resume", { id, task: "again" });
 		for (const [index, opened] of s.tmux.opened.entries()) {
 			const seen = await inPi(toolArgs(opened.argv));
-			assert.ok(seen.all.includes("mcp__fake__echo"), "inactive parent deferred tool is retained");
-			assert.equal(seen.all.includes("probe_tool"), index === 0, "resume reads current parent tools");
+			assert.ok(seen.all.includes("probe_tool"), `launch ${index} keeps a tool the parent lacks`);
 			assert.deepEqual(
 				seen.all.filter((name) => name.startsWith("extra_")),
-				[],
+				["extra_deferred", "extra_direct", "extra_late", "extra_script"],
 			);
-			assert.ok(!seen.all.includes("mcp__fake__other"));
 		}
 	} finally {
 		await s.shutdown();

@@ -378,6 +378,59 @@ test("a tools line with a +name entry, or with names and -name entries mixed, di
 	assert.match(s.errors[0], /agent "mixed" is disabled because its file is invalid: .*mix tool names with -name/);
 });
 
+test("a $name tools entry stands for that toolBundles bundle's tools, in place and without repeats", async () => {
+	setSettings({ toolBundles: { readonly: ["read", "grep", "find", "ls"], talk: ["session_mail_*"] } });
+	writeAgent("reader", agentFile({ ...SCOUT, tools: "[$readonly, pstack_models, read, $talk]" }));
+	const s = session();
+	await s.start();
+	await s.delegate("reader go");
+	assert.deepEqual(s.errors, []);
+	assert.deepEqual(pair(s.tmux.opened[0].argv, "--tools"), [
+		"--tools",
+		"read,grep,find,ls,pstack_models,session_mail_*,mcp__",
+	]);
+	assert.match(
+		s.tool("delegate").description,
+		/- reader — .*tools: read\/grep\/find\/ls\/pstack_models\/session_mail_\*/,
+	);
+});
+
+test("an unknown bundle, a -$name entry or an invalid toolBundles setting disables only the agents that use bundles", () => {
+	writeAgent("unknown", agentFile({ ...SCOUT, tools: "$nope, read" }));
+	writeAgent("minus", agentFile({ ...SCOUT, tools: "-$readonly" }));
+	writeAgent("scout", agentFile({ ...SCOUT, tools: "read" }));
+	setSettings({ toolBundles: { readonly: ["read"] } });
+	let { agents, disabled } = readRoster(agentDir);
+	assert.deepEqual(
+		agents.map((agent) => agent.name),
+		["scout"],
+	);
+	const reasons = Object.fromEntries(disabled.map((item) => [item.name, item.reason]));
+	assert.match(
+		reasons.unknown,
+		/unknown\.md has tools entry "\$nope", but toolBundles in .*settings\.json defines no bundle "nope"/,
+	);
+	assert.match(reasons.minus, /minus\.md has tools entry "-\$readonly": a bundle cannot be taken off/);
+	writeAgent("reader", agentFile({ ...SCOUT, tools: "$readonly" }));
+	for (const [bundles, why] of [
+		[["read"], /must be an object of bundle names/],
+		[{ readonly: "read" }, /bundle "readonly" must be a list of tool names/],
+		[{ readonly: ["$other"] }, /bundle "readonly" entry "\$other" must be one tool name or pattern/],
+		[{ readonly: ["read,grep"] }, /entry "read,grep" must be one tool name/],
+		[{ "bad name": ["read"] }, /bundle name "bad name" is not letters/],
+	] as const) {
+		setSettings({ toolBundles: bundles });
+		({ agents, disabled } = readRoster(agentDir));
+		assert.deepEqual(
+			agents.map((agent) => agent.name),
+			["scout"],
+		);
+		const reason = disabled.find((item) => item.name === "reader")?.reason ?? "";
+		assert.match(reason, /reader\.md has tools entry "\$readonly", but toolBundles in .* is invalid/);
+		assert.match(reason, why);
+	}
+});
+
 test("a delegateTools entry that starts with + or - refuses every launch with an error naming the file", async () => {
 	for (const entry of ["+codemode", "-bash"]) {
 		setSettings({ delegateTools: ["reach_parent", entry] });

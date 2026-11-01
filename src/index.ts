@@ -78,7 +78,7 @@ import { pickResume } from "./resume-picker.ts";
 import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
-import { availableTools, enforceToolCeiling } from "./tool-ceiling.ts";
+import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { treeNotice } from "./tree-notice.ts";
 import {
@@ -1044,22 +1044,6 @@ export default function delegate(
 		for (const key of ["parent", "root", "depth", "chain"] as const)
 			Object.defineProperty(payload, key, { writable: false, configurable: false });
 		pi.events.emit(LAUNCH, payload);
-		if (identity.current()) {
-			const prefix = parentCommand().length;
-			const args = payload.args.slice(prefix);
-			enforceToolCeiling({
-				args,
-				available: availableTools(pi).filter(
-					(name) => grantsNesting(start.agent, own.depth) || !DELEGATION_TOOLS.has(name),
-				),
-				registered: pi.getAllTools().map((tool) => tool.name),
-				cwd,
-				agentDir: payload.env.PI_CODING_AGENT_DIR,
-				trusted,
-				notices: start.notices,
-			});
-			payload.args.splice(prefix, payload.args.length - prefix, ...args);
-		}
 		const token: Reservation = { root: own.root, id };
 		bindTree(token, { windowName: name, cwd, workspace });
 		dispatchTree(token);

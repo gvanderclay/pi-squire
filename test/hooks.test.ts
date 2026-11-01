@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { parseArgs } from "@earendil-works/pi-coding-agent";
 
 import { writeIdentity } from "../src/identity.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
@@ -58,7 +59,7 @@ test("the README's session:launch example adds its flag and env key to the launc
 	assert.equal(opened.env.PI_DELEGATE_PARENT, s.parent, "the emitter's own env stays");
 });
 
-test("the executable launch example preserves unrelated flags/env under the nested final ceiling", async () => {
+test("the executable launch example adds its flags/env to a nested launch", async () => {
 	mkdirSync(join(agentDir, "squire"), { recursive: true });
 	writeFileSync(join(agentDir, "squire", "settings.json"), '{"maxDepth":2}');
 	writeAgent("coordinator", agentFile({ allow_nested_delegation: "[scout]" }));
@@ -71,7 +72,7 @@ test("the executable launch example preserves unrelated flags/env under the nest
 		assert.ok(opened.argv.includes("--auto"));
 		assert.equal(opened.env.GATE_MODE, "auto");
 		assert.equal(opened.env.GATE_PARENT, s.parent);
-		assert.deepEqual(opened.argv.slice(-2), ["--tools", "read,mcp__"]);
+		assert.deepEqual(parseArgs([...opened.argv]).tools, ["read", "mcp__"]);
 	} finally {
 		await s.shutdown();
 	}

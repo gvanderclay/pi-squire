@@ -12,7 +12,7 @@ import { createEventBus, type EventBus, type ExtensionAPI } from "@earendil-work
 
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
-
+import { readIdentity, writeIdentity } from "../src/identity.ts";
 import register from "../src/index.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { FakeUsage } from "./fake-usage.ts";
@@ -50,7 +50,7 @@ export function resetRoot(): void {
 		rmSync(join(agentDir, name), { recursive: true, force: true });
 	}
 	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
-	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles"])
+	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles", "owners"])
 		rmSync(join(agentDir, "squire", name), { recursive: true, force: true });
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
@@ -226,12 +226,16 @@ export type SessionOptions = {
 	mailProvider?: (pi: ExtensionAPI) => void;
 	/** Exercise the opposite extension load order. */
 	mailProviderLast?: boolean;
+	/** Register an intervening extension before Squire, after mail when mail loads first. */
+	beforeSquire?: (pi: ExtensionAPI) => void;
 	/** Register an intervening extension before a provider loaded last. */
 	beforeMailProvider?: (pi: ExtensionAPI) => void;
+	/** Header provenance used by actual fork/clone restoration tests. */
+	sessionHeader?: { parentSession?: string };
 	/** Whether `ctx.hasUI` is true. */
 	hasUI?: boolean;
 	/** Interactive widget tests opt in; existing JSON-mode tests keep their count footer. */
-	mode?: "tui" | "json" | "rpc";
+	mode?: import("@earendil-works/pi-coding-agent").ExtensionContext["mode"];
 	/** The parent's working directory, `ctx.cwd`; default `root`. */
 	cwd?: string;
 	/** What `ctx.isProjectTrusted()` answers; default false. */
@@ -451,6 +455,7 @@ export function session(options: SessionOptions = {}) {
 		sessionManager: {
 			getSessionId: () => parent,
 			getSessionDir: () => options.sessionDir ?? sessionDir,
+			getHeader: () => ({ type: "session", id: parent, cwd: options.cwd ?? root, ...options.sessionHeader }),
 			getEntries: () =>
 				entries.map((entry, index) => ({
 					type: "custom",
@@ -559,7 +564,18 @@ export function session(options: SessionOptions = {}) {
 	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
 	if (options.fallbackEnv !== undefined) process.env.PI_DELEGATE_FALLBACK = options.fallbackEnv;
 	if (options.agentEnv !== undefined) process.env.PI_DELEGATE_AGENT = options.agentEnv;
+	// A real Squire launch persists exact-session identity before opening Pi.
+	if (options.parentEnv && !readIdentity(parent))
+		writeIdentity(parent, {
+			parent: options.parentEnv,
+			root: process.env.PI_DELEGATE_ROOT || options.parentEnv,
+			depth: Number(process.env.PI_DELEGATE_DEPTH || 1),
+			agent: options.agentEnv ?? "",
+			chain: (process.env.PI_DELEGATE_CHAIN || options.agentEnv || "").split(",").filter(Boolean),
+			autoExit: options.autoExitEnv === "1",
+		});
 	if (!options.mailProviderLast) options.mailProvider?.(pi as never);
+	options.beforeSquire?.(pi as never);
 	register(pi as never, tmux, usage);
 	if (options.mailProviderLast) {
 		options.beforeMailProvider?.(pi as never);

@@ -1,6 +1,8 @@
 // Actual released provider, isolated roots, fake Pi lifecycle only. Uses the
 // tree-process IPC protocol so tests can pause a live owner outside a lock.
 import { join } from "node:path";
+import { readIdentity } from "../../src/identity.ts";
+import type { TmuxWindow } from "../../src/tmux.ts";
 import { mailSession, scan } from "../mail-harness.ts";
 
 process.env.PI_CODING_AGENT_DIR = process.env.SQUIRE_TEST_AGENT_DIR;
@@ -8,34 +10,36 @@ process.env.XDG_STATE_HOME = join(process.env.SQUIRE_TEST_AGENT_DIR!, "mail-stat
 type Instance = ReturnType<typeof mailSession>;
 let instance: Instance | undefined;
 let release: (() => void) | undefined;
-process.on(
-	"message",
-	(input: {
-		key: number;
-		op: string;
-		session?: string;
-		last?: boolean;
-		gated?: boolean;
-		to?: string;
-		reply?: string;
-	}) => {
-		void execute(input).then(
-			(result) => process.send?.({ key: input.key, result }),
-			(error: unknown) => process.send?.({ key: input.key, error: String(error) }),
-		);
-	},
-);
-async function execute(input: {
+type Server = { windows: TmuxWindow[]; companions: string[]; parentSession: string };
+type Command = {
+	key: number;
 	op: string;
 	session?: string;
 	last?: boolean;
 	gated?: boolean;
 	to?: string;
 	reply?: string;
-}): Promise<unknown> {
+	cwd?: string;
+	sessionDir?: string;
+	stateHome?: string;
+	server?: Server;
+	tool?: string;
+	params?: Record<string, unknown>;
+};
+process.on("message", (input: Command) => {
+	void execute(input).then(
+		(result) => process.send?.({ key: input.key, result }),
+		(error: unknown) => process.send?.({ key: input.key, error: String(error) }),
+	);
+});
+async function execute(input: Command): Promise<unknown> {
 	if (input.op === "boot") {
+		for (const key of Object.keys(process.env)) if (key.startsWith("PI_DELEGATE_")) delete process.env[key];
+		if (input.stateHome) process.env.XDG_STATE_HOME = input.stateHome;
 		instance = mailSession({
 			parent: input.session,
+			cwd: input.cwd,
+			sessionDir: input.sessionDir,
 			hasUI: false,
 			mailProviderLast: input.last,
 			beforeSquire: (pi) => {
@@ -50,6 +54,7 @@ async function execute(input: {
 					);
 			},
 		});
+		if (input.server) restoreServer(input.server);
 		await instance.start();
 		return snapshot();
 	}
@@ -63,6 +68,11 @@ async function execute(input: {
 		return snapshot();
 	}
 	if (input.op === "snapshot") return snapshot();
+	if (input.op === "tool") {
+		if (input.server) restoreServer(input.server);
+		const result = await instance.toolCall(input.tool!, input.params);
+		return { ...snapshot(), result };
+	}
 	if (input.op === "fail-injection") {
 		instance.pi.sendMessage = () => {
 			throw new Error("injected display failure");
@@ -89,13 +99,31 @@ async function execute(input: {
 	}
 	throw new Error("unknown operation");
 }
-function snapshot(): unknown {
+function restoreServer(server: Server): void {
+	if (!instance) throw new Error("not booted");
+	instance.tmux.windows.clear();
+	for (const window of server.windows) {
+		instance.tmux.addWindow(window.id, window.name, window.session);
+		if (window.exited) instance.tmux.exit(window.id);
+	}
+	instance.tmux.companions.clear();
+	for (const name of server.companions) instance.tmux.companions.add(name);
+	instance.tmux.parentSession = server.parentSession;
+}
+function snapshot() {
 	return {
 		sent: instance?.sent,
 		prompts: instance?.userMessages,
 		entries: instance?.entries,
 		errors: instance?.errors,
 		shutdowns: instance?.shutdowns(),
+		identity: instance ? readIdentity(instance.parent) : undefined,
+		opened: instance?.tmux.opened,
+		killed: instance?.tmux.killed,
+		windows: instance ? [...instance.tmux.windows].map(([id, window]) => ({ id, ...window })) : [],
+		companions: instance ? [...instance.tmux.companions] : [],
+		selects: instance?.selects,
+		delegateEnv: Object.keys(process.env).filter((key) => key.startsWith("PI_DELEGATE_")),
 	};
 }
 process.send?.({ ready: true });

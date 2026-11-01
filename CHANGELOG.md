@@ -17,6 +17,13 @@ follows [Semantic Versioning](https://semver.org/).
   genuine result publication remains warning-only. Unknown/foreign/obsolete
   target ids refuse before effects. Canceling unfinished children now requires
   direct-parent processing rather than silently releasing the task barrier.
+- Delegations recorded without the required original-root placement identity
+  can no longer be resumed after this update, including pre-nesting and
+  identity-less records even when reopened by their original root. Resume tools,
+  commands and picker refuse before trust, mail, exited-window kill, reservation
+  or spawn effects. No legacy identity synthesis or migration is provided.
+  The subtree-close identity-less resume fixture now asserts this refusal when
+  composed with root placement; its earlier fallback expectation is superseded.
 
 - Require pi-session-mail 0.6.0 or another provider of all four message hooks.
   Upgrade mail and squire together: squire now owns delegate task settlement
@@ -127,6 +134,19 @@ follows [Semantic Versioning](https://semver.org/).
   lifecycle coverage.
 
 ### Fixed
+
+- Preserve the original root project companion preference through nested
+  cross-project launches, same-id coordinator restarts without launch environment,
+  and direct-parent resumes while the root is absent. Save one `rootPlacement`
+  base in existing identity/local/shared tree records, keeping call-time
+  current/companion mode and marked/unmarked alternative selection separate.
+  Malformed or conflicting required placement identity fails closed; nested
+  parent-preference contradictions are refused before target trust resolution.
+  Identity-less resume refusal is declared above under Breaking; no relocation
+  or repair system is added.
+  Existing synthetic identity fixtures and full-identity assertions deliberately
+  include this required field. Add real-provider/Git cross-project coverage and
+  actual coordinator process shutdown/SIGKILL/reopen with root-absent resume.
 
 - Incomplete transcript/child-identity restoration now fails closed for both
   completion and admission, retains known own child obligations and refuses

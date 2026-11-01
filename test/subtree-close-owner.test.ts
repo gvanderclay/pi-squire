@@ -18,6 +18,7 @@ test("ancestor closes worker while its real coordinator owner is dead; same-id r
 	const identity: Identity = {
 		parent: "root",
 		root: "root",
+		rootPlacement: "fixture-delegate-session",
 		depth: 1,
 		agent: "coordinator",
 		chain: ["coordinator"],
@@ -26,6 +27,7 @@ test("ancestor closes worker while its real coordinator owner is dead; same-id r
 	const workerIdentity: Identity = {
 		parent: "c",
 		root: "root",
+		rootPlacement: "fixture-delegate-session",
 		depth: 2,
 		agent: "worker",
 		chain: ["coordinator", "worker"],

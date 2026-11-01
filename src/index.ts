@@ -81,6 +81,7 @@ import { availableTools, enforceToolCeiling } from "./tool-ceiling.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { treeNotice } from "./tree-notice.ts";
 import {
+	assertParentPlacement,
 	bindTree,
 	claimTree,
 	dispatchTree,
@@ -96,7 +97,7 @@ import {
 import { assertResumeAuthority, historicalRecord, visibleRecords } from "./tree-view.ts";
 import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
-import { placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
+import { assertRootPlacement, placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
 import {
 	normalizeWorkspaceValue,
 	prepareDirectory,
@@ -944,7 +945,7 @@ export default function delegate(
 		/** The delegate's tools, from `toolSelection`, read when the launch began; empty means none. */
 		tools: readonly string[];
 		onWindowOpened?: () => void;
-		identity?: Identity;
+		identity: Identity;
 		sessionId?: string;
 	}): Promise<OpenedWindow> {
 		const {
@@ -966,12 +967,11 @@ export default function delegate(
 		results.checkStorage(true);
 		if (input.sessionId && sessionIsOwned(input.sessionId))
 			throw new Error(`delegate session ${input.sessionId} is already open; resume refused before spawn`);
-		const own = input.identity ?? identity.child(start.agent, ctx);
+		const own = input.identity;
+		assertRootPlacement(own.rootPlacement);
 		own.autoExit = start.autoExit;
 		writeIdentity(input.sessionId ?? id, own);
 		const parent = own.parent;
-		const project = placement === "companion" ? placementProject(ctx.cwd) : { companion: "", notices: [] };
-		start.notices.push(...project.notices);
 		const managedContext =
 			workspace.mode === "managed"
 				? `\n\nYour managed worktree is ${workspace.cwd}, branch ${workspace.createdBranch}, based on commit ${workspace.baseCommit}.`
@@ -1047,7 +1047,7 @@ export default function delegate(
 		dispatchTree(token);
 		let opened: OpenedWindow;
 		try {
-			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement, project.companion);
+			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement, own.rootPlacement);
 		} catch (err) {
 			if (err instanceof WindowOpenError && err.certainty === "not-opened") {
 				try {
@@ -1077,6 +1077,7 @@ export default function delegate(
 	}
 
 	async function launchWindow(input: {
+		identity: Identity;
 		id: string;
 		requestId: string;
 		workspace: Workspace;
@@ -1097,6 +1098,7 @@ export default function delegate(
 			id,
 			name,
 			session: ["--session-id", id, "--name", name],
+			identity: input.identity,
 			workspace,
 			trusted,
 			cwd,
@@ -1144,6 +1146,14 @@ export default function delegate(
 		await requireTmuxVersion(tmux);
 		// Read once, before anything is created or mailed; the launch keeps these values.
 		const placement = windowPlacement(getAgentDir());
+		const parentIdentity = identity.current();
+		const project = parentIdentity
+			? { companion: parentIdentity.rootPlacement, notices: [] }
+			: placementProject(ctx.cwd);
+		assertRootPlacement(project.companion);
+		const own = identity.child(start.agent, ctx, project.companion);
+		if (parentIdentity) assertParentPlacement(readTree(own.root), own);
+		if (placement === "companion") start.notices.push(...project.notices);
 		const tools = childTools(start.agent);
 		const sessionDir = ctx.sessionManager.getSessionDir();
 		if (!isAbsolute(sessionDir))
@@ -1205,7 +1215,6 @@ export default function delegate(
 		const run = async (): Promise<Launched> => {
 			admit(start.agent.name, currentRoster(ctx));
 			results.checkStorage(true);
-			const own = identity.child(start.agent, ctx);
 			await reconcileTree(own.root, tmux);
 			admit(start.agent.name, currentRoster(ctx));
 			if (combined?.aborted) throw new Error("the launch was aborted");
@@ -1265,6 +1274,7 @@ export default function delegate(
 				results.recordAttempt(attempt, ctx);
 			}
 			return launchWindow({
+				identity: own,
 				id,
 				requestId,
 				workspace,
@@ -1364,18 +1374,9 @@ export default function delegate(
 			if (record && isStarted(record)) assertResumeAuthority(record, ctx);
 		},
 		reserve: async (record, id, ctx) => {
-			let own = record.identity ?? readIdentity(sessionIdOf(record));
-			if (!own) {
-				const roster = currentRoster(ctx);
-				const disabled = disabledProblem(roster, record.agent);
-				if (disabled) throw new Error(`${disabled}, so delegation ${record.id} is not resumed`);
-				const agent = roster.agents.find((agent) => agent.name === record.agent);
-				if (!agent)
-					throw new Error(
-						`agent ${JSON.stringify(record.agent)} is no longer in the roster, so delegation ${record.id} is not resumed`,
-					);
-				own = identity.child(agent, ctx);
-			}
+			const own = record.identity;
+			if (!own) throw new Error(`delegation ${record.id} has no original root placement identity; resume refused`);
+			assertRootPlacement(own.rootPlacement);
 			await reconcileTree(own.root, tmux);
 			admit(record.agent, currentRoster(ctx));
 			return reserveTree({

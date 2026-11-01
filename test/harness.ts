@@ -14,6 +14,7 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { readIdentity, writeIdentity } from "../src/identity.ts";
 import register from "../src/index.ts";
+import { placementProject } from "../src/window-placement.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { FakeUsage } from "./fake-usage.ts";
 
@@ -531,6 +532,7 @@ export function session(options: SessionOptions = {}) {
 		writeIdentity(parent, {
 			parent: options.parentEnv,
 			root: process.env.PI_DELEGATE_ROOT || options.parentEnv,
+			rootPlacement: placementProject(options.cwd ?? root).companion,
 			depth: Number(process.env.PI_DELEGATE_DEPTH || 1),
 			agent: options.agentEnv ?? "",
 			chain: (process.env.PI_DELEGATE_CHAIN || options.agentEnv || "").split(",").filter(Boolean),

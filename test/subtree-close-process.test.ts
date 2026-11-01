@@ -10,7 +10,15 @@ import { TreeProcess } from "./tree-process-harness.ts";
 const intent = (id: string, parent = "root", root = "root"): TreeIntent => ({
 	id,
 	sessionId: id,
-	identity: { parent, root, depth: parent === root ? 1 : 2, agent: "worker", chain: ["worker"], autoExit: false },
+	identity: {
+		parent,
+		root,
+		rootPlacement: "fixture-delegate-session",
+		depth: parent === root ? 1 : 2,
+		agent: "worker",
+		chain: ["worker"],
+		autoExit: false,
+	},
 });
 const window = (id: string, name: string) => ({ id, name, exited: false, session: "shared-companion" });
 type Closed = CloseResult & { killed: string[] };

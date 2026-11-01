@@ -271,7 +271,7 @@ test("closed coordinator can be resumed by direct parent, with a new lifetime ch
 	assert.equal(readTree(owner.parent).entries.find((entry) => entry.id === resumed.id)?.closing, undefined);
 });
 
-test("a parent-authenticated start without shared history can still resume; unknown ids are not close-all", async () => {
+test("missing original placement identity refuses resume; unknown ids are not close-all", async () => {
 	const tmux = new FakeTmux();
 	mkdirSync(sessionDir, { recursive: true });
 	writeFileSync(
@@ -296,8 +296,12 @@ test("a parent-authenticated start without shared history can still resume; unkn
 		],
 	});
 	await owner.start();
-	const resumed = await owner.toolCall("delegation_resume", { id: "legacy", task: "continue" });
-	assert.equal((resumed.structuredContent as { resumedFrom: string }).resumedFrom, "legacy");
+	await assert.rejects(
+		owner.toolCall("delegation_resume", { id: "legacy", task: "continue" }),
+		/no original root placement identity/,
+	);
+	assert.equal(tmux.opened.length, 0);
+	assert.equal(readIdentity("legacy"), undefined);
 	await assert.rejects(owner.toolCall("delegation_close", { id: "" }), /no delegation/);
 	assert.equal(tmux.killed.length, 0);
 });

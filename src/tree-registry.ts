@@ -5,6 +5,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readChildRecords } from "./child-tasks.ts";
+import type { Identity } from "./identity.ts";
 import { readState, writeState } from "./local-state.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Recorded } from "./result-types.ts";
@@ -15,6 +16,7 @@ import { checkResumeFence, fenced } from "./tree-fence.ts";
 import { processAlive, withTreeLock } from "./tree-lock.ts";
 import { treeCaps } from "./tree-settings.ts";
 import type { Reservation, TreeCounts, TreeEntry, TreeIntent, TreeState } from "./tree-types.ts";
+import { assertRootPlacement } from "./window-placement.ts";
 import { listWindows } from "./windows.ts";
 
 export type { Reservation, TreeCounts, TreeEntry, TreeIntent, TreeState } from "./tree-types.ts";
@@ -82,6 +84,7 @@ function validateCloses(state: TreeState, ids: Set<string>): void {
 
 function validateFields(entry: TreeEntry): void {
 	const own = entry.identity;
+	assertRootPlacement(own.rootPlacement);
 	if (
 		!Number.isSafeInteger(own.depth) ||
 		own.depth < 1 ||
@@ -145,10 +148,22 @@ function entryFor(state: TreeState, token: Reservation): TreeEntry {
 	return entry;
 }
 
+/** Read-only preflight also reused under the admission lock against races. */
+export function assertParentPlacement(state: TreeState, identity: Identity): void {
+	if (
+		state.entries.some(
+			(entry) => entry.sessionId === identity.parent && entry.identity.rootPlacement !== identity.rootPlacement,
+		)
+	)
+		throw new Error("conflicting rootPlacement with recorded direct parent; launch refused");
+}
+
 export function reserveTree(intent: TreeIntent): Reservation {
+	assertRootPlacement(intent.identity.rootPlacement);
 	const root: string = intent.identity.root;
 	return treeTransaction(root, (state) => {
 		reconcileFacts(state);
+		assertParentPlacement(state, intent.identity);
 		const caps = treeCaps();
 		const counts: TreeCounts = treeCounts(state);
 		if (fenced(state, intent.identity.parent)) throw new Error("delegation subtree is closing; launch refused");

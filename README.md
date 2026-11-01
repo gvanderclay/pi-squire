@@ -366,6 +366,17 @@ root Pi session's project chooses it, not the parent tmux session or the
 delegate's working directory. Launching into another repository or creating a
 worktree there still uses the root's companion; resuming a delegate does too.
 
+Nested launches inherit the original root project: A → coordinator in B →
+worker in C all select A's companion. The preferred base name (for example,
+`A-delegate-session`) is saved as `rootPlacement` in the existing durable
+delegation identity and shared tree records, not recomputed from B/C or the
+containing tmux session. Reopening the **same** coordinator session without its
+launch environment restores that preference; it can launch or directly resume
+its workers while the root is absent, provided target trust is already resolved.
+Resume retains the original preference and still requires the direct parent.
+The saved preference is not a numbered selected session or a tmux locator:
+every open still applies the managed/unmarked selection rules below.
+
 In Git, the project name is the **main checkout's folder name**. Roots in
 repository subdirectories and linked worktrees therefore share the main
 checkout's companion. Outside Git, use the root working directory's folder
@@ -416,7 +427,15 @@ To open windows in your own session, as before, set `windowPlacement` in
 ```
 
 The values are `companion` (the default when the setting is absent) and
-`current`. The file is read at each launch. Any other value refuses the launch
+`current`. The mode is read at each launch/resume independently of the saved
+project preference. Even a `current` launch saves the original root project for
+later companion launches; `current` itself still opens in the invoking pane's
+session. Missing or malformed `rootPlacement` in a recorded identity, or conflicting
+saved/launch identities, refuses restore/admission/resume. Identity-less records
+also cannot be resumed after this update, including by their original root
+(see [Resuming a delegation](#resuming-a-delegation)). There is
+no identity migration, directory relocation/rename tracking or companion repair.
+The file is read at each launch. Any other value refuses the launch
 with an error naming the file, before the task is sent or a window opens.
 
 ## Reaching delegates
@@ -1328,6 +1347,13 @@ absolute path opens that file directly.
 
 ## Resuming a delegation
 
+**Breaking resume change:** delegations recorded without the required
+original-root placement identity cannot be resumed after this update. This
+includes pre-nesting and identity-less records, even when their original root
+reopens them. The tool, command and picker refuse before trust resolution, mail,
+killing an exited window, reserving a launch or spawning a new window. There is
+no legacy identity synthesis or migration.
+
 An exited delegate can continue its own session with a follow-up task:
 
 ```text
@@ -1491,7 +1517,9 @@ buffered transcript. Atomic file replacement preserves pending answers over
 reload, restart, squire resume and manual reopening of the same session with
 the same agent directory. Identity and auto-exit state live separately in
 `<agent dir>/squire/identity/<encoded session id>.json`; manual reopening
-restores parent/root/depth/agent/chain and the saved auto-exit setting. The
+restores parent/root/depth/agent/chain, the original `rootPlacement` companion
+preference and the saved auto-exit setting. This internal placement scalar adds
+no launch environment variable or `session:launch` field. The
 launch-time remaining fallback list is not restored by a manual reopen;
 squire resume still supplies its current fallback candidates.
 

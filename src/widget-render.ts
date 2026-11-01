@@ -57,6 +57,26 @@ function entry(row: DelegateRow, width: number, connector: string, theme: Widget
 	return truncateToWidth(`${prefix}${theme.bold(identity)}${description}${suffix}${theme.fg("dim", extra)}`, width);
 }
 
+/** One secondary line; a future factual descendant summary takes priority when both do not fit. */
+export function activityLine(
+	row: DelegateRow,
+	width: number,
+	last: boolean,
+	theme: WidgetTheme,
+	summary = "",
+): string | undefined {
+	const activity: string =
+		row.running && row.activity
+			? `${row.activity.kind === "response" ? "response: " : ""}${widgetText(row.activity.text)}`
+			: "";
+	const facts: string = widgetText(summary);
+	if (!activity && !facts) return;
+	const prefix: string = last ? "   └─ " : "│  └─ ";
+	let text: string = [activity, facts].filter(Boolean).join(" · ");
+	if (facts && visibleWidth(prefix + text) > width) text = facts;
+	return truncateToWidth(theme.fg("dim", prefix + text), width);
+}
+
 /** Pure render seam: future selection/activity/tree rows can compose around stable row keys. */
 export function renderDelegateWidget(
 	rows: readonly DelegateRow[],
@@ -72,6 +92,8 @@ export function renderDelegateWidget(
 	for (const [index, row] of visible.entries()) {
 		const last: boolean = index === visible.length - 1 && hidden === 0;
 		lines.push(entry(row, width, last ? "└─" : "├─", theme, now));
+		const secondary: string | undefined = activityLine(row, width, last, theme);
+		if (secondary) lines.push(secondary);
 	}
 	if (hidden) lines.push(theme.fg("dim", `└─ +${hidden} more direct delegate${hidden === 1 ? "" : "s"}`));
 	return lines.map((line) => truncateToWidth(line, width));

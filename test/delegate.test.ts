@@ -439,8 +439,10 @@ test("the child's env names the parent's root and address, and the session dir w
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();
 	await s.delegate("scout do the thing");
+	const nativeId = s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--session-id") + 1];
 	assert.deepEqual(s.tmux.opened[0].env, {
 		PI_CODING_AGENT_DIR: agentDir,
+		PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: nativeId, launchId: nativeId }),
 		PI_DELEGATE_PARENT: s.parent,
 		PI_DELEGATE_ROOT: s.parent,
 		PI_DELEGATE_DEPTH: "1",

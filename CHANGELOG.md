@@ -30,6 +30,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Factual live direct-delegate activity from actual concurrent/nested tool-call
+  ids and bounded assistant response text, propagated across Pi processes by
+  disposable owner-only snapshots. Launch correlation separates resumed tasks
+  from stable sessions; lifecycle cleanup and known task results/close clear
+  activity independently of task delivery. No thinking, tool results, inferred
+  intent/waits, extra model calls, counters or stale-state timer. Uncorrelated
+  manual reopen has no task-row activity. The common launcher now includes a
+  private stable-session/launch correlation environment value; launch-wire tests
+  deliberately account for this per-launch field.
 - Live, passive direct-delegate overview in interactive Pi: running children
   first, then finished-open children, newest within each group, with stable
   session keys, mutable native titles and actual failure/stopped outcomes.
@@ -39,7 +48,7 @@ follows [Semantic Versioning](https://semver.org/).
 - `delegateWidgetPlacement` (above/below, default above) and
   `delegateWidgetMaxEntries` (default three) in the existing Squire settings.
   Independent observation continues after task completion and is cleaned up on
-  reload; no focus keys, activity or tree accounting semantics change.
+  reload; no focus keys or tree accounting semantics change.
 - Shared per-root tree registry and atomic cross-process launch reservations.
   `maxConcurrentDelegates` and `maxDelegatesPerRoot` default to 16/64 with
   maxDepth > 1, remain unlimited when absent at depth 1, and accept zero for
@@ -107,6 +116,9 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Normalize process-start observation to C locale and UTC for live activity and
+  native-title mirrors, so differing parent/delegate time zones or locales do not
+  hide metadata or falsely delete a live activity snapshot.
 - Keep durable local result/gone delivery, coordinator wakes and close tracking
   working when shared fact publication fails; warn and reconcile those saved
   facts at the next admission. Worker frozen-terminal publication remains

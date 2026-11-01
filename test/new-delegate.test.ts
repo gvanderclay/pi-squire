@@ -229,7 +229,12 @@ function wire(s: ReturnType<typeof session>, index: number) {
 	for (const flag of ["--session-id", "--name", "--append-system-prompt"]) argv[argv.indexOf(flag) + 1] = "<varies>";
 	const record = { ...s.entries[index].data } as Record<string, unknown>;
 	for (const key of ["id", "name", "windowId", "windowName", "requestId"]) delete record[key];
-	return { argv, cwd: window.cwd, env: window.env, record };
+	const env = { ...window.env };
+	const live = JSON.parse(env.PI_SQUIRE_LIVE_LAUNCH);
+	assert.equal(live.sessionId, s.entries[index].data.id);
+	assert.equal(live.launchId, s.entries[index].data.id);
+	env.PI_SQUIRE_LIVE_LAUNCH = "<per-launch correlation>";
+	return { argv, cwd: window.cwd, env, record };
 }
 
 const option = "scout — Looks things up";

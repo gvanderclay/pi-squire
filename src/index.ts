@@ -959,6 +959,8 @@ export default function delegate(
 		];
 		const env: Record<string, string> = {
 			PI_CODING_AGENT_DIR: getAgentDir(),
+			// Private live metadata correlation: resume retains session id, not launch id.
+			PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: input.sessionId ?? id, launchId: id }),
 			[PARENT_ENV]: parent,
 			PI_DELEGATE_ROOT: own.root,
 			PI_DELEGATE_DEPTH: String(own.depth),

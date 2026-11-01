@@ -50,8 +50,9 @@ export function resetRoot(): void {
 		rmSync(join(agentDir, name), { recursive: true, force: true });
 	}
 	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
-	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles"])
+	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles", "live-sessions"])
 		rmSync(join(agentDir, "squire", name), { recursive: true, force: true });
+	delete process.env.PI_SQUIRE_LIVE_LAUNCH;
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
 	delete process.env.PI_DELEGATE_FALLBACK;

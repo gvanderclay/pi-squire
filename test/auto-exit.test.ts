@@ -25,8 +25,8 @@ test("auto-exit is on by default and reaches the child's env and the record", as
 	assert.equal((s.entries[0].data as { autoExit?: boolean }).autoExit, true);
 });
 
-test("an agent's auto-exit: false is its default, and a call beats it either way", async () => {
-	writeAgent("keeper", agentFile({ ...SCOUT, "auto-exit": "false" }));
+test("an agent's auto_exit: false is its default, and a call beats it either way", async () => {
+	writeAgent("keeper", agentFile({ ...SCOUT, auto_exit: "false" }));
 	writeAgent("scout", agentFile(SCOUT));
 	const s = session();
 	await s.start();
@@ -45,13 +45,33 @@ test("an agent's auto-exit: false is its default, and a call beats it either way
 	assert.equal(s.sendCalls[1].body, "do the thing"); // the flag is not part of the task
 });
 
-test("an auto-exit that is not true or false leaves the agent out with a warning", async () => {
-	writeAgent("odd", agentFile({ ...SCOUT, "auto-exit": "sometimes" }));
+test("auto_exit accepts explicit booleans and takes precedence over ignored auto-exit", async () => {
+	writeAgent("on", agentFile({ ...SCOUT, auto_exit: "true", "auto-exit": "false" }));
+	writeAgent("off", agentFile({ ...SCOUT, auto_exit: "false", "auto-exit": "invalid" }));
+	const s = session();
+	await s.start();
+	for (const agent of ["on", "off"]) await s.toolCall("delegate", { agent, task: "go" });
+	assert.deepEqual(
+		s.tmux.opened.map(({ env }) => env.PI_DELEGATE_AUTO_EXIT),
+		["1", "0"],
+	);
+	assert.deepEqual(
+		s.entries.map(({ data }) => data.autoExit),
+		[true, false],
+	);
+	assert.deepEqual(s.warnings, []);
+	assert.deepEqual(s.errors, []);
+	assert.ok(s.tool("delegate").description.includes("auto_exit"));
+	assert.ok(!s.tool("delegate").description.includes("tools, extensions"));
+});
+
+test("an auto_exit that is not true or false leaves the agent out with a warning", async () => {
+	writeAgent("odd", agentFile({ ...SCOUT, auto_exit: "sometimes" }));
 	const s = session();
 	await s.delegate("odd do the thing");
 	assert.deepEqual(s.tmux.opened, []);
 	assert.ok(
-		s.warnings.some((warning) => /auto-exit "sometimes"/.test(warning)),
+		s.warnings.some((warning) => /auto_exit "sometimes"/.test(warning)),
 		s.warnings.join("\n"),
 	);
 });
@@ -92,10 +112,12 @@ test("delegation_status shows the auto-exit setting", async () => {
 // ---------------------------------------------------------------------------
 // The delegate: exiting
 
-test("inside a delegate only /auto-exit is registered, never /delegate or the tools", async () => {
+test("inside a leaf delegate commands remain registered but delegation tools are inactive", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
-	assert.deepEqual(s.commands(), ["auto-exit"]);
-	assert.deepEqual(s.tools(), []);
+	await s.start();
+	assert.ok(s.commands().includes("auto-exit"));
+	assert.ok(!s.pi.getActiveTools().includes("delegate"));
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "go" }), /maxDepth/);
 });
 
 test("with auto-exit on, a normal completion shuts the delegate down after the settle", async () => {
@@ -103,6 +125,18 @@ test("with auto-exit on, a normal completion shuts the delegate down after the s
 	await s.start();
 	await s.run("completed");
 	assert.equal(s.shutdowns(), 1);
+});
+
+test("an owned task cannot auto-exit when no provider handles message:reply", async () => {
+	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
+	await s.start();
+	s.events.emit("message:inbound", {
+		envelope: { id: "owed-task", from: "some-parent", kind: "request", body: "do the task" },
+		handled: false,
+	});
+	await s.run();
+	assert.equal(s.shutdowns(), 0);
+	assert.match(s.errors.join("\n"), /no message:reply provider installed.*answer is retained/);
 });
 
 test("with auto-exit off, a normal completion leaves the delegate running", async () => {
@@ -131,8 +165,8 @@ test("a failed run exits like a completion when auto-exit is on, and only then",
 });
 
 test("the delegate's footer shows auto-exit and follows it off and back on", async () => {
-	const on = { key: "delegate", text: "<child> delegate \u00b7 auto-exit on" };
-	const off = { key: "delegate", text: "<child> delegate \u00b7 auto-exit off" };
+	const on = { key: "delegate-self", text: "<child> delegate \u00b7 auto-exit on" };
+	const off = { key: "delegate-self", text: "<child> delegate \u00b7 auto-exit off" };
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
 	await s.start();
 	assert.deepEqual(s.statuses, [on]);
@@ -175,7 +209,7 @@ for (const end of ["aborted", "stopped"] as const) {
 test("the delegate's footer names its agent when the launch gives one", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1", agentEnv: "reviewer" });
 	await s.start();
-	assert.deepEqual(s.statuses, [{ key: "delegate", text: "<child> reviewer delegate \u00b7 auto-exit on" }]);
+	assert.deepEqual(s.statuses, [{ key: "delegate-self", text: "<child> reviewer delegate \u00b7 auto-exit on" }]);
 });
 
 test("/auto-exit turns it back on for the next normal completion", async () => {
@@ -202,7 +236,10 @@ test("/auto-exit works in a delegate started with auto-exit off", async () => {
 test("the parent's request reaches the delegate as a user prompt; other mail is left to the provider", async () => {
 	const s = session({ parentEnv: "some-parent", autoExitEnv: "1" });
 	await s.start();
-	const task = { envelope: { from: "some-parent", kind: "request", body: "do the thing" }, handled: false };
+	const task = {
+		envelope: { id: "task-id", from: "some-parent", kind: "request", body: "do the thing" },
+		handled: false,
+	};
 	const peer = { envelope: { from: "someone-else", kind: "request", body: "x" }, handled: false };
 	const note = { envelope: { from: "some-parent", kind: "message", body: "y" }, handled: false };
 	for (const payload of [task, peer, note]) s.events.emit("message:inbound", payload);

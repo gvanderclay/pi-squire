@@ -10,9 +10,11 @@ import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-
 import { type TObject, Type } from "typebox";
 
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
+import { type Identity, readIdentity } from "./identity.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
+	assertNoOwner,
 	inFlight,
 	passes,
 	preflight,
@@ -23,6 +25,8 @@ import {
 } from "./resume-checks.ts";
 import type { OpenedWindow, TmuxClient } from "./tmux.ts";
 import { listWindows, type ToolDef, toolResult } from "./tracking.ts";
+import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
+import { recordedIdentity } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -52,6 +56,10 @@ export type ResumeDeps = {
 	/** The window placement for this call; throws on an invalid setting. */
 	placement(): WindowPlacement;
 	roster(ctx: ExtensionContext): Roster;
+	/** Depth/current-parent grant check, before even an exited window is killed. */
+	admit?(agent: string, ctx: ExtensionContext): void;
+	authorize?(id: string, ctx: ExtensionContext): void;
+	reserve(record: StartedRecorded, id: string, ctx: ExtensionContext): Promise<Reservation>;
 	/** The parent's current model and thinking level, which a field the agent locks but does not set keeps. */
 	parentDefaults(ctx: ExtensionContext): { model?: string; thinking: string };
 	chooseModel(
@@ -66,6 +74,7 @@ export type ResumeDeps = {
 		cwd: string,
 		ctx: ExtensionContext,
 		signal: AbortSignal | undefined,
+		agent: string,
 	): Promise<{ workspace: Workspace; trusted: boolean }>;
 	/** Mail the task to a session id; returns the request id. */
 	sendTask(to: string, task: string): string;
@@ -82,6 +91,8 @@ export type ResumeDeps = {
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
 		placement: WindowPlacement;
+		identity: Identity;
+		sessionId: string;
 	}): Promise<OpenedWindow>;
 };
 
@@ -182,7 +193,7 @@ async function planResume(
 	const { record, agent, session, request } = input;
 	const { thinking, chosen } = await settleModel(deps, input, ctx);
 	const autoExit = request.autoExit ?? record.autoExit === true;
-	const prepared = await deps.prepareDirectory(session.cwd, ctx, signal);
+	const prepared = await deps.prepareDirectory(session.cwd, ctx, signal, agent.name);
 	// A managed worktree keeps its launch facts while the session still runs in it.
 	const workspace = record.workspace?.cwd === prepared.workspace.cwd ? record.workspace : prepared.workspace;
 	return {
@@ -210,26 +221,40 @@ async function mailTask(deps: ResumeDeps, windowId: string, sessionId: string, t
 	}
 }
 
+function publishResumeRequest(token: Reservation, requestId: string, windowId: string, ctx: ExtensionContext): void {
+	try {
+		bindTree(token, { requestId });
+	} catch (error) {
+		ctx.ui.notify(
+			`delegate: window ${windowId} opened and task mail was sent, but shared request publication failed: ${String(error)}. Local tracking continues; accounting reconciles before the next admission.`,
+			"warning",
+		);
+	}
+}
+
 async function startResume(
 	deps: ResumeDeps,
 	input: {
-		record: StartedRecorded;
+		record: StartedRecorded & { identity: Identity };
 		session: SessionFile;
 		plan: Plan;
 		task: string;
 		toolCallId: string | undefined;
 		placement: WindowPlacement;
+		reservation: Reservation;
 	},
 	ctx: ExtensionContext,
 ): Promise<Resumed> {
 	const { record, session, plan, task, toolCallId, placement } = input;
 	const { start, chosen, workspace } = plan;
-	const id = randomUUID();
+	const id = input.reservation.id;
 	const sessionId = sessionIdOf(record);
 	const name = recordedName(record);
 	const { id: windowId, session: windowSession } = await deps.open({
 		id,
 		name,
+		identity: record.identity,
+		sessionId,
 		sessionPath: session.path,
 		workspace,
 		trusted: plan.trusted,
@@ -241,9 +266,11 @@ async function startResume(
 		placement,
 	});
 	const requestId = await mailTask(deps, windowId, sessionId, task);
+	publishResumeRequest(input.reservation, requestId, windowId, ctx);
 	deps.results.recordStart(
 		{
 			id,
+			identity: readIdentity(sessionId) ?? record.identity,
 			agent: start.agent.name,
 			...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
 			model: start.model,
@@ -284,6 +311,13 @@ async function startResume(
 	};
 }
 
+/** Resolve once before any exited-window kill; never reconstruct a lost root from cwd. */
+function requiredIdentity(record: StartedRecorded): Identity {
+	const own = recordedIdentity(record);
+	if (!own) throw new Error(`delegation ${record.id} has no original root placement identity; resume refused`);
+	return own;
+}
+
 /** Resume `request.id`: every eligibility check in order, then the launch. */
 async function resume(
 	deps: ResumeDeps,
@@ -293,19 +327,34 @@ async function resume(
 ): Promise<Resumed> {
 	const placement = await preflight(deps); // read once, before the exited window is killed or anything is mailed
 	if (request.task.trim() === "") throw new Error("a task is required");
-	const record = newestStarted(deps.results, request.id);
-	await ensureExited(record, deps.tmux);
-	const { session, agent } = recordCheck(deps, record, ctx);
-	inFlight.add(record.id);
+	deps.authorize?.(request.id, ctx);
+	const found = newestStarted(deps.results, request.id);
+	const record = { ...found, identity: requiredIdentity(found) };
+	deps.admit?.(record.agent, ctx);
+	assertNoOwner(record);
+	deps.results.checkStorage(true);
+	const reservation = await deps.reserve(record, randomUUID(), ctx);
+	let acquired = false;
 	try {
+		await ensureExited(record, deps.tmux);
+		const { session, agent } = recordCheck(deps, record, ctx);
+		inFlight.add(record.id);
+		acquired = true;
 		const plan = await planResume(deps, { record, agent, session, request }, ctx, signal);
 		return await startResume(
 			deps,
-			{ record, session, plan, task: request.task, toolCallId: request.toolCallId, placement },
+			{ record, session, plan, task: request.task, toolCallId: request.toolCallId, placement, reservation },
 			ctx,
 		);
+	} catch (error) {
+		try {
+			failedTree(reservation);
+		} catch (accounting) {
+			ctx.ui.notify(`delegate: reservation remains charged: ${String(accounting)}`, "error");
+		}
+		throw error;
 	} finally {
-		inFlight.delete(record.id);
+		if (acquired) inFlight.delete(record.id);
 	}
 }
 
@@ -342,7 +391,7 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 		name: "delegation_resume",
 		label: "Resume delegation",
 		description:
-			"Continue an exited delegate with a follow-up task: reopen its own session, so it keeps the context it built, in a new window. The follow-up is recorded as a new delegation, and its result arrives as a message on its own, like a delegate's. Use it when the next task needs what the delegate already read or decided; for unrelated work, use delegate. It refuses a delegation that is still running (send it a message instead), one whose window is still open, an older delegation of a chain that was already resumed (it names the newest), and one whose working directory is gone, a removed worktree included. A delegate whose window was killed mid-turn can be resumed.",
+			"Only this session’s direct children may be resumed; viewing a descendant does not grant authority, and fork/clone copies must return to the original parent. Current depth, grants, caps, tools and trust are checked again. Continue an exited delegate with a follow-up task: reopen its own session, so it keeps the context it built, in a new window. The follow-up is recorded as a new delegation, and its result arrives as a message on its own, like a delegate's. Use it when the next task needs what the delegate already read or decided; for unrelated work, use delegate. It refuses a delegation that is still running (send it a message instead), one whose window is still open, an older delegation of a chain that was already resumed (it names the newest), and one whose working directory is gone, a removed worktree included. A delegate whose window was killed mid-turn can be resumed.",
 		parameters: Type.Object({
 			id: Type.String({ description: "The delegation to resume, from a delegate result or delegation_status." }),
 			task: Type.String({

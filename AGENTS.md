@@ -10,17 +10,34 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
 - The extension is the `.ts` files in `src/`. `src/index.ts` is the entry Pi
   loads; `child.ts` is what a delegate itself registers, `agents.ts` reads
   the roster and the `delegateTools` setting, `results.ts` handles replies and works out a delegation's
-  state (`result-message.ts` words the result), `render.ts` draws the
+  state (`result-message.ts` words the result; `result-restore.ts` restores
+  semantic records fail-closed), `render.ts` draws the
   delegate messages, `tracking.ts` holds the status and close
   tools, `poll.ts` the poll (with `windows.ts`), `navigator.ts`
   the `/delegates` panel and `/delegate-open`, `new-delegate.ts` the new-delegate
   form, `resume-picker.ts` the resume picker, `resume.ts` the resume launch (`resume-checks.ts` the checks the picker shares) and the `delegation_resume` tool, `workspace.ts` resolves a
   delegate's directory, its Git checkout at launch and its project trust,
+  `trust-prompt.ts` serializes local/root trust choices, `trust-control.ts`
+  owns root control lifecycle and `trust-wire.ts` carries bounded loopback requests,
   `snapshot.ts` observes that checkout read-only for results and status,
   `git.ts` contains read-only Git identity and path parsing, `worktree.ts`
   plans/creates/rolls back managed worktrees, `worktree-placement.ts` resolves
-  call-time placement settings, and `tmux.ts` talks to tmux.
+  call-time placement settings, `tool-ceiling.ts` enforces the nested callable-tool
+  ceiling after launch customization, and `tmux.ts` talks to tmux.
+- `src/task-replies.ts` owns task takeover/retries, `task-settlement.ts` the
+  request settlement wording, and `task-store.ts` the durable answer outbox.
+- `src/tree-registry.ts` owns shared per-root structural facts and admission;
+  `tree-types.ts` its schema, `tree-settings.ts` call-time caps, and `tree-lock.ts`
+  cross-process arbitration. `tree-close.ts` is the shared explicit subtree-close
+  runner and `tree-fence.ts` composes close/resume admission; `result-close.ts`
+  words missing/canceled work for the direct parent's processing inbox. `session-owner.ts` owns exact-session process
+  arbitration and staged Squire ingress; `tree-view.ts` projects descendants
+  read-only and `tree-notice.ts` bounds fresh-session discovery. Local result
+  processing stays in `child-tasks.ts`.
+  `test/tree-process-harness.ts` and `test/fixtures/tree-coordinator.ts` provide
+  isolated separate-process contention/crash controls for caps and close tests.
 - Tests and their helpers (`harness.ts`, `fake-tmux.ts`) are in `test/`.
+  `test/mail-harness.ts` runs real-provider instances over an isolated mail root.
   Nothing under `test/` is published; `scripts/check-pack.mjs` enforces that.
 
 ## Checks

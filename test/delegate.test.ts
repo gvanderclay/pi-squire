@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { placementProject } from "../src/window-placement.ts";
 
 import {
 	agentDir,
@@ -60,6 +61,8 @@ test("an AGENT.md in the retired squire/agents folder is not an agent, and both 
 	writeLegacyAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();
 	assert.equal(await s.completions(""), null);
+	await s.start();
+	s.warnings.length = 0;
 	await s.delegate("scout do the thing");
 	assert.deepEqual(s.tmux.opened, []);
 	assert.deepEqual(s.sendCalls, []);
@@ -83,10 +86,13 @@ test("an unknown agent is refused with the roster's names", async () => {
 	assert.match(s.errors[0], /scout/);
 });
 
-test("inside a delegate /delegate is not registered", async () => {
+test("inside a leaf delegate /delegate is refused by admission", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session({ parentEnv: "some-parent" });
-	assert.ok(!s.commands().includes("delegate"), s.commands().join(", "));
+	await s.start();
+	await s.delegate("scout go");
+	assert.equal(s.tmux.opened.length, 0);
+	assert.match(s.errors.join("\n"), /maxDepth/);
 });
 
 // ---------------------------------------------------------------------------
@@ -207,9 +213,11 @@ test("a model without credentials is refused, per call and as the agent default"
 
 test("a malformed agent file is warned about at call time and left out of the roster", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
-	writeAgent("broken", "---\ndescription: bad auto-exit\nauto-exit: maybe\n---\n\nDo it.\n");
+	writeAgent("broken", "---\ndescription: bad auto-exit\nauto_exit: maybe\n---\n\nDo it.\n");
 	writeAgent("unreadable", "---\ndescription: [unclosed\nmodel: alpha/fast-model\nthinking: low\n---\n\nDo it.\n");
 	const s = session();
+	await s.start();
+	s.warnings.length = 0;
 	await s.delegate("scout do the thing");
 	assert.equal(s.warnings.length, 2);
 	assert.match(s.warnings[0], /broken/);
@@ -432,9 +440,14 @@ test("the child's env names the parent's root and address, and the session dir w
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
 	const s = session();
 	await s.delegate("scout do the thing");
+	const nativeId = s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--session-id") + 1];
 	assert.deepEqual(s.tmux.opened[0].env, {
 		PI_CODING_AGENT_DIR: agentDir,
+		PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: nativeId, launchId: nativeId }),
 		PI_DELEGATE_PARENT: s.parent,
+		PI_DELEGATE_ROOT: s.parent,
+		PI_DELEGATE_DEPTH: "1",
+		PI_DELEGATE_CHAIN: "scout",
 		PI_DELEGATE_AUTO_EXIT: "1",
 		PI_DELEGATE_AGENT: "scout",
 		PI_UNATTENDED: "1",
@@ -500,6 +513,15 @@ test("the delegation is recorded with no task text, and the parent gets a notice
 			customType: "delegate",
 			data: {
 				id,
+				identity: {
+					parent: s.parent,
+					root: s.parent,
+					rootPlacement: placementProject(root).companion,
+					depth: 1,
+					agent: "scout",
+					chain: ["scout"],
+					autoExit: true,
+				},
 				agent: "scout",
 				model: "alpha/fast-model",
 				thinking: "low",
@@ -690,6 +712,7 @@ test("a resumed parent rebuilds its records and still takes a later reply", asyn
 	await first.delegate("scout find the answer");
 	const saved = structuredClone(first.entries);
 
+	await first.shutdown();
 	const resumed = session({ parent: first.parent, entries: saved });
 	await resumed.start();
 	assert.deepEqual(resumed.statuses.at(-1), { key: "delegate", text: "<parent> 1 delegate running" });

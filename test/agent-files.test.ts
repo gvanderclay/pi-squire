@@ -1,14 +1,13 @@
 // Agent files: one `<name>.md` per agent in `<agent dir>/agents/` and, in a
 // trusted project, `<cwd>/.pi/agents/`. These tests cover where the roster is
 // read from and what each frontmatter field does to the delegate: its model,
-// thinking, tools (with the `delegateTools` setting), extensions, prompt, name
+// thinking, tools (with the `delegateTools` setting), prompt, name
 // on screen and the fields a call cannot override. They drive the extension
 // only through its registration function: a temporary agent directory, a fake
 // Pi session, the fake tmux.
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, beforeEach, type TestContext, test } from "node:test";
 
@@ -143,15 +142,15 @@ test("an invalid agent file is disabled: out of the roster and the tool descript
 	await s.prepare();
 	assert.equal(s.warnings.length, 1, s.warnings.join("\n"));
 	// A file that turns invalid later is warned about before the next run.
-	writeAgent("scout", agentFile({ ...SCOUT, "auto-exit": "maybe" }));
+	writeAgent("scout", agentFile({ ...SCOUT, auto_exit: "maybe" }));
 	await s.prepare();
 	assert.equal(s.warnings.length, 2, s.warnings.join("\n"));
-	assert.match(s.warnings[1], /scout\.md has auto-exit "maybe"/);
+	assert.match(s.warnings[1], /scout\.md has auto_exit "maybe"/);
 	assert.ok(!s.tool("delegate").description.includes("- scout —"), s.tool("delegate").description);
 });
 
 test("calling a disabled agent by name gets an error naming its file and reason, from the tool and the command", async () => {
-	writeAgent("bad", agentFile({ ...SCOUT, extensions: "./nope.ts" }));
+	writeAgent("bad", agentFile({ ...SCOUT, tools: "read, -bash" }));
 	const s = session();
 	await s.start();
 	await s.delegate("bad go");
@@ -160,11 +159,11 @@ test("calling a disabled agent by name gets an error naming its file and reason,
 	assert.equal(s.errors.length, 1);
 	assert.match(
 		s.errors[0],
-		/agent "bad" is disabled because its file is invalid: .*bad\.md has extension .*nope\.ts, which does not exist/,
+		/agent "bad" is disabled because its file is invalid: .*bad\.md has tools that mix tool names with -name entries/,
 	);
 	await assert.rejects(
 		s.toolCall("delegate", { agent: "bad", task: "go" }),
-		/agent "bad" is disabled because its file is invalid: .*nope\.ts, which does not exist/,
+		/agent "bad" is disabled because its file is invalid: .*tools that mix tool names with -name entries/,
 	);
 });
 
@@ -275,7 +274,7 @@ test("a list with no mcp__ entry gets the mcp__ entry that names no tool, so Pi 
 });
 
 test("without a tools field the delegate gets the parent's active tools, less the delegation tools", async () => {
-	writeAgent("none", agentFile({ ...SCOUT, extensions: "" }));
+	writeAgent("none", agentFile(SCOUT));
 	const s = session({
 		activeTools: ["read", "grep", "delegate", "delegation_status", "codemode", "delegation_resume"],
 	});
@@ -397,7 +396,7 @@ test("a delegateTools entry that starts with + or - refuses every launch with an
 	}
 });
 
-test("an agent extension's tools reach the delegate only when tools or delegateTools names them, and the parent never loads it", async () => {
+test("ignored extensions do not change tool selection or load in the parent or child", async () => {
 	setSettings({ delegateTools: ["ext_shared"] });
 	const marker = join(root, "ext-loaded");
 	rmSync(marker, { force: true });
@@ -413,13 +412,14 @@ test("an agent extension's tools reach the delegate only when tools or delegateT
 	assert.deepEqual(s.errors, []);
 	assert.deepEqual(s.warnings, []);
 	const [inherit, less, named, namedext] = s.tmux.opened.map((opened) => pair(opened.argv, "--tools")[1]);
-	// The baseline is the parent's active tools only; the agent's extension adds nothing to it.
+	// Tool names remain selectable even though this extensions field cannot load them.
 	assert.equal(inherit, "read,bash,ext_shared,mcp__");
 	assert.equal(less, "read,ext_shared,mcp__");
 	assert.equal(named, "read,ext_shared,mcp__");
 	assert.equal(namedext, "read,ext_tool,ext_shared,mcp__");
-	// The extension is only passed to the child as -e; nothing loads it in the parent.
-	assert.ok(!existsSync(marker), "the parent loaded the agent's extension");
+	// Neither the parent nor the child loads this agent-specific extension.
+	assert.ok(!existsSync(marker), "the parent loaded the ignored extension");
+	for (const { argv } of s.tmux.opened) assert.ok(!argv.includes("-e"), argv.join(" "));
 });
 
 test("a tools or fallback list entry holding a comma makes the file invalid; a comma-separated line still splits", async () => {
@@ -568,7 +568,7 @@ test("keys pi-squire does not know, and the ones it knows to ignore, are ignored
 });
 
 // ---------------------------------------------------------------------------
-// fallback and extensions
+// fallback and ignored frontmatter
 
 test("fallback parses as a comma-separated string or a YAML list, and is empty when absent", async () => {
 	writeAgent("a", agentFile({ ...SCOUT, fallback: "beta/other-model, alpha/deep-model" }));
@@ -600,44 +600,34 @@ test("a fallback that is not a list is ignored with a warning and the agent stil
 	assert.ok(warnings[1].endsWith(`b.md has fallback {"x":"y"}, not a list of models; ignored`), warnings[1]);
 });
 
-test("extensions become repeated -e flags, ~ and paths relative to the agent file's folder resolved", async () => {
-	writeAgent("tester", agentFile({ ...SCOUT, extensions: "./ext.ts, ~/home-ext.ts" }));
-	const rel = join(rosterDir, "ext.ts");
-	writeFileSync(rel, "");
-	const savedHome = process.env.HOME;
-	process.env.HOME = agentDir; // os.homedir() follows HOME on POSIX
-	const home = join(homedir(), "home-ext.ts");
-	writeFileSync(home, "");
-	try {
-		const { agents } = readRoster(agentDir);
-		assert.deepEqual(agents[0].extensions, [rel, home]);
-		const s = session();
-		await s.start();
-		await s.delegate("tester go");
-		assert.deepEqual(s.errors, []);
-		const { argv } = s.tmux.opened[0];
-		assert.deepEqual(argv.flatMap((arg, i) => (arg === "-e" ? [argv[i + 1]] : [])).slice(-2), [rel, home]);
-		assert.ok(!argv.includes("--no-extensions") && !argv.includes("-ne"), argv.join(" "));
-	} finally {
-		process.env.HOME = savedHome;
-		rmSync(home);
-	}
-});
-
-test("a project agent's relative extension resolves against the project's agents folder", async () => {
+test("old auto-exit and extensions values are silently ignored in global and project agents", async () => {
 	const cwd = project();
-	const path = writeProjectAgent(cwd, "tester", agentFile({ ...SCOUT, extensions: "./ext.ts" }));
-	writeFileSync(join(cwd, ".pi", "agents", "ext.ts"), "");
-	const { agents } = readRoster(agentDir, join(cwd, ".pi", "agents"));
-	assert.equal(agents[0].path, path);
-	assert.deepEqual(agents[0].extensions, [join(cwd, ".pi", "agents", "ext.ts")]);
-});
-
-test("a missing extension path leaves the agent out with a warning", async () => {
-	writeAgent("tester", agentFile({ ...SCOUT, extensions: "./nope.ts" }));
-	const { agents, warnings } = readRoster(agentDir);
-	assert.deepEqual(agents, []);
-	assert.ok(warnings[0].includes("nope.ts, which does not exist; skipped"), warnings[0]);
+	const values = [
+		{ "auto-exit": "false", extensions: "./missing.ts, ~/missing.ts" },
+		{ "auto-exit": "maybe", extensions: "{ path: missing }" },
+		{ "auto-exit": "[false]", extensions: "5" },
+		{ "auto-exit": "true", extensions: "[./missing.ts]" },
+	];
+	for (const [i, fields] of values.entries()) {
+		writeAgent(`global-${i}`, agentFile({ ...SCOUT, ...fields }));
+		writeProjectAgent(cwd, `local-${i}`, agentFile({ ...SCOUT, ...fields }));
+	}
+	const roster = readRoster(agentDir, join(cwd, ".pi", "agents"));
+	assert.equal(roster.agents.length, values.length * 2);
+	assert.deepEqual(roster.disabled, []);
+	assert.deepEqual(roster.warnings, []);
+	assert.ok(roster.agents.every((agent) => agent.autoExit && !Object.hasOwn(agent, "extensions")));
+	const s = session({ cwd, projectTrusted: true });
+	await s.start();
+	for (const { name } of roster.agents) await s.delegate(`${name} go`);
+	assert.equal(s.tmux.opened.length, values.length * 2);
+	assert.deepEqual(s.errors, []);
+	assert.deepEqual(s.warnings, []);
+	for (const { argv, env } of s.tmux.opened) {
+		assert.equal(env.PI_DELEGATE_AUTO_EXIT, "1");
+		assert.ok(!argv.includes("-e") && !argv.includes("--extension"), argv.join(" "));
+		assert.ok(!argv.includes("--no-extensions") && !argv.includes("-ne"), argv.join(" "));
+	}
 });
 
 // ---------------------------------------------------------------------------
@@ -768,7 +758,7 @@ test("a locked field the file leaves unset keeps the parent's value, and a call'
 
 test("display_name names the window and the /delegates row; the agent's name still reaches session:launch", async () => {
 	writeAgent("reviewer", agentFile({ ...SCOUT, display_name: "Code_Reviewer-2" }));
-	const s = session();
+	const s = session({ mode: "tui" });
 	await s.start();
 	const launches: { agent: string; env: Record<string, string> }[] = [];
 	s.events.on("session:launch", (data) => launches.push(data as { agent: string; env: Record<string, string> }));

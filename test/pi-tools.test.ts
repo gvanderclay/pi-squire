@@ -13,7 +13,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentDir, agentFile, cleanup, resetRoot, root, rosterDir, session, writeAgent } from "./harness.ts";
+import {
+	agentDir,
+	agentFile,
+	cleanup,
+	resetRoot,
+	root,
+	rosterDir,
+	session,
+	sessionDir,
+	writeAgent,
+} from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -33,8 +43,10 @@ export default function (pi) {
 	${tool("mcp__fake__other", "deferred")}
 	${tool("list_mcp_resources", "direct")}
 	pi.on("session_start", () => {
-		const report = { all: pi.getAllTools().map((t) => t.name).sort(), active: [...pi.getActiveTools()].sort() };
-		writeFileSync(process.env.PROBE_OUT, JSON.stringify(report));
+		setImmediate(() => {
+			const report = { all: pi.getAllTools().map((t) => t.name).sort(), active: [...pi.getActiveTools()].sort() };
+			writeFileSync(process.env.PROBE_OUT, JSON.stringify(report));
+		});
 	});
 }
 `;
@@ -60,7 +72,7 @@ async function inPi(args: readonly string[]): Promise<{ all: string[]; active: s
 	// A delegate's PI_* variables (and PI_CODING_AGENT_DIR) would change what Pi loads.
 	const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PI_")));
 	const pi = spawn("node_modules/.bin/pi", ["--no-session", "--mode", "rpc", "-ne", "-e", probe, ...args], {
-		env: { ...env, HOME: home, PI_CODING_AGENT_DIR: home, PROBE_OUT: out },
+		env: { ...env, HOME: home, PI_CODING_AGENT_DIR: home, PI_OFFLINE: "1", PROBE_OUT: out },
 		stdio: ["pipe", "ignore", "pipe"],
 	});
 	let stderr = "";
@@ -90,6 +102,63 @@ async function launchArgs(agent: string, activeTools: readonly string[]): Promis
 }
 
 const MCP = ["list_mcp_resources", "mcp__fake__echo", "mcp__fake__other"];
+
+test("nested launch and resume CLI enforce exact registration after hook-added extensions and wildcard tool flags", async () => {
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), '{"maxDepth":3}');
+	writeAgent("coordinator", agentFile({ ...SCOUT, allow_nested_delegation: "[worker]" }));
+	writeAgent("worker", agentFile({ ...SCOUT, tools: "read, probe_tool, mcp__fake__echo" }));
+	const extra = join(root, "launch-extra.ts");
+	writeFileSync(
+		extra,
+		`export default function (pi) {
+		${tool("extra_direct", "direct")}
+		${tool("extra_script", "codemode")}
+		${tool("extra_deferred", "deferred")}
+		pi.on("session_start", () => { ${tool("extra_late", "deferred")} });
+	}`,
+	);
+	const s = session({
+		parentEnv: "isolated-root",
+		agentEnv: "coordinator",
+		activeTools: ["read", "probe_tool", "delegate", "delegation_resume"],
+		registeredTools: ["read", "probe_tool", "mcp__fake__echo"],
+		toolExposures: { mcp__fake__echo: "deferred" },
+	});
+	s.events.on("session:launch", (payload) => {
+		(payload as { args: string[] }).args.push("-e", extra, "--tools", "*");
+	});
+	try {
+		const first = await s.toolCall("delegate", { agent: "worker", task: "probe" });
+		const id = (first.structuredContent as { id: string }).id;
+		mkdirSync(sessionDir, { recursive: true });
+		writeFileSync(
+			join(sessionDir, `probe_${id}.jsonl`),
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id,
+				timestamp: "",
+				cwd: root,
+			})}\n`,
+		);
+		s.tmux.windows.clear();
+		s.pi.setActiveTools(["read", "delegate", "delegation_resume"]);
+		await s.toolCall("delegation_resume", { id, task: "again" });
+		for (const [index, opened] of s.tmux.opened.entries()) {
+			const seen = await inPi(toolArgs(opened.argv));
+			assert.ok(seen.all.includes("mcp__fake__echo"), "inactive parent deferred tool is retained");
+			assert.equal(seen.all.includes("probe_tool"), index === 0, "resume reads current parent tools");
+			assert.deepEqual(
+				seen.all.filter((name) => name.startsWith("extra_")),
+				[],
+			);
+			assert.ok(!seen.all.includes("mcp__fake__other"));
+		}
+	} finally {
+		await s.shutdown();
+	}
+});
 
 test("a tools list without MCP tools leaves every MCP tool unregistered in the child, deferred and codemode too", async () => {
 	writeAgent("plain", agentFile({ ...SCOUT, tools: "read, probe_tool" }));
@@ -123,7 +192,7 @@ test("the parent's tools, with no tools field, reach the child exactly: MCP tool
 	);
 });
 
-test("an agent's own extension tools reach the child only when its tools list or delegateTools names them", async () => {
+test("ignored agent extensions never load in real Pi, even when tools or delegateTools name their tools", async () => {
 	mkdirSync(rosterDir, { recursive: true });
 	writeFileSync(
 		join(rosterDir, "own.ts"),
@@ -136,10 +205,10 @@ test("an agent's own extension tools reach the child only when its tools list or
 	writeAgent("named", agentFile({ ...SCOUT, extensions: "./own.ts", tools: "read, own_tool" }));
 	const own = (seen: { all: string[] }) => seen.all.filter((name) => name.startsWith("own_"));
 	const inherit = await inPi(await launchArgs("inherit", ["read", "bash", "delegate"]));
-	assert.deepEqual(own(inherit), ["own_shared"]);
+	assert.deepEqual(own(inherit), []);
 	const less = await inPi(await launchArgs("less", ["read", "bash", "delegate"]));
-	assert.deepEqual(own(less), ["own_shared"]);
+	assert.deepEqual(own(less), []);
 	const named = await inPi(await launchArgs("named", ["read", "bash", "delegate"]));
-	assert.deepEqual(own(named), ["own_shared", "own_tool"]);
-	assert.ok(named.active.includes("own_tool") && named.all.includes("read"), named.all.join(", "));
+	assert.deepEqual(own(named), []);
+	assert.ok(!named.active.includes("own_tool") && named.all.includes("read"), named.all.join(", "));
 });

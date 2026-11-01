@@ -46,6 +46,9 @@ test("real tmux: exact ownership targeting, unmarked collisions, alternative reu
 	skip: process.env.SQUIRE_REAL_TMUX !== "1",
 }, async () => {
 	await isolated(async ({ dir, run, client }) => {
+		const own = await client.currentWindow?.();
+		assert.match(own?.id ?? "", /^@[0-9]+$/);
+		assert.equal(own?.name, run("display-message", "-p", "-t", process.env.TMUX_PANE!, "-F", "#{window_name}"));
 		const base = "api-delegate-session";
 		for (const name of [base, `${base}-2`, `${base}-old`]) {
 			run("new-session", "-d", "-s", name, "sleep 120");

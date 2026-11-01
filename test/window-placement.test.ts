@@ -235,7 +235,7 @@ test("a resume keeps the placement it read first when the settings change before
 	assert.equal(d.s.sendCalls.length, 2, "the task mail went out after a coherent start");
 });
 
-test("a settings file that is malformed, unreadable or not an object falls back to companion", async () => {
+test("malformed, unreadable or non-object settings refuse launch rather than erase tree caps", async () => {
 	const s = await started();
 	const bad: (() => void)[] = [
 		() => writeFileSync(settingsFile, "{"),
@@ -250,12 +250,10 @@ test("a settings file that is malformed, unreadable or not an object falls back 
 	for (const [index, damage] of bad.entries()) {
 		rmSync(settingsFile, { recursive: true, force: true });
 		damage();
-		await call(s, `fallback-${index}`);
+		await assert.rejects(call(s, `fallback-${index}`), /tree caps/);
 	}
-	assert.deepEqual(
-		s.tmux.opened.map((window) => window.session),
-		bad.map(() => companion),
-	);
+	assert.equal(s.tmux.opened.length, 0);
+	assert.equal(s.sendCalls.length, 0);
 });
 
 test("a failed retry after losing the new-session race is unknown, never not-opened", async () => {
@@ -273,7 +271,7 @@ test("a window moved to another session is still matched by status and closed by
 	assert.match(status, /state: running/);
 	assert.ok(status.includes(`window: scout-first (${d.windowId}) in session elsewhere`), status);
 	const result = await d.s.toolCall("delegation_close", { id: d.id });
-	assert.match(result.content[0].text, /killed window scout-first/);
+	assert.match(result.content[0].text, /killed scout-first/);
 	assert.deepEqual(d.s.tmux.killed, [d.windowId]);
 });
 

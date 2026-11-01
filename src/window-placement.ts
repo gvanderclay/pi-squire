@@ -9,6 +9,14 @@ import { inspectGit } from "./git.ts";
 
 export type WindowPlacement = "companion" | "current";
 
+/** A preferred base, never a selected numbered companion or a tmux locator. */
+export function assertRootPlacement(value: unknown): asserts value is string {
+	if (typeof value !== "string" || !/^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?-delegate-session$/.test(value))
+		throw new Error(
+			"invalid or missing rootPlacement in delegation identity; original root companion preference is required",
+		);
+}
+
 /** The owning root's project, never the delegate's chosen working directory. */
 export function placementProject(cwd: string): { companion: string; notices: string[] } {
 	const git = inspectGit(cwd);
@@ -27,9 +35,8 @@ export function placementProject(cwd: string): { companion: string; notices: str
 
 /**
  * The placement for this call. An unknown value refuses with the file named.
- * A file that cannot be read or parsed is left to the worktree settings,
- * which report it when a launch needs them: it does not stop the launches
- * that never read it, so those keep the default.
+ * This reader defaults malformed/unreadable files to companion; mandatory
+ * tree-cap admission separately refuses those files for every launch/resume.
  */
 export function windowPlacement(agentDir: string): WindowPlacement {
 	const file = join(agentDir, "squire", "settings.json");

@@ -8,12 +8,19 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
+import {
+	CustomEditor,
+	createEventBus,
+	type EventBus,
+	type ExtensionAPI,
+	type TerminalInputHandler,
+} from "@earendil-works/pi-coding-agent";
 
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
-
+import { readIdentity, writeIdentity } from "../src/identity.ts";
 import register from "../src/index.ts";
+import { placementProject } from "../src/window-placement.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { FakeUsage } from "./fake-usage.ts";
 
@@ -29,7 +36,8 @@ export const delegationPromptPath = join(agentDir, "squire", "delegation_prompt.
 /** The session directory the fake `sessionManager` reports. */
 export const sessionDir = join(agentDir, "sessions");
 process.env.PI_CODING_AGENT_DIR = agentDir;
-export const cleanup = () => rmSync(root, { recursive: true, force: true });
+// Retries cover late async writes from a test's sessions landing while the root is removed.
+export const cleanup = () => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 
 /** A frontmatter block and body, the way an agent file is written. */
 export function agentFile(fields: Record<string, string>, body = "Do the task and report back."): string {
@@ -50,10 +58,17 @@ export function resetRoot(): void {
 		rmSync(join(agentDir, name), { recursive: true, force: true });
 	}
 	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
+	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles", "live-sessions", "owners"])
+		rmSync(join(agentDir, "squire", name), { recursive: true, force: true });
+	delete process.env.PI_SQUIRE_LIVE_LAUNCH;
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;
 	delete process.env.PI_DELEGATE_FALLBACK;
 	delete process.env.PI_DELEGATE_AGENT;
+	delete process.env.PI_DELEGATE_ROOT;
+	delete process.env.PI_DELEGATE_DEPTH;
+	delete process.env.PI_DELEGATE_CHAIN;
+	delete process.env.PI_UNATTENDED;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }
 
@@ -214,8 +229,22 @@ let counter = 0;
 export type Entry = { customType: string; data: Record<string, unknown> };
 
 export type SessionOptions = {
+	/** Shared server for multi-instance tree accounting tests. */
+	tmux?: FakeTmux;
+	/** Install a real mail provider instead of the send/scan stubs. */
+	mailProvider?: (pi: ExtensionAPI) => void;
+	/** Exercise the opposite extension load order. */
+	mailProviderLast?: boolean;
+	/** Register an intervening extension before Squire, after mail when mail loads first. */
+	beforeSquire?: (pi: ExtensionAPI) => void;
+	/** Register an intervening extension before a provider loaded last. */
+	beforeMailProvider?: (pi: ExtensionAPI) => void;
+	/** Header provenance used by actual fork/clone restoration tests. */
+	sessionHeader?: { parentSession?: string };
 	/** Whether `ctx.hasUI` is true. */
 	hasUI?: boolean;
+	/** Interactive widget tests opt in; existing JSON-mode tests keep their count footer. */
+	mode?: import("@earendil-works/pi-coding-agent").ExtensionContext["mode"];
 	/** The parent's working directory, `ctx.cwd`; default `root`. */
 	cwd?: string;
 	/** What `ctx.isProjectTrusted()` answers; default false. */
@@ -240,6 +269,8 @@ export type SessionOptions = {
 	ui?: UiAnswers;
 	/** The tool names `pi.getAllTools()` reports once the session has started. */
 	registeredTools?: readonly string[];
+	/** Per-tool exposure metadata, including tools not directly displayed. */
+	toolExposures?: Record<string, "direct" | "model-only" | "codemode" | "deferred" | "hidden">;
 	/** The tool names `pi.getActiveTools()` reports; default `DEFAULT_TOOLS` and the delegation tools. `pi.setActiveTools` changes them. */
 	activeTools?: readonly string[];
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
@@ -303,6 +334,24 @@ export function session(options: SessionOptions = {}) {
 	const userMessages: { text: string; options: unknown }[] = [];
 	const entries: Entry[] = [...(options.entries ?? [])];
 	const statuses: { key: string; text: string | undefined }[] = [];
+	const widgets = new Map<string, { render(width: number): string[]; invalidate(): void }>();
+	const widgetCalls: { key: string; placement: unknown; renderer: string }[] = [];
+	let renderer = "regular";
+	const widgetTheme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+	const inputHandlers = new Set<TerminalInputHandler>();
+	let editorText = "";
+	let autocomplete = false;
+	let customEditor = false;
+	const promptEditor = Object.create(CustomEditor.prototype) as CustomEditor;
+	promptEditor.isShowingAutocomplete = () => autocomplete;
+	let focusedComponent: unknown = promptEditor;
+	const widgetTui = {
+		get mode() {
+			return renderer;
+		},
+		getFocusedComponent: () => focusedComponent,
+		requestRender: () => {},
+	};
 	const notes: string[] = [];
 	const warnings: string[] = [];
 	const errors: string[] = [];
@@ -313,7 +362,7 @@ export function session(options: SessionOptions = {}) {
 	/** Every `pi.registerTool` call, in order, so a test can count re-registrations. */
 	const registrations: string[] = [];
 	/** Every `ctx.ui.select` call, with what it showed. */
-	const selects: { title: string; options: string[] }[] = [];
+	const selects: { title: string; options: string[]; signal?: AbortSignal; timeout?: number }[] = [];
 	/** Every `ctx.ui.editor` call, with what it pre-filled. */
 	const editors: { title: string; prefill: string | undefined }[] = [];
 	/** Every `ctx.ui.input` call, with its title. */
@@ -347,7 +396,7 @@ export function session(options: SessionOptions = {}) {
 			return baseUrl === undefined ? undefined : { baseUrl };
 		},
 	};
-	const tmux = new FakeTmux();
+	const tmux = options.tmux ?? new FakeTmux();
 	const usage = options.usage ?? new FakeUsage();
 	/** The current run's abort signal, as `ctx.signal` reports it; cleared when the run settles. */
 	let signal: AbortSignal | undefined;
@@ -361,7 +410,12 @@ export function session(options: SessionOptions = {}) {
 	let bound = false;
 	const registeredTools = options.registeredTools ?? DEFAULT_TOOLS;
 	let activeTools = [...(options.activeTools ?? [...DEFAULT_TOOLS, ...DELEGATION_TOOLS])];
+	let sessionName: string | undefined;
 	const pi = {
+		getSessionName: () => sessionName,
+		setSessionName: (name: string) => {
+			sessionName = name;
+		},
 		getThinkingLevel: () => options.parentThinking ?? "medium",
 		getActiveTools: () => [...activeTools],
 		setActiveTools: (names: string[]) => {
@@ -370,7 +424,10 @@ export function session(options: SessionOptions = {}) {
 		getAllTools: () => {
 			if (!bound)
 				throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
-			return registeredTools.map((name) => ({ name }));
+			return [...new Set([...registeredTools, ...activeTools, ...Object.keys(tools)])].map((name) => ({
+				name,
+				exposure: options.toolExposures?.[name] ?? "direct",
+			}));
 		},
 		events,
 		on: (name: string, handler: Handler) => (handlers[name] ??= []).push(handler),
@@ -408,6 +465,8 @@ export function session(options: SessionOptions = {}) {
 					},
 		cwd: options.cwd ?? root,
 		hasUI: options.hasUI ?? true,
+		mode: options.mode ?? "json",
+		isIdle: () => signal === undefined,
 		isProjectTrusted: () => options.projectTrusted ?? false,
 		modelRegistry: registry,
 		get signal() {
@@ -419,6 +478,8 @@ export function session(options: SessionOptions = {}) {
 		sessionManager: {
 			getSessionId: () => parent,
 			getSessionDir: () => options.sessionDir ?? sessionDir,
+			getSessionFile: () => undefined,
+			getHeader: () => ({ type: "session", id: parent, cwd: options.cwd ?? root, ...options.sessionHeader }),
 			getEntries: () =>
 				entries.map((entry, index) => ({
 					type: "custom",
@@ -437,10 +498,48 @@ export function session(options: SessionOptions = {}) {
 					key,
 					text: text?.replace(/^(?:👨|👩) /u, "<parent> ").replace(/^(?:👦|👧) /u, "<child> "),
 				}),
-			theme: { fg: (_color: string, text: string) => text },
-			select: async (title: string, options: string[]) => {
-				selects.push({ title, options });
-				return await selectAnswers.shift();
+			theme: widgetTheme,
+			getEditorText: () => editorText,
+			getEditorComponent: () => (customEditor ? () => promptEditor : undefined),
+			onTerminalInput: (handler: TerminalInputHandler) => {
+				inputHandlers.add(handler);
+				return () => {
+					inputHandlers.delete(handler);
+				};
+			},
+			setWidget: (
+				key: string,
+				factory:
+					| ((
+							tui: typeof widgetTui,
+							theme: typeof widgetTheme,
+					  ) => { render(width: number): string[]; invalidate(): void })
+					| undefined,
+				placement?: unknown,
+			) => {
+				widgetCalls.push({ key, placement, renderer });
+				if (!factory) {
+					widgets.delete(key);
+					return;
+				}
+				widgets.set(key, factory(widgetTui, widgetTheme));
+			},
+			select: async (title: string, options: string[], opts?: { signal?: AbortSignal; timeout?: number }) => {
+				selects.push({ title, options, ...opts });
+				const answer = selectAnswers.shift();
+				if (!opts?.signal) return await answer;
+				const signal = opts.signal;
+				if (signal.aborted) return undefined;
+				let dismiss = () => {};
+				const dismissed = new Promise<undefined>((resolve) => {
+					dismiss = () => resolve(undefined);
+					signal.addEventListener("abort", dismiss, { once: true });
+				});
+				try {
+					return await Promise.race([Promise.resolve(answer), dismissed]);
+				} finally {
+					signal.removeEventListener("abort", dismiss);
+				}
 			},
 			editor: async (title: string, prefill?: string) => {
 				editors.push({ title, prefill });
@@ -448,7 +547,15 @@ export function session(options: SessionOptions = {}) {
 			},
 			confirm: async (title: string, message: string) => {
 				confirms.push({ title, message });
-				return confirmAnswers.shift() ?? false;
+				const previous: unknown = focusedComponent;
+				focusedComponent = {};
+				await fire("ui_prompt_start", { kind: "confirm" });
+				try {
+					return confirmAnswers.shift() ?? false;
+				} finally {
+					focusedComponent = previous;
+					await fire("ui_prompt_end", { kind: "confirm" });
+				}
 			},
 			input: async (title: string, placeholder?: string) => {
 				inputs.push({ title, placeholder });
@@ -458,13 +565,22 @@ export function session(options: SessionOptions = {}) {
 				customs.push(factory);
 				customOptions.push(uiOptions);
 				const answer = customAnswers.shift();
-				return isKeyScript(answer) ? runKeyScript(factory, answer) : answer;
+				const previous: unknown = focusedComponent;
+				focusedComponent = {};
+				await fire("ui_prompt_start", { kind: "custom" });
+				try {
+					return isKeyScript(answer) ? await runKeyScript(factory, answer) : answer;
+				} finally {
+					focusedComponent = previous;
+					await fire("ui_prompt_end", { kind: "custom" });
+				}
 			},
 		},
 	};
 	// The provider stub runs synchronously on the same bus, as `mailbox` does.
 	const mode = options.send ?? "envelope";
 	events.on("message:send", (data) => {
+		if (options.mailProvider !== undefined) return;
 		const payload = data as SendPayload;
 		sendCalls.push(payload);
 		if (mode === "envelope") payload.envelope = { id: randomUUID() };
@@ -476,6 +592,7 @@ export function session(options: SessionOptions = {}) {
 	const scan = { answering: true, calls: 0, queue: [] as unknown[] };
 	events.on("message:scan", (data) => {
 		scan.calls++;
+		if (options.mailProvider !== undefined) return;
 		if (!scan.answering) return;
 		for (const inbound of scan.queue.splice(0)) events.emit("message:inbound", inbound);
 		(data as { scanned?: boolean }).scanned = true;
@@ -484,7 +601,24 @@ export function session(options: SessionOptions = {}) {
 	if (options.autoExitEnv !== undefined) process.env.PI_DELEGATE_AUTO_EXIT = options.autoExitEnv;
 	if (options.fallbackEnv !== undefined) process.env.PI_DELEGATE_FALLBACK = options.fallbackEnv;
 	if (options.agentEnv !== undefined) process.env.PI_DELEGATE_AGENT = options.agentEnv;
+	// A real Squire launch persists exact-session identity before opening Pi.
+	if (options.parentEnv && !readIdentity(parent))
+		writeIdentity(parent, {
+			parent: options.parentEnv,
+			root: process.env.PI_DELEGATE_ROOT || options.parentEnv,
+			rootPlacement: placementProject(options.cwd ?? root).companion,
+			depth: Number(process.env.PI_DELEGATE_DEPTH || 1),
+			agent: options.agentEnv ?? "",
+			chain: (process.env.PI_DELEGATE_CHAIN || options.agentEnv || "").split(",").filter(Boolean),
+			autoExit: options.autoExitEnv === "1",
+		});
+	if (!options.mailProviderLast) options.mailProvider?.(pi as never);
+	options.beforeSquire?.(pi as never);
 	register(pi as never, tmux, usage);
+	if (options.mailProviderLast) {
+		options.beforeMailProvider?.(pi as never);
+		options.mailProvider?.(pi as never);
+	}
 	const fire = async (name: string, event: object = {}) => {
 		const results: unknown[] = [];
 		for (const handler of handlers[name] ?? []) results.push(await handler({ type: name, ...event }, ctx));
@@ -492,6 +626,7 @@ export function session(options: SessionOptions = {}) {
 	};
 	/** Dispatch one run preparation, with the structured options Pi would pass, and return the event after handlers. */
 	const prepare = async (options: PrepareOptions = {}): Promise<PrepareEvent> => {
+		await ensureStarted();
 		const { messageType = "user", systemPrompt = "", prompt, message, ...promptOptions } = options;
 		const event: PrepareEvent = {
 			type: "before_agent_start",
@@ -524,7 +659,13 @@ export function session(options: SessionOptions = {}) {
 	};
 	let calls = 0;
 	/** `abort` is the call's own signal, as Pi passes a tool; none by default. */
-	const callTool = (name: string, params: unknown, abort?: AbortSignal): Promise<ToolResult> => {
+	const ensureStarted = async (): Promise<void> => {
+		if (bound) return;
+		bound = true;
+		await fire("session_start", { reason: "startup" });
+	};
+	const callTool = async (name: string, params: unknown, abort?: AbortSignal): Promise<ToolResult> => {
+		if (!bound) await ensureStarted();
 		const tool = tools[name];
 		if (tool === undefined) return Promise.reject(new Error(`no tool named ${name} is registered`));
 		return tool.execute(`call-${++calls}`, params as never, abort, undefined, ctx).then((result) => {
@@ -543,6 +684,32 @@ export function session(options: SessionOptions = {}) {
 		userMessages,
 		entries,
 		statuses,
+		widgets,
+		terminalKey: (key: string) => {
+			for (const handler of inputHandlers) {
+				const result = handler(KEY_DATA[key] ?? key);
+				if (result?.consume) return true;
+			}
+			return false;
+		},
+		terminalListeners: () => inputHandlers.size,
+		editorText: (text: string) => {
+			editorText = text;
+		},
+		editorCompletion: (value: boolean) => {
+			autocomplete = value;
+		},
+		customEditor: (value: boolean) => {
+			customEditor = value;
+		},
+		promptFocus: (component: unknown = promptEditor) => {
+			focusedComponent = component;
+		},
+		widgetCalls,
+		switchRenderer: (mode: string) => {
+			renderer = mode;
+			for (const widget of widgets.values()) widget.invalidate();
+		},
 		notes,
 		warnings,
 		errors,
@@ -586,7 +753,10 @@ export function session(options: SessionOptions = {}) {
 		modelSets,
 		continuations,
 		/** Type `/<name> <args>` for any command the extension registered. */
-		command: (name: string, args = "") => commands[name].handler(args, ctx),
+		command: async (name: string, args = "") => {
+			await ensureStarted();
+			return commands[name].handler(args, ctx);
+		},
 		/** Ask any registered command for argument completions. */
 		completionsFor: async (name: string, prefix: string) =>
 			(await commands[name].getArgumentCompletions?.(prefix)) as { value: string; label: string }[] | null,
@@ -599,10 +769,12 @@ export function session(options: SessionOptions = {}) {
 		 * error, signal not aborted). Then the next event-loop turns run.
 		 */
 		run: async (end: "completed" | "aborted" | "stopped" | "error" = "completed", failure?: RunFailure) => {
+			await ensureStarted();
 			const controller = new AbortController();
 			signal = controller.signal;
 			const { response: _response, ...errorFields } = failure ?? {};
 			await fire("agent_start");
+			await fire("context", { messages: [] });
 			if (end === "error")
 				for (const response of [failure?.response ?? []].flat()) await fire("after_provider_response", response);
 			if (end === "aborted" || end === "stopped") controller.abort();
@@ -631,7 +803,10 @@ export function session(options: SessionOptions = {}) {
 			await new Promise((resolve) => setImmediate(resolve));
 		},
 		/** Type `/delegate <args>`. */
-		delegate: (args: string) => commands.delegate.handler(args, ctx),
+		delegate: async (args: string) => {
+			await ensureStarted();
+			return commands.delegate.handler(args, ctx);
+		},
 		/** Ask for completions after `/delegate `; the real call has no context. */
 		completions: async (prefix: string) =>
 			(await commands.delegate.getArgumentCompletions?.(prefix)) as { value: string; label: string }[] | null,

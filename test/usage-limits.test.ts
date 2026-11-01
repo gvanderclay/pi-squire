@@ -38,6 +38,7 @@ async function fail(errorMessage: string, model = "paid", id = "delegation-1") {
 	delete process.env.PI_DELEGATE_PARENT;
 	await delegate.start();
 	await delegate.run("error", { errorMessage, provider: "opencode-go", model });
+	await delegate.shutdown();
 }
 
 /** A fresh parent session, as another Pi session on the machine. */
@@ -346,7 +347,8 @@ test("past and unparseable header values are ignored", async (t) => {
 
 test("a millisecond duration and a mixed-case header name are read", async (t) => {
 	clock(t);
-	await failWith({ status: 429, headers: { "X-RateLimit-Reset-Requests": "500ms" } });
+	const first = await failWith({ status: 429, headers: { "X-RateLimit-Reset-Requests": "500ms" } });
+	await first.shutdown();
 	assert.equal(marks()[0].clearsAt, START + 500);
 	writeFileSync(FILE, "[]");
 	await failWith({ status: 429, headers: { "Anthropic-RateLimit-Tokens-Reset": "2026-10-03T12:10:00Z" } });
@@ -841,7 +843,7 @@ test("a hit after a clear starts at 5 minutes, not an escalated cooldown", async
 	assert.equal(marks()[0].clearsAt, Date.now() + 5 * 60_000);
 });
 
-test("/delegate-clear completes all and the active scopes, and is absent in a delegate", async (t) => {
+test("/delegate-clear completes all and the active scopes, including in a delegate", async (t) => {
 	clock(t);
 	await fail(GO_LIMIT);
 	const p = parent();
@@ -859,7 +861,7 @@ test("/delegate-clear completes all and the active scopes, and is absent in a de
 	const child = session({ parentEnv: "parent-x", parent: "delegation-9" });
 	await child.start();
 	delete process.env.PI_DELEGATE_PARENT;
-	assert.ok(!child.commands().includes("delegate-clear"));
+	assert.ok(child.commands().includes("delegate-clear"));
 	assert.ok(p.commands().includes("delegate-clear"));
 });
 

@@ -105,7 +105,8 @@ test("no tick does any tmux work once no delegation is running", async (t) => {
 
 test("a restored session with a running delegation polls and detects its gone window", async (t) => {
 	const first = await started(t);
-	const resumed = session({ entries: first.entries });
+	await first.shutdown();
+	const resumed = session({ parent: first.parent, entries: first.entries });
 	resumed.tmux.windows.clear();
 	await resumed.start();
 	await tick(t);
@@ -140,7 +141,8 @@ test("a closed-without-a-result record survives a resume and is not polled again
 	const s = await started(t);
 	s.tmux.windows.clear();
 	await tick(t);
-	const resumed = session({ entries: s.entries });
+	await s.shutdown();
+	const resumed = session({ parent: s.parent, entries: s.entries });
 	await resumed.start();
 	assert.match(await statusText(resumed), /state: closed without a result/);
 	const before = resumed.scan.calls;
@@ -179,7 +181,8 @@ test("a tmux error declares nothing for that tick", async (t) => {
 
 test("a window id that now belongs to a differently named window is closed without a result and never killed", async (t) => {
 	const first = await started(t);
-	const resumed = session({ entries: first.entries });
+	await first.shutdown();
+	const resumed = session({ parent: first.parent, entries: first.entries });
 	resumed.tmux.addWindow(first.tmux.opened[0].windowId, "vim");
 	await resumed.start();
 	await tick(t);
@@ -189,7 +192,7 @@ test("a window id that now belongs to a differently named window is closed witho
 	assert.equal(closedMessages(resumed).length, 1, "told once");
 	const id = (first.entries[0].data as { id: string }).id;
 	const closed = await resumed.toolCall("delegation_close", { id });
-	assert.match(closed.content[0].text, /was already gone/);
+	assert.match(closed.content[0].text, /: absent/);
 	assert.deepEqual(resumed.tmux.killed, []);
 });
 
@@ -227,6 +230,7 @@ test("recorded session directory survives parent resume and gone late reply", as
 	writeFileSync(childSessionPath, "");
 
 	// The parent resumes with another selected session directory.
+	await first.shutdown();
 	const s = session({ parent: first.parent, entries: structuredClone(first.entries), sessionDir: laterDir });
 	s.tmux.addWindow(d.windowId, d.windowName);
 	await s.start();
@@ -279,10 +283,11 @@ test("recorded session directory survives parent resume and gone late reply", as
 
 	// A later resume reads the path the gone record kept, without finding the file again.
 	rmSync(childSessionPath);
+	await s.shutdown();
 	const restored = session({ parent: s.parent, entries: afterGone, sessionDir: laterDir });
 	await restored.start();
 	const restoredAfterGoneItem = await item(restored);
-	assert.equal(restoredAfterGoneItem.state, "gone");
+	assert.equal(restoredAfterGoneItem.state, "done", "durable result outranks an older transcript snapshot");
 	assert.equal(restoredAfterGoneItem.sessionPath, childSessionPath);
 });
 

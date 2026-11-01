@@ -15,15 +15,13 @@
 // in the parent session; its answer is taken over on `message:inbound` and
 // shown as one result message, so the parent hears back on its own.
 //
-// With auto-exit on (the agent's `auto-exit`, default true, overridden per
+// With auto-exit on (the agent's `auto_exit`, default true, overridden per
 // call) the delegate closes its own window after a normal completion; the
 // delegate's side lives in `child.ts`. With it off the window stays open.
 // An agent's `tools`, or the parent's active tools when it has no `tools`
 // field (less any `-name` entries), goes to the child as `--tools` with the
-// `delegateTools` setting added (`--no-tools` when that leaves nothing), and
-// each of its `extensions` as `-e`, both for the child alone. A tool only the
-// agent's own extensions register is passed only when `tools` or
-// `delegateTools` names it. An agent with no `model` or `thinking` runs
+// `delegateTools` setting added (`--no-tools` when that leaves nothing).
+// An agent with no `model` or `thinking` runs
 // on the parent's.
 //
 // The model gets four tools. `delegate` takes agent, task and optional model
@@ -36,9 +34,9 @@
 // envelope paths.
 // `delegation_close` kills the window and records the close. `delegation_resume`
 // (`resume.ts`) reopens an exited delegate's session in a new window with a
-// follow-up task, recorded as a new delegation. Inside a delegate
-// (`PI_DELEGATE_PARENT` set) the extension registers only `child.ts`'s
-// `/auto-exit` and handlers, so a delegate cannot delegate.
+// follow-up task, recorded as a new delegation. A delegate can launch children
+// only below maxDepth and with its current agent allow_nested_delegation grant.
+// Durable identity restores that boundary even on a manual session reopening.
 //
 // The `session:launch` contract this package provides, and the `message:*`
 // hooks it consumes, live in this package's README.
@@ -68,17 +66,41 @@ import {
 	withoutLocked,
 } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
+import { registerCompletionHost } from "./completion-holds.ts";
+import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
-import { createResults, delegateName, type WorkspaceAttempt } from "./results.ts";
+import { createResults, delegateName, isStarted, sessionIdOf, type WorkspaceAttempt } from "./results.ts";
 import { createResume, type ResumeRequest, resumableIds, startedLine } from "./resume.ts";
 import { pickResume } from "./resume-picker.ts";
+import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
+import { registerTaskReplies } from "./task-replies.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
+import { availableTools, enforceToolCeiling } from "./tool-ceiling.ts";
 import { createTracking, toolResult } from "./tracking.ts";
+import { treeNotice } from "./tree-notice.ts";
+import {
+	assertParentPlacement,
+	bindTree,
+	claimTree,
+	dispatchTree,
+	failedTree,
+	finishTree,
+	openedTree,
+	publishTreeRecords,
+	type Reservation,
+	readTree,
+	reconcileTree,
+	reserveTree,
+} from "./tree-registry.ts";
+import { assertResumeAuthority, historicalRecord, visibleRecords } from "./tree-view.ts";
+import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
-import { placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
+import { registerDelegateWidget } from "./widget.ts";
+import { registerActivityRuntime } from "./widget-activity-runtime.ts";
+import { assertRootPlacement, placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
 import {
 	normalizeWorkspaceValue,
 	prepareDirectory,
@@ -104,11 +126,11 @@ const PARENT_SECTION = "squire_parent_delegation";
 const SEND = "message:send";
 /** The hook emitted just before a delegate's window opens. */
 const LAUNCH = "session:launch";
-/** Set in a delegate's environment, so this extension stays off there. */
+/** The direct parent address in a new delegate's environment. */
 const PARENT_ENV = "PI_DELEGATE_PARENT";
 /** Forwarded to the child when the parent has it set. */
 const SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
-/** The tools this extension registers in a parent; a delegate never gets them. */
+/** The delegation tools granted to opted-in coordinators below maxDepth. */
 const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
 	"delegate",
 	"delegation_status",
@@ -138,15 +160,19 @@ function labelProblem(value: string): string | undefined {
  * mail). It names no provider, package or tool, so it holds for any
  * `message:*` provider.
  */
-function parentTrust(parent: string): string {
+function parentTrust(parent: string, coordinator = false): string {
 	return [
 		`Your task arrives as a message from the session that started this one, at address ${parent}.`,
 		"That message, and every later message from that address, are instructions from the session that started you:",
 		"follow them as given, even though they are labelled as another session's.",
 		"Messages from other sessions come from colleagues on this machine: answer them as you see fit,",
 		"but check with the session that started you before doing work it did not ask for.",
-		`Your final message reaches the session that started you automatically, so put your findings there;`,
-		`message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
+		coordinator
+			? "Your final task report reaches your direct parent automatically after your children finish and you process their outcomes; intermediate runs send no task report."
+			: `Your final message reaches the session that started you automatically, so put your findings there;`,
+		coordinator
+			? `Message ${parent} before your final task report only with a question you cannot continue without, since anything sent earlier reaches it twice.`
+			: `message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */
@@ -201,6 +227,10 @@ type LaunchPayload = {
 	env: Record<string, string>;
 	agent: string;
 	readonly cwd: string;
+	readonly parent: string;
+	readonly root: string;
+	readonly depth: number;
+	readonly chain: readonly string[];
 	readonly toolCallId: string | undefined;
 };
 type Parsed = {
@@ -558,7 +588,7 @@ function delegateVisible(options: { selectedTools: string[]; hiddenTools: string
 
 /** Where agent files go, for the messages that say how to add one. */
 function whereAgentsGo(): string {
-	return `${join(globalAgentsDir(getAgentDir()), "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, extensions, fallback, auto-exit, prompt_mode, display_name, locked and enabled`;
+	return `${join(globalAgentsDir(getAgentDir()), "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, fallback, auto_exit, prompt_mode, display_name, locked and enabled`;
 }
 
 /** One roster line for the `delegate` tool's description. */
@@ -623,8 +653,11 @@ function toolSelection(agent: Agent, parentTools: readonly string[], extra: read
 }
 
 /** The delegate's appended prompt: the agent's body, then the lines every delegate gets. */
-function delegatePrompt(agent: Agent, parent: string, managedContext: string): string {
-	const tail = `${FINAL_LINE}\n\n${parentTrust(parent)}${managedContext}`;
+function delegatePrompt(agent: Agent, parent: string, managedContext: string, coordinator: boolean): string {
+	const final = coordinator
+		? "End the task with one self-contained final report to your direct parent after your child tasks finish and you process their outcomes."
+		: FINAL_LINE;
+	const tail = `${final}\n\n${parentTrust(parent, coordinator)}${managedContext}`;
 	if (agent.prompt === "") return tail;
 	// `replace` is how every delegate was built before `prompt_mode`, byte for byte.
 	const body =
@@ -659,21 +692,104 @@ function toolDescription(agents: readonly Agent[]): string {
  * passes only `pi`, so they are not part of the package's documented contract.
  */
 export default function delegate(
-	pi: ExtensionAPI,
+	api: ExtensionAPI,
 	tmux: TmuxClient = createTmuxClient(),
 	usage: UsageClient = createUsageClient(),
 ): void {
-	// A delegate registers only its auto-exit side: `delegate` is one level deep (Q27).
-	const parentId = process.env[PARENT_ENV] ?? "";
-	if (parentId !== "") {
-		registerChild(pi, parentId);
-		return;
-	}
-
-	const results = createResults(pi);
+	const owner = new SessionOwner();
+	const host = api;
+	host.on("session_start", (_event, ctx) => owner.start(ctx));
+	host.events.on("message:inbound", (payload) => owner.receive(payload as import("./results.ts").Inbound));
+	const pi = ownedAPI(host, owner);
+	const externalReady = registerCompletionHost(pi);
+	const identity = createIdentity(pi);
+	const results = createResults(
+		pi,
+		() => identity.current() !== undefined,
+		(ctx, records) =>
+			publishTreeRecords(
+				identity.current()?.root ?? ctx.sessionManager.getSessionId(),
+				ctx.sessionManager.getSessionId(),
+				records,
+			),
+		() => owner.active(),
+		(ctx) =>
+			readTree(identity.current()?.root ?? ctx.sessionManager.getSessionId())
+				.entries.filter((entry) => entry.identity.parent === ctx.sessionManager.getSessionId() && entry.closed)
+				.map((entry) => entry.id),
+	);
+	pi.on("session_start", (_event, ctx) => tracking.restore(ctx));
+	const replies = registerTaskReplies(
+		pi,
+		() => identity.current()?.parent,
+		() => {
+			try {
+				owner.assert();
+				identity.current();
+				return results.completionReady() && externalReady();
+			} catch {
+				return false;
+			}
+		},
+		(ctx) => coordinates(currentRoster(ctx)),
+		(ctx, ids) => {
+			owner.assert();
+			const own = identity.current();
+			if (own) finishTree(own.root, ctx.sessionManager.getSessionId(), ids);
+		},
+	);
+	registerChild(pi, replies, identity.current, () => owner.active());
+	host.on("session_start", () => owner.arm());
+	// Restore answers synchronously before this potentially slow tmux read.
+	pi.on("session_start", async (_event, ctx) => {
+		try {
+			const own = identity.current();
+			if (!own) return;
+			const window = await tmux.currentWindow?.();
+			owner.assert();
+			claimTree(own.root, ctx.sessionManager.getSessionId(), window);
+		} catch (error) {
+			ctx.ui.notify(
+				`delegate: could not publish startup accounting: ${String(error)}; uncertain reservations remain charged.`,
+				"error",
+			);
+		}
+	});
 
 	const proactive = createProactive(usage);
-	const tracking = createTracking(pi, results, tmux, proactive.errors);
+	let viewContext: ExtensionContext | undefined;
+	pi.on("session_start", (_event, ctx) => {
+		viewContext = ctx;
+	});
+	pi.on("session_start", async (_event, ctx) => {
+		if (!identity.current() && results.list().length === 0) {
+			try {
+				await treeNotice(ctx, tmux, () => owner.active());
+			} catch (error) {
+				ctx.ui.notify(`delegate: owner discovery unavailable: ${String(error)}`, "warning");
+			}
+		}
+	});
+	const viewResults = {
+		...results,
+		list: () => (viewContext ? visibleRecords(results, viewContext) : results.list()),
+		find: (id: string) =>
+			viewContext ? visibleRecords(results, viewContext).find((record) => record.id === id) : results.find(id),
+	};
+	const tracking = createTracking(pi, results, tmux, proactive.errors, viewResults, () => owner.assert());
+	const trustControl = registerTrustControl(pi, identity.current);
+	// Factual lifecycle observation survives failed action processing; only creation needs ownership.
+	registerActivityRuntime(host, () => owner.active(), tmux, owner.token);
+	registerDelegateWidget(
+		pi,
+		results,
+		tmux,
+		async (ctx, sessionId) => {
+			owner.assert();
+			await navigator.panel(ctx, sessionId);
+		},
+		() => owner.assert(),
+	);
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
@@ -710,14 +826,37 @@ export default function delegate(
 
 	/**
 	 * The delegate's tools for a launch or resume starting now: the agent's
-	 * named tools, or the parent's active tools at this moment (less any
-	 * `-name` entries), then the `delegateTools` setting. The agent's own
-	 * extensions are never loaded here: a tool only they register is passed
-	 * only when `tools` or `delegateTools` names it. Throws, naming the file,
-	 * on an invalid setting.
+	 * named tools, or the parent's current tools (including indirect callable
+	 * tools when nested, less any `-name` entries), then `delegateTools`.
+	 * Throws, naming the file, on an invalid setting.
 	 */
 	function childTools(agent: Agent): string[] {
-		return toolSelection(agent, agent.tools === undefined ? pi.getActiveTools() : [], delegateTools(getAgentDir()));
+		const selected = toolSelection(
+			agent,
+			agent.tools === undefined ? (identity.current() ? availableTools(pi) : pi.getActiveTools()) : [],
+			delegateTools(getAgentDir()),
+		);
+		if (grantsNesting(agent, (identity.current()?.depth ?? 0) + 1)) selected.push(...DELEGATION_TOOLS);
+		return [...new Set(selected)];
+	}
+
+	function coordinates(roster: Roster): boolean {
+		const own = identity.current();
+		const agent = roster.agents.find((item) => item.name === own?.agent);
+		return own !== undefined && agent !== undefined && grantsNesting(agent, own.depth);
+	}
+
+	function admit(agent: string, roster: Roster): void {
+		owner.assert();
+		results.checkStorage();
+		identity.admit(agent, roster);
+	}
+
+	function exposeDelegation(roster: Roster): void {
+		if (!identity.current()) return;
+		const enabled = coordinates(roster);
+		const base = pi.getActiveTools().filter((name) => !DELEGATION_TOOLS.has(name));
+		pi.setActiveTools(enabled ? [...base, ...DELEGATION_TOOLS] : base);
 	}
 
 	/** Read the roster now, warning about every file left out. */
@@ -744,6 +883,8 @@ export default function delegate(
 
 	/** The request as a start, or an error naming what to fix. */
 	async function validate(request: Parsed, roster: Roster, ctx: ExtensionContext): Promise<Start> {
+		admit(request.agent, roster);
+		results.checkStorage(true);
 		const disabled = disabledProblem(roster, request.agent);
 		if (disabled !== undefined) throw new Error(disabled);
 		if (roster.agents.length === 0) throw new Error(noAgents());
@@ -820,6 +961,8 @@ export default function delegate(
 		/** The delegate's tools, from `toolSelection`, read when the launch began; empty means none. */
 		tools: readonly string[];
 		onWindowOpened?: () => void;
+		identity: Identity;
+		sessionId?: string;
 	}): Promise<OpenedWindow> {
 		const {
 			id,
@@ -836,16 +979,24 @@ export default function delegate(
 			tools,
 			onWindowOpened,
 		} = input;
-		const parent = ctx.sessionManager.getSessionId();
-		const project = placement === "companion" ? placementProject(ctx.cwd) : { companion: "", notices: [] };
-		start.notices.push(...project.notices);
+		admit(start.agent.name, currentRoster(ctx));
+		results.checkStorage(true);
+		if (input.sessionId && sessionIsOwned(input.sessionId))
+			throw new Error(`delegate session ${input.sessionId} is already open; resume refused before spawn`);
+		const own = input.identity;
+		assertRootPlacement(own.rootPlacement);
+		own.autoExit = start.autoExit;
+		writeIdentity(input.sessionId ?? id, own);
+		const parent = own.parent;
 		const managedContext =
 			workspace.mode === "managed"
 				? `\n\nYour managed worktree is ${workspace.cwd}, branch ${workspace.createdBranch}, based on commit ${workspace.baseCommit}.`
 				: workspace.mode === "existing"
 					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
 					: "";
-		const prompt = writePromptFile(delegatePrompt(start.agent, parent, managedContext));
+		const prompt = writePromptFile(
+			delegatePrompt(start.agent, parent, managedContext, grantsNesting(start.agent, own.depth)),
+		);
 		const argv = [
 			...parentCommand(),
 			...session,
@@ -857,14 +1008,18 @@ export default function delegate(
 			start.model,
 			"--thinking",
 			start.thinking,
-			...start.agent.extensions.flatMap((extension) => ["-e", extension]),
 			...toolArgs(tools),
 			"--append-system-prompt",
 			prompt,
 		];
 		const env: Record<string, string> = {
 			PI_CODING_AGENT_DIR: getAgentDir(),
+			// Private live metadata correlation: resume retains session id, not launch id.
+			PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: input.sessionId ?? id, launchId: id }),
 			[PARENT_ENV]: parent,
+			PI_DELEGATE_ROOT: own.root,
+			PI_DELEGATE_DEPTH: String(own.depth),
+			PI_DELEGATE_CHAIN: own.chain.join(","),
 			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
 			[AGENT_ENV]: start.agent.name,
 			// A general signal for any extension: no human watches this session, so don't wait on a dialog.
@@ -875,22 +1030,72 @@ export default function delegate(
 		const envSessionDir = process.env[SESSION_DIR_ENV];
 		if (envSessionDir !== undefined && envSessionDir !== "") env[SESSION_DIR_ENV] = envSessionDir;
 		// Listeners may only append to `args` and add to `env`; there is no veto.
-		const payload: LaunchPayload = { args: argv, env, agent: start.agent.name, cwd, toolCallId };
+		const payload: LaunchPayload = {
+			args: argv,
+			env,
+			agent: start.agent.name,
+			cwd,
+			toolCallId,
+			parent: own.parent,
+			root: own.root,
+			depth: own.depth,
+			chain: Object.freeze([...own.chain]),
+		};
+		for (const key of ["parent", "root", "depth", "chain"] as const)
+			Object.defineProperty(payload, key, { writable: false, configurable: false });
 		pi.events.emit(LAUNCH, payload);
+		if (identity.current()) {
+			const prefix = parentCommand().length;
+			const args = payload.args.slice(prefix);
+			enforceToolCeiling({
+				args,
+				available: availableTools(pi).filter(
+					(name) => grantsNesting(start.agent, own.depth) || !DELEGATION_TOOLS.has(name),
+				),
+				registered: pi.getAllTools().map((tool) => tool.name),
+				cwd,
+				agentDir: payload.env.PI_CODING_AGENT_DIR,
+				trusted,
+				notices: start.notices,
+			});
+			payload.args.splice(prefix, payload.args.length - prefix, ...args);
+		}
+		const token: Reservation = { root: own.root, id };
+		bindTree(token, { windowName: name, cwd, workspace });
+		dispatchTree(token);
 		let opened: OpenedWindow;
 		try {
-			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement, project.companion);
-			onWindowOpened?.();
+			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement, own.rootPlacement);
 		} catch (err) {
+			if (err instanceof WindowOpenError && err.certainty === "not-opened") {
+				try {
+					failedTree(token, true);
+				} catch (accounting) {
+					ctx.ui.notify(
+						`delegate: could not refund the pre-start reservation: ${String(accounting)}; it remains charged.`,
+						"warning",
+					);
+				}
+			}
 			if (err instanceof WindowOpenError) {
 				throw new WindowOpenError(`could not open window ${name} for ${id}: ${err.message}`, err.certainty);
 			}
 			throw new WindowOpenError(`could not open window ${name} for ${id}: ${(err as Error).message}`, "unknown");
 		}
+		onWindowOpened?.();
+		try {
+			openedTree(token, opened.id);
+		} catch (error) {
+			ctx.ui.notify(
+				`delegate: window ${opened.id} opened, but shared accounting publication failed: ${String(error)}. Local tracking continues; the reservation remains charged until accounting reconciles.`,
+				"warning",
+			);
+		}
 		return opened;
 	}
 
 	async function launchWindow(input: {
+		identity: Identity;
 		id: string;
 		requestId: string;
 		workspace: Workspace;
@@ -911,6 +1116,7 @@ export default function delegate(
 			id,
 			name,
 			session: ["--session-id", id, "--name", name],
+			identity: input.identity,
 			workspace,
 			trusted,
 			cwd,
@@ -926,6 +1132,7 @@ export default function delegate(
 		results.recordStart(
 			{
 				id,
+				identity: readIdentity(id),
 				agent: start.agent.name,
 				...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
 				model: start.model,
@@ -951,10 +1158,20 @@ export default function delegate(
 		signal?: AbortSignal,
 		toolCallId?: string,
 	): Promise<Launched> {
+		admit(start.agent.name, currentRoster(ctx));
+		results.checkStorage(true);
 		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 		await requireTmuxVersion(tmux);
 		// Read once, before anything is created or mailed; the launch keeps these values.
 		const placement = windowPlacement(getAgentDir());
+		const parentIdentity = identity.current();
+		const project = parentIdentity
+			? { companion: parentIdentity.rootPlacement, notices: [] }
+			: placementProject(ctx.cwd);
+		assertRootPlacement(project.companion);
+		const own = identity.child(start.agent, ctx, project.companion);
+		if (parentIdentity) assertParentPlacement(readTree(own.root), own);
+		if (placement === "companion") start.notices.push(...project.notices);
 		const tools = childTools(start.agent);
 		const sessionDir = ctx.sessionManager.getSessionDir();
 		if (!isAbsolute(sessionDir))
@@ -987,13 +1204,23 @@ export default function delegate(
 				getAgentDir(),
 			);
 			if (combined?.aborted) throw new Error("the launch was aborted");
-			const trust = await trustPlannedWorktree(plan, ctx, getAgentDir(), combined);
+			const trust = await trustPlannedWorktree(
+				plan,
+				ctx,
+				getAgentDir(),
+				combined,
+				trustControl.forAgent(start.agent.name, ctx),
+			);
 			if (combined?.aborted) throw new Error("the launch was aborted");
 			trusted = trust.trusted;
 			revalidateTrust = trust.revalidate;
 			plan.trusted = trusted;
 		} else {
-			const prepared = await prepareDirectory({ cwd: cwdOption, signal }, ctx, getAgentDir());
+			const prepared = await prepareDirectory(
+				{ cwd: cwdOption, signal, trust: trustControl.forAgent(start.agent.name, ctx) },
+				ctx,
+				getAgentDir(),
+			);
 			directory = prepared.workspace;
 			trusted = prepared.trusted;
 		}
@@ -1002,7 +1229,14 @@ export default function delegate(
 		let attempt: WorkspaceAttempt | undefined;
 		let managed: Extract<Workspace, { mode: "managed" }> | undefined;
 		let windowOpened = false;
+		let reservation: Reservation | undefined;
 		const run = async (): Promise<Launched> => {
+			admit(start.agent.name, currentRoster(ctx));
+			results.checkStorage(true);
+			await reconcileTree(own.root, tmux);
+			admit(start.agent.name, currentRoster(ctx));
+			if (combined?.aborted) throw new Error("the launch was aborted");
+			reservation = reserveTree({ id, sessionId: id, identity: own, sessionDir });
 			if (plan !== undefined) {
 				revalidate(plan);
 				revalidateTrust?.();
@@ -1052,11 +1286,13 @@ export default function delegate(
 			// at session start without a handshake, and a window that fails leaves
 			// mail that is reported rather than cleaned up.
 			const requestId = sendTask(id, start.task);
+			bindTree(reservation, { requestId });
 			if (attempt !== undefined) {
 				attempt = { ...attempt, requestId };
 				results.recordAttempt(attempt, ctx);
 			}
 			return launchWindow({
+				identity: own,
 				id,
 				requestId,
 				workspace,
@@ -1077,6 +1313,13 @@ export default function delegate(
 			try {
 				return await run();
 			} catch (error) {
+				if (reservation) {
+					try {
+						failedTree(reservation);
+					} catch (accounting) {
+						ctx.ui.notify(`delegate: reservation remains charged: ${String(accounting)}`, "error");
+					}
+				}
 				if (attempt !== undefined && managed !== undefined) {
 					const cause = (error as Error).message;
 					if (windowOpened || (error instanceof WindowOpenError && error.certainty === "unknown")) {
@@ -1141,17 +1384,55 @@ export default function delegate(
 		startPolling: tracking.startPolling,
 		placement: () => windowPlacement(getAgentDir()),
 		roster: rosterFor,
+		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
+		authorize: (id, ctx) => {
+			owner.assert();
+			results.checkStorage();
+			const record = results.find(id) ?? viewResults.find(id) ?? historicalRecord(id, ctx);
+			if (record && isStarted(record)) assertResumeAuthority(record, ctx);
+		},
+		reserve: async (record, id, ctx) => {
+			const own = record.identity;
+			if (!own) throw new Error(`delegation ${record.id} has no original root placement identity; resume refused`);
+			assertRootPlacement(own.rootPlacement);
+			await reconcileTree(own.root, tmux);
+			admit(record.agent, currentRoster(ctx));
+			return reserveTree({
+				id,
+				sessionId: sessionIdOf(record),
+				identity: own,
+				resumedFrom: record.id,
+				sessionDir: record.sessionDir,
+			});
+		},
 		parentDefaults,
 		chooseModel: (explicit, agent, models, preferred) =>
 			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
 		thinkingProblem,
-		prepareDirectory: (cwd, ctx, signal) => prepareDirectory({ cwd, signal }, ctx, getAgentDir()),
+		prepareDirectory: (cwd, ctx, signal, agent) =>
+			prepareDirectory({ cwd, signal, trust: trustControl.forAgent(agent, ctx) }, ctx, getAgentDir()),
 		sendTask,
-		open: ({ id, name, sessionPath, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement }) =>
+		open: ({
+			id,
+			name,
+			sessionPath,
+			workspace,
+			trusted,
+			cwd,
+			sessionDir,
+			start,
+			toolCallId,
+			ctx,
+			placement,
+			identity: own,
+			sessionId,
+		}) =>
 			openChild({
 				id,
 				name,
 				session: ["--session", sessionPath],
+				identity: own,
+				sessionId,
 				workspace,
 				trusted,
 				cwd,
@@ -1221,9 +1502,10 @@ export default function delegate(
 		await runDelegate(outcome.parsed, ctx);
 	}
 
-	async function resumeCommand(input: string, ctx: ExtensionContext): Promise<void> {
-		if (input.trim() === "") {
-			await pickResume(ctx, {
+	async function resumePicker(ctx: ExtensionContext, id?: string): Promise<void> {
+		await pickResume(
+			ctx,
+			{
 				unavailable: () => (tmux.insideTmux() ? undefined : NOT_IN_TMUX),
 				eligible: resumer.eligible,
 				resume: async (request, context) => {
@@ -1233,9 +1515,13 @@ export default function delegate(
 						context.ui.notify(`delegate: ${(err as Error).message}`, "error");
 					}
 				},
-			});
-			return;
-		}
+			},
+			id,
+		);
+	}
+
+	async function resumeCommand(input: string, ctx: ExtensionContext): Promise<void> {
+		if (input.trim() === "") return resumePicker(ctx);
 		const outcome = parseResume(input);
 		if ("error" in outcome) {
 			ctx.ui.notify(`delegate: ${outcome.error}`, "error");
@@ -1384,23 +1670,28 @@ export default function delegate(
 	pi.on("session_start", (_event, ctx) => {
 		registry = ctx.modelRegistry;
 		latest = ctx;
-		tracking.restore(ctx);
 		// The roster is read at call time; the description is rebuilt here and before each run.
 		const roster = currentRoster(ctx);
 		announced.clear();
 		announce(roster, ctx);
 		registerDelegate(toolDescription(roster.agents));
+		exposeDelegation(roster);
 	});
 
 	// One roster/prompt snapshot prepares this run: refresh the description only when
 	// it changed, and replace only this extension's prompt section from the same snapshot.
 	pi.on("before_agent_start", (event, ctx) => {
 		latest = ctx;
+		const own = identity.current();
 		const roster = currentRoster(ctx);
+		if (own)
+			event.systemPromptOptions.sections.squire_delegate_task = `You are a delegate. ${parentTrust(own.parent, coordinates(roster))}`;
+		else delete event.systemPromptOptions.sections.squire_delegate_task;
+		exposeDelegation(roster);
 		announce(roster, ctx);
 		const description = toolDescription(roster.agents);
 		const prompt = readParentPrompt();
-		const visible = delegateVisible(event.systemPromptOptions);
+		const visible = delegateVisible(event.systemPromptOptions) && pi.getActiveTools().includes("delegate");
 		// Report a read failure even when guidance cannot be used, so it does not go unseen.
 		if (prompt.error !== undefined) ctx.ui.notify(`delegate: ${prompt.error}`, "warning");
 		if (visible && description !== registeredDescription) registerDelegate(description);
@@ -1414,6 +1705,7 @@ export default function delegate(
 	pi.on("session_shutdown", () => {
 		tracking.stop();
 	});
+	host.on("session_shutdown", () => owner.stop());
 
 	/** Agent names, flags, model ids and thinking levels, at the cursor's token. */
 	function completions(prefix: string): { value: string; label: string }[] | null {
@@ -1457,12 +1749,20 @@ export default function delegate(
 		handler: resumeCommand,
 	});
 
-	const navigator = createNavigator(results, tmux, tracking, (ctx: ExtensionContext) =>
-		startNewDelegate(ctx, newDelegateDeps),
+	const navigator = createNavigator(
+		viewResults,
+		tmux,
+		tracking,
+		(ctx: ExtensionContext) => startNewDelegate(ctx, newDelegateDeps),
+		{
+			assertActive: () => owner.assert(),
+			close: (id, ctx) => tracking.close(id, ctx),
+			resume: (id, ctx) => resumePicker(ctx, id),
+		},
 	);
 
 	pi.registerCommand("delegates", {
-		description: "Open the panel of delegates whose window is open: switch, peek, close",
+		description: "Open the shared delegate dashboard: details, switch, peek, close, resume",
 		handler: async (_args: string, ctx: ExtensionContext) => navigator.panel(ctx),
 	});
 

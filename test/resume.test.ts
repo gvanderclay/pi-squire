@@ -62,11 +62,21 @@ function writeSession(file: string, id: string, cwd: string, model?: string): vo
  * window exit: `gone` removes the window, `exited` leaves it with a dead pane.
  */
 async function exitedDelegate(
-	options: { window?: "gone" | "exited" | "open"; model?: string; fallback?: string; cwd?: string } = {},
+	options: {
+		window?: "gone" | "exited" | "open";
+		model?: string;
+		fallback?: string;
+		cwd?: string;
+		autoExit?: boolean;
+	} = {},
 ): Promise<Exited> {
 	writeAgent(
 		"scout",
-		agentFile({ ...AGENT, ...(options.fallback === undefined ? {} : { fallback: options.fallback }) }),
+		agentFile({
+			...AGENT,
+			...(options.fallback === undefined ? {} : { fallback: options.fallback }),
+			...(options.autoExit === undefined ? {} : { auto_exit: String(options.autoExit) }),
+		}),
 	);
 	const s = session();
 	await s.start();
@@ -82,6 +92,20 @@ async function exitedDelegate(
 
 const resume = (s: Session, params: Record<string, unknown>): Promise<ToolResult> =>
 	s.toolCall("delegation_resume", params);
+
+async function within<T>(promise: Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error("resume test operation did not settle")), 2000);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
 
 const resumeError = async (s: Session, params: Record<string, unknown>): Promise<string> => {
 	try {
@@ -136,12 +160,64 @@ test("the resume opens the session file with --session, never --session-id or --
 	const prompt = argv[argv.indexOf("--append-system-prompt") + 1];
 	assert.ok(prompt.endsWith("prompt.md"));
 	assert.equal(launches.length, 1, "the resume emits session:launch");
-	assert.deepEqual(Object.keys(launches[0]).sort(), ["agent", "args", "cwd", "env", "toolCallId"]);
+	assert.deepEqual(Object.keys(launches[0]).sort(), [
+		"agent",
+		"args",
+		"chain",
+		"cwd",
+		"depth",
+		"env",
+		"parent",
+		"root",
+		"toolCallId",
+	]);
 	assert.match(launches[0].toolCallId ?? "", /^call-\d+$/, "the resume passes its delegation_resume call id");
 	assert.equal(launches[0].agent, "scout");
 	assert.equal(launches[0].cwd, realpathSync(d.cwd));
 	assert.match(result.content[0].text, new RegExp(`Resumed delegation ${d.id} as `));
 	assert.match(d.s.notes.join("\n"), /resumed .* as /);
+});
+
+test("resume ignores old fields and keeps recorded auto-exit unless the call overrides it", async () => {
+	for (const autoExit of [undefined, true, false]) {
+		const d = await exitedDelegate({ autoExit });
+		const expected = autoExit ?? true;
+		writeAgent(
+			"scout",
+			agentFile({
+				...AGENT,
+				auto_exit: String(!expected),
+				"auto-exit": "invalid",
+				extensions: "./missing.ts, ~/missing.ts",
+			}),
+		);
+		const result = await resume(d.s, { id: d.id, task: "again" });
+		assert.equal((result.structuredContent as { autoExit: boolean }).autoExit, expected);
+		const window = d.s.tmux.opened[1];
+		assert.equal(window.env.PI_DELEGATE_AUTO_EXIT, expected ? "1" : "0");
+		assert.ok(!window.argv.includes("-e") && !window.argv.includes("--extension"), window.argv.join(" "));
+		assert.deepEqual(d.s.warnings, []);
+		d.s.tmux.windows.delete(window.windowId);
+		// The next resume continues the same Pi session and can override either boolean.
+		const nextId = (result.structuredContent as { id: string }).id;
+		const overridden = await resume(d.s, { id: nextId, task: "once more", auto_exit: !expected });
+		assert.equal((overridden.structuredContent as { autoExit: boolean }).autoExit, !expected);
+	}
+});
+
+test("resume still lets session:launch add extension arguments and environment", async () => {
+	const d = await exitedDelegate();
+	writeAgent("scout", agentFile({ ...AGENT, extensions: "{ ignored: true }" }));
+	d.s.events.on("session:launch", (payload) => {
+		const launch = payload as { args: string[]; env: Record<string, string> };
+		assert.ok(!launch.args.includes("-e"), "no frontmatter extension arguments");
+		launch.args.push("-e", "/custom/resume.ts");
+		launch.env.CUSTOM_LAUNCH = "resume";
+	});
+	await resume(d.s, { id: d.id, task: "again" });
+	assert.deepEqual(d.s.tmux.opened[1].argv.slice(-2), ["-e", "/custom/resume.ts"]);
+	assert.equal(d.s.tmux.opened[1].env.CUSTOM_LAUNCH, "resume");
+	assert.deepEqual(d.s.warnings, []);
 });
 
 test("the new record has its own id, the old session id, and resumedFrom; mail goes to the session", async () => {
@@ -220,6 +296,7 @@ test("a late reply to the old request settles the old record only, also after a 
 	const d = await exitedDelegate();
 	await resume(d.s, { id: d.id, task: "again" });
 	const [, record] = starts(d.s) as { id: string; requestId: string; windowId: string; windowName: string }[];
+	await d.s.shutdown();
 	const restored = session({ parent: d.s.parent, entries: structuredClone(d.s.entries) as Entry[] });
 	restored.tmux.addWindow(record.windowId, record.windowName);
 	await restored.start();
@@ -270,7 +347,7 @@ test("refused: an unknown id and a workspace attempt", async () => {
 		plan: {},
 		attempt: { phase: "rolled-back", resources: { kind: "none" }, cause: "x" },
 	};
-	const s = session({ entries: [{ customType: "delegate", data: attempt }] });
+	const s = session({ parent: "p", entries: [{ customType: "delegate", data: attempt }] });
 	await s.start();
 	assert.match(await resumeError(s, { id: "attempt-1", task: "x" }), /is a workspace attempt/);
 	assert.equal(s.tmux.opened.length, 0);
@@ -318,10 +395,10 @@ test("refused: an agent no longer in the roster", async () => {
 
 test("refused: an agent whose file turned invalid, naming the file and reason", async () => {
 	const d = await exitedDelegate();
-	writeAgent("scout", agentFile({ ...AGENT, "auto-exit": "maybe" }));
+	writeAgent("scout", agentFile({ ...AGENT, auto_exit: "maybe" }));
 	assert.match(
 		await resumeError(d.s, { id: d.id, task: "x" }),
-		/agent "scout" is disabled because its file is invalid: .*scout\.md has auto-exit "maybe", not true or false/,
+		/agent "scout" is disabled because its file is invalid: .*scout\.md has auto_exit "maybe", not true or false/,
 	);
 	assert.equal(d.s.tmux.opened.length, 1);
 });
@@ -371,6 +448,41 @@ test("refused: a concurrent resume of the same delegation, and the guard is rele
 	failing.s.tmux.failOpen = undefined;
 	await resume(failing.s, { id: failing.id, task: "x again" });
 	assert.equal(starts(failing.s).length, 2);
+});
+
+test("a refused second resume cannot release the first call's guard for a third before dispatch", async () => {
+	const d = await exitedDelegate();
+	const protectedDir = join(root, "three-way-resume");
+	mkdirSync(join(protectedDir, ".pi"), { recursive: true });
+	writeFileSync(join(protectedDir, ".pi", "settings.json"), "{}");
+	writeSession(d.file, d.id, protectedDir);
+	let release: (choice: string | undefined) => void = () => {};
+	let entered: () => void = () => {};
+	const gate = new Promise<string | undefined>((resolve) => {
+		release = resolve;
+	});
+	const prompt = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	let prompts = 0;
+	d.s.context.ui.select = async () => {
+		prompts++;
+		entered();
+		return gate;
+	};
+	const first = resume(d.s, { id: d.id, task: "one" });
+	try {
+		await within(prompt);
+		assert.match(await within(resumeError(d.s, { id: d.id, task: "two" })), /already being resumed/);
+		assert.match(await within(resumeError(d.s, { id: d.id, task: "three" })), /already being resumed/);
+		assert.equal(prompts, 1);
+		assert.equal(d.s.tmux.opened.length, 1, "only the original launch exists while the first resume is parked");
+	} finally {
+		release("Do not trust (this session only)");
+		await first;
+	}
+	assert.equal(starts(d.s).length, 2);
+	assert.equal(d.s.tmux.opened.length, 2);
 });
 
 test("an exited window of the delegate is killed first; a window that only shares its name is ignored", async () => {

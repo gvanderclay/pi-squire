@@ -21,6 +21,26 @@ test("a tmux call that outlasts the timeout rejects naming the subcommand", asyn
 	}
 });
 
+test("startup locator reads this pane's exact window id and name", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "squire-own-window-"));
+	const saved = { path: process.env.PATH, pane: process.env.TMUX_PANE };
+	try {
+		writeFileSync(join(dir, "tmux"), "#!/bin/sh\nprintf '@9\\tmy\\twindow\\n'\n");
+		chmodSync(join(dir, "tmux"), 0o755);
+		process.env.PATH = `${dir}:${saved.path}`;
+		process.env.TMUX_PANE = "%fixture";
+		assert.deepEqual(await createTmuxClient().currentWindow?.(), { id: "@9", name: "my\twindow" });
+		writeFileSync(join(dir, "tmux"), "#!/bin/sh\nprintf 'invalid\\n'\n");
+		assert.equal(await createTmuxClient().currentWindow?.(), undefined);
+	} finally {
+		if (saved.path === undefined) delete process.env.PATH;
+		else process.env.PATH = saved.path;
+		if (saved.pane === undefined) delete process.env.TMUX_PANE;
+		else process.env.TMUX_PANE = saved.pane;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("an invalid whole tmux window-id response is unknown", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "squire-tmux-id-"));
 	const oldPath = process.env.PATH;

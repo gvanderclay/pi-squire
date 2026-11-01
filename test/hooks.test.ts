@@ -7,12 +7,13 @@
 // when a fence has no runner.
 
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 
-import { agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
+import { writeIdentity } from "../src/identity.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -52,7 +53,43 @@ test("the README's session:launch example adds its flag and env key to the launc
 	assert.equal(opened.argv[opened.argv.indexOf("--thinking") + 1], "low", "the emitter's own args stay");
 	assert.equal(opened.env.GATE_MODE, "auto");
 	assert.equal(opened.env.GATE_ROOT, opened.cwd, "the example reads the cwd the window opens in");
+	assert.equal(opened.env.GATE_CHAIN, "scout");
+	assert.equal(opened.env.GATE_PARENT, s.parent);
 	assert.equal(opened.env.PI_DELEGATE_PARENT, s.parent, "the emitter's own env stays");
+});
+
+test("the executable launch example preserves unrelated flags/env under the nested final ceiling", async () => {
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), '{"maxDepth":2}');
+	writeAgent("coordinator", agentFile({ allow_nested_delegation: "[scout]" }));
+	writeAgent("scout", agentFile({ model: "alpha/fast-model" }));
+	const s = session({ parentEnv: "root", agentEnv: "coordinator", activeTools: ["read", "delegate"] });
+	try {
+		await runExample("session:launch", { pi: s.pi });
+		await s.delegate("scout go");
+		const opened = s.tmux.opened[0];
+		assert.ok(opened.argv.includes("--auto"));
+		assert.equal(opened.env.GATE_MODE, "auto");
+		assert.equal(opened.env.GATE_PARENT, s.parent);
+		assert.deepEqual(opened.argv.slice(-2), ["--tools", "read,mcp__"]);
+	} finally {
+		await s.shutdown();
+	}
+});
+
+test("session:launch can still add an extension after agent-specific loading was removed", async () => {
+	writeAgent("scout", agentFile({ model: "alpha/fast-model", extensions: "./ignored.ts" }));
+	const s = session();
+	s.events.on("session:launch", (payload) => {
+		const launch = payload as { args: string[]; env: Record<string, string> };
+		assert.ok(!launch.args.includes("-e"), "no frontmatter extension arguments");
+		launch.args.push("-e", "/custom/launch.ts");
+		launch.env.CUSTOM_LAUNCH = "new";
+	});
+	await s.delegate("scout go");
+	assert.deepEqual(s.tmux.opened[0].argv.slice(-2), ["-e", "/custom/launch.ts"]);
+	assert.equal(s.tmux.opened[0].env.CUSTOM_LAUNCH, "new");
+	assert.deepEqual(s.warnings, []);
 });
 
 test("the payload a session:launch listener sees names the agent", async () => {
@@ -124,6 +161,62 @@ test("while a delegation runs, each tick emits message:scan with a payload the p
 	await s.shutdown();
 });
 
+test("the README's squire:identity example observes root, delegate and invalid before later activation", async (t) => {
+	const listenerErrors: unknown[][] = [];
+	t.mock.method(console, "error", (...args: unknown[]) => {
+		listenerErrors.push(args);
+	});
+	const s = session();
+	await runExample("squire:identity", { pi: s.pi });
+	const seen: unknown[] = [];
+	s.events.on("squire:identity", (payload) => {
+		seen.push(payload);
+	});
+	s.pi.on("session_start", () => {
+		assert.equal((seen.at(-1) as { sessionId: string }).sessionId, s.parent);
+	});
+	await s.start();
+	assert.deepEqual(seen.at(-1), { sessionId: s.parent, status: "root" });
+	await s.shutdown();
+
+	writeIdentity(s.parent, {
+		parent: "parent-id",
+		root: "root-id",
+		agent: "worker",
+		chain: ["worker"],
+		depth: 1,
+		rootPlacement: "test-delegate-session",
+		autoExit: false,
+	});
+	const reopened = session({ parent: s.parent });
+	await runExample("squire:identity", { pi: reopened.pi });
+	reopened.events.on("squire:identity", (payload) => {
+		seen.push(payload);
+	});
+	await reopened.start();
+	assert.equal((seen.at(-1) as { status: string }).status, "delegate");
+	await reopened.shutdown();
+
+	writeFileSync(join(agentDir, "squire", "identity", `${encodeURIComponent(s.parent)}.json`), "{");
+	const invalid = session({ parent: s.parent });
+	await runExample("squire:identity", { pi: invalid.pi });
+	invalid.events.on("squire:identity", (payload) => {
+		seen.push(payload);
+	});
+	// Other Squire handlers deliberately refuse an unhealthy identity.
+	await assert.rejects(invalid.start());
+	assert.deepEqual(seen.at(-1), { sessionId: s.parent, status: "invalid" });
+	await invalid.shutdown();
+	assert.deepEqual(listenerErrors, [], "the executable observer never throws on any status");
+});
+
+test("the README completion-holds:v1 observer sees only an active exact-session host", async () => {
+	const s = session();
+	await runExample("completion-holds:v1", { pi: s.pi });
+	await s.start();
+	await s.shutdown();
+});
+
 test("every runnable example in the README has a runner above", () => {
-	assert.deepEqual([...examples.keys()].sort(), ["session:launch"]);
+	assert.deepEqual([...examples.keys()].sort(), ["completion-holds:v1", "session:launch", "squire:identity"]);
 });

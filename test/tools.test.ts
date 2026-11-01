@@ -82,10 +82,11 @@ test("an agent defined only under the legacy agents directory is neither listed 
 	assert.deepEqual(s.sendCalls, []);
 });
 
-test("inside a delegate no tools are registered", async () => {
+test("inside a leaf delegate delegation tools are inactive", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session({ parentEnv: "some-parent" });
-	assert.deepEqual(s.tools(), []);
+	await s.start();
+	assert.ok(!s.pi.getActiveTools().includes("delegate"));
 });
 
 // ---------------------------------------------------------------------------
@@ -286,13 +287,18 @@ test("call-time validation reads a newly added agent before the description is r
 	assert.match(s.tool("delegate").description, /researcher/);
 });
 
-test("inside a delegate run preparation adds no parent section and registers no parent tool", async () => {
+test("inside a leaf delegate run preparation removes parent guidance and restores task guidance", async () => {
 	writeDelegationPrompt(GUIDE);
 	const s = session({ parentEnv: "some-parent" });
 	await s.start();
 	const event = await s.prepare({ sections: { [PARENT_SECTION]: "keep" } });
-	assert.deepEqual(event.systemPromptOptions.sections, { [PARENT_SECTION]: "keep" });
-	assert.deepEqual(s.tools(), []);
+	assert.equal(event.systemPromptOptions.sections[PARENT_SECTION], undefined);
+	assert.match(
+		event.systemPromptOptions.sections.squire_delegate_task,
+		/Your final message reaches the session that started you automatically/,
+	);
+	assert.doesNotMatch(event.systemPromptOptions.sections.squire_delegate_task, /children finish|intermediate runs/);
+	assert.ok(!s.pi.getActiveTools().includes("delegate"));
 });
 
 // ---------------------------------------------------------------------------
@@ -363,6 +369,15 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 		customType: "delegate",
 		data: {
 			id,
+			identity: {
+				parent: s.parent,
+				root: s.parent,
+				rootPlacement: placementProject(root).companion,
+				depth: 1,
+				agent: "scout",
+				chain: ["scout"],
+				autoExit: true,
+			},
 			agent: "scout",
 			model: "alpha/fast-model",
 			thinking: "low",
@@ -617,7 +632,7 @@ test("the tools declare all four annotations and stay direct", async () => {
 	}
 });
 
-test("structured results carry each delegation's state and one close shape", async () => {
+test("structured results carry each delegation's state and subtree close members", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session();
 	await s.start();
@@ -636,16 +651,20 @@ test("structured results carry each delegation's state and one close shape", asy
 		windowId,
 		windowName,
 		closed: true,
+		complete: true,
 		alreadyClosed: false,
 		killed: true,
+		members: [{ id, sessionId: id, windowId, windowName, closed: true, killed: true, outcome: "killed" }],
 	});
 	assert.deepEqual((await s.toolCall("delegation_close", { id })).structuredContent, {
 		id,
 		windowId,
 		windowName,
 		closed: true,
+		complete: true,
 		alreadyClosed: true,
 		killed: false,
+		members: [{ id, sessionId: id, windowId, windowName, closed: true, killed: false, outcome: "already-closed" }],
 	});
 	assert.deepEqual(await states(), ["closed"]);
 });
@@ -725,12 +744,12 @@ test("delegation_close kills the window, records the close, and reports it once"
 	assert.deepEqual(s.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
 	assert.match(
 		closed.content[0].text,
-		new RegExp(`Closed delegation ${id}: killed window scout-${id.slice(0, 8)} \\(${windowId}\\)\\.`),
+		new RegExp(`Closed delegation subtree ${id}.*\\n- ${id}: killed scout-${id.slice(0, 8)} \\(${windowId}\\)`),
 	);
 	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: undefined });
 
 	const again = await s.toolCall("delegation_close", { id });
-	assert.equal(again.content[0].text, `Delegation ${id} is already closed.`);
+	assert.match(again.content[0].text, /already-closed/);
 	assert.deepEqual(s.tmux.killed, [windowId]);
 
 	const status = (await s.toolCall("delegation_status", { id })).content[0].text;
@@ -771,14 +790,15 @@ test("delegation_close kills nothing when the recorded id belongs to another win
 	await first.start();
 	await first.toolCall("delegate", { agent: "scout", task: "do it" });
 	const id = first.entries[0].data.id as string;
-	const resumed = session({ entries: first.entries });
+	await first.shutdown();
+	const resumed = session({ parent: first.parent, entries: first.entries });
 	resumed.tmux.addWindow(first.tmux.opened[0].windowId, "vim");
 	await resumed.start();
 
 	const status = (await resumed.toolCall("delegation_status", { id })).content[0].text;
 	assert.match(status, /state: closed — the window is gone/);
 	const result = await resumed.toolCall("delegation_close", { id });
-	assert.match(result.content[0].text, /was already gone/);
+	assert.match(result.content[0].text, /: absent/);
 	assert.deepEqual(resumed.tmux.killed, []);
 	assert.deepEqual(resumed.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
 });
@@ -807,7 +827,10 @@ test("a failed window list shows unknown and delegation_close refuses to guess",
 	s.tmux.failList = "no server";
 	const status = (await s.toolCall("delegation_status", { id })).content[0].text;
 	assert.match(status, /state: unknown/);
-	await assert.rejects(s.toolCall("delegation_close", { id }), /could not ask tmux/);
+	const closed = await s.toolCall("delegation_close", { id });
+	assert.equal((closed as { isError?: boolean }).isError, true);
+	assert.equal((closed.structuredContent as { complete: boolean }).complete, false);
+	assert.match(closed.content[0].text, /no server/);
 	assert.deepEqual(s.tmux.killed, []);
 });
 
@@ -820,7 +843,7 @@ test("delegation_close records a close when the window is already gone", async (
 	s.tmux.windows.delete(s.tmux.opened[0].windowId);
 
 	const result = await s.toolCall("delegation_close", { id });
-	assert.match(result.content[0].text, /its window scout-.* was already gone/);
+	assert.match(result.content[0].text, /: absent scout-/);
 	assert.deepEqual(s.tmux.killed, []);
 	assert.deepEqual(s.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
 });
@@ -830,11 +853,7 @@ test("delegation_close refuses an unknown id and kills nothing", async () => {
 	const s = session();
 	await s.start();
 	await s.toolCall("delegate", { agent: "scout", task: "do it" });
-	const id = s.entries[0].data.id as string;
-	await assert.rejects(
-		s.toolCall("delegation_close", { id: "nope" }),
-		new RegExp(`no delegation "nope"; known: ${id}`),
-	);
+	await assert.rejects(s.toolCall("delegation_close", { id: "nope" }), /no delegation "nope".*descendant tree/);
 	assert.deepEqual(s.tmux.killed, []);
 	assert.equal(s.entries.length, 1);
 });
@@ -848,11 +867,12 @@ test("a resumed parent still reports a recorded close as closed", async () => {
 	await first.toolCall("delegation_close", { id });
 	const saved = structuredClone(first.entries);
 
+	await first.shutdown();
 	const resumed = session({ parent: first.parent, entries: saved });
 	await resumed.start();
 	assert.deepEqual(resumed.statuses, [], "a closed delegation is not counted as running");
 	const status = (await resumed.toolCall("delegation_status", { id })).content[0].text;
 	assert.match(status, /state: closed — delegation_close recorded it/);
 	const again = await resumed.toolCall("delegation_close", { id });
-	assert.equal(again.content[0].text, `Delegation ${id} is already closed.`);
+	assert.match(again.content[0].text, /already-closed/);
 });

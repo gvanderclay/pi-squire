@@ -40,7 +40,7 @@ const setPlacement = (value: string): void => {
 
 /** A started session; each `launch` adds a delegation and returns its id and window. */
 async function started(options: Options = {}): Promise<Session> {
-	const s = session(options);
+	const s = session({ mode: "tui", ...options });
 	await s.start();
 	return s;
 }
@@ -94,7 +94,7 @@ test("the extension registers /delegates, /delegate-open and the alt+shift+d sho
 	assert.deepEqual(s.shortcuts(), ["alt+shift+d"]);
 });
 
-test("the panel lists only delegations whose window is open, newest first, and the shortcut opens it", async () => {
+test("the panel retains closed/history rows and verified open windows, and the shortcut opens it", async () => {
 	const s = await started();
 	const first = await launch(s, "first");
 	const second = await launch(s, "second");
@@ -108,12 +108,14 @@ test("the panel lists only delegations whose window is open, newest first, and t
 	await s.shortcut("alt+shift+d");
 	const [frame] = script.frames;
 	assert.match(frame, /second/);
-	assert.doesNotMatch(frame, /first|third|fourth/);
+	assert.match(frame, /first.*window-closed/);
+	assert.match(frame, /third.*window-closed/);
+	assert.match(frame, /fourth.*closed/);
 	assert.ok(frame.includes(`${second.windowId} in ${companion}`), frame);
-	assert.match(frame, /↑↓ select · enter switch · p peek · x close · n new · esc leave/);
+	assert.match(frame, /↑↓ select · enter details · p peek · x close · r resume · n new · esc leave/);
 });
 
-test("the list is newest first and a finished delegation with auto-exit off stays listed", async () => {
+test("the hierarchy preserves parent-first history and a finished open delegation stays listed", async () => {
 	const s = await started();
 	const first = await launch(s, "alpha-one");
 	await launch(s, "beta-two");
@@ -121,7 +123,7 @@ test("the list is newest first and a finished delegation with auto-exit off stay
 	const script = keyScript(["escape"]);
 	await panel(s, script);
 	const [frame] = script.frames;
-	assert.ok(frame.indexOf("beta-two") < frame.indexOf("alpha-one"), frame);
+	assert.ok(frame.indexOf("alpha-one") < frame.indexOf("beta-two"), frame);
 	assert.match(frame, /alpha-one · scout · done/);
 	assert.match(frame, /beta-two · scout · running/);
 });
@@ -137,13 +139,13 @@ test("with nothing open the panel says so, and n starts a new delegate", async (
 	assert.deepEqual(choose.result, { action: "new" });
 });
 
-test("down moves the selection and enter switches your client to that delegation's window, with a notice", async () => {
+test("down selects; enter opens details and a second enter switches with a notice", async () => {
 	const s = await started();
 	await launch(s, "older");
 	const newer = await launch(s, "newer");
 	await launch(s, "newest");
 	s.tmux.attachClient("c1", 100);
-	const script = keyScript(["down", "enter"]);
+	const script = keyScript(["down", "enter", "enter"]);
 	await panel(s, script);
 	assert.match(script.frames[1], /▸ scout-newer/);
 	assert.deepEqual(script.result, { action: "switch", id: newer.id });
@@ -170,7 +172,7 @@ test("the client is the most recently active one attached to the parent's sessio
 	s.tmux.attachClient("stale", 10);
 	s.tmux.attachClient("fresh", 90);
 	s.tmux.attachClient("elsewhere", 500, "other-session");
-	await panel(s, keyScript(["enter"]));
+	await panel(s, keyScript(["enter", "enter"]));
 	assert.deepEqual(s.tmux.clientLookups, ["work"]);
 	assert.deepEqual(
 		s.tmux.switches.map((sw) => sw.client),
@@ -182,7 +184,7 @@ test("with no client attached switch refuses with a notice and peek and close st
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.screens.set(one.windowId, "hello from the pane");
-	await panel(s, keyScript(["enter"]));
+	await panel(s, keyScript(["enter", "enter"]));
 	assert.deepEqual(s.tmux.switches, []);
 	assert.equal(s.warnings.length, 1);
 	assert.match(s.warnings[0], /cannot switch: no tmux client is attached to session work/);
@@ -268,7 +270,7 @@ test("closing a running delegate asks first; no leaves it open, yes kills it and
 		delegations: { state: string }[];
 	};
 	assert.equal(status.delegations[0].state, "closed");
-	assert.ok(s.notes.some((note) => note.includes(`Closed delegation ${one.id}`)));
+	assert.ok(s.notes.some((note) => note.includes(`Closed delegation subtree ${one.id}`)));
 });
 
 test("closing a finished delegate does not ask", async () => {
@@ -367,6 +369,10 @@ test("n from a populated panel opens the form, and cancelling it starts nothing"
 });
 
 test("the poll runs only while a delegation is running", async (t) => {
+	// Keep the TUI navigator active but isolate its authoritative poll from the
+	// passive widget, which deliberately observes finished-open windows too.
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ delegateWidgetMaxEntries: 0 }));
 	t.mock.timers.enable({ apis: ["setInterval"] });
 	const s = await started();
 	const one = await launch(s, "one");

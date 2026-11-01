@@ -6,6 +6,306 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- `delegation_close` now closes a persistent descendant subtree rather than one
+  local window. Its structured result adds `complete` and per-member outcomes;
+  partial failures return `isError:true` with details rather than discarding
+  successful members in a thrown tmux error. Close requires a readable shared
+  fence before kills. Old single-window wording/schema, direct-close-on-corrupt-
+  registry, panel/poll/placement text assertions deliberately change; local
+  genuine result publication remains warning-only. Unknown/foreign/obsolete
+  target ids refuse before effects. Canceling unfinished children now requires
+  direct-parent processing rather than silently releasing the task barrier.
+- Delegations recorded without the required original-root placement identity
+  can no longer be resumed after this update, including pre-nesting and
+  identity-less records even when reopened by their original root. Resume tools,
+  commands and picker refuse before trust, mail, exited-window kill, reservation
+  or spawn effects. No legacy identity synthesis or migration is provided.
+  The subtree-close identity-less resume fixture now asserts this refusal when
+  composed with root placement; its earlier fallback expectation is superseded.
+
+- Require pi-session-mail 0.6.0 or another provider of all four message hooks.
+  Upgrade mail and squire together: squire now owns delegate task settlement
+  through `message:reply`; mail no longer automatically answers task requests.
+
+- Agent frontmatter now uses `auto_exit` (boolean, default true).
+  Old `auto-exit` and `extensions` fields are silently ignored, with no
+  warnings or validation. In particular, old `auto-exit: false` now leaves
+  auto-exit on unless `auto_exit` or a call override disables it.
+  Agent-specific extension path resolution and launch arguments are removed
+  for both launch and resume; normal Pi extension loading and `session:launch`
+  customization remain. CLI flags, commands, internal fields and environment
+  variables keep their names. Updated agent-file, auto-exit, delegate, real-Pi
+  tool-selection, resume and hook tests for this deliberate contract change.
+
+### Changed
+
+- Complete branch-focused widget entry in the same dashboard: initial details
+  retain their Escape-to-compact-list behavior, while `b` opens only the selected
+  branch's descendant/resume history and worker details return to that list.
+  Overall `/delegates` stays scoped to the invoking session's whole subtree.
+  Root close-all remains explicitly all root subtrees, not only displayed rows.
+- Dashboard switch/peek and `/delegate-open` now reuse positively verified
+  current pane/server/owner locators for reattached latest sessions, without
+  rewriting historical launch/result facts or changing close authority.
+  A lost or replaced current locator never falls back to an old still-open
+  window; peek captures the exact verified Pi pane. Details distinguish launch
+  and current windows and reflect native session titles and actual outcomes.
+  Verified live latest rows remain navigable even before historical disappearance
+  is polled. Closing live navigation rows confirms the separate durable control
+  scope; telemetry never retargets a kill, and reattached windows may remain open.
+  Post-switch ownership loss reports the completed switch honestly.
+  Add `test/navigator-current.test.ts`, extend `test/dashboard.test.ts` and
+  `test/widget-nesting-final.test.ts` for deliberate branch-list behavior,
+  current-window races, title composition and direct-parent resume refusal.
+- Compose the shared widget/dashboard actions with context-aware subtree close:
+  selected close reports aggregate partial errors, and the root retains confirmed
+  `a` close-all from the same dashboard, including empty/history views. Keep
+  direct-widget activity/focus and direct-parent resume checks unchanged; no
+  second panel or row-by-row close authority. Add combined coverage in
+  `test/widget-nesting-final.test.ts` and root action intent coverage in
+  `test/dashboard.test.ts`; extend `test/dashboard-actions.test.ts` control stubs.
+- Make the direct-delegate widget keyboard-navigable and reuse one dashboard for
+  widget Enter, `/delegates` and its shortcut. Down at an empty built-in prompt
+  selects children; stable selection scrolls through the cap. Enter opens details,
+  and Escape returns to list then prompt. Dashboard list Enter now opens details
+  before a second Enter switches (a deliberate navigation change); peek, close,
+  new and authorized resume remain behind existing action/ownership checks.
+  Custom editors, autocomplete, dialogs and unknown focus pass through unchanged.
+  The isolated Pi-internals adapter was tested with installed Pi 1.4.0 in both
+  regular and fullscreen modes; no Pi change or editor/footer replacement.
+  Protect the empty prompt while a widget-opened dashboard is loading or
+  re-listing between actions, without intercepting real dashboard/dialog input.
+  Update `test/navigator.test.ts` for the deliberate two-Enter details/switch
+  flow and `test/tree-restore.test.ts` to inspect metadata in details.
+- The interactive direct-delegate overview deliberately replaces only Squire’s
+  running-count entry when its cap is positive, preserving custom footers/editors
+  and the own-delegate badge. Cap zero and non-TUI hosts retain the running count.
+
+### Added
+
+- Nested delegate overview: root-to-parent ancestor rows with direct live-window
+  navigation, parent-first Down and cap-zero ancestor navigation plus the existing
+  direct-child count. Same-id reopens use owner-correlated current pane/server/
+  window metadata, independent of strict task activity launch correlation.
+- All-depth descendant **task/launch-id** summaries beneath direct coordinator
+  rows, preserving failed/stopped/missing outcomes and failures across resumes.
+  Read-only semantic provenance and coverage keep registry accounting distinct
+  from actual replies; unknown/partial coverage is explicit. Summaries share one
+  secondary line with factual activity and take priority at narrow widths.
+  The former cap-zero empty-widget assertion deliberately changes for delegates;
+  async ancestor metadata tests now wait for the observable refreshed frame.
+  Corrupt descendant owner facts show unavailable counts without freezing fresh
+  ancestors/direct rows. Hidden/empty child views skip locator I/O, and unchanged
+  positive locator observations do not rewrite telemetry snapshots.
+  No task/control policy, result barrier, provider contract or second tree index.
+- Factual live direct-delegate activity from actual concurrent/nested tool-call
+  ids and bounded assistant response text, propagated across Pi processes by
+  disposable owner-only snapshots. Launch correlation separates resumed tasks
+  from stable sessions; lifecycle cleanup and known task results/close clear
+  activity independently of task delivery. No thinking, tool results, inferred
+  intent/waits, extra model calls, counters or stale-state timer. Uncorrelated
+  manual reopen has no task-row activity. The common launcher now includes a
+  private stable-session/launch correlation environment value; launch-wire tests
+  deliberately account for this per-launch field.
+- Live, passive direct-delegate overview in interactive Pi: running children
+  first, then finished-open children, newest within each group, with stable
+  session keys, mutable native titles and actual failure/stopped outcomes.
+  Native file-backed renames and unflushed title mirrors refresh without naming
+  tools or model calls. Responsive themed tree rows clamp narrow/wide text and
+  omit model then file-age metadata as space shrinks.
+- `delegateWidgetPlacement` (above/below, default above) and
+  `delegateWidgetMaxEntries` (default three) in the existing Squire settings.
+  Independent observation continues after task completion and is cleaned up on
+  reload; no focus keys or tree accounting semantics change.
+
+- Provider-neutral process-local completion holds: active exact-session Squire
+  runtimes advertise support in the versioned `pi.completion-holds.v1` data
+  table. External holds gate new final task replies, tree completion and
+  auto-exit until every current-session entry is ready. Host registrations are
+  runtime-owned and removed on every shutdown; provider holds survive reload
+  but are not durable across process restart.
+
+- Synchronous `squire:identity` lifecycle notification with a frozen,
+  exact-session root/delegate/invalid observation, emitted after identity
+  restoration and persistence and before later asynchronous startup work.
+  Consumers can observe ordinary reopen and runtime replacement without
+  treating launch environment variables as identity authority.
+
+- Explicit ancestor-scoped subtree close and root-only confirmed panel close-all.
+  Shared admission/own-entry dispatch fences precede effects, including root
+  reservations. Already-dispatched unknown creates remain charged/fenced and
+  partial; bounded explicit retries never guess no-start. Current verified
+  id+name locators include manually reattached same-id coordinators. Per-member
+  errors preserve successful closes; shared companions, branches and worktrees
+  are retained, and ordinary runtime exit never cascades.
+- Confirmed closes are imported only by the direct-parent semantic owner as
+  durable canceled/missing child outcomes. Offline restoration and settlement
+  retain the processing barrier, root replay-stop behavior and genuine
+  mid-close/late worker replies. Completed fences allow a new authorized,
+  lifetime-counted direct-parent resume without reviving canceled descendants.
+- Restore exact-session delegation trees without recreating live workers,
+  including offline child/coordinator replies, pending result processing and
+  concurrency for a manually reopened unfinished coordinator. Shared registry
+  ancestry drives descendant status/navigation; each direct parent's local
+  results/outcome inbox remains authoritative.
+- Single Squire process owner per Pi identity, using the existing bakery lock.
+  Already-claimed Squire input is durably staged for the sole owner across
+  duplicate scans and delayed startup. Losing/stale runtimes cannot act or
+  clear a replacement token; ordinary parent exit never closes children.
+- Bounded fresh-session notices explain reopening direct owners without
+  adoption: current agent/session directory, newest 64 registry files, at most
+  10 owners, 1 MiB per tree, one 200 ms cooperative notice budget, and explicit
+  unavailable/truncated scope.
+- Shared per-root tree registry and atomic cross-process launch reservations.
+  `maxConcurrentDelegates` and `maxDelegatesPerRoot` default to 16/64 with
+  maxDepth > 1, remain unlimited when absent at depth 1, and accept zero for
+  unlimited. Settings changes affect subsequent launches/resumes; refusals
+  report count/limit without queues or killing existing work. Resumes spend
+  new launches; completed open windows free concurrency, not lifetime count.
+- Publish worker terminal accounting independently of the parent's process,
+  retaining 03's local result-processing authority and durable reply retries.
+  Preserve failed-versus-uncertain launch/resume handling, recover child window
+  locators after lost tmux responses, reconcile disappeared workers and retain
+  ambiguous reservations until positive evidence exists. Counts survive
+  ordinary root/coordinator restarts. Separate Node-process contention/crash
+  fixtures are reusable by the later subtree-close slice.
+
+- Nested unresolved project trust goes directly to the attended root's squire,
+  outside model questions and task mail, with agent-chain, requester and
+  directory/source context. Root-local and remote prompts share a serialized
+  queue, including while the root is busy. Preserve scoped/source-worktree
+  resolution and explicit approval/denial flags on launch and resume.
+- Bound ordinary trust requests to ten minutes including queue wait. Cancellation,
+  disconnect, expiry and either runtime's replacement stop the pending launch
+  and dismiss its question; late approvals and old requests after restart cannot
+  save trust or revive work. Persistent choices are saved only by a live
+  requester; launch-only choices remain unsaved. Unavailable/unattended roots
+  refuse without opening delegate UI. Squire uses owner-token loopback control,
+  without provider internals, permission inheritance or pending-request replay.
+  Deliberately replace the interim nested-trust refusal tests with root-choice
+  behavior, real-provider isolation and separate-process kill/restart coverage.
+- Nested launch/resume tools are capped by the direct parent’s actually available
+  operations, including codemode/deferred and active model-only tools. Requested
+  patterns become exact registration grants after `session:launch` customization;
+  neither `delegateTools` nor hook-added extensions can widen them. Launch/resume
+  notices report removed tools and restricted patterns; top-level selection stays
+  unchanged. Real Pi 1.3 execution and isolated CLI launch/resume tests cover the
+  deliberate nested-only behavior.
+- Complete nested-grant validation: false and empty lists grant none, malformed
+  values disable the agent, duplicates are removed, and unavailable child names
+  warn without disabling known entries. An agent with a permission map warns
+  when a listed child lacks one, including `true` grants over the current roster.
+  This heuristic does not compare policies or inherit permission authority;
+  tool restrictions and permission rules do not provide filesystem isolation.
+- Unreleased nested-worker lifecycle: `maxDepth` (default 1), current-agent
+  `allow_nested_delegation` grants and bypass-resistant launch/resume admission,
+  including trusted project-agent shadowing. Coordinators get all four
+  delegation tools even with an explicit tools list; listing tools alone warns
+  and grants nothing. Nesting remains an incomplete integration milestone:
+  full integrated real-model and permission-forwarding validation remains required
+  before production use.
+- Persist parent/root/depth/agent/chain identity and auto-exit state for manual
+  same-session reopening. Expose read-only parent/root/depth/frozen chain on
+  `session:launch`, alongside existing mutable args/env customization.
+- Durable direct-child task completion and result-processing barrier. No
+  intermediate coordinator reply/exit while children run; out-of-order results
+  and rolling fan-out finish only after a later processing run settles. Results
+  arriving during final settlement force processing before completion.
+  Coordinators can recover after fallback exhaustion while workers run; their
+  final run determines success/failure. Confirmed disappearance produces the
+  existing missing-result outcome; unknown tmux state does not release work.
+- Separate coordinator identity/auto-exit and running-child footer keys, retain
+  parent delegation guidance in coordinators, and keep trust questions out of
+  unattended UI. Update deliberate single-level-only
+  registration, hook shape, footer and persistence expectations in tests;
+  execute the expanded README hook example and real-mail multi-instance
+  lifecycle coverage.
+
+### Fixed
+
+- Keep factual activity end/settlement observation live when Squire task-owner
+  processing fails or owner-record reads are unavailable, without granting action
+  authority. Check publication ownership only at startup, not on each text delta.
+- Normalize process-start observation to C locale and UTC for live activity and
+  native-title mirrors, so differing parent/delegate time zones or locales do not
+  hide metadata or falsely delete a live activity snapshot.
+- Preserve the original root project companion preference through nested
+  cross-project launches, same-id coordinator restarts without launch environment,
+  and direct-parent resumes while the root is absent. Save one `rootPlacement`
+  base in existing identity/local/shared tree records, keeping call-time
+  current/companion mode and marked/unmarked alternative selection separate.
+  Malformed or conflicting required placement identity fails closed; nested
+  parent-preference contradictions are refused before target trust resolution.
+  Identity-less resume refusal is declared above under Breaking; no relocation
+  or repair system is added.
+  Existing synthetic identity fixtures and full-identity assertions deliberately
+  include this required field. Add real-provider/Git cross-project coverage and
+  actual coordinator process shutdown/SIGKILL/reopen with root-absent resume.
+- Incomplete transcript/child-identity restoration now fails closed for both
+  completion and admission, retains known own child obligations and refuses
+  incidental saves until repair/reopen. Foreign copied history stays excluded.
+- Stage matching input atomically without waiting for a contended owner lock;
+  only the token owner drains, with callbacks outside that mutex. Preserve
+  timestamp/path order, avoid idle lock writes, and report unpersistable input
+  explicitly instead of silently falling through to plain mail. Ready owners
+  can use normal direct processing when staging alone is unwritable.
+- Always run runtime shutdown cleanup after input/owner failures, closing old
+  trust controls/timers before replacement. Persist explicit root user stops
+  without automatic replay on reopen; fresh live results/gone outcomes still
+  wake normally and clear that replay hold. Ordinary crash recovery remains.
+  Root continuations use response wording rather than coordinator task reports.
+- Ownership errors name the PID/file; discovery reports owner-read/tmux failures
+  once and shares one total latency budget. Document ordinary-mail/ask and
+  shared running-record consequences of duplicate provider processes.
+
+- Restrict resume execution and picker authority to the original direct parent,
+  retaining root/depth, live-session/obsolete-chain protections and current
+  grants, caps, tool ceiling and trust resolver. Fork/clone copies are history,
+  not authority; inherited launch environment no longer assigns identity.
+- Deliberately change the delegates panel to retain hierarchical history and
+  details rather than only open windows; only verified windows support
+  navigation. Descendant close stays with the separate explicit-close slice.
+  Reattachment tests now reopen the same id after shutdown rather than copying
+  starts into a fresh/live duplicate session. Root outcomes retain processing
+  durability with a non-displaying recovery wake instead of a repeated final.
+
+- Keep durable local result/gone delivery, coordinator wakes and close tracking
+  working when shared fact publication fails; warn and reconcile those saved
+  facts at the next admission. Worker frozen-terminal publication remains
+  mandatory before transport. A confirmed window open stays successful and
+  locally tracked even if accounting publication fails, and refund failures
+  preserve the original tmux certainty/error. A refused concurrent resume no
+  longer releases another call\'s in-flight guard.
+- Retain frozen answers when task context is unavailable rather than bypassing
+  terminal accounting, and skip failure-cleanup transactions after successful
+  resumes. Clarify malformed-settings behavior and unresolved-launch refusals.
+
+- Refuse launches/resumes on malformed, unreadable or non-object shared squire
+  settings instead of silently losing configured cap limits. Deliberately
+  update window-placement/worktree-setting tests that previously allowed
+  inherited/cwd launches with an unreadable settings file; readable unrelated
+  creation settings still do not affect those launches.
+
+- Preserve default leaf task guidance and takeover wording; only effective
+  coordinators receive child-first reporting instructions, including after a
+  current grant change. Refuse unhealthy durable child-task storage before
+  launch/resume effects rather than reporting failure after a child starts.
+  A task-wording lookup failure uses the original leaf wording before ownership
+  is recorded, so invalid depth configuration cannot strand an unprompted task;
+  launch admission still refuses invalid configuration.
+
+- Persist owed delegate task answers and frozen reply retries across reload,
+  restart, resume and same-session manual reopening. Bounded startup retries
+  tolerate delayed mail initialization; remaining reply write failures are
+  visible and block auto-exit. Stops hold tasks through failed runs; successful
+  recovery, final failure, fallback and no-answer wording are preserved.
+  Updated `test/auto-exit.test.ts` for consumer-owned reply/exit behavior and
+  added real-provider task-reply and correlation regression coverage.
+- Correlate every request id in a batched reply and suppress duplicate final
+  results even when a transport retry writes a fresh reply envelope.
+
 ### Changed
 
 - Default companion placement now groups delegate windows by the owning root

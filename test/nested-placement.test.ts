@@ -46,9 +46,12 @@ let sequence = 0;
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_CONFIG_GLOBAL = devNull;
 
-function settings(windowPlacement = "companion"): void {
+function settings(windowPlacement = "companion", companionSuffix?: string): void {
 	mkdirSync(join(agentDir, "squire"), { recursive: true });
-	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ maxDepth: 2, windowPlacement }));
+	writeFileSync(
+		join(agentDir, "squire", "settings.json"),
+		JSON.stringify({ maxDepth: 2, windowPlacement, companionSuffix }),
+	);
 }
 beforeEach(() => {
 	resetRoot();
@@ -152,7 +155,7 @@ test("Git A main/subdirectory/linked root → B → C uses A and keeps independe
 	for (const cwd of [a, sub, linked]) {
 		const { owner, child, c: parent } = await coordinator(cwd, b, tmux);
 		const worker = await launch(child, "worker", { cwd: c });
-		const preferred = "A-project-delegate-session";
+		const preferred = "A-project-delegates";
 		assert.equal(parent.windowSession, preferred);
 		assert.equal(worker.windowSession, preferred);
 		assert.equal(parent.cwd, b);
@@ -179,7 +182,7 @@ test("closed subtree resumes in original root preference with placement consiste
 	const a = repository("CloseRoot"),
 		b = resolvedProject("CloseB", false),
 		c = resolvedProject("CloseC", true);
-	const preferred = "CloseRoot-delegate-session";
+	const preferred = "CloseRoot-delegates";
 	const selected = `${preferred}-2`;
 	const tmux = new FakeTmux();
 	tmux.addWindow("@user", "unmarked", preferred);
@@ -273,7 +276,7 @@ test("C worktree_source and root-absent coordinator reopen inherit A without lau
 		c = resolvedProject("C", true);
 	const { owner, child, tmux } = await coordinator(a, b);
 	const first = await launch(child, "worker", { worktree: "placement/topic", worktree_source: c });
-	assert.equal(first.windowSession, "A-delegate-session");
+	assert.equal(first.windowSession, "A-delegates");
 	assert.equal(first.workspace?.mode, "managed");
 	assert.notEqual(first.cwd, c);
 	await owner.shutdown();
@@ -297,21 +300,21 @@ test("nested opens and direct-parent resume retain marked alternatives without a
 		b = resolvedProject("B", false),
 		c = resolvedProject("C", true);
 	const tmux = new FakeTmux();
-	tmux.addWindow("@100", "user-base", "same-delegate-session");
-	tmux.addWindow("@101", "user-numbered", "same-delegate-session-2");
+	tmux.addWindow("@100", "user-base", "same-delegates");
+	tmux.addWindow("@101", "user-numbered", "same-delegates-2");
 	const { owner, child } = await coordinator(a, b, tmux);
 	tmux.windows.delete("@100");
 	const w = await launch(child, "worker", { cwd: c });
-	assert.equal(w.windowSession, "same-delegate-session-3");
-	assert.equal(w.identity?.rootPlacement, "same-delegate-session", "save preference, not selected alternative");
+	assert.equal(w.windowSession, "same-delegates-3");
+	assert.equal(w.identity?.rootPlacement, "same-delegates", "save preference, not selected alternative");
 	header(w);
 	tmux.exit(w.windowId);
 	await assert.rejects(owner.toolCall("delegation_resume", { id: w.id, task: "not owner" }), /only direct parent/);
 	await owner.shutdown();
 	const resumed = await child.toolCall("delegation_resume", { id: w.id, task: "continue" });
-	assert.equal((resumed.details as { windowSession: string }).windowSession, "same-delegate-session-3");
+	assert.equal((resumed.details as { windowSession: string }).windowSession, "same-delegates-3");
 	assert.equal(tmux.windows.get("@101")?.name, "user-numbered");
-	assert.equal(tmux.detachOnDestroy.has("same-delegate-session-2"), false);
+	assert.equal(tmux.detachOnDestroy.has("same-delegates-2"), false);
 	assert.deepEqual(tmux.killed, [w.windowId]);
 });
 
@@ -322,21 +325,22 @@ test("call-time current vs companion selection is independent of persisted origi
 		c = resolvedProject("C", true);
 	const { child, tmux } = await coordinator(a, b);
 	assert.equal(tmux.opened[0].session, "work");
-	assert.equal(readIdentity(child.parent)?.rootPlacement, "A-delegate-session");
+	assert.equal(readIdentity(child.parent)?.rootPlacement, "A-delegates");
 	tmux.parentSession = "coordinator-pane";
 	settings();
 	const off = child.events.on("session:launch", () => settings("current"));
 	const w = await launch(child, "worker", { cwd: c });
 	off();
-	assert.equal(w.windowSession, "A-delegate-session", "mode is read once before hook changes");
+	assert.equal(w.windowSession, "A-delegates", "mode is read once before hook changes");
 	header(w);
 	tmux.exit(w.windowId);
 	await child.toolCall("delegation_resume", { id: w.id, task: "current now" });
 	assert.equal(tmux.opened.at(-1)!.session, "coordinator-pane");
-	assert.equal(readIdentity(w.id)?.rootPlacement, "A-delegate-session");
+	assert.equal(readIdentity(w.id)?.rootPlacement, "A-delegates");
 });
 
-test("root same-id reopen resumes B coordinator with its original preference before it launches C", async () => {
+test("root same-id reopen resumes a legacy companion before the coordinator launches C", async () => {
+	settings("companion", "delegate-session");
 	const a = repository("A"),
 		b = resolvedProject("B", false),
 		c = resolvedProject("C", true);
@@ -345,6 +349,7 @@ test("root same-id reopen resumes B coordinator with its original preference bef
 	await child.shutdown();
 	tmux.exit(record.windowId);
 	await owner.shutdown();
+	settings();
 	tmux.parentSession = "unrelated-root-reopen-pane";
 	const reopened = await instance({ parent: owner.parent, cwd: a, tmux, entries: [] });
 	const result = await reopened.toolCall("delegation_resume", { id: record.id, task: "coordinate again" });
@@ -379,6 +384,9 @@ test("malformed/missing root placement blocks ordinary reopen, launch and comple
 	for (const valid of [
 		"A-delegate-session",
 		"project-delegate-session",
+		"A-playpen",
+		"A-delegates",
+		"project-delegates",
 		"___-delegate-session",
 		"A_b-9-delegate-session",
 	])
@@ -531,7 +539,7 @@ for (const exit of ["shutdown", "crash"]) {
 			b = resolvedProject("B", false),
 			c = resolvedProject("C", true);
 		const owner = await instance({ cwd: a });
-		owner.tmux.addWindow("@100", "user", "A-delegate-session");
+		owner.tmux.addWindow("@100", "user", "A-delegates");
 		const coordinatorRecord = await launch(owner, "coordinator", { cwd: b });
 		await owner.shutdown();
 		assert.equal(sessionIsOwned(owner.parent), false);
@@ -539,7 +547,7 @@ for (const exit of ["shutdown", "crash"]) {
 		const boot = { session: coordinatorRecord.id, cwd: b, sessionDir, stateHome: join(root, "mail-state") };
 		const started = await original.command<ProcessSnapshot>("boot", { ...boot, server: server(owner.tmux) });
 		assert.deepEqual(started.delegateEnv, []);
-		assert.equal(started.identity.rootPlacement, "A-delegate-session");
+		assert.equal(started.identity.rootPlacement, "A-delegates");
 		const claimed = await original.command<ProcessSnapshot>("scan");
 		assert.equal(claimed.prompts.length, 1, "released provider took over the coordinator task");
 		const opened = await original.command<ProcessSnapshot>("tool", {
@@ -547,8 +555,8 @@ for (const exit of ["shutdown", "crash"]) {
 			params: { agent: "worker", task: "work", cwd: c },
 		});
 		const worker = opened.entries.find(({ data }) => data.id === opened.result.structuredContent.id)!.data;
-		assert.equal(opened.result.structuredContent.windowSession, "A-delegate-session-2");
-		assert.equal(worker.identity?.rootPlacement, "A-delegate-session");
+		assert.equal(opened.result.structuredContent.windowSession, "A-delegates-2");
+		assert.equal(worker.identity?.rootPlacement, "A-delegates");
 		header(worker);
 		if (exit === "shutdown") await original.command("shutdown");
 		await original.kill();
@@ -563,16 +571,16 @@ for (const exit of ["shutdown", "crash"]) {
 			},
 		});
 		assert.deepEqual(restored.delegateEnv, []);
-		assert.equal(restored.identity.rootPlacement, "A-delegate-session");
+		assert.equal(restored.identity.rootPlacement, "A-delegates");
 		assert.deepEqual(restored.opened, [], "same-id startup never recreates workers");
 		const resumed = await next.command<ProcessSnapshot>("tool", {
 			tool: "delegation_resume",
 			params: { id: worker.id, task: "continue" },
 		});
-		assert.equal(resumed.result.structuredContent.windowSession, "A-delegate-session-2");
+		assert.equal(resumed.result.structuredContent.windowSession, "A-delegates-2");
 		assert.equal(resumed.result.structuredContent.resumedFrom, worker.id);
 		const identity = readIdentity(worker.id)!;
-		assert.equal(identity.rootPlacement, "A-delegate-session");
+		assert.equal(identity.rootPlacement, "A-delegates");
 		assert.equal(identity.root, owner.parent);
 		assert.equal(identity.parent, coordinatorRecord.id);
 		assert.equal(identity.depth, 2);
@@ -585,7 +593,7 @@ for (const exit of ["shutdown", "crash"]) {
 			tool: "delegate",
 			params: { agent: "worker", task: "new task", cwd: c },
 		});
-		assert.equal(another.result.structuredContent.windowSession, "A-delegate-session-2");
+		assert.equal(another.result.structuredContent.windowSession, "A-delegates-2");
 		assert.equal(another.opened.length, 2);
 		assert.equal(
 			another.windows.some((window) => window.id === "@100" && window.name === "user"),

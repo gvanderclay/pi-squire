@@ -5,13 +5,12 @@
 
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 import { WindowOpenError } from "../src/tmux.ts";
-import { placementProject } from "../src/window-placement.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
-const companion = placementProject(root).companion;
+const companion = `${basename(root)}-delegates`;
 
 beforeEach(() => {
 	resetRoot();
@@ -44,6 +43,62 @@ test("by default the delegate is the first window of a new companion session, wi
 	assert.equal(s.tmux.detachOnDestroy.get(companion), "off");
 	assert.equal(s.tmux.sessions.has("work"), false, "nothing is recorded in the parent's session");
 	assert.equal(s.tmux.detachOnDestroy.has("work"), false, "the user's own session keeps its options");
+});
+
+test("a configured suffix opens the normalized root project companion", async () => {
+	setSettings({ companionSuffix: "playpen" });
+	const s = session({ cwd: join(root, "Client API") });
+	mkdirSync(join(root, "Client API"));
+	await s.start();
+	const result = await call(s, "configured");
+	assert.equal(s.tmux.opened[0].session, "Client-API-playpen");
+	assert.equal((result.structuredContent as { windowSession: string }).windowSession, "Client-API-playpen");
+});
+
+test("valid suffixes preserve case, underscores, internal hyphens and the length limit", async () => {
+	const s = await started();
+	for (const suffix of ["a", "A_9", "x--y", "a".repeat(32)]) {
+		setSettings({ companionSuffix: suffix });
+		await call(s, suffix);
+		assert.equal(s.tmux.opened.at(-1)?.session, `${basename(root)}-${suffix}`);
+	}
+});
+
+test("an invalid companionSuffix refuses before mail is sent or a window opens", async () => {
+	const s = await started();
+	for (const value of ["2", "x-10", "a b", "a".repeat(33), "", "-a", "a-", "../x", "a\n", "é", 3, null]) {
+		setSettings({ companionSuffix: value });
+		await assert.rejects(call(s, "bad"), (err: Error) => {
+			assert.ok(err.message.includes(settingsFile), err.message);
+			assert.match(err.message, /companionSuffix must be/);
+			return true;
+		});
+	}
+	assert.deepEqual(s.sendCalls, []);
+	assert.deepEqual(s.tmux.opened, []);
+	assert.deepEqual(s.entries, []);
+});
+
+test("/delegate reports an invalid companionSuffix and starts nothing", async () => {
+	setSettings({ companionSuffix: "x-10" });
+	const s = await started();
+	await s.delegate("scout look");
+	assert.ok(s.errors.some((line) => line.includes(settingsFile) && line.includes("companionSuffix")));
+	assert.deepEqual(s.sendCalls, []);
+	assert.deepEqual(s.tmux.opened, []);
+});
+
+test("the companion suffix is read at launch but a resume keeps its saved preference", async () => {
+	setSettings({ companionSuffix: "playpen" });
+	const d = await exitedDelegate();
+	const original = `${basename(root)}-playpen`;
+	assert.equal(d.s.tmux.opened[0].session, original);
+	setSettings({ companionSuffix: "other" });
+	await call(d.s, "new");
+	assert.equal(d.s.tmux.opened.at(-1)?.session, `${basename(root)}-other`);
+	d.s.tmux.exit(d.windowId);
+	const result = await d.s.toolCall("delegation_resume", { id: d.id, task: "more" });
+	assert.equal((result.structuredContent as { windowSession: string }).windowSession, original);
 });
 
 test("an existing companion session gets a new window", async () => {
@@ -213,7 +268,12 @@ test("/delegate-resume on tmux older than 3.2 reports the version and mails noth
 
 test("a launch keeps the placement it read first when the settings change before its window opens", async () => {
 	const s = await started();
-	for (const later of [{ windowPlacement: "bad" }, { windowPlacement: "current" }]) {
+	for (const later of [
+		{ windowPlacement: "bad" },
+		{ windowPlacement: "current" },
+		{ companionSuffix: "playpen" },
+		{ companionSuffix: "2" },
+	]) {
 		const off = s.events.on("session:launch", () => setSettings(later)); // it comes after the task was mailed
 		const result = await call(s, `late-${s.tmux.opened.length}`);
 		assert.equal((result.structuredContent as { windowSession?: string }).windowSession, companion);
@@ -222,7 +282,7 @@ test("a launch keeps the placement it read first when the settings change before
 	}
 	assert.deepEqual(
 		s.tmux.opened.map((window) => window.session),
-		[companion, companion],
+		[companion, companion, companion, companion],
 	);
 });
 

@@ -100,7 +100,7 @@ import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 import { registerDelegateWidget } from "./widget.ts";
 import { registerActivityRuntime } from "./widget-activity-runtime.ts";
-import { assertRootPlacement, placementProject, type WindowPlacement, windowPlacement } from "./window-placement.ts";
+import { assertRootPlacement, placementProject, type WindowPlacement, windowSettings } from "./window-placement.ts";
 import {
 	normalizeWorkspaceValue,
 	prepareDirectory,
@@ -1147,11 +1147,11 @@ export default function delegate(
 		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
 		await requireTmuxVersion(tmux);
 		// Read once, before anything is created or mailed; the launch keeps these values.
-		const placement = windowPlacement(getAgentDir());
+		const { placement, companionSuffix } = windowSettings(getAgentDir());
 		const parentIdentity = identity.current();
 		const project = parentIdentity
 			? { companion: parentIdentity.rootPlacement, notices: [] }
-			: placementProject(ctx.cwd);
+			: placementProject(ctx.cwd, companionSuffix);
 		assertRootPlacement(project.companion);
 		const own = identity.child(start.agent, ctx, project.companion);
 		if (parentIdentity) assertParentPlacement(readTree(own.root), own);
@@ -1366,7 +1366,7 @@ export default function delegate(
 		delegateSchema: DelegateSchema,
 		notInTmux: NOT_IN_TMUX,
 		startPolling: tracking.startPolling,
-		placement: () => windowPlacement(getAgentDir()),
+		placement: () => windowSettings(getAgentDir()).placement,
 		roster: rosterFor,
 		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
 		authorize: (id, ctx) => {

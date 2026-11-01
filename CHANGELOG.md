@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-01
+
 ### Breaking
 
 - Nested launches and resumes no longer cap a child's tools to its direct
@@ -996,7 +998,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/gvanderclay/pi-squire/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/gvanderclay/pi-squire/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/gvanderclay/pi-squire/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/gvanderclay/pi-squire/compare/v0.13.1...v0.14.0

@@ -18,7 +18,11 @@ async function isolated(body: (fixture: Fixture) => Promise<void>): Promise<void
 	const socket = join(dir, "tmux.sock");
 	const saved = { path: process.env.PATH, tmux: process.env.TMUX, pane: process.env.TMUX_PANE };
 	const run = (...args: string[]): string =>
-		execFileSync(realTmux, ["-S", socket, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+		execFileSync(realTmux, ["-S", socket, ...args], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 10_000,
+		}).trim();
 	try {
 		const pane = run("-f", devNull, "new-session", "-d", "-s", "test-parent", "-P", "-F", "#{pane_id}", "sleep 120");
 		writeFileSync(join(dir, "tmux"), `#!/bin/sh\nexec ${quote(realTmux)} -S ${quote(socket)} "$@"\n`);
@@ -95,6 +99,62 @@ test("real tmux: exact ownership targeting, unmarked collisions, alternative reu
 		assert.equal(run("show-options", "-v", "-t", `=${base}-2:`, "detach-on-destroy"), "on");
 		await client.kill(first.id);
 		assert.ok((await client.listWindows()).some((window) => window.id === second.id));
+	});
+});
+
+test("real tmux: delegate environment reaches each window but never persists in its companion session", {
+	skip: process.env.SQUIRE_REAL_TMUX !== "1",
+}, async () => {
+	await isolated(async ({ dir, run, client }) => {
+		for (const key of ["PI_UNATTENDED", "SQUIRE_TEST_API_KEY"]) run("set-environment", "-gu", key);
+		const probe = join(dir, "probe.cjs");
+		writeFileSync(
+			probe,
+			`const { writeFileSync } = require("node:fs");
+const { execFileSync } = require("node:child_process");
+writeFileSync(process.argv[2], JSON.stringify({
+  unattended: process.env.PI_UNATTENDED === "1",
+  parent: process.env.SQUIRE_TEST_PARENT_API_KEY !== undefined,
+  token: process.env.SQUIRE_TEST_API_KEY === "synthetic token ' \\$ value",
+}));
+execFileSync(${JSON.stringify(join(dir, "tmux"))}, ["wait-for", "-S", process.argv[3]]);
+setInterval(() => {}, 1000);
+`,
+		);
+		const launch = async (name: string, env: Record<string, string>) => {
+			const output = join(dir, `${name}.json`);
+			const opened = await client.openWindow(
+				{ name, cwd: dir, env, argv: [process.execPath, probe, output, name] },
+				"companion",
+				"env-delegate-session",
+			);
+			run("wait-for", name);
+			return { ...opened, observed: JSON.parse(readFileSync(output, "utf8")) };
+		};
+		const env = { PI_UNATTENDED: "1", SQUIRE_TEST_API_KEY: "synthetic token ' $ value" };
+		const previous = process.env.SQUIRE_TEST_PARENT_API_KEY;
+		let first: Awaited<ReturnType<typeof launch>>;
+		try {
+			process.env.SQUIRE_TEST_PARENT_API_KEY = "parent-only-synthetic-credential";
+			first = await launch("first-env", env);
+		} finally {
+			if (previous === undefined) delete process.env.SQUIRE_TEST_PARENT_API_KEY;
+			else process.env.SQUIRE_TEST_PARENT_API_KEY = previous;
+		}
+		assert.deepEqual(first.observed, { unattended: true, token: true, parent: false });
+		assert.throws(
+			() => run("show-environment", "-t", `=${first.session}:`, "SQUIRE_TEST_PARENT_API_KEY"),
+			/unknown variable/,
+		);
+		for (const key of Object.keys(env))
+			assert.throws(() => run("show-environment", "-t", `=${first.session}:`, key), /unknown variable/);
+		const second = await launch("second-empty", {});
+		assert.equal(second.session, first.session);
+		assert.deepEqual(second.observed, { unattended: false, token: false, parent: false });
+		const third = await launch("third-env", env);
+		assert.deepEqual(third.observed, { unattended: true, token: true, parent: false });
+		for (const key of Object.keys(env))
+			assert.throws(() => run("show-environment", "-t", `=${third.session}:`, key), /unknown variable/);
 	});
 });
 

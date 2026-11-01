@@ -80,7 +80,7 @@ async function withStub(mode: string, body: (log: () => string[]) => Promise<voi
 			`display-message) printf '$1\\t${parent}\\n';;`,
 			"list-windows) printf '@1\\t0\\tlegacy-squire\\ta\\tb\\n@2\\t1\\twork\\tplain\\n';;",
 			`list-sessions) if [ -f '${dir}/gone' ] && [ '${mode}' = window-gone-read-error ]; then echo "server gone" >&2; exit 1; fi; if [ -f '${dir}/made' ] && [ '${mode}' = duplicate-read-error ]; then echo "server gone" >&2; exit 1; fi; printf '$1\\t\\twork\\n'; if [ -f '${dir}/made' ]; then case '${mode}' in unmarked|duplicate-unmarked) printf '$2\\t\\t${base}\\n';; *) printf '$2\\t1\\t${base}\\n';; esac; fi;;`,
-			`new-window) case '${mode}' in window-gone|window-gone-read-error) rm '${dir}/made'; touch '${dir}/gone'; echo "can't find session: $2" >&2; exit 1;; window-full) echo "no space" >&2; exit 1;; window-malformed) printf 'warning\\n@8\\n'; exit 0;; esac; case "$*" in *'-t $1 '*) echo @8;; *'-t $2 '*) echo @8;; *) echo @99;; esac;;`,
+			`new-window) case '${mode}' in echo-args) printf '%s\\n' "$*" >&2; exit 1;; silent) exit 1;; window-gone|window-gone-read-error) rm '${dir}/made'; touch '${dir}/gone'; echo "can't find session: $2" >&2; exit 1;; window-full) echo "no space" >&2; exit 1;; window-malformed) printf 'warning\\n@8\\n'; exit 0;; esac; case "$*" in *'-t $1 '*) echo @8;; *'-t $2 '*) echo @8;; *) echo @99;; esac;;`,
 			`new-session) case '${mode}' in full) echo "no space" >&2; exit 1;; malformed) printf 'warning\\n@7\\n';; duplicate|duplicate-unmarked|duplicate-read-error) if [ -f '${dir}/made' ]; then echo @7; else touch '${dir}/made'; echo "duplicate session: x" >&2; exit 1; fi;; *) touch '${dir}/made'; echo @7;; esac;;`,
 			"esac",
 		].join("\n");
@@ -112,9 +112,37 @@ test("a fresh companion is created and marked in one command queue, with exact o
 		);
 		assert.equal(
 			log()[2],
-			"new-session -d -s project-delegate-session -n scout-x -c /work -e A=1 -P -F #{window_id} -- pi --x ; set-option -t =project-delegate-session: @squire-companion 1 ; set-option -t =project-delegate-session: detach-on-destroy off",
+			"new-session -d -s project-delegate-session -n scout-x -c /work -P -F #{window_id} -- env A=1 pi --x ; set-option -t =project-delegate-session: @squire-companion 1 ; set-option -t =project-delegate-session: detach-on-destroy off",
 		);
 	});
+});
+
+test("parent-only credentials are never copied into tmux arguments", async () => {
+	const previous = process.env.SQUIRE_TEST_PARENT_API_KEY;
+	try {
+		process.env.SQUIRE_TEST_PARENT_API_KEY = "parent-only-synthetic-credential";
+		await withStub("ok", async (log) => {
+			await createTmuxClient().openWindow(SPEC, "companion", BASE);
+			await createTmuxClient().openWindow(SPEC, "companion", BASE);
+			const args = log().join("\n");
+			assert.ok(!args.includes("SQUIRE_TEST_PARENT_API_KEY"));
+			assert.ok(!args.includes("parent-only-synthetic-credential"));
+		});
+	} finally {
+		if (previous === undefined) delete process.env.SQUIRE_TEST_PARENT_API_KEY;
+		else process.env.SQUIRE_TEST_PARENT_API_KEY = previous;
+	}
+});
+
+test("tmux failures never include arguments or environment values, even when stderr echoes them", async () => {
+	for (const mode of ["echo-args", "silent"]) {
+		await withStub(mode, async () => {
+			await assert.rejects(createTmuxClient().openWindow(SPEC, "current", ""), {
+				message: "tmux new-window failed",
+				certainty: "unknown",
+			});
+		});
+	}
 });
 
 test("a managed companion is opened by its verified session id, not a prefix or the invoking session", async () => {
@@ -147,7 +175,7 @@ test("a definite missing managed target leaves a failed recheck known not-opened
 	await withStub("window-gone-read-error", async (log) => {
 		await assert.rejects(createTmuxClient().openWindow(SPEC, "companion", BASE), {
 			certainty: "not-opened",
-			message: /server gone/,
+			message: /tmux list-sessions failed/,
 		});
 		assert.deepEqual(
 			log().map((line) => line.split(" ")[0]),
@@ -193,7 +221,7 @@ test("a failed ownership recheck after a dispatched creation retains unknown cer
 	await withStub("duplicate-read-error", async (log) => {
 		await assert.rejects(createTmuxClient().openWindow(SPEC, "companion", BASE), {
 			certainty: "unknown",
-			message: /server gone/,
+			message: /tmux list-sessions failed/,
 		});
 		assert.equal(log().filter((line) => line.startsWith("new-session")).length, 1);
 	});

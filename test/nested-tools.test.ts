@@ -146,14 +146,17 @@ async function runtime(args: readonly string[] = []): Promise<{
 	return result;
 }
 
-async function coordinator(active = ["probe_driver", "plain", "orchestrator", "delegate", "delegation_resume"]) {
+async function coordinator(
+	active = ["probe_driver", "plain", "orchestrator", "delegate", "delegation_resume"],
+	nested = true,
+) {
 	const real = await runtime();
 	real.api.setActiveTools(active);
 	// The parent does not have these child-only registrations at all.
 	const registered = real.api.getAllTools().filter((tool) => !["child_only", "late_only"].includes(tool.name));
 	const parent = session({
-		parentEnv: "isolated-root",
-		agentEnv: "coordinator",
+		parentEnv: nested ? "isolated-root" : undefined,
+		agentEnv: nested ? "coordinator" : undefined,
 		activeTools: active,
 		registeredTools: registered.map((tool) => tool.name),
 		toolExposures: exposures,
@@ -203,6 +206,21 @@ test("parent availability matches real indirect execution plus active model-only
 	}
 	assert.deepEqual(new Set(available), new Set([...seen.callable, "orchestrator"]));
 	assert.ok(!real.api.getActiveTools().includes("deferred_tool"));
+});
+
+test("root inherited tools retain inactive deferred tools without admitting inactive direct or hidden tools", async () => {
+	const { parent } = await coordinator(undefined, false);
+	await parent.toolCall("delegate", { agent: "worker", task: "isolated probe" });
+	const child = await runtime(parent.tmux.opened[0].argv);
+	const seen = await child.probe();
+	for (const name of ["script_tool", "deferred_tool", "mcp__fake__echo", "list_mcp_resources"])
+		assert.equal(seen.outcomes[name], true, name);
+	for (const name of ["inactive", "hidden_tool", "child_only", "late_only", "delegate"])
+		assert.equal(seen.outcomes[name], false, name);
+	child.api.setActiveTools(child.api.getActiveTools().filter((name) => name !== "deferred_tool"));
+	assert.ok(!child.api.getActiveTools().includes("deferred_tool"));
+	child.api.setActiveTools([...child.api.getActiveTools(), "deferred_tool"]);
+	assert.ok(child.api.getActiveTools().includes("deferred_tool"));
 });
 
 test("nested inherited tools retain codemode/deferred and model-only operations; real child calls stay bounded", async () => {

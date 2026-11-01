@@ -12,7 +12,7 @@ export function toolMatches(pattern: string, name: string): boolean {
 
 /**
  * The operations this session can reach: active tools plus codemode and
- * deferred ones, never hidden ones. A nested delegate with no `tools` field
+ * deferred ones, never hidden ones. A delegate with no `tools` field
  * inherits these. Includes active model-only operations, though
  * ctx.executeTool cannot call those.
  */

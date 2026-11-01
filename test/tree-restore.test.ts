@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { readIdentity } from "../src/identity.ts";
@@ -257,7 +258,7 @@ test("direct-parent resume restores coordinator children and offline replies bef
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 0, lifetime: 3 });
 	assert.equal(readIdentity(c.id)!.depth, 1);
 });
-test("notice budgets are explicit and do not adopt or scan unrelated session directories", async () => {
+test("notice count budgets are explicit and do not adopt or scan unrelated session directories", async (t) => {
 	const tmux = new FakeTmux();
 	for (let i = 0; i < 70; i++) {
 		const id = `notice-child-${i}`,
@@ -287,7 +288,9 @@ test("notice budgets are explicit and do not adopt or scan unrelated session dir
 		);
 	}
 	const fresh = instance({ tmux });
+	const clock = t.mock.method(performance, "now", () => 0);
 	await fresh.start();
+	clock.mock.restore();
 	assert.equal(fresh.notes.filter((message) => message.includes("earlier session")).length, 10);
 	assert.match(fresh.warnings.join("\n"), /newest 64 trees and 10 owners/);
 	assert.equal((await status(fresh)).length, 0);

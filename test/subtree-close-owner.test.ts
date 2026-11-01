@@ -37,14 +37,27 @@ test("ancestor closes worker while its real coordinator owner is dead; same-id r
 		mkdirSync(join(dir, path, ".."), { recursive: true });
 		writeFileSync(join(dir, path), JSON.stringify(value));
 	};
-	const pendingFinals = (): { from: string; body: string }[] => {
-		const inbox = join(dir, "mail-state", "pi-session-mail", "root", "new");
-		try {
-			return readdirSync(inbox).map((file) => JSON.parse(readFileSync(join(inbox, file), "utf8")));
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-			throw error;
+	type Final = { id: string; from: string; to: string; kind: string; in_reply_to: string[]; body: string };
+	const correlatedFinals = (requestId: string): Final[] => {
+		const replies = new Map<string, Final>();
+		for (const box of ["new", "cur"]) {
+			const inbox = join(dir, "mail-state", "pi-session-mail", "root", box);
+			try {
+				for (const file of readdirSync(inbox)) {
+					const envelope = JSON.parse(readFileSync(join(inbox, file), "utf8")) as Final;
+					if (
+						envelope.kind === "reply" &&
+						envelope.from === "c" &&
+						envelope.to === "root" &&
+						envelope.in_reply_to.includes(requestId)
+					)
+						replies.set(envelope.id, envelope);
+				}
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
 		}
+		return [...replies.values()];
 	};
 	try {
 		mkdirSync(join(dir, "agents"), { recursive: true });
@@ -102,12 +115,16 @@ test("ancestor closes worker while its real coordinator owner is dead; same-id r
 		assert.equal(before.records[0].result, undefined);
 		assert.equal(before.outcomes.length, 1);
 		assert.match(before.outcomes[0].content, /canceled.*missing work/);
-		assert.equal(pendingFinals().length, 0, "restoration alone cannot settle the task");
+		assert.equal(correlatedFinals(task.envelope.id).length, 0, "restoration alone cannot settle the task");
 		await replacement.command("run");
+		await root.command("scan"); // The receiver may claim new/ into cur/ before the assertion.
 		const after = JSON.parse(readFileSync(join(dir, "squire", "child-tasks", "c.json"), "utf8"));
 		assert.equal(after.outcomes.length, 0, "non-stopped processing run acknowledges cancellation");
-		assert.equal(pendingFinals().length, 1);
-		assert.equal(pendingFinals()[0].from, "c");
+		const replies = correlatedFinals(task.envelope.id);
+		assert.equal(replies.length, 1, "exactly one correlated coordinator final survives receiver claim");
+		assert.equal(replies[0].from, "c");
+		assert.equal(replies[0].to, "root");
+		assert.deepEqual(replies[0].in_reply_to, [task.envelope.id]);
 		assert.equal(after.records[0].result, undefined, "no fabricated successful worker result");
 	} finally {
 		await Promise.all([tree.kill(), root.kill(), coordinator.kill(), replacement?.kill()]);

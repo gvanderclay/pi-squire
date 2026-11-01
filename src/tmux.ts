@@ -18,7 +18,6 @@ export type TmuxWindow = { id: string; session: string; name: string; exited: bo
 /** A window just opened: its id and the name of the session it is in, when known. */
 export type OpenedWindow = { id: string; session: string | undefined };
 
-/** The oldest tmux delegate windows need: `new-session -e` arrived in 3.2. */
 export const MIN_TMUX = { major: 3, minor: 2 } as const;
 
 export type TmuxVersion = { text: string; major: number; minor: number };
@@ -124,8 +123,8 @@ function runTmux(args: string[], timeout: number): Promise<string> {
 					reject(new Error(`tmux ${args[0]} timed out after ${timeout / 1000} s`));
 					return;
 				}
-				const detail = typeof stderr === "string" && stderr.trim() !== "" ? stderr.trim() : error.message;
-				reject(new Error(detail));
+				const reason = ["duplicate session", "can't find session"].find((text) => stderr.includes(text));
+				reject(new Error(`tmux ${args[0]} failed${reason === undefined ? "" : `: ${reason}`}`));
 				return;
 			}
 			resolve(stdout);
@@ -215,8 +214,17 @@ async function openCompanion(run: Run, spec: WindowSpec, base: string): Promise<
 				continue;
 			}
 		}
-		const args = ["new-session", "-d", "-s", session, "-n", spec.name, "-c", spec.cwd, ...envArgs(spec)];
-		args.push("-P", "-F", "#{window_id}", "--", ...spec.argv);
+		const args = ["new-session", "-d", "-s", session, "-n", spec.name, "-c", spec.cwd];
+		// new-session -e persists in the session; env confines these values to its first window.
+		args.push(
+			"-P",
+			"-F",
+			"#{window_id}",
+			"--",
+			"env",
+			...Object.entries(spec.env).map(([key, value]) => `${key}=${value}`),
+			...spec.argv,
+		);
 		args.push(";", "set-option", "-t", `=${session}:`, COMPANION_OPTION, "1");
 		args.push(";", "set-option", "-t", `=${session}:`, "detach-on-destroy", "off");
 		certainty = "unknown";

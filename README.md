@@ -992,11 +992,14 @@ are not checked against the parent's tools, at top level or nested: normal Pi
 extension discovery or `session:launch` customization can provide tools in the
 child.
 
-- No `tools` field: the delegate gets the parent session's tools as they are
-  when the launch (or resume) starts: active tools for a top-level launch, or
-  available tools including codemode/deferred operations for a nested one, passed as
-  `--tools`, plus the `delegateTools` entries. A parent limited to `read`
-  gives such a delegate only `read`.
+- No `tools` field: the delegate gets the parent session's available tools
+  when the launch (or resume) starts, at any depth: active tools plus registered
+  codemode/deferred operations, excluding hidden tools and inactive direct tools,
+  passed as `--tools`, plus the `delegateTools` entries. Pi initially declares
+  these selected tools in the child, even when their exposure is codemode or
+  deferred. An extension can deselect optional tools during child startup and
+  enable them later. A parent with only `read` available gives such a delegate
+  only `read`.
 - An empty `tools` field, `tools:` or `tools: []`: the delegate gets no tools
   except the `delegateTools` entries. With none of those either, it starts
   with `--no-tools`.
@@ -1691,6 +1694,11 @@ window opens.
 An empty final set also receives `--no-tools` and an empty allowlist so earlier
 selection flags cannot restore tools. Do all work synchronously: the emitter
 reads the payload the moment `emit` returns.
+
+Environment additions are not a secret transport. They can be visible in tmux
+command arguments and a fresh companion's first pane start command to anyone
+with access to its socket. pi-squire never copies the parent's full process
+environment into these arguments.
 
 `cwd`, the trust flag (`--approve` or `--no-approve`), `--session-dir` and the
 session choice (`--session-id` for a new delegate, `--session` for a [resumed](#resuming-a-delegation)

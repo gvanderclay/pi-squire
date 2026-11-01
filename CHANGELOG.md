@@ -6,6 +6,29 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Agents without a `tools:` field inherit available deferred and codemode tools
+  from root sessions, just as they already did from nested delegates. Inactive
+  direct tools and hidden tools remain excluded. Pi initially declares the
+  selected tools in the child; extensions that enable optional tools on demand
+  must deselect them during child startup. This can increase initial declarations
+  for root-launched delegates whose extensions do not deselect those tools.
+- Creating a companion session no longer saves the first delegate's environment,
+  including `PI_UNATTENDED` and API keys, into the session for later windows to
+  inherit. Each delegate still receives its own launch environment. Existing
+  polluted sessions are not changed. The fresh-companion argument test now pins
+  window-local environment delivery instead of session-level `-e` options.
+  Launches still pass only Squire's environment and `session:launch` additions,
+  never a copy of the parent's full process environment.
+- tmux failures report a bounded subcommand error instead of raw process errors
+  or stderr that could expose launch arguments or environment values. The two
+  failed ownership-recheck tests now expect the bounded error wording.
+- The discovery-count regression uses a controlled clock so additional parallel
+  test load does not turn its structural count assertion into a timing failure.
+  The separate real-time discovery deadline test and 200 ms product bound are
+  unchanged.
+
 ## [0.18.1] - 2026-11-01
 
 ### Changed

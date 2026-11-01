@@ -807,13 +807,13 @@ export default function delegate(
 	/**
 	 * The delegate's tools for a launch or resume starting now: the agent's
 	 * named tools, or the parent's current tools (including indirect callable
-	 * tools when nested, less any `-name` entries), then `delegateTools`.
+	 * tools, less any `-name` entries), then `delegateTools`.
 	 * Throws, naming the file, on an invalid setting.
 	 */
 	function childTools(agent: Agent): string[] {
 		const selected = toolSelection(
 			agent,
-			agent.tools === undefined ? (identity.current() ? availableTools(pi) : pi.getActiveTools()) : [],
+			agent.tools === undefined ? availableTools(pi) : [],
 			delegateTools(getAgentDir()),
 		);
 		if (grantsNesting(agent, (identity.current()?.depth ?? 0) + 1)) selected.push(...DELEGATION_TOOLS);

@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-01
+
 ### Changed
 
 - New root companion sessions deliberately default to `<project>-delegates`
@@ -1006,7 +1008,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/gvanderclay/pi-squire/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/gvanderclay/pi-squire/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/gvanderclay/pi-squire/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/gvanderclay/pi-squire/compare/v0.14.0...v0.15.0

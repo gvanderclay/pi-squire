@@ -15,6 +15,8 @@ function processStart(pid: number): string | undefined {
 		const value: string = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
 			encoding: "utf8",
 			timeout: 1000,
+			// Compare identical formatting even across differently configured tmux environments.
+			env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
 			stdio: ["ignore", "pipe", "ignore"],
 		}).trim();
 		return value || undefined;

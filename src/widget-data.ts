@@ -2,6 +2,7 @@
 // Rows are keyed by native session id, never by a mutable title or launch id.
 import { isStarted, locateSession, type Results, recordedName, type StartedRecorded, sessionIdOf } from "./results.ts";
 import type { TmuxWindow } from "./tmux.ts";
+import type { Activity } from "./widget-activity.ts";
 import { WidgetTitleMirrors } from "./widget-title.ts";
 import { WidgetTitleFiles } from "./widget-title-file.ts";
 import { windowState } from "./windows.ts";
@@ -18,6 +19,7 @@ export type DelegateRow = {
 	model: string;
 	/** Transcript mtime is a last-active hint, not proof of tool activity. */
 	lastActive: number | undefined;
+	activity?: Activity;
 };
 
 /** All eligible rows remain available; only this viewport incurs metadata I/O. */

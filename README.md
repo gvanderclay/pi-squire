@@ -434,8 +434,9 @@ transcript-file age appear when space permits: model is
 dropped first, then file age, before identity/state are compressed. At very
 narrow widths the state glyph remains beside the truncated identity.
 `file … ago` is only a last-active hint from transcript mtime, not live tool
-activity. No activity, descendant summaries, ancestors or keyboard focus are
-added by this overview; use [/delegates](#reaching-delegates) to inspect windows.
+activity. When available, a second line shows factual live activity (below).
+Descendant summaries, ancestors and keyboard focus are not added by this
+overview; use [/delegates](#reaching-delegates) to inspect windows.
 
 Configure it in the existing `<agent dir>/squire/settings.json`, alongside
 `windowPlacement`, worktree and nesting preferences:
@@ -459,7 +460,7 @@ Configure it in the existing `<agent dir>/squire/settings.json`, alongside
 Launch/result/close changes refresh promptly; an independent one-second observer
 keeps finished-open rows, window eligibility and later native title changes
 fresh even when the result poll has stopped. Only visible rows resolve titles and
-file metadata; overflow counts still include every eligible child. Closed/gone-only
+file metadata and live activity; overflow counts still include every eligible child. Closed/gone-only
 history does not keep the observer listing tmux windows. A failed tmux listing is unknown,
 not proof that a window disappeared: running tasks remain eligible, but
 finished rows require a positively open matching window.
@@ -473,6 +474,41 @@ clears. A small owner-only disposable title mirror under
 over that mirror: an external picker rename may differ temporarily from the
 child's own in-memory name. Files are read incrementally, with bounded work per
 refresh; very large existing transcripts may take several refreshes to catch up.
+
+### Factual live activity
+
+The secondary line follows actual Pi tool-execution events: `reading…`,
+`editing…`, `writing…`, `command call…`, or `using <tool name>…`. Parallel
+and nested calls are tracked by their actual call ids, not by tool name.
+Active nested calls take precedence over their orchestrator. A tool start is
+observed before permission interception: `command call…` means an outstanding
+call, not proof that a subprocess started or permission was granted. Squire
+does not inspect commands to guess intent, or display arguments, paths, tool
+results, thinking or provider payloads.
+
+Otherwise, while an assistant response streams, `response: …` shows a literal
+single-line excerpt bounded to 512 UTF-8 bytes. It clears when that message
+ends; a quick response may finish between refreshes and never appear. Calls
+clear on matching end, run end/settlement, stop, reload and shutdown. Known
+task results/close suppress activity even if a delegate's last snapshot remains.
+A settled or silent coordinator can still own unfinished child tasks: activity
+does not determine task completion, thinking or waiting for a human.
+
+This best-effort feed uses bounded owner-only atomic snapshots under
+`<agent dir>/squire/live-sessions/`, separate from title mirrors and durable
+task/tree state. Each runtime owns a unique generation; dead/reused processes
+are rejected and their own snapshots can be removed, while unknown or duplicate
+live owners make activity unavailable. No inactivity timeout or stale-state UI
+is introduced. The same private launch correlation distinguishes a resumed task
+from its stable Pi session. Manual reopen without this correlation does not
+supply task-row activity yet. Missing, corrupt or inaccessible telemetry never
+blocks task launch, reply delivery or settlement, and causes no chat or model
+calls. Publication requires positive Squire ownership at startup; later factual
+end/settlement observation continues even if task-owner processing fails or its
+record becomes unreadable, without re-enabling actions. Event publishing works
+in non-TUI delegates and with the list hidden.
+One child-entry slot may occupy two physical lines; there is no empty secondary
+line or tool-use counter.
 
 Squire owns only its widget key and its existing status entries. It does not
 replace your footer/editor, bind navigation keys or move focus, and clears its

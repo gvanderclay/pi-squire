@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Results } from "./results.ts";
 import type { TmuxClient } from "./tmux.ts";
+import { joinActivities } from "./widget-activity-join.ts";
 import { type DelegateRow, DirectDelegateView } from "./widget-data.ts";
 import { renderDelegateWidget } from "./widget-render.ts";
 import { DEFAULT_WIDGET_SETTINGS, type WidgetSettings, widgetSettings } from "./widget-settings.ts";
@@ -22,6 +23,7 @@ class Overview {
 	private stopped = false;
 	private reading = false;
 	private again = false;
+	private factsRevision = 0;
 	private signature = "";
 	private warning = "";
 	private countVisible: boolean | undefined;
@@ -33,7 +35,10 @@ class Overview {
 	}
 
 	start(): void {
-		this.unsubscribe = this.results.subscribe(() => this.queue());
+		this.unsubscribe = this.results.subscribe(() => {
+			this.factsRevision++;
+			this.queue();
+		});
 		this.configureCount(this.settings().maxEntries === 0);
 		this.queue();
 		this.timer = setInterval(() => this.queue(), WIDGET_REFRESH_MS);
@@ -88,6 +93,7 @@ class Overview {
 		try {
 			const settings: WidgetSettings = this.settings();
 			this.configureCount(settings.maxEntries === 0);
+			const revision: number = this.factsRevision;
 			const windows =
 				settings.maxEntries > 0 && this.view.needsWindows(this.results) ? await listWindows(this.tmux) : [];
 			if (this.stopped) return;
@@ -95,6 +101,10 @@ class Overview {
 				offset: 0,
 				limit: settings.maxEntries,
 			});
+			await joinActivities(rows, { offset: 0, limit: settings.maxEntries }, this.results);
+			if (this.stopped) return;
+			// Results notifications arriving during I/O need a fresh eligibility/state snapshot.
+			if (revision !== this.factsRevision) return;
 			this.show(rows, settings);
 		} catch {
 			// Optional metadata/UI failures cannot interrupt the poll, launch or result processing.

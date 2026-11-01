@@ -6,6 +6,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The delegation tools put about 70% less text in a model's context: in a
+  codemode root their declarations drop from about 5,100 estimated tokens to
+  about 1,400. The descriptions and parameter notes are shorter, and the output
+  schemas carry no field descriptions. `workspace`, `workspaceSnapshot`, and a
+  workspace attempt's `plan` and `attempt` are declared by their discriminant
+  and directory only, with their other fields left open; the structured data
+  itself is unchanged. Tests that pinned the old wording are updated.
+- A delegate's appended prompt is its agent body and working-directory line
+  only. The paragraph naming the parent's address and the final-message rule
+  are in the per-run `squire_delegate_task` section alone, where they were
+  already repeated.
+
 ## [0.18.0] - 2026-11-01
 
 ### Changed

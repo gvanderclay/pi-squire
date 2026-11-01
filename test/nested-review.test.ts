@@ -54,17 +54,11 @@ test("default-depth leaf preserves exact launch and takeover wording even with a
 	// Missing maxDepth means 1, so the opted-in coordinator is effectively a leaf.
 	const { parent, child } = await coordinator();
 	const guidance = await section(child);
-	assert.match(
-		guidance,
-		/Your final message reaches the session that started you automatically, so put your findings there;/,
-	);
+	assert.match(guidance, /Your final message reaches the session that started you automatically and is all it sees/);
 	assert.doesNotMatch(guidance, /children finish|intermediate runs/);
 	const argv = parent.tmux.opened[0].argv;
 	const launchPrompt = readFileSync(argv[argv.indexOf("--append-system-prompt") + 1], "utf8");
-	assert.ok(
-		launchPrompt.endsWith(guidance.replace("You are a delegate. ", "")),
-		"per-run leaf paragraph is identical to the launch paragraph",
-	);
+	assert.ok(!launchPrompt.includes("Your task arrives"), "the parent paragraph is per-run only");
 	assert.equal(
 		child.userMessages[0].text,
 		`[delegate] Your task, from the session that started you (${parent.parent}). Your final message this turn goes back to it automatically.\n\ncoordinate`,

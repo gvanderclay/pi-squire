@@ -281,7 +281,7 @@ export function renderDelegateResult(
 		const text = result.content.map((part) => part.text ?? "").join("\n");
 		return new Text(context.isError ? theme.fg("error", text) : text, 0, 0);
 	}
-	const started = details as Static<typeof DelegateSchema>;
+	const started = details as Static<typeof DelegateSchema> & { workspace: Workspace };
 	const lines = [
 		`${theme.fg("accent", "●")} ${theme.fg("toolTitle", theme.bold(started.windowName))}${theme.fg(
 			"dim",

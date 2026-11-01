@@ -6,8 +6,6 @@ import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 
-import { Type } from "typebox";
-
 /** A bounded list of file names, as data; never shell text. */
 export type PathSummary = { paths: string[]; total: number; truncated: boolean };
 /** A checkout's repository, as canonical absolute paths. */
@@ -18,13 +16,6 @@ export type GitLaunch =
 	| { kind: "git"; identity: GitIdentity; position: GitPosition; head: string | null; baseline: string | null }
 	| { kind: "non-git" }
 	| { kind: "unknown"; reason: string };
-
-/** `PathSummary` as a schema. */
-export const PathSummarySchema = Type.Object({
-	paths: Type.Array(Type.String(), { description: "The first paths, whole; never more than 100 or 16 KiB." }),
-	total: Type.Number({ description: "Every path observed in this category." }),
-	truncated: Type.Boolean(),
-});
 
 /** How many paths, and how many bytes of them, a summary lists. */
 const LIST_PATHS = 100;

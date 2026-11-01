@@ -171,7 +171,7 @@ async function ensureExited(record: StartedRecorded, tmux: TmuxClient): Promise<
 function resultSchema(delegateSchema: TObject): TObject {
 	return Type.Object({
 		...delegateSchema.properties,
-		resumedFrom: Type.String({ description: "The delegation whose session this one reopened." }),
+		resumedFrom: Type.String(),
 	});
 }
 
@@ -391,26 +391,15 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 		name: "delegation_resume",
 		label: "Resume delegation",
 		description:
-			"Only this session’s direct children may be resumed; viewing a descendant does not grant authority, and fork/clone copies must return to the original parent. Current depth, grants, caps, tools and trust are checked again. Continue an exited delegate with a follow-up task: reopen its own session, so it keeps the context it built, in a new window. The follow-up is recorded as a new delegation, and its result arrives as a message on its own, like a delegate's. Use it when the next task needs what the delegate already read or decided; for unrelated work, use delegate. It refuses a delegation that is still running (send it a message instead), one whose window is still open, an older delegation of a chain that was already resumed (it names the newest), and one whose working directory is gone, a removed worktree included. A delegate whose window was killed mid-turn can be resumed.",
+			"Continue an exited direct child in its own session, so it keeps the context it built, with a follow-up task in a new window. It is recorded as a new delegation whose result arrives as a message. For unrelated work, use delegate. Refuses a running delegation (mail it instead), an open window, an older link of a resumed chain (it names the newest) and a missing working directory.",
 		parameters: Type.Object({
-			id: Type.String({ description: "The delegation to resume, from a delegate result or delegation_status." }),
-			task: Type.String({
-				description: "The follow-up task. The delegate sees its earlier conversation plus this.",
-			}),
-			model: Type.Optional(
-				Type.String({
-					description:
-						"provider/id to resume on; used as given. Omit to continue on the model the delegate finished on, or its agent's next fallback when that one is unavailable. Not used when the agent locks model: the agent's current model applies.",
-				}),
-			),
+			id: Type.String({ description: "The newest delegation id of the child." }),
+			task: Type.String(),
+			model: Type.Optional(Type.String({ description: "provider/id; defaults to the model it finished on." })),
 			thinking: Type.Optional(
-				Type.String({
-					description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the level the delegate last ran on, from its session. Not used when the agent locks thinking: the agent's current level applies.`,
-				}),
+				Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the level it last ran on.` }),
 			),
-			auto_exit: Type.Optional(
-				Type.Boolean({ description: "Close the window once it finishes; defaults to the delegation's setting." }),
-			),
+			auto_exit: Type.Optional(Type.Boolean({ description: "Defaults to the delegation's setting." })),
 		}),
 		outputSchema: resultSchema(deps.delegateSchema),
 		// Opens a window and removes nothing but an exited window of the old run; each call starts another run.

@@ -71,46 +71,30 @@ const StartedSchema = Type.Object({
 	root: Type.Optional(Type.String()),
 	depth: Type.Optional(Type.Number()),
 	accounting: Type.Optional(Type.String()),
-	canResume: Type.Boolean({
-		description: "Direct-parent authority only; current admission and exited-session checks still apply.",
-	}),
+	canResume: Type.Boolean(),
 	kind: Type.Literal("started"),
 	id: Type.String(),
 	name: Type.String(),
 	agent: Type.String(),
-	model: Type.String({ description: "The model it was launched on." }),
-	finishedModel: Type.Optional(
-		Type.String({ description: "The model its result came from, read from its session file; done only." }),
-	),
+	model: Type.String(),
+	finishedModel: Type.Optional(Type.String()),
 	thinking: Type.String(),
 	autoExit: Type.Boolean(),
-	resumedFrom: Type.Optional(Type.String({ description: "The delegation whose session this one reopened." })),
+	resumedFrom: Type.Optional(Type.String()),
 	windowId: Type.String(),
 	windowName: Type.String(),
-	windowSession: Type.Optional(
-		Type.String({ description: "The tmux session its window is in now; absent when the window is gone." }),
-	),
-	cwd: Type.Optional(
-		Type.String({ description: "The directory its window opened in; absent for records from before it was kept." }),
-	),
-	sessionDir: Type.Optional(Type.String({ description: "The session-storage directory it was told to use." })),
+	windowSession: Type.Optional(Type.String()),
+	cwd: Type.Optional(Type.String()),
+	sessionDir: Type.Optional(Type.String()),
 	workspace: Type.Optional(WorkspaceSchema),
 	workspaceSnapshot: WorkspaceSnapshotSchema,
-	state: Type.Union(
-		STARTED_STATES.map((state) => Type.Literal(state)),
-		{
-			description:
-				"running: window open, no result. done: a result arrived (see status, envelopePath). gone: the window went with no result; a late reply makes it done. closed: delegation_close recorded it. window-closed: the window is gone. unknown: tmux could not be asked. done and closed are final, though a later delegation_resume continues one as a new delegation; gone and window-closed turn done if a late reply arrives.",
-		},
-	),
+	state: Type.Union(STARTED_STATES.map((state) => Type.Literal(state))),
 	closed: Type.Boolean(),
 	closedWithoutResult: Type.Boolean(),
-	status: Type.Optional(Type.String({ description: "The result envelope's status: done, failed or stopped." })),
+	status: Type.Optional(Type.String()),
 	envelopePath: Type.Optional(Type.String()),
 	sessionPath: Type.Optional(Type.String()),
-	lastActiveAt: Type.Optional(
-		Type.String({ description: "ISO time the session file was last written; running only." }),
-	),
+	lastActiveAt: Type.Optional(Type.String()),
 });
 
 const DelegationSchema = Type.Union([StartedSchema, AttemptSchema]);
@@ -297,10 +281,8 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"This session’s descendant delegations, scoped to its own subtree. Parent/root/depth and stable session ids identify ownership; only a direct parent may resume a child. Shared accounting does not acknowledge result processing. Each delegation is reported as running (the window is open and no result has arrived yet), done (with the result envelope's status) or closed (closed with delegation_close, or its window is gone). A delegation whose window went with no reply is reported closed without a result until a late reply makes it done. Call it to check on a delegation that seems stuck or to find its files; a result arrives as a message on its own, so there is no need to call it to wait for one. Names the delegation id, agent, session name, model, thinking, window, working directory, delegate session path and result envelope path. A running delegation also shows when its session file was last written; a long gap may mean it is stuck but does not prove it. A delegate's window being open means it is connected, not that its task is unfinished or finished; only a result means done.",
-		parameters: Type.Object({
-			id: Type.Optional(Type.String({ description: "One delegation id; omit to report every delegation." })),
-		}),
+			"Report this session's descendant delegations, or one by id: state, window, model, paths and workspace. Results arrive as messages on their own, so call it only for a delegation that seems stuck or to find its files. An open window does not mean the task is unfinished; only a result means done. gone and window-closed turn done if a late reply arrives.",
+		parameters: Type.Object({ id: Type.Optional(Type.String()) }),
 		outputSchema: StatusSchema,
 		annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...CLOSED_WORLD },
 		async execute(
@@ -375,10 +357,8 @@ function closeTool(results: Results, tmux: TmuxClient, assertActive: () => void)
 		name: "delegation_close",
 		label: "Close delegation",
 		description:
-			"Explicitly close a descendant and its recorded subtree. Fences new child launches, kills only verified current tmux windows and retains worktrees, branches and session/result files. Any ancestor may close; only the direct parent may resume. Partial errors or unknown in-flight creates stay fenced and are reported for an explicit retry, never as successful closure.",
-		parameters: Type.Object({
-			id: Type.String({ description: "The delegation id to close." }),
-		}),
+			"Close a descendant and its recorded subtree: fence new launches and kill its verified windows, keeping worktrees, branches and session files. Check closed and complete; partial failures stay fenced for a retry.",
+		parameters: Type.Object({ id: Type.String() }),
 		outputSchema: CloseSchema,
 		// Kills only verified windows; repeats retry unresolved members and preserve confirmed facts.
 		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, ...CLOSED_WORLD },

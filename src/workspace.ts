@@ -18,7 +18,7 @@ import {
 	ProjectTrustStore,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { askGit, type GitLaunch, inspectGit, PathSummarySchema } from "./git.ts";
+import { askGit, type GitLaunch, inspectGit } from "./git.ts";
 import { localTrust, type TrustDecision, type TrustResolver, trustChoices } from "./trust-prompt.ts";
 import type { ManagedWorkspace } from "./worktree.ts";
 
@@ -41,69 +41,14 @@ export type DirectoryWorkspace = {
 	git: GitLaunch;
 };
 export type Workspace = DirectoryWorkspace | ManagedWorkspace;
-/** `GitPosition` as a schema. */
-export const PositionSchema = Type.Union([
-	Type.Object({ branch: Type.String(), detached: Type.Literal(false) }),
-	Type.Object({ branch: Type.Null(), detached: Type.Literal(true) }),
-]);
-
-/** `GitIdentity` as a schema. */
-export const IdentitySchema = Type.Object({
-	mainRoot: Type.String(),
-	commonDir: Type.String(),
-	checkoutRoot: Type.String(),
-});
-
-const CheckoutSchema = Type.Object({
-	kind: Type.Literal("git"),
-	identity: IdentitySchema,
-	position: PositionSchema,
-	head: Type.Union([Type.String(), Type.Null()]),
-	baseline: Type.Union([Type.String(), Type.Null()], {
-		description: "The commit checked out at launch; null when the checkout had no commit yet.",
-	}),
-});
-
-const CWD_DESCRIPTION = "The directory the delegate's window opened in.";
-
-/** `Workspace` as a schema, for the tools' structured outputs. */
-export const WorkspaceSchema = Type.Union([
-	Type.Object({
-		mode: Type.Union([Type.Literal("inherited"), Type.Literal("existing")]),
-		cwd: Type.String({ description: CWD_DESCRIPTION }),
-		git: Type.Union(
-			[
-				CheckoutSchema,
-				Type.Object({ kind: Type.Literal("non-git") }),
-				Type.Object({ kind: Type.Literal("unknown"), reason: Type.String() }),
-			],
-			{ description: "The checkout at launch: git, non-git, or unknown when Git could not be asked." },
-		),
-	}),
-	Type.Object({
-		mode: Type.Literal("managed"),
-		cwd: Type.String({ description: CWD_DESCRIPTION }),
-		git: CheckoutSchema,
-		sourceCwd: Type.String({ description: "The checkout the worktree was created from." }),
-		source: IdentitySchema,
-		createdBranch: Type.String({ description: "The branch created for the worktree, as originally named." }),
-		requestedBase: Type.String(),
-		baseCommit: Type.String({ description: "The commit the branch was created at." }),
-		sourceDirty: PathSummarySchema,
-	}),
-]);
-
-/** `WorktreePlan` as a schema: what an attempt intended. */
-export const WorktreePlanSchema = Type.Object({
-	sourceCwd: Type.String(),
-	source: IdentitySchema,
-	destination: Type.String(),
-	branch: Type.String(),
-	requestedBase: Type.String(),
-	baseCommit: Type.String(),
-	sourceDirty: PathSummarySchema,
-	trusted: Type.Boolean(),
-});
+/** `Workspace` as a schema for the tools' structured outputs: the discriminant and directory, the rest open to keep tool declarations short. */
+export const WorkspaceSchema = Type.Object(
+	{
+		mode: Type.Union([Type.Literal("inherited"), Type.Literal("existing"), Type.Literal("managed")]),
+		cwd: Type.String(),
+	},
+	{ additionalProperties: true },
+);
 
 /** Optional inputs some models fill with these instead of leaving them out. */
 const OMITTED = new Set(["", "null", "none", "false", "undefined"]);

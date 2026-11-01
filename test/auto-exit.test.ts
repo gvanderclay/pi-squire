@@ -61,7 +61,7 @@ test("auto_exit accepts explicit booleans and takes precedence over ignored auto
 	);
 	assert.deepEqual(s.warnings, []);
 	assert.deepEqual(s.errors, []);
-	assert.ok(s.tool("delegate").description.includes("auto_exit"));
+	assert.match(JSON.stringify(s.tool("delegate").parameters), /auto_exit/);
 	assert.ok(!s.tool("delegate").description.includes("tools, extensions"));
 });
 
@@ -81,7 +81,6 @@ test("the tool describes auto_exit, and completions offer launch flags", async (
 	const s = session();
 	await s.start();
 	assert.match(JSON.stringify(s.tool("delegate").parameters), /auto_exit/);
-	assert.match(s.tool("delegate").description, /auto_exit/);
 	assert.deepEqual(
 		(await s.completions("scout --"))?.map((item) => item.label),
 		[

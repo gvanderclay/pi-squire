@@ -694,14 +694,9 @@ test("by default the body is wrapped in <agent_instructions>, and an empty body 
 	await s.start();
 	for (const name of ["wrapped", "empty", "unknown"]) await s.delegate(`${name} go`);
 	const [wrapped, empty, unknown] = s.tmux.opened.map((opened) => promptOf(opened.argv));
-	assert.ok(
-		wrapped.startsWith(
-			"<agent_instructions>\nLook things up.\n\nCarefully.\n</agent_instructions>\n\nEnd with one self-contained final message:",
-		),
-		wrapped,
-	);
-	assert.ok(empty.startsWith("End with one self-contained final message:"), empty);
-	assert.ok(unknown.startsWith("<agent_instructions>\nLook things up.\n</agent_instructions>"), unknown);
+	assert.equal(wrapped, "<agent_instructions>\nLook things up.\n\nCarefully.\n</agent_instructions>");
+	assert.equal(empty, "");
+	assert.equal(unknown, "<agent_instructions>\nLook things up.\n</agent_instructions>");
 	assert.ok(
 		s.warnings.some((warning) =>
 			warning.endsWith(`unknown.md has prompt_mode "prepend", not append or replace; append applies`),

@@ -649,7 +649,7 @@ test("the resumed delegate's window is named like the first and the tool is regi
 		openWorldHint: true,
 	});
 	assert.deepEqual((tool.parameters as { required: string[] }).required.sort(), ["id", "task"]);
-	assert.match(d.s.tool("delegate").description, /delegation_resume/);
+	assert.match(tool.description, /with a follow-up task/);
 	assert.ok(d.s.commands().includes("delegate-resume"));
 });
 

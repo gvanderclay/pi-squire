@@ -1063,14 +1063,14 @@ limit, it resolves each entry the way Pi resolves `--model`: an exact
 order the entries are listed. No entry may be a `*` pattern: a `model` or
 `fallback` entry with `*` makes the file invalid, and the agent is disabled.
 
-The body is followed by one fixed final-message line and a paragraph naming the
-parent session's address. The delegate's task arrives as a message from that
+Each run of the delegate also gets a system-prompt section naming the parent
+session's address. The delegate's task arrives as a message from that
 session, and that message and every later one from the same address are
 instructions to follow as given. Other sessions are colleagues: the delegate
 may answer them, but checks with the parent before doing work the parent did
-not ask for. The paragraph names no provider, package or tool, so it holds
-whatever `message:*` provider delivers the task. `prompt_mode: replace` builds
-the prompt exactly as every delegate was built before `prompt_mode` existed.
+not ask for. Its final message reaches the parent on its own. The section names
+no provider, package or tool, so it holds whatever `message:*` provider
+delivers the task. `prompt_mode: replace` appends the body as written.
 
 An agent file that cannot be used is invalid, and its agent is disabled:
 frontmatter that is not readable YAML or not a set of fields, an `enabled` or

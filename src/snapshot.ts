@@ -16,11 +16,9 @@ import {
 	type GitPosition,
 	onePath,
 	type PathSummary,
-	PathSummarySchema,
 	pendingPaths,
 	summarize,
 } from "./git.ts";
-import { PositionSchema } from "./workspace.ts";
 
 /**
  * A checkout as observed at one moment: its position and head against the
@@ -41,31 +39,10 @@ export type WorkspaceSnapshot =
 			pending: { staged: PathSummary; unstaged: PathSummary; untracked: PathSummary; conflicted: PathSummary };
 	  };
 
-/** `WorkspaceSnapshot` as a schema, for `delegation_status`. */
-export const WorkspaceSnapshotSchema = Type.Union(
-	[
-		Type.Object({ kind: Type.Literal("non-git") }),
-		Type.Object({ kind: Type.Literal("unknown"), reason: Type.String() }),
-		Type.Object({
-			kind: Type.Literal("git"),
-			position: PositionSchema,
-			head: Type.String(),
-			baseline: Type.String({ description: "The launch commit the changes are counted from." }),
-			ahead: Type.Number({ description: "Commits reachable from head but not from the baseline." }),
-			workingState: Type.Union([Type.Literal("clean"), Type.Literal("dirty")]),
-			committed: PathSummarySchema,
-			pending: Type.Object({
-				staged: PathSummarySchema,
-				unstaged: PathSummarySchema,
-				untracked: PathSummarySchema,
-				conflicted: PathSummarySchema,
-			}),
-		}),
-	],
-	{
-		description:
-			"The checkout observed now: git (changes since the launch commit, committed and pending), non-git, or unknown with a reason.",
-	},
+/** `WorkspaceSnapshot` as a schema for `delegation_status`: the discriminant, the rest open. */
+export const WorkspaceSnapshotSchema = Type.Object(
+	{ kind: Type.Union([Type.Literal("git"), Type.Literal("non-git"), Type.Literal("unknown")]) },
+	{ additionalProperties: true },
 );
 
 /** Reporting limits for one snapshot; never evidence for deleting anything. */

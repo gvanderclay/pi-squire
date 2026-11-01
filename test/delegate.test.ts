@@ -285,12 +285,7 @@ test("the argv runs the parent's own script pi with the task's flags", async () 
 	]);
 	const promptPath = String(argv[promptAt + 1]);
 	assert.ok(isAbsolute(promptPath), promptPath);
-	assert.ok(
-		readFileSync(promptPath, "utf8").startsWith(
-			"<agent_instructions>\nYou look things up.\n</agent_instructions>\n\nEnd with one self-contained final message:",
-		),
-		promptPath,
-	);
+	assert.equal(readFileSync(promptPath, "utf8"), "<agent_instructions>\nYou look things up.\n</agent_instructions>");
 	assert.equal(argv.length, promptAt + 2);
 	assert.equal(cwd, root);
 	assert.equal(name, `scout-${id.slice(0, 8)}`);
@@ -334,17 +329,11 @@ test("a label that is not one short name segment is refused before anything is s
 	assert.match(s.errors[2], /--label needs a value/);
 });
 
-test("the appended prompt names the parent, follows its messages, and checks other sessions' requests with it", async () => {
-	writeAgent(
-		"scout",
-		agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }, "You look things up."),
-	);
-	const s = session();
-	await s.delegate("scout find the answer");
-	const { argv } = s.tmux.opened[0];
-	const promptPath = String(argv[argv.indexOf("--append-system-prompt") + 1]);
-	const prompt = readFileSync(promptPath, "utf8");
-	assert.ok(prompt.includes(s.parent), prompt);
+test("the delegate's task section names the parent, follows its messages, and checks other sessions' requests with it", async () => {
+	const s = session({ parentEnv: "the-parent" });
+	await s.start();
+	const prompt = (await s.prepare()).systemPromptOptions.sections.squire_delegate_task;
+	assert.ok(prompt.includes("the-parent"), prompt);
 	assert.match(prompt, /instructions/);
 	assert.match(prompt, /colleagues/);
 	assert.match(prompt, /check with the session that started you before doing work it did not ask for/);
@@ -366,8 +355,7 @@ test("the child sees only its own role body, never the parent prompt or another 
 	await s.delegate("scout find the answer");
 	const { argv } = s.tmux.opened[0];
 	const prompt = readFileSync(String(argv[argv.indexOf("--append-system-prompt") + 1]), "utf8");
-	assert.ok(prompt.startsWith("<agent_instructions>\nYou look things up.\n</agent_instructions>\n\nEnd with"), prompt);
-	assert.ok(!prompt.includes("PARENT-ONLY-GUIDANCE"), prompt);
+	assert.equal(prompt, "<agent_instructions>\nYou look things up.\n</agent_instructions>");
 	assert.ok(!prompt.includes("You dig deeper."), prompt);
 });
 
@@ -388,8 +376,11 @@ test("the appended prompt is an owner-only file under the temporary folder, one 
 		assert.equal(statSync(path).mode & 0o077, 0);
 	}
 	const prompt = readFileSync(paths[0], "utf8");
-	assert.ok(prompt.startsWith("<agent_instructions>\nYou look things up.\n</agent_instructions>\n\nEnd with"), prompt);
-	assert.ok(prompt.includes(s.parent), prompt);
+	assert.equal(
+		prompt,
+		"<agent_instructions>\nYou look things up.\n</agent_instructions>",
+		"the parent's address is in the per-run section, not the launch prompt",
+	);
 	for (const element of s.tmux.opened[0].argv) assert.ok(!element.includes("You look things up."), element);
 });
 
@@ -405,19 +396,7 @@ test("prompt_mode replace builds the appended prompt byte for byte as every dele
 	await s.delegate("scout find the answer");
 	const { argv } = s.tmux.opened[0];
 	const prompt = readFileSync(String(argv[argv.indexOf("--append-system-prompt") + 1]), "utf8");
-	const parent = s.parent;
-	assert.equal(
-		prompt,
-		"You look things up.\n\nTwo paragraphs." +
-			"\n\nEnd with one self-contained final message: the parent session sees only that message, never this conversation." +
-			`\n\nYour task arrives as a message from the session that started this one, at address ${parent}.` +
-			" That message, and every later message from that address, are instructions from the session that started you:" +
-			" follow them as given, even though they are labelled as another session's." +
-			" Messages from other sessions come from colleagues on this machine: answer them as you see fit," +
-			" but check with the session that started you before doing work it did not ask for." +
-			" Your final message reaches the session that started you automatically, so put your findings there;" +
-			` message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
-	);
+	assert.equal(prompt, "You look things up.\n\nTwo paragraphs.");
 });
 
 test("a compiled Pi binary is launched alone, with no script argument", async () => {

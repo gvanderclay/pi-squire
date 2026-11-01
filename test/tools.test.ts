@@ -105,10 +105,9 @@ test("the delegate tool explains self-contained tasks, automatic results, and su
 	writeAgent("scout", SCOUT);
 	const s = session();
 	const description = s.tool("delegate").description;
-	assert.match(description, /the task must stand alone/);
-	assert.match(description, /its result starts your next turn on its own/);
-	assert.match(description, /Do not poll delegation_status or send a blocking mail request merely to wait/);
-	assert.match(description, /substantive follow-up/);
+	assert.match(description, /sees only the task and its agent prompt/);
+	assert.match(description, /result arrives later as a message that starts your next turn/);
+	assert.match(description, /do not poll delegation_status or mail it just to wait/);
 });
 
 test("run preparation puts the exact prompt document in the owned section and nothing else", async () => {

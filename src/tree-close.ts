@@ -23,7 +23,7 @@ export const CloseSchema = Type.Object({
 	id: Type.String(),
 	windowId: Type.Optional(Type.String()),
 	windowName: Type.Optional(Type.String()),
-	closed: Type.Boolean({ description: "True only when every member is confirmed closed or never dispatched." }),
+	closed: Type.Boolean(),
 	complete: Type.Boolean(),
 	alreadyClosed: Type.Boolean(),
 	killed: Type.Boolean(),

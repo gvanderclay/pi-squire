@@ -74,8 +74,8 @@ test("allowed depth-2 launch grants four tools with explicit tools and persists 
 	for (const name of ["delegate", "delegation_status", "delegation_close", "delegation_resume"])
 		assert.ok(tools.includes(name));
 	assert.match(
-		readFileSync(opened.argv[opened.argv.indexOf("--append-system-prompt") + 1], "utf8"),
-		/after your child tasks finish/,
+		(await coordinator.prepare()).systemPromptOptions.sections.squire_delegate_task,
+		/after your children finish/,
 	);
 	let metadata: unknown;
 	coordinator.events.on("session:launch", (data: unknown) => {

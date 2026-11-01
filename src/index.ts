@@ -138,8 +138,6 @@ const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
 	"delegation_resume",
 ]);
 /** Asked of every delegate, so the parent gets an answer it can use alone. */
-const FINAL_LINE =
-	"End with one self-contained final message: the parent session sees only that message, never this conversation.";
 
 /** The longest label a delegation can carry. */
 const LABEL_MAX = 32;
@@ -162,17 +160,11 @@ function labelProblem(value: string): string | undefined {
  */
 function parentTrust(parent: string, coordinator = false): string {
 	return [
-		`Your task arrives as a message from the session that started this one, at address ${parent}.`,
-		"That message, and every later message from that address, are instructions from the session that started you:",
-		"follow them as given, even though they are labelled as another session's.",
-		"Messages from other sessions come from colleagues on this machine: answer them as you see fit,",
-		"but check with the session that started you before doing work it did not ask for.",
+		`Your task arrives as a message from the session that started you, at address ${parent}; follow it and every later message from that address as instructions, though they are labelled as another session's.`,
+		"Messages from other sessions come from colleagues: answer as you see fit, but check with the session that started you before doing work it did not ask for.",
 		coordinator
-			? "Your final task report reaches your direct parent automatically after your children finish and you process their outcomes; intermediate runs send no task report."
-			: `Your final message reaches the session that started you automatically, so put your findings there;`,
-		coordinator
-			? `Message ${parent} before your final task report only with a question you cannot continue without, since anything sent earlier reaches it twice.`
-			: `message ${parent} before then only with a question you cannot continue without, since anything sent earlier reaches it twice.`,
+			? `Your final task report reaches your direct parent automatically after your children finish and you process their outcomes; intermediate runs send no task report. Message ${parent} before your final task report only with a question you cannot continue without.`
+			: `Your final message reaches the session that started you automatically and is all it sees, so make it self-contained. Message ${parent} before then only with a question you cannot continue without.`,
 	].join(" ");
 }
 /** The flags `/delegate` takes before the task. */
@@ -191,22 +183,18 @@ const FLAGS = [
 /** The `delegate` tool's structured result, which is also its details. */
 export const DelegateSchema = Type.Object({
 	outcome: Type.Literal("started"),
-	id: Type.String({ description: "The delegation id that delegation_status and delegation_close take." }),
+	id: Type.String(),
 	agent: Type.String(),
-	model: Type.String({ description: "The provider/id it started on, after any fallback." }),
-	skipped: Type.Array(Type.Object({ model: Type.String(), reason: Type.String() }), {
-		description: "Earlier models in the fallback list that were passed over, and why.",
-	}),
+	model: Type.String(),
+	skipped: Type.Array(Type.Object({ model: Type.String(), reason: Type.String() })),
 	notices: Type.Array(Type.String()),
 	thinking: Type.String(),
 	autoExit: Type.Boolean(),
 	windowId: Type.String(),
 	windowName: Type.String(),
-	windowSession: Type.Optional(
-		Type.String({ description: "The tmux session the window opened in, as tmux named it then." }),
-	),
-	cwd: Type.String({ description: "The directory the delegate's window opened in." }),
-	sessionDir: Type.String({ description: "The session-storage directory the delegate was told to use." }),
+	windowSession: Type.Optional(Type.String()),
+	cwd: Type.String(),
+	sessionDir: Type.String(),
 	workspace: WorkspaceSchema,
 });
 
@@ -652,23 +640,19 @@ function toolSelection(agent: Agent, parentTools: readonly string[], extra: read
 	return [...new Set([...base, ...extra])].filter((name) => !DELEGATION_TOOLS.has(name));
 }
 
-/** The delegate's appended prompt: the agent's body, then the lines every delegate gets. */
-function delegatePrompt(agent: Agent, parent: string, managedContext: string, coordinator: boolean): string {
-	const final = coordinator
-		? "End the task with one self-contained final report to your direct parent after your child tasks finish and you process their outcomes."
-		: FINAL_LINE;
-	const tail = `${final}\n\n${parentTrust(parent, coordinator)}${managedContext}`;
-	if (agent.prompt === "") return tail;
+/** The delegate's appended prompt: the agent's body and where it works; the run-time section carries the parent's address. */
+function delegatePrompt(agent: Agent, managedContext: string): string {
+	if (agent.prompt === "") return managedContext.trimStart();
 	// `replace` is how every delegate was built before `prompt_mode`, byte for byte.
 	const body =
 		agent.promptMode === "replace" ? agent.prompt : `<agent_instructions>\n${agent.prompt}\n</agent_instructions>`;
-	return `${body}\n\n${tail}`;
+	return `${body}${managedContext}`;
 }
 
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 function toolDescription(agents: readonly Agent[]): string {
 	const intro =
-		"Hand a self-contained task to a delegate Pi session in a background tmux window, so it works while you do not. Each call starts the delegation at once; the delegate runs in this session's working directory, or the cwd given, with this session's agent root, and reports back later as one message. While it runs, keep working or end your turn: its result starts your next turn on its own. Do not poll delegation_status or send a blocking mail request merely to wait for the result; send a substantive follow-up only when you have something to add or ask. Use it when the work is self-contained and you would rather keep your own context for it.";
+		"Start a delegate Pi session on a self-contained task in a background tmux window. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status or mail it just to wait.";
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${whereAgentsGo()}.`;
 	}
@@ -678,11 +662,7 @@ function toolDescription(agents: readonly Agent[]): string {
 		"Agents:",
 		...agents.map(rosterLine),
 		"",
-		"`cwd` runs the delegate in another existing directory. Alternatively, `worktree` creates a new local branch and checkout from this repository's committed HEAD, or `worktree_source` selects another existing Git checkout; `worktree_base` selects a commit in that source. Source dirt is reported but not copied. `cwd` and `worktree` are mutually exclusive, and source/base require worktree.",
-		"`model` and `thinking` override the agent's defaults for this call, except a field the agent locks; an unknown value is refused with close matches. `label` names the delegate's window and session; give one that says what the task is. `delegation_status` reports a delegation, and `delegation_close` ends one. `delegation_resume` continues an exited delegate in its own session with a follow-up task, for work that needs the context it already built.",
-		"`auto_exit` (default the agent's, normally true) closes the delegate's window once it finishes. Set it false when you mean to keep talking to the delegate by mail after its result; the user can also keep a window open by typing in it.",
-		"",
-		"Writing the task: the delegate sees nothing of this session, so the task must stand alone. State the question, the decision its answer feeds, what is already known or ruled out, and the files or paths to start from. When the work produces a report, name the path to write it to and ask for the conclusion back, not the contents.",
+		"The delegate sees only the task and its agent prompt. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",
 	].join("\n");
 }
 
@@ -994,9 +974,7 @@ export default function delegate(
 				: workspace.mode === "existing"
 					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
 					: "";
-		const prompt = writePromptFile(
-			delegatePrompt(start.agent, parent, managedContext, grantsNesting(start.agent, own.depth)),
-		);
+		const prompt = writePromptFile(delegatePrompt(start.agent, managedContext));
 		const argv = [
 			...parentCommand(),
 			...session,
@@ -1526,53 +1504,32 @@ export default function delegate(
 		label: "Delegate",
 		description,
 		parameters: Type.Object({
-			agent: Type.String({ description: "Roster agent name to run." }),
-			task: Type.String({
-				description: "The task for the delegate. It sees this and its agent prompt, nothing else of this session.",
-			}),
-			model: Type.Optional(
-				Type.String({
-					description:
-						"provider/id model for this call; defaults to the agent's, or this session's when it names none. Not used when the agent locks model.",
-				}),
-			),
-			thinking: Type.Optional(
-				Type.String({
-					description: `Thinking level (${THINKING_LEVELS.join(", ")}); defaults to the agent's, or this session's when it names none. Not used when the agent locks thinking.`,
-				}),
-			),
+			agent: Type.String({ description: "Roster agent name." }),
+			task: Type.String(),
+			model: Type.Optional(Type.String({ description: "provider/id; defaults to the agent's." })),
+			thinking: Type.Optional(Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the agent's.` })),
 			label: Type.Optional(
 				Type.String({
-					description: `A short name for this delegation (letters, digits, _ or -, at most ${LABEL_MAX}), such as roster-research. Its session and tmux window are named <agent>-<label>; without it, <agent>-<first 8 id characters>.`,
+					description: `Window and session name suffix: letters, digits, _ or -, at most ${LABEL_MAX}.`,
 				}),
 			),
 			cwd: Type.Optional(
-				Type.Union([Type.String(), Type.Null()], {
-					description:
-						"An existing directory to run the delegate in: absolute, relative to this session's working directory, or starting with ~/. Omit to run in this session's working directory. The directory is used as it is; nothing is created or cleaned up. Mutually exclusive with worktree.",
-				}),
+				Type.Union([Type.String(), Type.Null()], { description: "Existing directory to run in. Not with worktree." }),
 			),
 			worktree: Type.Optional(
 				Type.Union([Type.String(), Type.Null()], {
-					description:
-						"Create a new managed worktree and local branch with this literal branch name, from this repository's committed HEAD or explicit worktree_base. Source dirt is not copied. Mutually exclusive with cwd.",
+					description: "New branch name: creates a managed worktree from HEAD or worktree_base. Not with cwd.",
 				}),
 			),
 			worktree_source: Type.Optional(
-				Type.Union([Type.String(), Type.Null()], {
-					description:
-						"Existing Git checkout to create from; relative to this session or starting with ~/. Requires worktree.",
-				}),
+				Type.Union([Type.String(), Type.Null()], { description: "Git checkout to create the worktree from." }),
 			),
 			worktree_base: Type.Optional(
-				Type.Union([Type.String(), Type.Null()], {
-					description: "Local commit-ish to create the branch from; requires worktree. No fetch is performed.",
-				}),
+				Type.Union([Type.String(), Type.Null()], { description: "Local commit-ish for the worktree branch." }),
 			),
 			auto_exit: Type.Optional(
 				Type.Boolean({
-					description:
-						"Close the delegate's window once it finishes; defaults to the agent's setting. False keeps it open to talk to it by mail after its result.",
+					description: "Close the window when it finishes; defaults to the agent's. False keeps it open for mail.",
 				}),
 			),
 		}),

@@ -19,6 +19,20 @@ export type Identity = {
 	chain: string[];
 	autoExit: boolean;
 };
+/** Public, immutable exact-session observation; no internal placement or exit state. */
+export type IdentityNotification =
+	| Readonly<{ sessionId: string; status: "root" | "invalid" }>
+	| Readonly<{
+			sessionId: string;
+			status: "delegate";
+			identity: Readonly<{
+				parent: string;
+				root: string;
+				agent: string;
+				chain: readonly string[];
+				depth: number;
+			}>;
+	  }>;
 const pathFor = (session: string): string =>
 	join(getAgentDir(), "squire", "identity", `${encodeURIComponent(session)}.json`);
 export function readIdentity(session: string): Identity | undefined {
@@ -73,17 +87,37 @@ export function createIdentity(pi: ExtensionAPI): {
 	let current: Identity | undefined;
 	let problem: unknown;
 	pi.on("session_start", (_event, ctx) => {
+		const sessionId = ctx.sessionManager.getSessionId();
+		current = undefined;
 		problem = undefined;
 		try {
-			current = readIdentity(ctx.sessionManager.getSessionId());
-			if (current) writeIdentity(ctx.sessionManager.getSessionId(), current);
+			const restored = readIdentity(sessionId);
+			if (restored) writeIdentity(sessionId, restored);
+			current = restored;
 		} catch (error) {
 			problem = error;
+		}
+		const notification: IdentityNotification = current
+			? Object.freeze({
+					sessionId,
+					status: "delegate",
+					identity: Object.freeze({
+						parent: current.parent,
+						root: current.root,
+						agent: current.agent,
+						chain: Object.freeze([...current.chain]),
+						depth: current.depth,
+					}),
+				})
+			: Object.freeze({ sessionId, status: problem ? "invalid" : "root" });
+		// Synchronous listeners run before later session_start handlers or async work.
+		// This is a notification, not a gate or listener-success acknowledgement.
+		pi.events.emit("squire:identity", notification);
+		if (problem)
 			ctx.ui.notify(
-				`delegate: could not restore delegation identity: ${String(error)}; launches and completion are blocked.`,
+				`delegate: could not restore delegation identity: ${String(problem)}; launches and completion are blocked.`,
 				"error",
 			);
-		}
 	});
 	return {
 		current: () => {

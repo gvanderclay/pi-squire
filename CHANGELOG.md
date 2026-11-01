@@ -24,6 +24,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Make the direct-delegate widget keyboard-navigable and reuse one dashboard for
+  widget Enter, `/delegates` and its shortcut. Down at an empty built-in prompt
+  selects children; stable selection scrolls through the cap. Enter opens details,
+  and Escape returns to list then prompt. Dashboard list Enter now opens details
+  before a second Enter switches (a deliberate navigation change); peek, close,
+  new and authorized resume remain behind existing action/ownership checks.
+  Custom editors, autocomplete, dialogs and unknown focus pass through unchanged.
+  The isolated Pi-internals adapter was tested with installed Pi 1.4.0 in both
+  regular and fullscreen modes; no Pi change or editor/footer replacement.
+  Protect the empty prompt while a widget-opened dashboard is loading or
+  re-listing between actions, without intercepting real dashboard/dialog input.
+  Update `test/navigator.test.ts` for the deliberate two-Enter details/switch
+  flow and `test/tree-restore.test.ts` to inspect metadata in details.
 - The interactive direct-delegate overview deliberately replaces only Squire’s
   running-count entry when its cap is positive, preserving custom footers/editors
   and the own-delegate badge. Cap zero and non-TUI hosts retain the running count.

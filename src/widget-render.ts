@@ -77,24 +77,48 @@ export function activityLine(
 	return truncateToWidth(theme.fg("dim", prefix + text), width);
 }
 
-/** Pure render seam: future selection/activity/tree rows can compose around stable row keys. */
+export type WidgetRenderOptions = { offset?: number; selectedKey?: string; focused?: boolean };
+
+function selectableEntry(
+	row: DelegateRow,
+	width: number,
+	last: boolean,
+	theme: WidgetTheme,
+	now: number,
+	options: WidgetRenderOptions,
+): string {
+	const gutter: string = options.focused ? "  " : "";
+	const marker: string = options.focused && row.key === options.selectedKey ? theme.fg("accent", "▸ ") : gutter;
+	return marker + entry(row, width - visibleWidth(marker), last ? "└─" : "├─", theme, now);
+}
+
+function more(count: number): string {
+	return `${count} more direct delegate${count === 1 ? "" : "s"}`;
+}
+
+/** Pure layout: the cap counts child entries, not physical lines or hidden children. */
 export function renderDelegateWidget(
 	rows: readonly DelegateRow[],
 	cap: number,
 	width: number,
 	theme: WidgetTheme,
 	now: number = Date.now(),
+	options: WidgetRenderOptions = {},
 ): string[] {
 	if (cap === 0 || rows.length === 0 || width <= 0) return [];
-	const visible: readonly DelegateRow[] = rows.slice(0, cap);
-	const hidden: number = rows.length - visible.length;
-	const lines: string[] = [theme.fg("accent", theme.bold("Delegates"))];
+	const start: number = Math.max(0, Math.min(options.offset ?? 0, rows.length - cap));
+	const visible: readonly DelegateRow[] = rows.slice(start, start + cap);
+	const hidden: number = rows.length - start - visible.length;
+	const gutter: string = options.focused ? "  " : "";
+	const lines: string[] = [gutter + theme.fg("accent", theme.bold("Delegates"))];
+	if (start) lines.push(gutter + theme.fg("dim", `├─ ↑ ${more(start)}`));
 	for (const [index, row] of visible.entries()) {
 		const last: boolean = index === visible.length - 1 && hidden === 0;
-		lines.push(entry(row, width, last ? "└─" : "├─", theme, now));
-		const secondary: string | undefined = activityLine(row, width, last, theme);
-		if (secondary) lines.push(secondary);
+		lines.push(selectableEntry(row, width, last, theme, now, options));
+		const secondary: string | undefined = activityLine(row, width - gutter.length, last, theme);
+		if (secondary) lines.push(gutter + secondary);
 	}
-	if (hidden) lines.push(theme.fg("dim", `└─ +${hidden} more direct delegate${hidden === 1 ? "" : "s"}`));
+	if (hidden) lines.push(gutter + theme.fg("dim", `└─ +${more(hidden)}`));
+	if (options.focused) lines.push(theme.fg("dim", "↑↓ select · enter details · esc prompt"));
 	return lines.map((line) => truncateToWidth(line, width));
 }

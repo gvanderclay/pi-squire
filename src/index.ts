@@ -772,7 +772,10 @@ export default function delegate(
 	const trustControl = registerTrustControl(pi, identity.current);
 	// Factual lifecycle observation survives failed action processing; only creation needs ownership.
 	registerActivityRuntime(host, () => owner.active());
-	registerDelegateWidget(pi, results, tmux);
+	registerDelegateWidget(pi, results, tmux, async (ctx, sessionId) => {
+		owner.assert();
+		await navigator.panel(ctx, sessionId);
+	});
 
 	/** Captured because `getArgumentCompletions` is called without a context. */
 	let registry: ModelRegistry | undefined;
@@ -1485,9 +1488,10 @@ export default function delegate(
 		await runDelegate(outcome.parsed, ctx);
 	}
 
-	async function resumeCommand(input: string, ctx: ExtensionContext): Promise<void> {
-		if (input.trim() === "") {
-			await pickResume(ctx, {
+	async function resumePicker(ctx: ExtensionContext, id?: string): Promise<void> {
+		await pickResume(
+			ctx,
+			{
 				unavailable: () => (tmux.insideTmux() ? undefined : NOT_IN_TMUX),
 				eligible: resumer.eligible,
 				resume: async (request, context) => {
@@ -1497,9 +1501,13 @@ export default function delegate(
 						context.ui.notify(`delegate: ${(err as Error).message}`, "error");
 					}
 				},
-			});
-			return;
-		}
+			},
+			id,
+		);
+	}
+
+	async function resumeCommand(input: string, ctx: ExtensionContext): Promise<void> {
+		if (input.trim() === "") return resumePicker(ctx);
 		const outcome = parseResume(input);
 		if ("error" in outcome) {
 			ctx.ui.notify(`delegate: ${outcome.error}`, "error");
@@ -1727,12 +1735,20 @@ export default function delegate(
 		handler: resumeCommand,
 	});
 
-	const navigator = createNavigator(viewResults, tmux, tracking, (ctx: ExtensionContext) =>
-		startNewDelegate(ctx, newDelegateDeps),
+	const navigator = createNavigator(
+		viewResults,
+		tmux,
+		tracking,
+		(ctx: ExtensionContext) => startNewDelegate(ctx, newDelegateDeps),
+		{
+			assertActive: () => owner.assert(),
+			close: (id, _ctx) => tracking.close(id),
+			resume: (id, ctx) => resumePicker(ctx, id),
+		},
 	);
 
 	pi.registerCommand("delegates", {
-		description: "Open the panel of delegates whose window is open: switch, peek, close",
+		description: "Open the shared delegate dashboard: details, switch, peek, close, resume",
 		handler: async (_args: string, ctx: ExtensionContext) => navigator.panel(ctx),
 	});
 

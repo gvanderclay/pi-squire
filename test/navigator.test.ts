@@ -112,7 +112,7 @@ test("the panel retains closed/history rows and verified open windows, and the s
 	assert.match(frame, /third.*window-closed/);
 	assert.match(frame, /fourth.*closed/);
 	assert.ok(frame.includes(`${second.windowId} in ${companion}`), frame);
-	assert.match(frame, /↑↓ select · enter switch · p peek · x close · n new · esc leave/);
+	assert.match(frame, /↑↓ select · enter details · p peek · x close · r resume · n new · esc leave/);
 });
 
 test("the hierarchy preserves parent-first history and a finished open delegation stays listed", async () => {
@@ -139,13 +139,13 @@ test("with nothing open the panel says so, and n starts a new delegate", async (
 	assert.deepEqual(choose.result, { action: "new" });
 });
 
-test("down moves the selection and enter switches your client to that delegation's window, with a notice", async () => {
+test("down selects; enter opens details and a second enter switches with a notice", async () => {
 	const s = await started();
 	await launch(s, "older");
 	const newer = await launch(s, "newer");
 	await launch(s, "newest");
 	s.tmux.attachClient("c1", 100);
-	const script = keyScript(["down", "enter"]);
+	const script = keyScript(["down", "enter", "enter"]);
 	await panel(s, script);
 	assert.match(script.frames[1], /▸ scout-newer/);
 	assert.deepEqual(script.result, { action: "switch", id: newer.id });
@@ -172,7 +172,7 @@ test("the client is the most recently active one attached to the parent's sessio
 	s.tmux.attachClient("stale", 10);
 	s.tmux.attachClient("fresh", 90);
 	s.tmux.attachClient("elsewhere", 500, "other-session");
-	await panel(s, keyScript(["enter"]));
+	await panel(s, keyScript(["enter", "enter"]));
 	assert.deepEqual(s.tmux.clientLookups, ["work"]);
 	assert.deepEqual(
 		s.tmux.switches.map((sw) => sw.client),
@@ -184,7 +184,7 @@ test("with no client attached switch refuses with a notice and peek and close st
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.screens.set(one.windowId, "hello from the pane");
-	await panel(s, keyScript(["enter"]));
+	await panel(s, keyScript(["enter", "enter"]));
 	assert.deepEqual(s.tmux.switches, []);
 	assert.equal(s.warnings.length, 1);
 	assert.match(s.warnings[0], /cannot switch: no tmux client is attached to session work/);

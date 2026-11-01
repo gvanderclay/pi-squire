@@ -86,10 +86,10 @@ test("registry views are subtree scoped and never inject grandchildren's raw rep
 	assert.equal(tmux.switches.at(-1)?.windowId, w.windowId);
 	await coordinator.command("delegate-open", `${other.id} --peek`);
 	assert.equal(tmux.captures.length, 0);
-	const script = keyScript(["escape"], 250);
+	const script = keyScript(["enter", "escape", "escape"], 250);
 	owner.queueCustom(script);
 	await owner.command("delegates");
-	assert.match(script.frames[0], /depth: 1/);
+	assert.match(script.frames[1], /depth: 1/);
 	assert.ok(script.frames[0].includes("coordinator") && script.frames[0].includes("worker"));
 	assert.ok(
 		script.frames[0].indexOf(w.windowName) < script.frames[0].indexOf(sibling.windowName),

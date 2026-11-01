@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Model-facing delegate completion messages link the task copy instead of
+  quoting it, omit the workspace launch summary, and keep only the checkout
+  summary without path categories. Result bodies, errors, identity and file
+  pointers are unchanged. Task previews, workspace facts, and full snapshots
+  remain in saved message details and the expanded view. Tests that pinned the
+  previous model-facing wording now assert this shorter projection.
+
 ## [0.18.2] - 2026-11-01
 
 ### Fixed

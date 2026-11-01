@@ -4,7 +4,7 @@
 // file in the session directory and a reply on `message:inbound`.
 
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
@@ -25,7 +25,7 @@ async function started(entries?: Session["entries"], parent?: string) {
 }
 
 const delegationId = (s: Session) => (s.entries[0].data as { id: string }).id;
-const requestId = (s: Session) => (s.sendCalls[0].envelope as { id: string }).id;
+const requestId = (s: Session) => (s.entries[0].data as { requestId: string }).requestId;
 
 /** A delegate session file whose lines are `lines`, as JSON. */
 function writeDelegateSession(s: Session, lines: unknown[]): string {
@@ -40,7 +40,7 @@ const assistant = (provider: string, model: string) => ({
 	message: { role: "assistant", content: [{ type: "text", text: "hi" }], provider, model },
 });
 
-function deliver(s: Session, status = "done", body = "the answer") {
+function deliver(s: Session, status = "done", body = "the answer", task?: string) {
 	s.events.emit("message:inbound", {
 		envelope: {
 			id: `reply-${status}`,
@@ -52,7 +52,7 @@ function deliver(s: Session, status = "done", body = "the answer") {
 			body,
 		},
 		path: "/mail/cur/reply.json",
-		requests: [],
+		requests: task === undefined ? [] : [{ envelope: { id: requestId(s), body: task }, path: "/mail/sent/task.json" }],
 		handled: false,
 	});
 }
@@ -152,6 +152,93 @@ test("a result message carries the details its view is drawn from", async () => 
 		body: "line one\nline two",
 		workspaceSnapshot: { kind: "non-git" },
 	});
+});
+
+test("emitted completion messages preserve long results and errors without quoting long tasks", async (t) => {
+	for (const status of ["done", "failed", "stopped"]) {
+		await t.test(status, async () => {
+			resetRoot();
+			const s = await started();
+			const file = writeDelegateSession(s, [assistant("alpha", "fast-model")]);
+			const task = "Inspect every checkout and report the failing command.\n".repeat(80);
+			const body = [
+				"# Checkout findings",
+				...Array.from(
+					{ length: 180 },
+					(_, index) =>
+						`Finding ${index}: src/module-${index}.ts failed its assertion; retain the command output and repair advice.`,
+				),
+				"Error: verification failed\nCommand: pnpm check\nExit status: 1\nNext action: repair the reported assertion.",
+			].join("\n");
+			deliver(s, status, body, task);
+			const message = resultMessage(s);
+			assert.equal(message.content.split("\n\n").slice(1).join("\n\n"), body);
+			assert.equal(message.details?.body, body);
+			assert.match(message.content, new RegExp(`^Status: ${status}$`, "m"));
+			assert.match(message.content, /^Task: \/mail\/sent\/task.json$/m);
+			assert.doesNotMatch(message.content, /Task, quoted|> Inspect|Task cut|^Workspace:/m);
+			assert.ok(message.content.includes(`Working directory: ${root}`));
+			assert.ok(message.content.includes("Checkout when the result arrived: not a Git checkout"));
+			assert.ok(message.content.includes("Envelope: /mail/cur/reply.json"));
+			assert.ok(message.content.includes(`Delegate session: ${file}`));
+			const taskDetails = message.details?.task as { text: string; path: string };
+			assert.ok(taskDetails.text.startsWith(task.slice(0, 100)));
+			assert.match(taskDetails.text, /Task cut at 2 KiB/);
+			assert.equal(taskDetails.path, "/mail/sent/task.json");
+			assert.deepEqual(message.details?.workspaceSnapshot, { kind: "non-git" });
+		});
+	}
+});
+
+test("a completion for a legacy launch keeps missing-task and unknown-checkout diagnostics", async () => {
+	const s = await started();
+	const legacy = structuredClone(s.entries.slice(0, 1));
+	delete legacy[0].data.cwd;
+	delete legacy[0].data.sessionDir;
+	delete legacy[0].data.workspace;
+	await s.shutdown();
+	rmSync(join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`));
+	const resumed = await started(legacy, s.parent);
+	const body = "Error: the old task could not complete.\nNo launch directory was recorded.";
+	deliver(resumed, "failed", body);
+	const message = resultMessage(resumed);
+	assert.ok(
+		message.content.includes(`[delegate] The task ${requestId(resumed)} has no copy in sent/; only its id is known.`),
+	);
+	assert.match(message.content, /Working directory: unknown \(not recorded\)/);
+	assert.match(message.content, /Checkout when the result arrived: Git state unknown/);
+	assert.ok(message.content.endsWith(`\n\n${body}`));
+	assert.equal(message.details?.cwd, undefined);
+	assert.equal(message.details?.workspace, undefined);
+	const snapshot = message.details?.workspaceSnapshot as { kind: string; reason: string };
+	assert.equal(snapshot.kind, "unknown");
+	assert.ok(message.content.includes(snapshot.reason));
+});
+
+test("recovery replays saved legacy result text without rewriting it or filling a missing snapshot", async () => {
+	const s = await started();
+	deliver(s, "done", "The saved answer.", "The original task.");
+	const path = join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`);
+	await s.shutdown();
+	const state = JSON.parse(readFileSync(path, "utf8")) as {
+		outcomes: { content: string; delivered?: boolean; details: Record<string, unknown> }[];
+	};
+	const outcome = state.outcomes[0];
+	const legacyContent = resultMessage(s).content.replace(
+		"Task: /mail/sent/task.json",
+		"Task, quoted from /mail/sent/task.json:\n> The original task.",
+	);
+	outcome.content = legacyContent;
+	outcome.delivered = false;
+	delete outcome.details.workspaceSnapshot;
+	writeFileSync(path, JSON.stringify(state));
+	const resumed = await started(s.entries, s.parent);
+	await new Promise((resolve) => setImmediate(resolve));
+	const message = resultMessage(resumed);
+	assert.equal(message.content, legacyContent);
+	assert.equal(message.details?.workspaceSnapshot, undefined);
+	assert.deepEqual(message.details?.task, { text: "The original task.", path: "/mail/sent/task.json" });
+	assert.equal(message.details?.body, "The saved answer.");
 });
 
 test("a gone message carries details of kind gone with the finishing model", async (t: TestContext) => {

@@ -772,7 +772,8 @@ test("selected-directory facts reach the child prompt, results, status and resum
 	});
 	const message = s.sent[0].message as unknown as { content: string; details: Data };
 	assert.deepEqual(message.details.workspace, record.workspace);
-	assert.ok(message.content.includes(`Workspace: existing directory; Git checkout ${main}`), message.content);
+	assert.ok(message.content.includes(`Working directory: ${main}`), message.content);
+	assert.ok(!message.content.includes("Workspace:"), message.content);
 
 	await s.shutdown();
 	const resumed = session({ parent: s.parent, cwd: base, entries: s.entries });
@@ -938,6 +939,26 @@ test("status separates clean committed changes from pending conflicts", async ()
 	assert.deepEqual(itemFor(items, launchRecord).workspace, launchRecord.workspace);
 	assert.ok(text.includes('"conflict.txt"'), text);
 	assert.ok(text.includes('"untracked.txt"'), text);
+	for (const [record, snapshot, position] of [
+		[cleanRecord, cleanSnap, "branch main"],
+		[launchRecord, snap, "branch main"],
+		[detachedRecord, detachedSnap, "detached HEAD"],
+	] as const) {
+		s.events.emit("message:inbound", replyTo(s, record, `reply-${record.id}`));
+		const message = delegateMessages(s).at(-1)?.message as unknown as { content: string; details: Data };
+		assert.ok(
+			message.content.includes(
+				`Checkout when the result arrived: ${position}, head ${snapshot.head}, launch commit ${snapshot.baseline}, ${snapshot.ahead} commit${snapshot.ahead === 1 ? "" : "s"} since launch, working tree ${snapshot.workingState}`,
+			),
+			message.content,
+		);
+		assert.doesNotMatch(
+			message.content,
+			/committed since launch:|staged:|unstaged:|untracked:|conflicted:|^Workspace:/m,
+		);
+		assert.ok(!message.content.includes('"conflict.txt"'));
+		assert.deepEqual(message.details.workspaceSnapshot, snapshot);
+	}
 });
 
 test("completion snapshot stays historical while fresh status changes", async () => {
@@ -966,8 +987,8 @@ test("completion snapshot stays historical while fresh status changes", async ()
 	assert.ok(freshSnapshot.pending.untracked.paths.includes("late.txt"));
 	assert.equal(historical.pending.untracked.paths.includes("late.txt"), false);
 
-	// Text and the expanded view carry the same observation as the details, beside the recorded cwd.
-	assert.ok(resultMessage.content.includes('"first.txt"'), resultMessage.content);
+	assert.ok(!resultMessage.content.includes('"first.txt"'), resultMessage.content);
+	assert.doesNotMatch(resultMessage.content, /committed since launch:|staged:|unstaged:|untracked:|conflicted:/);
 	assert.equal(resultMessage.content.includes("late.txt"), false);
 	assert.ok(resultMessage.content.includes(historical.head), resultMessage.content);
 	assert.ok(text.includes('"late.txt"'), text);
@@ -1041,6 +1062,8 @@ test("inspection failure cannot lose duplicate or late replies or other status",
 	const resultMessage = delegateMessages(s)[0].message as unknown as { content: string; details: Data };
 	assert.equal(resultMessage.details.workspaceSnapshot.kind, "unknown");
 	assert.ok(resultMessage.details.workspaceSnapshot.reason.length > 0);
+	assert.match(resultMessage.content, /Checkout when the result arrived: Git state unknown/);
+	assert.ok(resultMessage.content.includes(resultMessage.details.workspaceSnapshot.reason), resultMessage.content);
 
 	// The late delegation's window goes, the poll records it gone, then its reply arrives while Git hangs there.
 	s.tmux.windows.delete(lateRecord.windowId);

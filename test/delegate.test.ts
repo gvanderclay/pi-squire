@@ -632,7 +632,8 @@ test("a done reply to a recorded delegation becomes one handled result message",
 	assert.match(content, /alpha\/fast-model/);
 	assert.ok(content.includes(delegation.id), content);
 	assert.match(content, /done/);
-	assert.match(content, /> find the answer/);
+	assert.ok(content.includes(`Task: ${payload.requests[0].path}`));
+	assert.ok(!content.includes("> find the answer"));
 	assert.ok(content.includes(payload.requests[0].path), content);
 	assert.ok(content.includes(payload.path), content);
 	assert.deepEqual(options, { triggerTurn: true, deliverAs: "steer" });
@@ -705,7 +706,7 @@ test("a resumed parent rebuilds its records and still takes a later reply", asyn
 	assert.deepEqual(resumed.statuses.at(-1), { key: "delegate", text: undefined }, "the result clears the footer");
 });
 
-test("a task over 2 KiB and a body over 32 KiB are cut with their paths", async () => {
+test("task details keep a 2 KiB preview while model text keeps only its path and the 32 KiB body", async () => {
 	const s = await scoutSession();
 	const delegation = s.entries[0].data as Delegation;
 	const task = "t".repeat(3 * 1024);
@@ -713,10 +714,15 @@ test("a task over 2 KiB and a body over 32 KiB are cut with their paths", async 
 	const payload = inbound(s.parent, delegation, { task, body });
 	s.events.emit("message:inbound", payload);
 	const content = String(s.sent[0].message.content);
-	assert.ok(content.includes(`> ${task.slice(0, 2 * 1024)}`), "the task is quoted up to 2 KiB");
-	assert.ok(!content.includes(task.slice(0, 2 * 1024 + 1)), "the quote stops at 2 KiB");
-	assert.match(content, /Task cut at 2 KiB/);
-	assert.ok(content.includes(payload.requests[0].path));
+	const { details } = s.sent[0].message as unknown as { details: { task: { text: string; path: string } } };
+	assert.equal(
+		details.task.text,
+		`${task.slice(0, 2 * 1024)}\n[delegate] Task cut at 2 KiB; the full copy is ${payload.requests[0].path}`,
+	);
+	assert.equal(details.task.path, payload.requests[0].path);
+	assert.ok(content.includes(`Task: ${payload.requests[0].path}`));
+	assert.ok(!content.includes(task.slice(0, 100)));
+	assert.ok(!content.includes("Task cut at 2 KiB"));
 	assert.ok(content.includes(body.slice(0, 32 * 1024)), "the result keeps 32 KiB");
 	assert.ok(!content.includes(body.slice(0, 32 * 1024 + 1)), "the body stops at 32 KiB");
 	assert.match(content, /Body cut at 32 KiB/);
@@ -729,9 +735,12 @@ test("the caps count UTF-8 bytes, so a cut never splits a character", async () =
 	const task = "é".repeat(2 * 1024); // 4 KiB in UTF-8
 	const payload = inbound(s.parent, delegation, { task });
 	s.events.emit("message:inbound", payload);
-	const content = String(s.sent[0].message.content);
-	assert.ok(content.includes(`> ${task.slice(0, 1024)}`), "2 KiB of two-byte characters");
-	assert.ok(!content.includes(task.slice(0, 1025)), "the cut is on a character boundary");
+	const { details } = s.sent[0].message as unknown as { details: { task: { text: string } } };
+	assert.equal(
+		details.task.text,
+		`${task.slice(0, 1024)}\n[delegate] Task cut at 2 KiB; the full copy is ${payload.requests[0].path}`,
+	);
+	assert.ok(!String(s.sent[0].message.content).includes(task.slice(0, 100)));
 });
 
 test("the delegate's session file is found by id, or the id is shown alone", async () => {

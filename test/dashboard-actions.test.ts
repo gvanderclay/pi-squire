@@ -42,6 +42,9 @@ test("context-bearing close seam preserves partial/error text; no duplicate wind
 			close: async () => {
 				throw Error("old close must not run");
 			},
+			closeAll: async () => {
+				throw Error("unused close-all");
+			},
 		},
 		() => {},
 		{
@@ -85,6 +88,9 @@ test("ownership lost during async window listing cannot mount a stale dashboard"
 		{
 			close: async () => {
 				throw Error("unused");
+			},
+			closeAll: async () => {
+				throw Error("unused close-all");
 			},
 		},
 		() => {},

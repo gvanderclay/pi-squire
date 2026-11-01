@@ -10,6 +10,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { ChildTasks } from "./child-tasks.ts";
 import type { Identity } from "./identity.ts";
 import { cwdLine, modelLabel, renderMessage, workspaceLine } from "./render.ts";
+import { closeOutcome } from "./result-close.ts";
 import { resultDetails, resultText, resumeDetails } from "./result-message.ts";
 import { restoreRecords } from "./result-restore.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
@@ -138,7 +139,7 @@ export type MessageDetails =
 			/** The checkout when the result arrived, the same value as the recorded result's; absent in older messages. */
 			workspaceSnapshot?: WorkspaceSnapshot;
 	  })
-	| (CommonDetails & { kind: "gone"; windowName: string });
+	| (CommonDetails & { kind: "gone"; windowName: string; reason?: "explicit-close" });
 
 /** The provider's payload on `message:inbound`. */
 export type Inbound = {
@@ -161,6 +162,8 @@ export type Results = {
 	recordAttempt(attempt: WorkspaceAttempt, ctx: ExtensionContext): void;
 	/** Record a close; does nothing when there is no such delegation or it is already closed. */
 	recordClose(id: string): void;
+	/** Import only confirmed own direct-child closes; no foreign semantic writes. */
+	syncCloses(): void;
 	/** Delegations with no result, no recorded close and no gone-window record. */
 	running(): StartedRecorded[];
 	/** Record that the window is gone with no result, and tell the parent once. False when it no longer applies. */
@@ -199,6 +202,7 @@ export function createResults(
 	processesChildren: () => boolean = () => false,
 	publish: (ctx: ExtensionContext, records: Recorded[]) => void = () => {},
 	active: () => boolean = () => true,
+	closedChildren: (ctx: ExtensionContext) => string[] = () => [],
 ): Results {
 	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
 	/** Every recorded delegation by its id, in the order recorded. */
@@ -281,6 +285,7 @@ export function createResults(
 				`delegate: could not restore child tasks: ${tasks.storageProblem()}; task completion is blocked.`,
 				"error",
 			);
+		syncCloses(false);
 		updateFooter();
 		// Mail is already claimed; replay only outcomes not processed by a
 		// settled coordinator run. No live worker is recreated.
@@ -312,13 +317,38 @@ export function createResults(
 		save();
 	}
 
-	function recordClose(id: string): void {
+	function recordClose(id: string, wake = true): void {
 		const record = startedById(id);
 		if (record === undefined || record.closed === true) return;
-		pi.appendEntry(CUSTOM_TYPE, { id, closed: true });
 		record.closed = true;
-		save();
+		const outcome = record.result || record.gone ? undefined : closeOutcome(record, ctx);
+		if (outcome) {
+			tasks.outcomes.push(outcome);
+			if (wake) tasks.paused = false;
+		}
+		save(); // Close and its processing obligation persist together, before transcript/display effects.
+		pi.appendEntry(CUSTOM_TYPE, { id, closed: true });
+		if (outcome && wake) {
+			pi.sendMessage(
+				{ customType: CUSTOM_TYPE, content: outcome.content, details: outcome.details, display: true },
+				{ triggerTurn: true, deliverAs: processesChildren() ? "steer" : "followUp" },
+			);
+			tasks.delivered(outcome.key);
+			save();
+		}
 		updateFooter();
+	}
+
+	function syncCloses(wake = true): void {
+		if (!ctx || !active() || tasks.failed) return;
+		try {
+			for (const id of closedChildren(ctx)) recordClose(id, wake);
+		} catch (error) {
+			ctx.ui.notify(
+				`delegate: confirmed close import unavailable: ${String(error)}; pending children remain unresolved.`,
+				"warning",
+			);
+		}
 	}
 
 	function recordGone(id: string): boolean {
@@ -398,6 +428,10 @@ export function createResults(
 			record.result = result;
 		}
 		const content = resultText(details);
+		const answered = new Set(pending.map((record) => record.id));
+		tasks.outcomes = tasks.outcomes.filter(
+			(outcome) => outcome.details.kind !== "gone" || !answered.has(outcome.details.id),
+		);
 		tasks.paused = false; // Only old replay is held by a root stop, not a new live result.
 		tasks.outcomes.push({ key: reply.id, content, details });
 		save();
@@ -412,6 +446,9 @@ export function createResults(
 		updateFooter();
 	}
 
+	pi.on("context", () => syncCloses());
+	pi.on("agent_before_settle", () => syncCloses());
+	pi.on("agent_settled", () => syncCloses());
 	tasks.register(
 		pi,
 		() => [...byId.values()],
@@ -433,6 +470,7 @@ export function createResults(
 		recordStart,
 		recordAttempt,
 		recordClose,
+		syncCloses,
 		running,
 		recordGone,
 		list: () => [...byId.values()],

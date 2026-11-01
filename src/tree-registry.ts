@@ -5,15 +5,18 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readChildRecords } from "./child-tasks.ts";
+import type { Identity } from "./identity.ts";
 import { readState, writeState } from "./local-state.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Recorded } from "./result-types.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import { readTaskState, taskStatePath } from "./task-store.ts";
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
+import { checkResumeFence, fenced } from "./tree-fence.ts";
 import { processAlive, withTreeLock } from "./tree-lock.ts";
 import { treeCaps } from "./tree-settings.ts";
 import type { Reservation, TreeCounts, TreeEntry, TreeIntent, TreeState } from "./tree-types.ts";
+import { assertRootPlacement } from "./window-placement.ts";
 import { listWindows } from "./windows.ts";
 
 export type { Reservation, TreeCounts, TreeEntry, TreeIntent, TreeState } from "./tree-types.ts";
@@ -54,11 +57,34 @@ function load(root: string): TreeState {
 		validateFields(entry);
 		ids.add(entry.id);
 	}
+	validateCloses(state, ids);
 	return state;
+}
+
+function validateCloses(state: TreeState, ids: Set<string>): void {
+	if (state.closes === undefined) return;
+	if (!Array.isArray(state.closes)) throw new Error("invalid close fences; admission blocked");
+	const tokens: Set<string> = new Set();
+	for (const close of state.closes) {
+		if (
+			!close ||
+			typeof close.id !== "string" ||
+			!close.id ||
+			tokens.has(close.id) ||
+			typeof close.target !== "string" ||
+			(close.target !== state.root && !state.entries.some((entry) => entry.sessionId === close.target)) ||
+			!Array.isArray(close.entries) ||
+			!close.entries.every((id) => typeof id === "string" && ids.has(id)) ||
+			new Set(close.entries).size !== close.entries.length
+		)
+			throw new Error(`invalid close fence for ${state.root}; admission blocked`);
+		tokens.add(close.id);
+	}
 }
 
 function validateFields(entry: TreeEntry): void {
 	const own = entry.identity;
+	assertRootPlacement(own.rootPlacement);
 	if (
 		!Number.isSafeInteger(own.depth) ||
 		own.depth < 1 ||
@@ -68,7 +94,7 @@ function validateFields(entry: TreeEntry): void {
 		typeof own.autoExit !== "boolean"
 	)
 		throw new Error(`invalid identity in tree entry ${entry.id}`);
-	for (const key of ["finished", "gone", "closed", "closing"] as const)
+	for (const key of ["finished", "gone", "closed", "closing", "createPending"] as const)
 		if (entry[key] !== undefined && typeof entry[key] !== "boolean")
 			throw new Error(`invalid ${key} in tree entry ${entry.id}`);
 	for (const key of ["requestId", "windowId", "windowName", "cwd", "sessionDir", "resumedFrom"] as const)
@@ -116,26 +142,32 @@ export function descendants(state: TreeState, ancestor: string): TreeEntry[] {
 	}
 	return state.entries.filter((entry) => sessions.has(entry.identity.parent));
 }
-function fenced(state: TreeState, parent: string): boolean {
-	return state.entries.some(
-		(entry) =>
-			entry.closing &&
-			(entry.sessionId === parent || descendants(state, entry.sessionId).some((child) => child.sessionId === parent)),
-	);
-}
 function entryFor(state: TreeState, token: Reservation): TreeEntry {
 	const entry: TreeEntry | undefined = state.entries.find((entry) => entry.id === token.id);
 	if (!entry) throw new Error(`missing tree reservation ${token.id}`);
 	return entry;
 }
 
+/** Read-only preflight also reused under the admission lock against races. */
+export function assertParentPlacement(state: TreeState, identity: Identity): void {
+	if (
+		state.entries.some(
+			(entry) => entry.sessionId === identity.parent && entry.identity.rootPlacement !== identity.rootPlacement,
+		)
+	)
+		throw new Error("conflicting rootPlacement with recorded direct parent; launch refused");
+}
+
 export function reserveTree(intent: TreeIntent): Reservation {
+	assertRootPlacement(intent.identity.rootPlacement);
 	const root: string = intent.identity.root;
 	return treeTransaction(root, (state) => {
 		reconcileFacts(state);
+		assertParentPlacement(state, intent.identity);
 		const caps = treeCaps();
 		const counts: TreeCounts = treeCounts(state);
 		if (fenced(state, intent.identity.parent)) throw new Error("delegation subtree is closing; launch refused");
+		checkResumeFence(state, intent);
 		if (state.entries.some((entry) => entry.id === intent.id)) throw new Error(`duplicate reservation ${intent.id}`);
 		if (state.entries.some((entry) => entry.sessionId === intent.sessionId && entry.phase === "dispatched"))
 			throw new Error(
@@ -161,9 +193,10 @@ export function bindTree(
 export function dispatchTree(token: Reservation): void {
 	treeTransaction(token.root, (state) => {
 		const entry: TreeEntry = entryFor(state, token);
-		if (entry.phase !== "reserved" || fenced(state, entry.identity.parent))
+		if (entry.phase !== "reserved" || entry.closing || fenced(state, entry.identity.parent))
 			throw new Error("tree reservation is no longer dispatchable");
 		entry.phase = "dispatched";
+		entry.createPending = true;
 	});
 }
 export function openedTree(token: Reservation, windowId: string): void {
@@ -171,6 +204,7 @@ export function openedTree(token: Reservation, windowId: string): void {
 		const entry: TreeEntry = entryFor(state, token);
 		entry.phase = "started";
 		entry.windowId = windowId;
+		entry.createPending = false;
 	});
 }
 /** A child can locate its own window even if its opener lost tmux's response. */
@@ -191,6 +225,7 @@ export function claimTree(root: string, session: string, window: { id: string; n
 		if (window) {
 			entry.windowId = window.id;
 			entry.windowName = window.name;
+			entry.createPending = false;
 		}
 	});
 }
@@ -198,8 +233,10 @@ export function claimTree(root: string, session: string, window: { id: string; n
 export function failedTree(token: Reservation, notOpened = false): void {
 	treeTransaction(token.root, (state) => {
 		const entry: TreeEntry = entryFor(state, token);
-		if (entry.phase === "reserved" || (entry.phase === "dispatched" && notOpened && !entry.finished))
+		if (entry.phase === "reserved" || (entry.phase === "dispatched" && notOpened && !entry.finished)) {
 			entry.phase = "not-started";
+			entry.createPending = false;
+		}
 	});
 }
 
@@ -211,9 +248,10 @@ function applyRecord(entry: TreeEntry, record: Recorded): void {
 	delete (entry.launch as Partial<typeof record>).gone;
 	delete (entry.launch as Partial<typeof record>).closed;
 	entry.phase = "started";
+	entry.createPending = false;
 	// A same-id manual reopen can positively locate a newer window. Historical
 	// parent facts must not overwrite that current locator at the next admission.
-	if (!entry.gone || !sessionIsOwned(entry.sessionId) || !entry.windowId) {
+	if (!entry.windowId || (!entry.closed && (!entry.gone || !sessionIsOwned(entry.sessionId)))) {
 		entry.windowId = record.windowId;
 		entry.windowName = record.windowName;
 	}

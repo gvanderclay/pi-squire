@@ -8,6 +8,23 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Breaking
 
+- `delegation_close` now closes a persistent descendant subtree rather than one
+  local window. Its structured result adds `complete` and per-member outcomes;
+  partial failures return `isError:true` with details rather than discarding
+  successful members in a thrown tmux error. Close requires a readable shared
+  fence before kills. Old single-window wording/schema, direct-close-on-corrupt-
+  registry, panel/poll/placement text assertions deliberately change; local
+  genuine result publication remains warning-only. Unknown/foreign/obsolete
+  target ids refuse before effects. Canceling unfinished children now requires
+  direct-parent processing rather than silently releasing the task barrier.
+- Delegations recorded without the required original-root placement identity
+  can no longer be resumed after this update, including pre-nesting and
+  identity-less records even when reopened by their original root. Resume tools,
+  commands and picker refuse before trust, mail, exited-window kill, reservation
+  or spawn effects. No legacy identity synthesis or migration is provided.
+  The subtree-close identity-less resume fixture now asserts this refusal when
+  composed with root placement; its earlier fallback expectation is superseded.
+
 - Require pi-session-mail 0.6.0 or another provider of all four message hooks.
   Upgrade mail and squire together: squire now owns delegate task settlement
   through `message:reply`; mail no longer automatically answers task requests.
@@ -24,6 +41,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Compose the shared widget/dashboard actions with context-aware subtree close:
+  selected close reports aggregate partial errors, and the root retains confirmed
+  `a` close-all from the same dashboard, including empty/history views. Keep
+  direct-widget activity/focus and direct-parent resume checks unchanged; no
+  second panel or row-by-row close authority. Add combined coverage in
+  `test/widget-nesting-final.test.ts` and root action intent coverage in
+  `test/dashboard.test.ts`; extend `test/dashboard-actions.test.ts` control stubs.
 - Make the direct-delegate widget keyboard-navigable and reuse one dashboard for
   widget Enter, `/delegates` and its shortcut. Down at an empty built-in prompt
   selects children; stable selection scrolls through the cap. Enter opens details,
@@ -62,6 +86,18 @@ follows [Semantic Versioning](https://semver.org/).
   `delegateWidgetMaxEntries` (default three) in the existing Squire settings.
   Independent observation continues after task completion and is cleaned up on
   reload; no focus keys or tree accounting semantics change.
+- Explicit ancestor-scoped subtree close and root-only confirmed panel close-all.
+  Shared admission/own-entry dispatch fences precede effects, including root
+  reservations. Already-dispatched unknown creates remain charged/fenced and
+  partial; bounded explicit retries never guess no-start. Current verified
+  id+name locators include manually reattached same-id coordinators. Per-member
+  errors preserve successful closes; shared companions, branches and worktrees
+  are retained, and ordinary runtime exit never cascades.
+- Confirmed closes are imported only by the direct-parent semantic owner as
+  durable canceled/missing child outcomes. Offline restoration and settlement
+  retain the processing barrier, root replay-stop behavior and genuine
+  mid-close/late worker replies. Completed fences allow a new authorized,
+  lifetime-counted direct-parent resume without reviving canceled descendants.
 - Restore exact-session delegation trees without recreating live workers,
   including offline child/coordinator replies, pending result processing and
   concurrency for a manually reopened unfinished coordinator. Shared registry
@@ -121,7 +157,7 @@ follows [Semantic Versioning](https://semver.org/).
   including trusted project-agent shadowing. Coordinators get all four
   delegation tools even with an explicit tools list; listing tools alone warns
   and grants nothing. Nesting remains an incomplete integration milestone:
-  tree controls must land
+  full integrated real-model and permission-forwarding validation remains required
   before production use.
 - Persist parent/root/depth/agent/chain identity and auto-exit state for manual
   same-session reopening. Expose read-only parent/root/depth/frozen chain on
@@ -148,6 +184,18 @@ follows [Semantic Versioning](https://semver.org/).
 - Normalize process-start observation to C locale and UTC for live activity and
   native-title mirrors, so differing parent/delegate time zones or locales do not
   hide metadata or falsely delete a live activity snapshot.
+- Preserve the original root project companion preference through nested
+  cross-project launches, same-id coordinator restarts without launch environment,
+  and direct-parent resumes while the root is absent. Save one `rootPlacement`
+  base in existing identity/local/shared tree records, keeping call-time
+  current/companion mode and marked/unmarked alternative selection separate.
+  Malformed or conflicting required placement identity fails closed; nested
+  parent-preference contradictions are refused before target trust resolution.
+  Identity-less resume refusal is declared above under Breaking; no relocation
+  or repair system is added.
+  Existing synthetic identity fixtures and full-identity assertions deliberately
+  include this required field. Add real-provider/Git cross-project coverage and
+  actual coordinator process shutdown/SIGKILL/reopen with root-absent resume.
 - Incomplete transcript/child-identity restoration now fails closed for both
   completion and admission, retains known own child obligations and refuses
   incidental saves until repair/reopen. Foreign copied history stays excluded.

@@ -180,6 +180,7 @@ test("a duplicate stages a coordinator task before start; only the owner prompts
 	writeIdentity(child, {
 		parent,
 		root: parent,
+		rootPlacement: "project-delegate-session",
 		depth: 1,
 		agent: "coordinator",
 		chain: ["coordinator"],

@@ -7,12 +7,13 @@ const items = Array.from({ length: 12 }, (_, index) => ({
 	label: `worker-${index}`,
 	details: Array.from({ length: 20 }, (_v, n) => `line ${n}`),
 }));
-function screen(detailBack: "list" | "exit" = "list", detail = false) {
+function screen(detailBack: "list" | "exit" = "list", detail = false, root = false) {
 	const position: DashboardPosition = { id: "0", detail, offset: 0 };
 	const results: DashboardIntent[] = [];
 	const dashboard = new Dashboard({
 		items,
 		position,
+		root,
 		detailBack,
 		theme: { fg: (_color, text) => text, bold: (text) => text },
 		done: (result) => results.push(result),
@@ -55,6 +56,19 @@ test("actions are opaque intents, position persists through reconstructed screen
 	});
 	assert.match(next.render(80).join("\n"), /▸ worker-10/);
 });
+test("root close-all is an opaque intent in list and details, absent for coordinators", () => {
+	for (const detail of [false, true]) {
+		const root = screen("list", detail, true);
+		assert.match(root.dashboard.render(180).join("\n"), /a close all subtrees/);
+		root.dashboard.handleInput("a");
+		assert.deepEqual(root.results, [{ action: "close-all" }]);
+		const child = screen("list", detail);
+		assert.doesNotMatch(child.dashboard.render(180).join("\n"), /a close all subtrees/);
+		child.dashboard.handleInput("a");
+		assert.deepEqual(child.results, []);
+	}
+});
+
 test("detail scroll, release filter, empty and disappearing selection", () => {
 	const f = screen("list", true);
 	f.dashboard.handleInput("\x1b[B");

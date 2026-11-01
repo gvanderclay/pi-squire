@@ -131,6 +131,7 @@ const ENDINGS: Record<string, { icon: string; color: Color; word: string; wordCo
 	failed: { icon: "✗", color: "error", word: "failed", wordColor: "error" },
 	stopped: { icon: "✗", color: "warning", word: "stopped", wordColor: "warning" },
 	gone: { icon: "✗", color: "warning", word: "closed without a result", wordColor: "warning" },
+	"canceled without a result": { icon: "✗", color: "warning", word: "canceled without a result", wordColor: "warning" },
 };
 
 /** `path` with the home directory shown as `~`. */
@@ -182,7 +183,9 @@ export function renderMessage(
 ): Component | undefined {
 	const details = message.details as MessageDetails | undefined;
 	if (details?.kind !== "result" && details?.kind !== "gone") return undefined;
-	const status = details.kind === "gone" ? "gone" : details.status;
+	const goneStatus =
+		details.kind === "gone" && details.reason === "explicit-close" ? "canceled without a result" : "gone";
+	const status = details.kind === "gone" ? goneStatus : details.status;
 	const background = status === "done" ? "toolSuccessBg" : "toolErrorBg";
 	const box = new Box(outputPad, 1, (text) => theme.bg(background, text));
 	const header = headerLine(details, status, theme);

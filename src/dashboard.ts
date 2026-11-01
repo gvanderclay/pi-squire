@@ -6,10 +6,12 @@ export type DashboardRow = { id: string; label: string; details: readonly string
 export type DashboardIntent =
 	| { action: "switch" | "close" | "peek" | "resume"; id: string }
 	| { action: "new" }
+	| { action: "close-all" }
 	| undefined;
 export type DashboardPosition = { id?: string; detail: boolean; offset: number };
 type DashboardOptions = {
 	items: readonly DashboardRow[];
+	root?: boolean;
 	position: DashboardPosition;
 	detailBack: "list" | "exit";
 	theme: WidgetTheme;
@@ -51,6 +53,7 @@ export class Dashboard implements Component {
 				position.offset = 0;
 			} else done(undefined);
 		} else if (matchesKey(data, "n")) done({ action: "new" });
+		else if (matchesKey(data, "a") && this.options.root) done({ action: "close-all" });
 		else if (matchesKey(data, "up")) this.move(-1);
 		else if (matchesKey(data, "down")) this.move(1);
 		else this.action(data);
@@ -91,7 +94,8 @@ export class Dashboard implements Component {
 		const { items, position, theme } = this.options;
 		const fit = (text: string): string => truncateToWidth(text, Math.max(0, width));
 		const item: DashboardRow | undefined = this.selected();
-		if (!item) return [theme.bold("Delegates"), "", "No open delegates · n new · esc close"].map(fit);
+		if (!item)
+			return [theme.bold("Delegates"), "", `No open delegates · n new · esc close${this.closeAllHint()}`].map(fit);
 		if (position.detail) return this.details(item).map(fit);
 		const index: number = items.indexOf(item);
 		const start: number = Math.max(0, index - this.height() + 1);
@@ -103,8 +107,15 @@ export class Dashboard implements Component {
 			"",
 			...rows,
 			`${index + 1}/${items.length}`,
-			theme.fg("dim", "↑↓ select · enter details · p peek · x close · r resume · n new · esc leave"),
+			theme.fg(
+				"dim",
+				`↑↓ select · enter details · p peek · x close · r resume · n new · esc leave${this.closeAllHint()}`,
+			),
 		].map(fit);
+	}
+
+	private closeAllHint(): string {
+		return this.options.root ? " · a close all subtrees" : "";
 	}
 
 	private details(item: DashboardRow): string[] {
@@ -114,7 +125,10 @@ export class Dashboard implements Component {
 			"",
 			...item.details.slice(position.offset, position.offset + this.height()).map(widgetText),
 			"",
-			theme.fg("dim", "↑↓ scroll · enter switch · p peek · x close · r resume · n new · esc back"),
+			theme.fg(
+				"dim",
+				`↑↓ scroll · enter switch · p peek · x close · r resume · n new · esc back${this.closeAllHint()}`,
+			),
 		];
 	}
 }

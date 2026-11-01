@@ -20,10 +20,13 @@ export type TreeEntry = {
 	finished?: boolean;
 	gone?: boolean;
 	closed?: boolean;
-	/** Reserved for the explicit-close consumer; admission and dispatch fence it. */
+	/** Explicit close fences this incarnation until an authorized successor supersedes it. */
 	closing?: boolean;
+	/** Dispatch may still create a window; completion accounting alone cannot clear this. */
+	createPending?: boolean;
 };
-export type TreeState = { version: 1; root: string; entries: TreeEntry[] };
+export type TreeClose = { id: string; target: string; entries: string[] };
+export type TreeState = { version: 1; root: string; entries: TreeEntry[]; closes?: TreeClose[] };
 export type Reservation = { root: string; id: string };
 export type TreeIntent = Pick<TreeEntry, "id" | "sessionId" | "identity" | "resumedFrom" | "sessionDir">;
 export type TreeCounts = { concurrent: number; lifetime: number };

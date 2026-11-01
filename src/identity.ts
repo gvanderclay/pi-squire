@@ -6,11 +6,14 @@ import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Agent, Roster } from "./agents.ts";
 import { readState, writeState } from "./local-state.ts";
+import { assertRootPlacement } from "./window-placement.ts";
 
 export const DELEGATION_TOOLS = ["delegate", "delegation_status", "delegation_close", "delegation_resume"] as const;
 export type Identity = {
 	parent: string;
 	root: string;
+	/** Original root project's preferred companion base, inherited unchanged. */
+	rootPlacement: string;
 	depth: number;
 	agent: string;
 	chain: string[];
@@ -35,6 +38,7 @@ export function readIdentity(session: string): Identity | undefined {
 		typeof value.autoExit !== "boolean"
 	)
 		throw new Error(`invalid delegation identity for ${session}; repair its squire/identity record before reopening`);
+	assertRootPlacement(value.rootPlacement);
 	return value;
 }
 export const writeIdentity = (session: string, identity: Identity): void => writeState(pathFor(session), identity);
@@ -61,7 +65,7 @@ export function grantsNesting(agent: Agent, depth: number): boolean {
 
 export function createIdentity(pi: ExtensionAPI): {
 	current(): Identity | undefined;
-	child(agent: Agent, ctx: ExtensionContext): Identity;
+	child(agent: Agent, ctx: ExtensionContext, rootPlacement: string): Identity;
 	admit(agent: string, roster: Roster): void;
 } {
 	// Launch writes exact-id identity before spawn. Inherited environment is
@@ -86,9 +90,10 @@ export function createIdentity(pi: ExtensionAPI): {
 			if (problem) throw problem;
 			return current;
 		},
-		child: (agent: Agent, ctx: ExtensionContext): Identity => ({
+		child: (agent: Agent, ctx: ExtensionContext, rootPlacement: string): Identity => ({
 			parent: ctx.sessionManager.getSessionId(),
 			root: current?.root ?? ctx.sessionManager.getSessionId(),
+			rootPlacement: current?.rootPlacement ?? rootPlacement,
 			depth: (current?.depth ?? 0) + 1,
 			agent: agent.name,
 			chain: [...(current?.chain ?? []), agent.name],

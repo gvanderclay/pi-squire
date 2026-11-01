@@ -83,7 +83,9 @@ export class FakeTmux implements TmuxClient {
 	}
 
 	private add(session: string, name: string): string {
-		const windowId = `@${++this.next}`;
+		let windowId: string;
+		do windowId = `@${++this.next}`;
+		while (this.windows.has(windowId));
 		this.windows.set(windowId, { name, exited: false, session });
 		return windowId;
 	}

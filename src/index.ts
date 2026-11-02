@@ -97,7 +97,7 @@ import {
 	reconcileTree,
 	reserveTree,
 } from "./tree-registry.ts";
-import { assertResumeAuthority, historicalRecord, visibleRecords } from "./tree-view.ts";
+import { assertChildAuthority, assertResumeAuthority, historicalRecord, visibleRecords } from "./tree-view.ts";
 import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 import { registerDelegateWidget } from "./widget.ts";
@@ -938,6 +938,7 @@ export default function delegate(
 		onWindowOpened?: () => void;
 		identity: Identity;
 		sessionId?: string;
+		forkSourceCwd?: string;
 	}): Promise<OpenedWindow> {
 		const {
 			id,
@@ -969,7 +970,11 @@ export default function delegate(
 				: workspace.mode === "existing"
 					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
 					: "";
-		const prompt = writePromptFile(delegatePrompt(start.agent, managedContext));
+		const forkContext =
+			workspace.mode === "managed" && input.forkSourceCwd
+				? `\n\nThis session was forked from one that worked in ${input.forkSourceCwd}. Work only in ${workspace.cwd}; its uncommitted changes are not here.`
+				: "";
+		const prompt = writePromptFile(delegatePrompt(start.agent, managedContext + forkContext));
 		const argv = [
 			...parentCommand(),
 			...session,
@@ -1085,6 +1090,7 @@ export default function delegate(
 			placement,
 			tools: input.tools,
 			onWindowOpened,
+			forkSourceCwd: input.fork?.sourceCwd,
 		});
 		// No task text in the record: the request copy in `sent/` has it.
 		results.recordStart(
@@ -1763,15 +1769,18 @@ export default function delegate(
 	pi.registerTool(
 		forkTool({
 			results,
+			tmux,
 			delegateSchema: DelegateSchema,
 			roster: rosterFor,
 			parentDefaults,
 			chooseModel: (explicit, agent, models, preferred) =>
 				chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
 			thinkingProblem,
-			authorize: (_id, _ctx) => {
+			authorize: (id, ctx) => {
 				owner.assert();
 				results.checkStorage();
+				const record = results.find(id) ?? viewResults.find(id) ?? historicalRecord(id, ctx);
+				if (record && isStarted(record)) assertChildAuthority(record, ctx, "fork");
 			},
 			admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
 			launch: async (start, source, ctx, signal, toolCallId) => {

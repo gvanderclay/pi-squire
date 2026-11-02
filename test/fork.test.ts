@@ -64,7 +64,13 @@ test("fork combines Pi flags, copies context to a new exact session id and leave
 	const launches: { args: string[]; env: Record<string, string>; toolCallId: string }[] = [];
 	d.s.events.on("session:launch", (payload) => launches.push(payload as (typeof launches)[number]));
 	const result = await fork(d.s, d.id);
-	const detail = result.structuredContent as { id: string; forkedFrom: string; model: string; thinking: string };
+	const detail = result.structuredContent as {
+		id: string;
+		forkedFrom: string;
+		model: string;
+		thinking: string;
+		notices: string[];
+	};
 	const record = lastStart(d.s);
 	assert.notEqual(detail.id, d.id);
 	assert.equal(detail.forkedFrom, d.id);
@@ -74,6 +80,10 @@ test("fork combines Pi flags, copies context to a new exact session id and leave
 	assert.equal(detail.model, "alpha/deep-model");
 	assert.equal(detail.thinking, "high");
 	assert.equal(record.autoExit, false);
+	const notice = `shares a working folder with running delegation ${d.id}; pass worktree to isolate`;
+	assert.ok(detail.notices.includes(notice));
+	assert.ok(result.content[0].text.includes(notice));
+	assert.equal(d.s.tool("delegation_fork").annotations?.destructiveHint, true);
 	const window = d.s.tmux.opened[1];
 	assert.equal(window.cwd, realpathSync(cwd));
 	const parsed = parseArgs([...window.argv]);
@@ -104,6 +114,17 @@ test("fork combines Pi flags, copies context to a new exact session id and leave
 	assert.equal(copied.getHeader()?.parentSession, d.file);
 	assert.match(readFileSync(copied.getSessionFile()!, "utf8"), /built state/);
 	assert.equal(readFileSync(d.file, "utf8"), original);
+});
+
+test("fork does not warn about sharing a folder with an exited source", async () => {
+	const d = await source();
+	d.s.tmux.windows.delete(d.s.tmux.opened[0].windowId);
+	const result = await fork(d.s, d.id);
+	assert.ok(
+		!(result.structuredContent as { notices: string[] }).notices.some((notice) =>
+			notice.includes("shares a working folder"),
+		),
+	);
 });
 
 test("forks can branch repeatedly, including from an older resumed record", async () => {
@@ -179,6 +200,7 @@ test("fork worktree starts from the child's checkout, not the parent's, with an 
 	git(checkout, "commit", "-qm", "next");
 	const head = git(checkout, "rev-parse", "HEAD");
 	const d = await source(checkout);
+	writeFileSync(join(checkout, "dirty.txt"), "uncommitted");
 	for (const [branch, more, expected] of [
 		["fork/head", {}, head],
 		["fork/base", { worktree_base: "HEAD~1" }, base],
@@ -187,13 +209,28 @@ test("fork worktree starts from the child's checkout, not the parent's, with an 
 		const details = result.structuredContent as {
 			cwd: string;
 			workspace: { mode: string; baseCommit: string; sourceCwd: string };
+			notices: string[];
 		};
 		assert.equal(details.workspace.mode, "managed");
 		assert.equal(details.workspace.baseCommit, expected);
 		assert.notEqual(details.cwd, checkout);
 		assert.equal(git(details.cwd, "rev-parse", "HEAD"), expected);
 		assert.equal(git(details.cwd, "branch", "--show-current"), branch);
-		assert.equal(parseArgs([...d.s.tmux.opened.at(-1)!.argv]).fork, d.file);
+		const parsed = parseArgs([...d.s.tmux.opened.at(-1)!.argv]);
+		assert.equal(parsed.fork, d.file);
+		const prompt = readFileSync(
+			d.s.tmux.opened.at(-1)!.argv[d.s.tmux.opened.at(-1)!.argv.indexOf("--append-system-prompt") + 1],
+			"utf8",
+		);
+		assert.ok(
+			prompt.includes(
+				`This session was forked from one that worked in ${checkout}. Work only in ${details.cwd}; its uncommitted changes are not here.`,
+			),
+		);
+		assert.ok(result.content[0].text.includes(details.cwd));
+		assert.ok(result.content[0].text.includes(`Branch ${branch} starts at ${expected}.`));
+		assert.match(result.content[0].text, /1 uncommitted source path is not copied into it \("dirty.txt"\)/);
+		assert.ok(!details.notices.some((notice) => notice.includes("shares a working folder")));
 	}
 	assert.equal(git(checkout, "rev-parse", "HEAD"), head);
 	assert.equal(git(checkout, "branch", "--show-current"), "main");
@@ -241,7 +278,10 @@ test("fork requires direct-parent authority, depth/grant admission and shared ca
 	const d = await source();
 	const stranger = session({ entries: d.s.entries });
 	await stranger.start();
-	await assert.rejects(fork(stranger, d.id), /no delegation|only direct parent/);
+	await assert.rejects(
+		fork(stranger, d.id),
+		new RegExp(`only direct parent ${d.s.parent} may fork delegation ${d.id}; reopen that parent session`),
+	);
 	settings({ maxConcurrentDelegates: 1 });
 	await assert.rejects(fork(d.s, d.id), /maxConcurrentDelegates/);
 	assert.equal(d.s.tmux.opened.length, 1);

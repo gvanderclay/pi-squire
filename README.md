@@ -1645,6 +1645,8 @@ Call `delegation_fork({ id, task })` when new work needs a child's built context
 without continuing that child's session. It runs
 `pi --fork <child session file> --session-id <new id>` in a new tmux window.
 The source may still be running; its window, task and session file are untouched.
+Without `worktree`, both sessions share the working folder; the tool warns when
+the source is running and recommends `worktree` to isolate their file changes.
 Pi copies the source history available when the new process starts, not future
 messages. An older delegation in a resumed chain names that chain's shared
 session file, so it copies the session's current history rather than an old snapshot.
@@ -1654,6 +1656,8 @@ Pass `worktree: "<new branch>"` to create a managed worktree from that folder's
 checkout instead; `worktree_base` optionally selects a local commit-ish rather
 than its HEAD. Normal worktree trust, placement and rollback checks apply.
 This copies conversation context, not uncommitted checkout changes.
+The fork's launch prompt names the source folder and tells it to work only in
+the new worktree, where the source's uncommitted changes are absent.
 
 The tool returns the `delegate` result plus `forkedFrom`. The new delegation
 has its own session/mail address and window name, and receives the new task

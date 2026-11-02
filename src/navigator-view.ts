@@ -165,6 +165,7 @@ function detailLines(item: OpenDelegate): string[] {
 		`session file: ${item.live?.sessionFile ?? locateSession({ ...record }, undefined) ?? "not found"}`,
 		`session directory: ${record.sessionDir ?? "not recorded"}`,
 		`result: ${record.result?.status ?? "none received"} · envelope: ${record.result?.envelopePath ?? "none"}`,
+		...(record.forkedFrom === undefined ? [] : [`forked from: ${record.forkedFrom}`]),
 		`resumed from: ${record.resumedFrom ?? "none"} · resumed as: ${item.resumedAs ?? "none"} · auto-exit: ${record.autoExit === true ? "on" : "off"}`,
 		`model: ${record.model} · thinking: ${record.thinking}`,
 	];

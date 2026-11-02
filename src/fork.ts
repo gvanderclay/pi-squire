@@ -2,13 +2,21 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { disabledProblem, THINKING_LEVELS } from "./agents.ts";
-import { isStarted, type StartedRecorded } from "./results.ts";
+import { dirtyNotice } from "./render.ts";
+import { deriveState, isStarted, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, Resumed } from "./resume.ts";
 import { sessionFor, settleModel } from "./resume-checks.ts";
-import { type ToolDef, toolResult } from "./tracking.ts";
+import { listWindows, type ToolDef, toolResult, windowState } from "./tracking.ts";
 import { assertChildAuthority, recordedIdentity } from "./tree-view.ts";
 
-export type ForkSource = { id: string; sessionPath: string; sessionDir: string; rootPlacement: string };
+export type ForkSource = {
+	id: string;
+	sessionPath: string;
+	sessionDir: string;
+	rootPlacement: string;
+	sourceCwd: string;
+};
+type Forked = Omit<Resumed, "resumedFrom" | "fallbackNote">;
 type ForkRequest = {
 	id: string;
 	task: string;
@@ -29,7 +37,7 @@ type ForkStart = Awaited<ReturnType<ResumeDeps["chooseModel"]>> & {
 };
 type ForkDeps = Pick<
 	ResumeDeps,
-	"results" | "roster" | "parentDefaults" | "chooseModel" | "thinkingProblem" | "delegateSchema"
+	"results" | "tmux" | "roster" | "parentDefaults" | "chooseModel" | "thinkingProblem" | "delegateSchema"
 > & {
 	authorize(id: string, ctx: ExtensionContext): void;
 	admit(agent: string, ctx: ExtensionContext): void;
@@ -39,7 +47,7 @@ type ForkDeps = Pick<
 		ctx: ExtensionContext,
 		signal: AbortSignal | undefined,
 		toolCallId: string,
-	): Promise<Omit<Resumed, "resumedFrom" | "fallbackNote">>;
+	): Promise<Forked>;
 };
 
 function given(value: string | null | undefined): string | undefined {
@@ -57,10 +65,36 @@ function sourceRecord(deps: ForkDeps, id: string, ctx: ExtensionContext): Starte
 	return record;
 }
 
+function forkSource(record: StartedRecorded, session: ReturnType<typeof sessionFor>): ForkSource {
+	const own = recordedIdentity(record);
+	if (!own) throw new Error(`delegation ${record.id} has no original root placement identity; fork refused`);
+	return {
+		id: record.id,
+		sessionPath: session.path,
+		sessionDir: session.dir,
+		rootPlacement: own.rootPlacement,
+		sourceCwd: session.cwd,
+	};
+}
+
 function fallbackNote(chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>): string {
 	return chosen.skipped.length
 		? ` Used fallback ${chosen.model} because ${chosen.skipped.map((item) => `${item.model} is ${item.why}`).join("; ")}.`
 		: "";
+}
+
+async function sharedFolderNotice(deps: ForkDeps, record: StartedRecorded, worktree?: string): Promise<string[]> {
+	if (worktree || deriveState(record, windowState(await listWindows(deps.tmux), record)) !== "running") return [];
+	return [`shares a working folder with running delegation ${record.id}; pass worktree to isolate`];
+}
+
+function launchText(id: string, details: Forked, chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>): string {
+	const workspace = details.workspace;
+	const managed =
+		workspace.mode === "managed"
+			? ` Branch ${workspace.createdBranch} starts at ${workspace.baseCommit}. ${dirtyNotice(workspace.sourceDirty)}`
+			: "";
+	return `Forked delegation ${id} as ${details.id} in window ${details.windowName} in ${details.cwd}.${managed} The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote(chosen)}${details.notices.map((notice) => ` ${notice}`).join("")}`;
 }
 
 export function forkTool(deps: ForkDeps): ToolDef {
@@ -85,7 +119,7 @@ export function forkTool(deps: ForkDeps): ToolDef {
 			),
 		}),
 		outputSchema: Type.Object({ ...deps.delegateSchema.properties, forkedFrom: Type.String() }),
-		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 		async execute(
 			toolCallId: string,
 			params: ForkRequest,
@@ -106,8 +140,8 @@ export function forkTool(deps: ForkDeps): ToolDef {
 				{ record, agent, session, request: { model: given(params.model), thinking: given(params.thinking) } },
 				ctx,
 			);
-			const own = recordedIdentity(record);
-			if (!own) throw new Error(`delegation ${record.id} has no original root placement identity; fork refused`);
+			const source = forkSource(record, session);
+			chosen.notices.push(...(await sharedFolderNotice(deps, record, given(params.worktree))));
 			const details = await deps.launch(
 				{
 					...chosen,
@@ -119,12 +153,12 @@ export function forkTool(deps: ForkDeps): ToolDef {
 					worktree: given(params.worktree),
 					worktree_base: given(params.worktree_base),
 				},
-				{ id: record.id, sessionPath: session.path, sessionDir: session.dir, rootPlacement: own.rootPlacement },
+				source,
 				ctx,
 				signal,
 				toolCallId,
 			);
-			const line = `Forked delegation ${record.id} as ${details.id} in window ${details.windowName}. The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote(chosen)}${details.notices.map((notice) => ` ${notice}`).join("")}`;
+			const line = launchText(record.id, details, chosen);
 			ctx.ui.notify(`delegate: ${line}`, "info");
 			return toolResult(line, { outcome: "started", ...details, forkedFrom: record.id });
 		},

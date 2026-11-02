@@ -11,6 +11,11 @@ import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, keyScript, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
 
+async function until(check: () => boolean, message: string): Promise<void> {
+	for (let count = 0; count < 200 && !check(); count++) await new Promise((resolve) => setTimeout(resolve, 5));
+	assert.ok(check(), message);
+}
+
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
 const instance = (options: Parameters<typeof mailSession>[0] = {}): Session => {
@@ -197,7 +202,10 @@ test("fresh sessions notice recorded owners within the current session directory
 	await coordinator.shutdown();
 	const fresh = instance({ tmux });
 	await fresh.start();
-	assert.ok(fresh.notes.some((note) => note.includes(owner.parent) && note.includes("Reopen")));
+	await until(
+		() => fresh.notes.some((note) => note.includes(owner.parent) && note.includes("Reopen")),
+		"discovery reported the earlier owner",
+	);
 	assert.ok(fresh.notes.some((note) => note.includes(c.id) && note.includes("does not adopt")));
 	assert.equal((await status(fresh)).length, 0);
 	const elsewhere = instance({ tmux, sessionDir: join(root, "elsewhere") });
@@ -290,6 +298,8 @@ test("notice count budgets are explicit and do not adopt or scan unrelated sessi
 	const fresh = instance({ tmux });
 	const clock = t.mock.method(performance, "now", () => 0);
 	await fresh.start();
+	// Discovery finishes after startup returns; the frozen clock must outlast it.
+	await until(() => /newest 64 trees and 10 owners/.test(fresh.warnings.join("\n")), "discovery reported its limits");
 	clock.mock.restore();
 	assert.equal(fresh.notes.filter((message) => message.includes("earlier session")).length, 10);
 	assert.match(fresh.warnings.join("\n"), /newest 64 trees and 10 owners/);

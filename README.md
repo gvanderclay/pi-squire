@@ -329,10 +329,13 @@ this agent directory's newest **64** registry files, and only entries using its
 current session-storage directory. It reports at most **10** direct owners with
 positively matched live windows and explains reopening the owning session (or
 returning to its existing owner). Registry-content reads are limited to 1 MiB
-per tree and one **200 ms total cooperative notice budget**, including the tmux
-wait, with registry lock waits capped at the remaining budget or 20 ms. The scan
-yields between trees and reports unavailable tmux, unreadable owner records or
-truncated scope once. Individual filesystem operations cannot be preempted.
+per tree and one **200 ms total cooperative notice budget**, which starts once
+tmux has listed its windows, with registry lock waits capped at the remaining
+budget or 20 ms. Discovery runs after `session_start` returns, so it never
+delays startup or a session switch; the tmux listing is bounded by the tmux
+client's own timeout, and a session that ends first reports nothing. The scan
+yields between trees and reports, once, a tmux failure with its message,
+unreadable owner records or truncated scope. Individual filesystem operations cannot be preempted.
 Directory names/mtimes are enumerated, but no recursive
 session search, mailbox search or other agent-directory search occurs. Exact-id
 restoration is not restricted by this notice budget.

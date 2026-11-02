@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fresh-session owner discovery no longer warns that tmux could not be asked
+  when tmux answered but a busy startup held its answer past the 200 ms notice
+  budget. Discovery now runs after `session_start` returns instead of holding
+  it, the tmux listing is bounded by the tmux client's own timeout, and the
+  200 ms budget covers only the registry scan after it. The warning now carries
+  tmux's error message, and the newest-tree sort reads each registry's
+  modification time once. Tests that read discovery notices now wait for them.
+
 ## [0.18.3] - 2026-11-01
 
 ### Changed

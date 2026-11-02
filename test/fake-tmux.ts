@@ -49,6 +49,8 @@ export class FakeTmux implements TmuxClient {
 	listCalls = 0;
 	/** When set, `listWindows` rejects with this message. */
 	failList: string | undefined;
+	/** When set, `listWindows` answers only once this settles. */
+	holdList: Promise<void> | undefined;
 	/** When set, `openWindow` rejects with this message instead of opening. */
 	failOpen: string | undefined;
 	/** Whether a `failOpen` failure could have left a window; a known failure by default. */
@@ -156,6 +158,7 @@ export class FakeTmux implements TmuxClient {
 
 	async listWindows(): Promise<TmuxWindow[]> {
 		this.listCalls++;
+		if (this.holdList !== undefined) await this.holdList;
 		if (this.failList !== undefined) throw new Error(this.failList);
 		return [...this.windows].map(([id, { name, exited, session }]) => ({ id, session, name, exited }));
 	}

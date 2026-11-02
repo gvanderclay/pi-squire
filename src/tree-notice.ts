@@ -1,4 +1,6 @@
 // Bounded discovery is a notice only. Exact-session restore never uses this budget.
+// Callers start it without awaiting, so a slow tmux never holds session_start; the
+// tmux client's own timeout bounds the listing, and the budget bounds only the scan.
 import { statSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -6,7 +8,6 @@ import { findSession } from "./result-sessions.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import { listTreeRoots, readTree, type TreeEntry, treePath } from "./tree-registry.ts";
-import { listWindows } from "./windows.ts";
 
 export const NOTICE_TREES = 64;
 export const NOTICE_OWNERS = 10;
@@ -16,21 +17,15 @@ export async function treeNotice(
 	tmux: TmuxClient,
 	active: () => boolean = () => true,
 ): Promise<void> {
-	const deadline: number = performance.now() + NOTICE_MS;
 	const session: string = ctx.sessionManager.getSessionId();
 	const dir: string = ctx.sessionManager.getSessionDir();
 	const roots: string[] = listTreeRoots().filter((root) => root !== session);
-	const newest: string[] = roots.sort((a, b) => modified(b) - modified(a)).slice(0, NOTICE_TREES);
+	const newest: string[] = newestRoots(roots);
 	if (!newest.length) return;
-	const windows: TmuxWindow[] | undefined = await noticeWindows(tmux, deadline);
-	if (!active()) return;
-	if (!windows) {
-		ctx.ui.notify(
-			"delegate: owner discovery unavailable: tmux could not be asked within the total notice budget; no absence or ownership was inferred.",
-			"warning",
-		);
-		return;
-	}
+	const windows: TmuxWindow[] | undefined = await noticeWindows(ctx, tmux, active);
+	if (!windows || !active()) return;
+	// The scan budget starts once tmux has answered.
+	const deadline: number = performance.now() + NOTICE_MS;
 	const owners: Map<string, TreeEntry> = new Map();
 	let unavailable = 0,
 		scanned = 0,
@@ -73,17 +68,30 @@ function reportOwners(ctx: ExtensionContext, dir: string, owners: Map<string, Tr
 	}
 	return ownerErrors;
 }
-async function noticeWindows(tmux: TmuxClient, deadline: number): Promise<TmuxWindow[] | undefined> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
+/** The newest roots first; each tree is stat'ed once, not on every sort comparison. */
+function newestRoots(roots: string[]): string[] {
+	return roots
+		.map((root) => ({ root, mtime: modified(root) }))
+		.sort((a, b) => b.mtime - a.mtime)
+		.slice(0, NOTICE_TREES)
+		.map(({ root }) => root);
+}
+/** tmux's windows, or undefined after warning (while still active) that tmux failed. */
+async function noticeWindows(
+	ctx: ExtensionContext,
+	tmux: TmuxClient,
+	active: () => boolean,
+): Promise<TmuxWindow[] | undefined> {
 	try {
-		return await Promise.race([
-			listWindows(tmux),
-			new Promise<undefined>((resolve) => {
-				timer = setTimeout(() => resolve(undefined), remaining(deadline));
-			}),
-		]);
-	} finally {
-		if (timer) clearTimeout(timer);
+		return await tmux.listWindows();
+	} catch (error) {
+		if (!active()) return undefined;
+		const reason: string = error instanceof Error ? error.message : String(error);
+		ctx.ui.notify(
+			`delegate: owner discovery unavailable: tmux could not be asked: ${reason}; no absence or ownership was inferred.`,
+			"warning",
+		);
+		return undefined;
 	}
 }
 function remaining(deadline: number): number {

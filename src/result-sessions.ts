@@ -78,6 +78,32 @@ export function finishedModel(sessionPath: string | undefined): string | undefin
 	return undefined;
 }
 
+/** Approximate copied context from the last assistant request, excluding its output. */
+export function sessionInputTokens(sessionPath: string): number | undefined {
+	let lines: string[];
+	try {
+		lines = readFileSync(sessionPath, "utf8").split("\n");
+	} catch {
+		return undefined;
+	}
+	for (let i = lines.length - 1; i >= 0; i--) {
+		let entry: { type?: unknown; message?: { role?: unknown; usage?: Record<string, unknown> } };
+		try {
+			entry = JSON.parse(lines[i]);
+		} catch {
+			continue;
+		}
+		if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
+		const usage = entry.message.usage;
+		const counts = [usage?.input, usage?.cacheRead, usage?.cacheWrite];
+		if (!counts.every((count): count is number => typeof count === "number" && Number.isFinite(count) && count >= 0))
+			return undefined;
+		const total = counts.reduce((sum, count) => sum + count, 0);
+		return Number.isFinite(total) && total > 0 ? total : undefined;
+	}
+	return undefined;
+}
+
 /** One session-file line, as much of it as the branch walk reads. */
 type BranchEntry = { type?: unknown; id?: unknown; parentId?: unknown; thinkingLevel?: unknown };
 

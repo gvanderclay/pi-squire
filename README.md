@@ -1670,7 +1670,10 @@ folder must exist, its agent must still be enabled, and current nesting grants,
 depth, capacity and trust checks apply. Copied history does not transfer
 ownership of the original child's descendants. Model, thinking and auto-exit
 default to the source's last settings with the same locks and fallbacks as a
-resume; the current roster supplies the prompt and tools.
+resume; the current roster supplies the prompt and tools. A different effective
+model re-reads the copied context without the source's cache; the result warns
+about the new cache write, estimating copied tokens when source usage is
+available. Keep the source's model unless the task needs another role.
 `session:launch` is emitted with the `delegation_fork` tool call id.
 
 ## Hooks

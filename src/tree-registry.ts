@@ -1,7 +1,3 @@
-// One registry per root owns structural/admission accounting. Parent-local
-// child facts and frozen worker replies remain semantic authorities. No bodies,
-// mailboxes, processing inboxes, or ancestor-liveness policy live here.
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readChildRecords } from "./child-tasks.ts";
@@ -23,17 +19,6 @@ export type { Reservation, TreeCounts, TreeEntry, TreeIntent, TreeState } from "
 
 export function treePath(root: string): string {
 	return join(getAgentDir(), "squire", "trees", `${encodeURIComponent(root)}.json`);
-}
-/** Discovery only; callers choose notice/view scope, never adopt another root. */
-export function listTreeRoots(): string[] {
-	try {
-		return readdirSync(join(getAgentDir(), "squire", "trees"))
-			.filter((name) => name.endsWith(".json"))
-			.map((name) => decodeURIComponent(name.slice(0, -5)));
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-		throw error;
-	}
 }
 function load(root: string): TreeState {
 	const saved: TreeState | undefined = readState<TreeState>(treePath(root));

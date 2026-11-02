@@ -3,22 +3,14 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
-import { performance } from "node:perf_hooks";
 import { after, afterEach, beforeEach, test } from "node:test";
-import { writeState } from "../src/local-state.ts";
 import type { Delegation } from "../src/results.ts";
-import { NOTICE_MS, treeNotice } from "../src/tree-notice.ts";
-import { treePath, treeTransaction } from "../src/tree-registry.ts";
 import { requestRootTrust, trustEndpointPath } from "../src/trust-wire.ts";
 import { FakeTmux } from "./fake-tmux.ts";
-import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
 
 type Session = ReturnType<typeof mailSession>;
-async function until(check: () => boolean, message: string): Promise<void> {
-	for (let count = 0; count < 200 && !check(); count++) await new Promise((resolve) => setTimeout(resolve, 5));
-	assert.ok(check(), message);
-}
 const active: Session[] = [];
 function instance(options: Parameters<typeof mailSession>[0] = {}): Session {
 	const value = mailSession(options);
@@ -364,114 +356,4 @@ test("root late-outcome continuation uses root wording, not coordinator final-ta
 	const results = await owner.fire("agent_before_settle");
 	assert.match(JSON.stringify(results), /finishing this response/);
 	assert.doesNotMatch(JSON.stringify(results), /final task report/);
-});
-test("discovery reports unavailable tmux/owners, and contended registries share one total time budget", async () => {
-	const tmux = new FakeTmux();
-	for (let i = 0; i < 20; i++) {
-		const tree = `busy-${i}`;
-		treeTransaction(tree, () => {});
-		const lock = `${treePath(tree)}.lock`;
-		writeFileSync(join(lock, "held.json"), JSON.stringify({ pid: process.pid, choosing: false, number: 1 }));
-	}
-	const fresh = instance({ tmux });
-	const start = performance.now();
-	await fresh.start();
-	assert.ok(performance.now() - start < NOTICE_MS + 1000, "no 64x50ms startup stall");
-	const discovery = () => fresh.warnings.filter((message) => message.includes("discovery"));
-	await until(() => discovery().length > 0, "discovery reported its limited scope");
-	assert.equal(fresh.warnings.filter((message) => message.includes("discovery")).length, 1);
-	assert.match(fresh.warnings.join("\n"), /200 ms total budget/);
-	// Remove only our controlled held tickets before fixture shutdown.
-	for (let i = 0; i < 20; i++) rmSync(join(`${treePath(`busy-${i}`)}.lock`, "held.json"));
-	const unavailable = instance({ tmux });
-	tmux.failList = "not available";
-	await unavailable.start();
-	await until(
-		() => unavailable.warnings.some((message) => message.includes("tmux could not be asked: not available;")),
-		"discovery reported the tmux error",
-	);
-	tmux.failList = undefined;
-	const badOwner = "unreadable-owner",
-		tree = "visible-tree";
-	tmux.addWindow("@visible", "visible");
-	treeTransaction(tree, (state) =>
-		state.entries.push({
-			id: "visible",
-			sessionId: "visible",
-			phase: "started",
-			ownerPid: process.pid,
-			identity: {
-				root: tree,
-				rootPlacement: "project-delegate-session",
-				parent: badOwner,
-				depth: 1,
-				agent: "worker",
-				chain: ["worker"],
-				autoExit: false,
-			},
-			sessionDir,
-			windowId: "@visible",
-			windowName: "visible",
-		}),
-	);
-	writeState(join(agentDir, "squire", "owners", `${badOwner}.json`), { invalid: true });
-	await treeNotice(fresh.context as never, tmux);
-	assert.ok(fresh.notes.some((message) => message.includes("Owner status is unavailable")));
-	assert.ok(fresh.warnings.some((message) => message.includes("owner records unreadable")));
-});
-test("discovery runs after startup returns and uses a tmux answer later than the scan budget", async () => {
-	const tmux = new FakeTmux();
-	const tree = "late-tree",
-		earlier = "earlier-owner";
-	tmux.addWindow("@late", "late");
-	treeTransaction(tree, (state) =>
-		state.entries.push({
-			id: "late",
-			sessionId: "late",
-			phase: "started",
-			ownerPid: process.pid,
-			identity: {
-				root: tree,
-				rootPlacement: "project-delegate-session",
-				parent: earlier,
-				depth: 1,
-				agent: "worker",
-				chain: ["worker"],
-				autoExit: false,
-			},
-			sessionDir,
-			windowId: "@late",
-			windowName: "late",
-		}),
-	);
-	let release: () => void = () => {};
-	tmux.holdList = new Promise((resolve) => {
-		release = resolve;
-	});
-	const fresh = instance({ tmux });
-	await fresh.start();
-	assert.equal(tmux.listCalls, 1, "startup returned while tmux was still being asked");
-	await new Promise((resolve) => setTimeout(resolve, NOTICE_MS + 100));
-	release();
-	await until(
-		() => fresh.notes.some((note) => note.includes(earlier) && note.includes("does not adopt")),
-		"a late tmux answer still reported the earlier owner",
-	);
-	assert.deepEqual(
-		fresh.warnings.filter((message) => message.includes("discovery")),
-		[],
-	);
-	// A session that ended before tmux answered reports nothing.
-	tmux.holdList = new Promise((resolve) => {
-		release = resolve;
-	});
-	const gone = instance({ tmux });
-	await gone.start();
-	await gone.shutdown();
-	release();
-	await new Promise((resolve) => setTimeout(resolve, 50));
-	assert.deepEqual(
-		[...gone.notes, ...gone.warnings].filter((message) => message.includes("delegate:")),
-		[],
-	);
 });

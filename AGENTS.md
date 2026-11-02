@@ -33,7 +33,7 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   runner and `tree-fence.ts` composes close/resume admission; `result-close.ts`
   words missing/canceled work for the direct parent's processing inbox. `session-owner.ts` owns exact-session process
   arbitration and staged Squire ingress; `tree-view.ts` projects descendants
-  read-only and `tree-notice.ts` bounds fresh-session discovery. Local result
+  read-only. Local result
   processing stays in `child-tasks.ts`.
   `test/tree-process-harness.ts` and `test/fixtures/tree-coordinator.ts` provide
   isolated separate-process contention/crash controls for caps and close tests.

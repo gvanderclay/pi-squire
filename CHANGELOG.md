@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- Fresh sessions no longer report other sessions' running delegates at
+  startup, and the "owner discovery unavailable" and "discovery is limited"
+  warnings are gone with that check. A session only ever reports its own tree;
+  to collect the delegates of a session you closed, reopen that session. The
+  tests that pinned the startup notices now pin that a fresh session reports
+  nothing, and the notice-budget tests are removed.
+
 ## [0.19.0] - 2026-11-02
 
 ### Changed

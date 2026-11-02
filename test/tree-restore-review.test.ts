@@ -15,6 +15,10 @@ import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent }
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
 
 type Session = ReturnType<typeof mailSession>;
+async function until(check: () => boolean, message: string): Promise<void> {
+	for (let count = 0; count < 200 && !check(); count++) await new Promise((resolve) => setTimeout(resolve, 5));
+	assert.ok(check(), message);
+}
 const active: Session[] = [];
 function instance(options: Parameters<typeof mailSession>[0] = {}): Session {
 	const value = mailSession(options);
@@ -373,6 +377,8 @@ test("discovery reports unavailable tmux/owners, and contended registries share 
 	const start = performance.now();
 	await fresh.start();
 	assert.ok(performance.now() - start < NOTICE_MS + 1000, "no 64x50ms startup stall");
+	const discovery = () => fresh.warnings.filter((message) => message.includes("discovery"));
+	await until(() => discovery().length > 0, "discovery reported its limited scope");
 	assert.equal(fresh.warnings.filter((message) => message.includes("discovery")).length, 1);
 	assert.match(fresh.warnings.join("\n"), /200 ms total budget/);
 	// Remove only our controlled held tickets before fixture shutdown.
@@ -380,7 +386,10 @@ test("discovery reports unavailable tmux/owners, and contended registries share 
 	const unavailable = instance({ tmux });
 	tmux.failList = "not available";
 	await unavailable.start();
-	assert.ok(unavailable.warnings.some((message) => message.includes("tmux could not be asked")));
+	await until(
+		() => unavailable.warnings.some((message) => message.includes("tmux could not be asked: not available;")),
+		"discovery reported the tmux error",
+	);
 	tmux.failList = undefined;
 	const badOwner = "unreadable-owner",
 		tree = "visible-tree";
@@ -409,4 +418,60 @@ test("discovery reports unavailable tmux/owners, and contended registries share 
 	await treeNotice(fresh.context as never, tmux);
 	assert.ok(fresh.notes.some((message) => message.includes("Owner status is unavailable")));
 	assert.ok(fresh.warnings.some((message) => message.includes("owner records unreadable")));
+});
+test("discovery runs after startup returns and uses a tmux answer later than the scan budget", async () => {
+	const tmux = new FakeTmux();
+	const tree = "late-tree",
+		earlier = "earlier-owner";
+	tmux.addWindow("@late", "late");
+	treeTransaction(tree, (state) =>
+		state.entries.push({
+			id: "late",
+			sessionId: "late",
+			phase: "started",
+			ownerPid: process.pid,
+			identity: {
+				root: tree,
+				rootPlacement: "project-delegate-session",
+				parent: earlier,
+				depth: 1,
+				agent: "worker",
+				chain: ["worker"],
+				autoExit: false,
+			},
+			sessionDir,
+			windowId: "@late",
+			windowName: "late",
+		}),
+	);
+	let release: () => void = () => {};
+	tmux.holdList = new Promise((resolve) => {
+		release = resolve;
+	});
+	const fresh = instance({ tmux });
+	await fresh.start();
+	assert.equal(tmux.listCalls, 1, "startup returned while tmux was still being asked");
+	await new Promise((resolve) => setTimeout(resolve, NOTICE_MS + 100));
+	release();
+	await until(
+		() => fresh.notes.some((note) => note.includes(earlier) && note.includes("does not adopt")),
+		"a late tmux answer still reported the earlier owner",
+	);
+	assert.deepEqual(
+		fresh.warnings.filter((message) => message.includes("discovery")),
+		[],
+	);
+	// A session that ended before tmux answered reports nothing.
+	tmux.holdList = new Promise((resolve) => {
+		release = resolve;
+	});
+	const gone = instance({ tmux });
+	await gone.start();
+	await gone.shutdown();
+	release();
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.deepEqual(
+		[...gone.notes, ...gone.warnings].filter((message) => message.includes("delegate:")),
+		[],
+	);
 });

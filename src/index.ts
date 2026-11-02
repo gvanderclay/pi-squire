@@ -741,13 +741,13 @@ export default function delegate(
 	pi.on("session_start", (_event, ctx) => {
 		viewContext = ctx;
 	});
-	pi.on("session_start", async (_event, ctx) => {
+	// Discovery is advisory: it runs after session_start returns, so tmux never delays startup or a session switch.
+	pi.on("session_start", (_event, ctx) => {
 		if (!identity.current() && results.list().length === 0) {
-			try {
-				await treeNotice(ctx, tmux, () => owner.active());
-			} catch (error) {
-				ctx.ui.notify(`delegate: owner discovery unavailable: ${String(error)}`, "warning");
-			}
+			const active = () => owner.active();
+			treeNotice(ctx, tmux, active).catch((error: unknown) => {
+				if (active()) ctx.ui.notify(`delegate: owner discovery unavailable: ${String(error)}`, "warning");
+			});
 		}
 	});
 	const viewResults = {

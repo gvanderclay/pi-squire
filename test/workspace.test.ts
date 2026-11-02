@@ -858,10 +858,15 @@ function expandedView(message: unknown): string {
 	initTheme("dark");
 	const view = renderMessage(
 		{ role: "custom", timestamp: 0, ...(message as object) } as Parameters<typeof renderMessage>[0],
-		{ expanded: true, outputPad: 1 },
+		{
+			expanded: true,
+			outputPad: 1,
+			keyText: () => assert.fail("the expanded view shows no key hint"),
+			keyHint: () => assert.fail("the expanded view shows no key hint"),
+		},
 		theme,
 	);
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: strips the real theme's ANSI from the expand hint
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: strips the real theme's ANSI from the rendered view
 	return (view?.render(2000) ?? []).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
 }
 

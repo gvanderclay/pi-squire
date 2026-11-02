@@ -10,12 +10,11 @@ answers with one message, which the parent session shows as a result.
 
 You need:
 
-- Pi 1.3.0 or later, on macOS or Linux (not Windows). Pi 1.3.0 is the version
-  pi-squire is tested with. It provides the per-run `before_agent_start`
-  preparation for idle custom-message results, the structured system-prompt
-  options the parent guidance uses, and the extension APIs the package relies
-  on. Pi supplies the peer dependencies `@earendil-works/pi-coding-agent` and
-  `typebox`.
+- Pi 1.5.0 or later, on macOS or Linux (not Windows). Pi 1.5.0 is the version
+  pi-squire is tested with. It provides configured keybinding hints for delegate
+  results, blocked-input status for inline choice screens, and the extension
+  APIs the package relies on. Pi supplies the peer dependencies
+  `@earendil-works/pi-coding-agent` and `typebox`.
 - tmux 3.2 or later, with the Pi session running in a tmux pane. That is the
   first version with `new-session -e`. Windows are placed
   relative to the pane's session (see [Where delegate windows

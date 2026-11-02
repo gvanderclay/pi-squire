@@ -9,7 +9,6 @@ import { homedir } from "node:os";
 
 import {
 	getMarkdownTheme,
-	keyHint,
 	type MessageRenderer,
 	type MessageRenderOptions,
 	type Theme,
@@ -178,7 +177,7 @@ function idLines(details: MessageDetails): string[] {
  */
 export function renderMessage(
 	message: Parameters<MessageRenderer>[0],
-	{ expanded, outputPad }: MessageRenderOptions,
+	{ expanded, outputPad, keyHint }: MessageRenderOptions,
 	theme: Theme,
 ): Component | undefined {
 	const details = message.details as MessageDetails | undefined;
@@ -192,7 +191,8 @@ export function renderMessage(
 	box.addChild(expanded ? new Text(header, 0, 0) : new TruncatedText(header));
 	if (details.kind === "result" && details.limit !== undefined)
 		box.addChild(new Text(theme.fg("warning", details.limit), 0, 0));
-	for (const child of expanded ? expandedLines(details, theme) : collapsedLines(details, theme)) box.addChild(child);
+	for (const child of expanded ? expandedLines(details, theme) : collapsedLines(details, theme, keyHint))
+		box.addChild(child);
 	return box;
 }
 
@@ -209,7 +209,7 @@ function headerLine(details: MessageDetails, status: string, theme: Theme): stri
 }
 
 /** A result's first lines, a count of the rest, and the expand hint. */
-function collapsedLines(details: MessageDetails, theme: Theme): Component[] {
+function collapsedLines(details: MessageDetails, theme: Theme, keyHint: MessageRenderOptions["keyHint"]): Component[] {
 	const children: Component[] = [];
 	if (details.kind === "result") {
 		const lines = plainLines(details.body);

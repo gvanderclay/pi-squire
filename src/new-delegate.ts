@@ -441,6 +441,7 @@ export async function startNewDelegate(ctx: ExtensionContext, deps: NewDelegateD
 				cwdProblem: (value: string): string | undefined => cwdProblem(value, ctx.cwd),
 				done,
 			}),
+		{ blocked: { kind: "question", message: "Choose delegate settings" } },
 	);
 	if (chosen === undefined) return;
 	await deps.start({ agent: agent.name, task, ...(label === undefined ? {} : { label }), ...chosen }, ctx);

@@ -419,7 +419,7 @@ export function session(options: SessionOptions = {}) {
 		getThinkingLevel: () => options.parentThinking ?? "medium",
 		getActiveTools: () => [...activeTools],
 		setActiveTools: (names: string[]) => {
-			activeTools = [...names];
+			activeTools = [...new Set([...activeTools.filter((name) => names.includes(name)), ...names])];
 		},
 		getAllTools: () => {
 			if (!bound)

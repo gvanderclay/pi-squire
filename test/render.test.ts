@@ -13,7 +13,7 @@ import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { renderMessage } from "../src/render.ts";
 import type { MessageDetails } from "../src/results.ts";
 
-// The expand hint and the Markdown body read Pi's global theme.
+// The Markdown body reads Pi's global theme.
 before(() => initTheme("dark"));
 
 /** The background tokens the last render asked for. */
@@ -42,7 +42,21 @@ function render(details: MessageDetails | undefined, expanded: boolean, width = 
 		timestamp: 0,
 		...(details === undefined ? {} : { details }),
 	} as const;
-	return renderMessage(message, { expanded, outputPad: 1 }, theme)?.render(width).map(plain);
+	return renderMessage(
+		message,
+		{
+			expanded,
+			outputPad: 1,
+			keyText: () => "alt+o",
+			keyHint: (action, description) => {
+				assert.equal(action, "app.tools.expand");
+				return `alt+o ${description}`;
+			},
+		},
+		theme,
+	)
+		?.render(width)
+		.map(plain);
 }
 
 const result = (overrides: Partial<MessageDetails & { kind: "result" }> = {}): MessageDetails => ({
@@ -72,8 +86,8 @@ const gone: MessageDetails = {
 	windowName: "scout-6ba168fc",
 };
 
-// keyHint has no bindings loaded under test, so the key part of the hint is empty.
-const HINT = "to expand";
+// The injected hint uses the host's configured binding, not a package-local registry.
+const HINT = "alt+o to expand";
 
 const HEADER = "<success:✓> <toolTitle:<bold:scout-6ba168fc>><dim: (a/one) —> <dim:done>";
 

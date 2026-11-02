@@ -5,7 +5,7 @@ import { agentFile, DELEGATION_TOOLS, session, writeAgent } from "./harness.ts";
 // Every byte here reaches the model of each session that loads pi-squire: the
 // description and parameters directly, the output schema through codemode's
 // declarations. Raise the budget only for text a model needs.
-const BUDGET = 10_000;
+const BUDGET = 12_000;
 
 test("the delegation tools' model-facing metadata stays within its budget", async () => {
 	writeAgent("scout", agentFile({ description: "Looks things up" }));

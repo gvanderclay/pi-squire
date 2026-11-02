@@ -24,7 +24,7 @@
 // An agent with no `model` or `thinking` runs
 // on the parent's.
 //
-// The model gets four tools. `delegate` takes agent, task and optional model
+// The model gets five tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
 // delegation at once, opening no dialog, so parallel calls cannot block one
 // another; the one exception is a `cwd` whose project trust is unresolved,
@@ -34,7 +34,9 @@
 // envelope paths.
 // `delegation_close` kills the window and records the close. `delegation_resume`
 // (`resume.ts`) reopens an exited delegate's session in a new window with a
-// follow-up task, recorded as a new delegation. A delegate can launch children
+// follow-up task, recorded as a new delegation. `delegation_fork` copies a
+// child's context into a new session, leaving the original untouched.
+// A delegate can launch children
 // only below maxDepth and with its current agent allow_nested_delegation grant.
 // Durable identity restores that boundary even on a manual session reopening.
 //
@@ -67,6 +69,7 @@ import {
 } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
 import { registerCompletionHost } from "./completion-holds.ts";
+import { type ForkSource, forkTool } from "./fork.ts";
 import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
@@ -94,7 +97,7 @@ import {
 	reconcileTree,
 	reserveTree,
 } from "./tree-registry.ts";
-import { assertResumeAuthority, historicalRecord, visibleRecords } from "./tree-view.ts";
+import { assertChildAuthority, assertResumeAuthority, historicalRecord, visibleRecords } from "./tree-view.ts";
 import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type Proactive, type UsageClient } from "./usage.ts";
 import { registerDelegateWidget } from "./widget.ts";
@@ -135,6 +138,7 @@ const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
 	"delegation_status",
 	"delegation_close",
 	"delegation_resume",
+	"delegation_fork",
 ]);
 /** Asked of every delegate, so the parent gets an answer it can use alone. */
 
@@ -912,7 +916,8 @@ export default function delegate(
 	 * Build the delegate's command line and environment, emit `session:launch`
 	 * and open its window; returns the window id and session. A launch and a resume share
 	 * it and differ only in `session`, the arguments that choose the session:
-	 * `--session-id <id> --name <name>` for a new one, `--session <path>` to reopen.
+	 * `--session-id <id> --name <name>` for a new one (plus `--fork <path>`
+	 * to copy context), `--session <path>` to reopen.
 	 */
 	async function openChild(input: {
 		id: string;
@@ -933,6 +938,7 @@ export default function delegate(
 		onWindowOpened?: () => void;
 		identity: Identity;
 		sessionId?: string;
+		forkSourceCwd?: string;
 	}): Promise<OpenedWindow> {
 		const {
 			id,
@@ -964,7 +970,11 @@ export default function delegate(
 				: workspace.mode === "existing"
 					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
 					: "";
-		const prompt = writePromptFile(delegatePrompt(start.agent, managedContext));
+		const forkContext =
+			workspace.mode === "managed" && input.forkSourceCwd
+				? `\n\nThis session was forked from one that worked in ${input.forkSourceCwd}. Work only in ${workspace.cwd}; its uncommitted changes are not here.`
+				: "";
+		const prompt = writePromptFile(delegatePrompt(start.agent, managedContext + forkContext));
 		const argv = [
 			...parentCommand(),
 			...session,
@@ -1060,6 +1070,7 @@ export default function delegate(
 		placement: WindowPlacement;
 		tools: readonly string[];
 		onWindowOpened: () => void;
+		fork?: ForkSource;
 	}): Promise<Launched> {
 		const { id, requestId, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement, onWindowOpened } =
 			input;
@@ -1067,7 +1078,7 @@ export default function delegate(
 		const { id: windowId, session: windowSession } = await openChild({
 			id,
 			name,
-			session: ["--session-id", id, "--name", name],
+			session: [...(input.fork ? ["--fork", input.fork.sessionPath] : []), "--session-id", id, "--name", name],
 			identity: input.identity,
 			workspace,
 			trusted,
@@ -1079,6 +1090,7 @@ export default function delegate(
 			placement,
 			tools: input.tools,
 			onWindowOpened,
+			forkSourceCwd: input.fork?.sourceCwd,
 		});
 		// No task text in the record: the request copy in `sent/` has it.
 		results.recordStart(
@@ -1097,6 +1109,7 @@ export default function delegate(
 				cwd,
 				sessionDir,
 				workspace,
+				...(input.fork ? { forkedFrom: input.fork.id } : {}),
 			},
 			ctx,
 		);
@@ -1109,6 +1122,7 @@ export default function delegate(
 		ctx: ExtensionContext,
 		signal?: AbortSignal,
 		toolCallId?: string,
+		fork?: ForkSource,
 	): Promise<Launched> {
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
@@ -1119,13 +1133,15 @@ export default function delegate(
 		const parentIdentity = identity.current();
 		const project = parentIdentity
 			? { companion: parentIdentity.rootPlacement, notices: [] }
-			: placementProject(ctx.cwd, companionSuffix);
+			: fork
+				? { companion: fork.rootPlacement, notices: [] }
+				: placementProject(ctx.cwd, companionSuffix);
 		assertRootPlacement(project.companion);
 		const own = identity.child(start.agent, ctx, project.companion);
 		if (parentIdentity) assertParentPlacement(readTree(own.root), own);
 		if (placement === "companion") start.notices.push(...project.notices);
 		const tools = childTools(start.agent);
-		const sessionDir = ctx.sessionManager.getSessionDir();
+		const sessionDir = fork?.sessionDir ?? ctx.sessionManager.getSessionDir();
 		if (!isAbsolute(sessionDir))
 			throw new Error(
 				`the parent's session directory ${JSON.stringify(sessionDir)} is not an absolute path; start Pi with an absolute --session-dir`,
@@ -1188,7 +1204,13 @@ export default function delegate(
 			await reconcileTree(own.root, tmux);
 			admit(start.agent.name, currentRoster(ctx));
 			if (combined?.aborted) throw new Error("the launch was aborted");
-			reservation = reserveTree({ id, sessionId: id, identity: own, sessionDir });
+			reservation = reserveTree({
+				id,
+				sessionId: id,
+				identity: own,
+				sessionDir,
+				...(fork ? { forkedFrom: fork.id } : {}),
+			});
 			if (plan !== undefined) {
 				revalidate(plan);
 				revalidateTrust?.();
@@ -1259,6 +1281,7 @@ export default function delegate(
 				onWindowOpened: () => {
 					windowOpened = true;
 				},
+				fork,
 			});
 		};
 		const runWithRollback = async (): Promise<Launched> => {
@@ -1743,4 +1766,51 @@ export default function delegate(
 	registerDelegate(toolDescription(currentRoster().agents));
 	tracking.registerTools();
 	pi.registerTool(resumer.tool() as never);
+	pi.registerTool(
+		forkTool({
+			results,
+			tmux,
+			delegateSchema: DelegateSchema,
+			roster: rosterFor,
+			parentDefaults,
+			chooseModel: (explicit, agent, models, preferred) =>
+				chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
+			thinkingProblem,
+			authorize: (id, ctx) => {
+				owner.assert();
+				results.checkStorage();
+				const record = results.find(id) ?? viewResults.find(id) ?? historicalRecord(id, ctx);
+				if (record && isStarted(record)) assertChildAuthority(record, ctx, "fork");
+			},
+			admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
+			launch: async (start, source, ctx, signal, toolCallId) => {
+				const launched = await launch(
+					{
+						...start,
+						cwd: start.worktree ? undefined : start.cwd,
+						worktree_source: start.worktree ? start.cwd : undefined,
+					},
+					ctx,
+					signal,
+					toolCallId,
+					source,
+				);
+				return {
+					id: launched.id,
+					agent: start.agent.name,
+					model: start.model,
+					skipped: start.skipped.map(({ model, reason }) => ({ model, reason })),
+					notices: start.notices,
+					thinking: start.thinking,
+					autoExit: start.autoExit,
+					windowId: launched.windowId,
+					windowName: launched.windowName,
+					...(launched.windowSession === undefined ? {} : { windowSession: launched.windowSession }),
+					cwd: launched.cwd,
+					sessionDir: launched.sessionDir,
+					workspace: launched.workspace,
+				};
+			},
+		}) as never,
+	);
 }

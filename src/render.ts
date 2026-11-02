@@ -155,6 +155,7 @@ function plainLines(text: string): string[] {
 function idLines(details: MessageDetails): string[] {
 	const lines = [`delegation ${details.id}`, `request ${details.requestId}`];
 	if (details.resumedFrom !== undefined) lines.splice(1, 0, `resumed from ${details.resumedFrom}`);
+	if (details.forkedFrom !== undefined) lines.splice(1, 0, `forked from ${details.forkedFrom}`);
 	if (details.kind === "result") lines.push(`envelope ${tilde(details.envelopePath)}`);
 	else lines.push(`window ${details.windowName}`);
 	lines.push(`cwd ${details.cwd === undefined ? cwdLine(undefined) : tilde(details.cwd)}`);

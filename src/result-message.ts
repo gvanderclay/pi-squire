@@ -35,9 +35,14 @@ function limitLine(sessionId: string, status: string): string | undefined {
 }
 
 /** The details that say a delegation reopened an earlier one's session. */
-export function resumeDetails(record: StartedRecorded): { resumedFrom?: string; sessionId?: string } {
+export function resumeDetails(record: StartedRecorded): {
+	resumedFrom?: string;
+	forkedFrom?: string;
+	sessionId?: string;
+} {
 	return {
 		...(record.resumedFrom === undefined ? {} : { resumedFrom: record.resumedFrom }),
+		...(record.forkedFrom === undefined ? {} : { forkedFrom: record.forkedFrom }),
 		...(record.sessionId === undefined ? {} : { sessionId: record.sessionId }),
 	};
 }
@@ -98,7 +103,7 @@ export function resultText(details: ResultDetails): string {
 	const { task } = details;
 	const taskLine = "note" in task ? task.note : `Task: ${task.path}`;
 	return [
-		`[delegate] Result from ${details.agent} (${modelLabel(details.model, details.finishedModel)}), delegation ${details.id}${details.resumedFrom === undefined ? "" : ` (resumed from ${details.resumedFrom})`}, request ${details.requestId}.`,
+		`[delegate] Result from ${details.agent} (${modelLabel(details.model, details.finishedModel)}), delegation ${details.id}${details.resumedFrom === undefined ? "" : ` (resumed from ${details.resumedFrom})`}${details.forkedFrom === undefined ? "" : ` (forked from ${details.forkedFrom})`}, request ${details.requestId}.`,
 		`Status: ${details.status}`,
 		...(details.limit === undefined ? [] : [details.limit]),
 		taskLine,

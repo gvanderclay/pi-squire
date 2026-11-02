@@ -304,7 +304,13 @@ export type RunFailure = {
 export const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
 
 /** The tools pi-squire registers in a parent, active there unless a test says otherwise. */
-export const DELEGATION_TOOLS = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
+export const DELEGATION_TOOLS = [
+	"delegate",
+	"delegation_status",
+	"delegation_close",
+	"delegation_resume",
+	"delegation_fork",
+];
 
 /**
  * Pi passes `structuredContent` to codemode scripts without checking it, so

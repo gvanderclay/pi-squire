@@ -175,7 +175,7 @@ scalars, quoted booleans, malformed lists and patterns) disable the agent with
 a path-specific warning. Unknown or unavailable names warn and cannot launch;
 known entries remain usable, and later roster changes apply normally.
 Below the limit the grant adds `delegate`,
-`delegation_status`, `delegation_close` and `delegation_resume` even with an
+`delegation_status`, `delegation_close`, `delegation_resume` and `delegation_fork` even with an
 explicit `tools` list. Merely listing those
 tools (including by pattern) does not opt in and produces
 a roster warning. At the depth limit they are inactive and not passed onward.
@@ -1021,7 +1021,7 @@ agent that uses a bundle, with the reason; agents without bundles are
 unaffected. (`$`, unlike `@`, may start a plain YAML value.)
 
 The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
-`delegation_resume`) are removed from ordinary tool selections. An opted-in
+`delegation_resume`, `delegation_fork`) are removed from ordinary tool selections. An opted-in
 coordinator below `maxDepth` receives them automatically; a leaf has them
 inactive. Commands are still registered but cannot bypass admission. See the
 unreleased [nesting restrictions](#nested-delegation-unreleased).
@@ -1135,7 +1135,7 @@ agent's `auto_exit`.
 
 ## Tools
 
-The model gets four tools. They share the command's launch path and the
+The model gets five tools. They share the command's launch path and the
 session's delegation records. In a delegate they are active only for an
 opted-in coordinator below `maxDepth`; admission also checks every launch/resume.
 
@@ -1145,6 +1145,7 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 | `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
 | `delegation_resume` | `id`, `task`, optional `model`, `thinking` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
+| `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
 
 The `delegate` tool's description lists the current roster, one line per agent:
 its name and any display name, description, default model (or this session's)
@@ -1638,6 +1639,40 @@ and it resumes as the command does.
 - Not detected: a Pi process you opened yourself on the same session outside
   pi-squire's window. Close it before resuming.
 
+## Forking a delegation
+
+Call `delegation_fork({ id, task })` when new work needs a child's built context
+without continuing that child's session. It runs
+`pi --fork <child session file> --session-id <new id>` in a new tmux window.
+The source may still be running; its window, task and session file are untouched.
+Without `worktree`, both sessions share the working folder; the tool warns when
+the source is running and recommends `worktree` to isolate their file changes.
+Pi copies the source history available when the new process starts, not future
+messages. An older delegation in a resumed chain names that chain's shared
+session file, so it copies the session's current history rather than an old snapshot.
+
+The new session runs in the working folder from the source session's header.
+Pass `worktree: "<new branch>"` to create a managed worktree from that folder's
+checkout instead; `worktree_base` optionally selects a local commit-ish rather
+than its HEAD. Normal worktree trust, placement and rollback checks apply.
+This copies conversation context, not uncommitted checkout changes.
+The fork's launch prompt names the source folder and tells it to work only in
+the new worktree, where the source's uncommitted changes are absent.
+
+The tool returns the `delegate` result plus `forkedFrom`. The new delegation
+has its own session/mail address and window name, and receives the new task
+like a fresh delegate. Its result arrives through the normal `[delegate]`
+message; results and status name `forkedFrom`. Forking does not supersede the
+source or prevent further forks/resumes.
+
+Only the source's direct parent may fork it. The source session and working
+folder must exist, its agent must still be enabled, and current nesting grants,
+depth, capacity and trust checks apply. Copied history does not transfer
+ownership of the original child's descendants. Model, thinking and auto-exit
+default to the source's last settings with the same locks and fallbacks as a
+resume; the current roster supplies the prompt and tools.
+`session:launch` is emitted with the `delegation_fork` tool call id.
+
 ## Hooks
 
 The `js` block below is the contract's worked example, and
@@ -1660,7 +1695,7 @@ the window is open (see [Resuming a delegation](#resuming-a-delegation)).
 | `env` | the child's environment, as `KEY`/`value` pairs |
 | `agent` | the agent's name, as in `<agent dir>/agents/<name>.md` or `<cwd>/.pi/agents/<name>.md` (never its `display_name`); read it, do not change it |
 | `cwd` | the directory the window opens in, the parent's or the resolved `--cwd`; read it, do not change it |
-| `toolCallId` | the ID of the `delegate` or `delegation_resume` tool call that started the launch; absent when started from the `/delegate` or `/delegate-resume` command; read it, do not change it |
+| `toolCallId` | the ID of the `delegate`, `delegation_resume` or `delegation_fork` tool call that started the launch; absent when started from the `/delegate` or `/delegate-resume` command; read it, do not change it |
 | `parent` | Read-only direct parent session id. |
 | `root` | Read-only root session id; retained on resume. |
 | `depth` | Read-only numeric child depth, root = 0; retained on resume. |
@@ -1688,9 +1723,9 @@ environment into these arguments.
 
 `cwd`, the trust flag (`--approve` or `--no-approve`), `--session-dir` and the
 session choice (`--session-id` for a new delegate, `--session` for a [resumed](#resuming-a-delegation)
-one) are launch invariants that `pi-squire` chooses. The window opens in its own `cwd`,
+one, `--fork` with `--session-id` for a [fork](#forking-a-delegation)) are launch invariants that `pi-squire` chooses. The window opens in its own `cwd`,
 whatever a listener assigns to the payload. A listener must not add another
-trust flag, `--session-dir`, `--session` or `--session-id`, or a working-directory change to `args`, since
+trust flag, `--session-dir`, `--session`, `--fork` or `--session-id`, or a working-directory change to `args`, since
 that would launch a child whose trust or session storage the parent did not
 choose and cannot find; append only unrelated settings.
 
@@ -1965,7 +2000,7 @@ Other extensions may rely on:
   [Hooks](#hooks));
 - the `message:send`, `message:reply`, `message:inbound` and `message:scan` hooks, consumed as
   their sections document;
-- the `delegate`, `delegation_status`, `delegation_close` and `delegation_resume` tool names,
+- the `delegate`, `delegation_status`, `delegation_close`, `delegation_resume` and `delegation_fork` tool names,
   parameters, the recorded `workspace` shape and the `workspaceSnapshot`
   shape in results and status;
 - the `/delegate` and `/delegate-resume` syntax and flags, and their

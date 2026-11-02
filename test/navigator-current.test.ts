@@ -75,6 +75,13 @@ test("current navigation preserves gone/failed launch facts and exact-pane liven
 	assert.equal(JSON.stringify(f.records), before);
 });
 
+test("dashboard details show a fork's source delegation", async () => {
+	const f = setup();
+	f.record.forkedFrom = "source-delegation";
+	const [item] = (await f.view.items(true))!;
+	assert.match(dashboardRows([item])[0].details.join("\n"), /forked from: source-delegation/);
+});
+
 test("lost/invalid current evidence never falls back to an old still-open window, including later refreshes", async () => {
 	const f = setup();
 	const [item] = (await f.view.items(true))!;

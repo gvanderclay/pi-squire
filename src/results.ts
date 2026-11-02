@@ -66,6 +66,8 @@ export type Delegation = {
 	workspace?: Workspace;
 	/** The delegation this one resumed, when it reopened that delegation's session. */
 	resumedFrom?: string;
+	/** The delegation whose context this new session copied. */
+	forkedFrom?: string;
 	/** The Pi session id; absent means `id`. A resumed delegation holds the session id of the one it resumed. */
 	sessionId?: string;
 };
@@ -113,6 +115,7 @@ type CommonDetails = {
 	id: string;
 	/** The delegation this one resumed. */
 	resumedFrom?: string;
+	forkedFrom?: string;
 	/** The Pi session id when it is not `id`: a resumed delegation's. */
 	sessionId?: string;
 	requestId: string;
@@ -375,7 +378,7 @@ export function createResults(
 			windowName: record.windowName,
 		};
 		const content = [
-			`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+			`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`}${record.forkedFrom === undefined ? "" : ` (forked from ${record.forkedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
 			`Working directory: ${cwdLine(record.cwd)}`,
 			...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
 			`Delegate session: ${session ?? sessionIdOf(record)}`,

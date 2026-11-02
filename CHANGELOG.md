@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-02
+
 ### Changed
 
 - **Breaking:** Pi 1.5.0 or later is now required. Delegate result expand hints use Pi's
@@ -1081,7 +1083,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.18.4...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/gvanderclay/pi-squire/compare/v0.18.4...v0.19.0
 [0.18.4]: https://github.com/gvanderclay/pi-squire/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/gvanderclay/pi-squire/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/gvanderclay/pi-squire/compare/v0.18.1...v0.18.2

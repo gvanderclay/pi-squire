@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-02
+
 ### Added
 
 - `delegation_fork({ id, task })` starts a new delegation from a direct child's
@@ -1109,7 +1111,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/gvanderclay/pi-squire/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/gvanderclay/pi-squire/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/gvanderclay/pi-squire/compare/v0.18.4...v0.19.0
 [0.18.4]: https://github.com/gvanderclay/pi-squire/compare/v0.18.3...v0.18.4

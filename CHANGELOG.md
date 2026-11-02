@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Pi 1.5.0 or later is now required. Delegate result expand hints use Pi's
+  configured keybinding, and the inline delegate dashboard and new-delegate
+  settings form report that Pi is waiting for a choice. The render tests now
+  require the configured key in the hint instead of accepting a missing key;
+  dashboard and form tests pin their blocked-input status. The active-tools
+  test fake now preserves retained tools' order, matching Pi 1.5.
 - Model-facing delegate completion messages link the task copy instead of
   quoting it, omit the workspace launch summary, and keep only the checkout
   summary without path categories. Result bodies, errors, identity and file

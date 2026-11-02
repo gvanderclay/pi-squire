@@ -314,6 +314,9 @@ test("the settings screen is the factory ui.custom receives, built from the regi
 	await s.start();
 	await s.delegate("");
 	assert.equal(s.customs.length, 1);
+	assert.deepEqual(s.customOptions[0], {
+		blocked: { kind: "question", message: "Choose delegate settings" },
+	});
 	let result: unknown = "pending";
 	const screen = (
 		s.customs[0] as (

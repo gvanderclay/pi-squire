@@ -291,7 +291,11 @@ test("a parent restricted to one tool passes just that tool, read when each laun
 	const s = session({ activeTools: ["read", "delegate"] });
 	await s.start();
 	await s.delegate("none go");
-	s.pi.setActiveTools(["read", "bash", "delegate"]);
+	// Pi 1.5 retains active tools in their existing order, appending newly activated ones.
+	s.pi.setActiveTools(["bash", "delegate", "read"]);
+	assert.deepEqual(s.pi.getActiveTools(), ["read", "delegate", "bash"]);
+	s.pi.setActiveTools(["bash", "read", "delegate"]);
+	assert.deepEqual(s.pi.getActiveTools(), ["read", "delegate", "bash"]);
 	await s.toolCall("delegate", { agent: "none", task: "again" });
 	const [first, second] = s.tmux.opened.map((opened) => opened.argv);
 	assert.deepEqual(pair(first, "--tools"), ["--tools", "read,mcp__"]);

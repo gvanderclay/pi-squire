@@ -229,7 +229,9 @@ test("peek captures the pane in an overlay, r refreshes it and enter switches to
 	assert.deepEqual(s.tmux.captures, [one.windowId, one.windowId]);
 	assert.deepEqual(peek.result, { action: "switch" });
 	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: one.windowId }]);
-	assert.equal(s.customOptions[0], undefined, "the panel is not an overlay");
+	assert.deepEqual(s.customOptions[0], {
+		blocked: { kind: "question", message: "Choose a delegate action" },
+	});
 	assert.deepEqual(s.customOptions[1], {
 		overlay: true,
 		overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" },

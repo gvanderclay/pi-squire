@@ -858,7 +858,12 @@ function expandedView(message: unknown): string {
 	initTheme("dark");
 	const view = renderMessage(
 		{ role: "custom", timestamp: 0, ...(message as object) } as Parameters<typeof renderMessage>[0],
-		{ expanded: true, outputPad: 1 },
+		{
+			expanded: true,
+			outputPad: 1,
+			keyText: () => "alt+o",
+			keyHint: (_action, description) => `alt+o ${description}`,
+		},
 		theme,
 	);
 	// biome-ignore lint/suspicious/noControlCharactersInRegex: strips the real theme's ANSI from the expand hint

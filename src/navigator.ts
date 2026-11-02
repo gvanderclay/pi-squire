@@ -263,6 +263,7 @@ function show(
 				redraw: () => tui.requestRender(),
 				rows: () => tui.terminal.rows,
 			}),
+		{ blocked: { kind: "question", message: "Choose a delegate action" } },
 	);
 }
 

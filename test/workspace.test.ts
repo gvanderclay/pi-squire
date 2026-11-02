@@ -861,12 +861,12 @@ function expandedView(message: unknown): string {
 		{
 			expanded: true,
 			outputPad: 1,
-			keyText: () => "alt+o",
-			keyHint: (_action, description) => `alt+o ${description}`,
+			keyText: () => assert.fail("the expanded view shows no key hint"),
+			keyHint: () => assert.fail("the expanded view shows no key hint"),
 		},
 		theme,
 	);
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: strips the real theme's ANSI from the expand hint
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: strips the real theme's ANSI from the rendered view
 	return (view?.render(2000) ?? []).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
 }
 

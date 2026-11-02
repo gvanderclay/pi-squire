@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { performance } from "node:perf_hooks";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { readIdentity } from "../src/identity.ts";
@@ -10,11 +9,6 @@ import { readTree, reconcileTree, treeCounts, treeTransaction } from "../src/tre
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, keyScript, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
-
-async function until(check: () => boolean, message: string): Promise<void> {
-	for (let count = 0; count < 200 && !check(); count++) await new Promise((resolve) => setTimeout(resolve, 5));
-	assert.ok(check(), message);
-}
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -196,24 +190,18 @@ test("actual Pi fork/clone history is not authority; inherited environment canno
 	await nestedCopy.start();
 	await assert.rejects(nestedCopy.toolCall("delegation_resume", { id: w.id, task: "steal" }), /only direct parent/);
 });
-test("fresh sessions notice recorded owners within the current session directory, without adoption", async () => {
-	const { owner, coordinator, c, tmux } = await tree();
+test("fresh sessions neither report nor adopt earlier trees", async () => {
+	const { owner, coordinator, tmux } = await tree();
 	await owner.shutdown();
 	await coordinator.shutdown();
 	const fresh = instance({ tmux });
 	await fresh.start();
-	await until(
-		() => fresh.notes.some((note) => note.includes(owner.parent) && note.includes("Reopen")),
-		"discovery reported the earlier owner",
+	await nextTurn();
+	assert.deepEqual(
+		[...fresh.notes, ...fresh.warnings].filter((message) => message.startsWith("delegate:")),
+		[],
 	);
-	assert.ok(fresh.notes.some((note) => note.includes(c.id) && note.includes("does not adopt")));
 	assert.equal((await status(fresh)).length, 0);
-	const elsewhere = instance({ tmux, sessionDir: join(root, "elsewhere") });
-	await elsewhere.start();
-	assert.equal(
-		elsewhere.notes.some((note) => note.includes("earlier session")),
-		false,
-	);
 	assert.equal(tmux.killed.length, 0, "ordinary exits never close children");
 });
 test("root pending outcomes survive queued-display loss without presenting its final result twice", async () => {
@@ -265,46 +253,6 @@ test("direct-parent resume restores coordinator children and offline replies bef
 	assert.equal(owner.sent.length, 1, "one correlated report covers both root requests");
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 0, lifetime: 3 });
 	assert.equal(readIdentity(c.id)!.depth, 1);
-});
-test("notice count budgets are explicit and do not adopt or scan unrelated session directories", async (t) => {
-	const tmux = new FakeTmux();
-	for (let i = 0; i < 70; i++) {
-		const id = `notice-child-${i}`,
-			owner = `notice-owner-${i}`,
-			tree = `notice-root-${i}`;
-		tmux.addWindow(`@notice-${i}`, id);
-		treeTransaction(tree, (state) =>
-			state.entries.push({
-				id,
-				sessionId: id,
-				ownerPid: process.pid,
-				phase: "started",
-				requestId: `task-${i}`,
-				identity: {
-					root: tree,
-					rootPlacement: "project-delegate-session",
-					parent: owner,
-					depth: 1,
-					chain: ["worker"],
-					agent: "worker",
-					autoExit: false,
-				},
-				windowId: `@notice-${i}`,
-				windowName: id,
-				sessionDir,
-			}),
-		);
-	}
-	const fresh = instance({ tmux });
-	const clock = t.mock.method(performance, "now", () => 0);
-	await fresh.start();
-	// Discovery finishes after startup returns; the frozen clock must outlast it.
-	await until(() => /newest 64 trees and 10 owners/.test(fresh.warnings.join("\n")), "discovery reported its limits");
-	clock.mock.restore();
-	assert.equal(fresh.notes.filter((message) => message.includes("earlier session")).length, 10);
-	assert.match(fresh.warnings.join("\n"), /newest 64 trees and 10 owners/);
-	assert.equal((await status(fresh)).length, 0);
-	assert.equal(tmux.killed.length, 0);
 });
 test("lowered depth and a live manually-opened child refuse resume before reservation or window kill", async () => {
 	const { owner, coordinator, worker, w, tmux } = await tree();

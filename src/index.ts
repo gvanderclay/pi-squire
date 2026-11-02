@@ -80,7 +80,6 @@ import { registerTaskReplies } from "./task-replies.ts";
 import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
-import { treeNotice } from "./tree-notice.ts";
 import {
 	assertParentPlacement,
 	bindTree,
@@ -740,15 +739,6 @@ export default function delegate(
 	let viewContext: ExtensionContext | undefined;
 	pi.on("session_start", (_event, ctx) => {
 		viewContext = ctx;
-	});
-	// Discovery is advisory: it runs after session_start returns, so tmux never delays startup or a session switch.
-	pi.on("session_start", (_event, ctx) => {
-		if (!identity.current() && results.list().length === 0) {
-			const active = () => owner.active();
-			treeNotice(ctx, tmux, active).catch((error: unknown) => {
-				if (active()) ctx.ui.notify(`delegate: owner discovery unavailable: ${String(error)}`, "warning");
-			});
-		}
 	});
 	const viewResults = {
 		...results,

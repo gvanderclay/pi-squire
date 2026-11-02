@@ -323,21 +323,9 @@ one Pi process per session. Ownership refusals name the PID and owner file; if
 stale/corrupt, verify the original owner has ended, stop affected Squire runtimes
 and repair only that record. Never remove live lock tickets or force adoption.
 
-Fresh sessions do not adopt earlier trees. At startup a fresh root inspects only
-this agent directory's newest **64** registry files, and only entries using its
-current session-storage directory. It reports at most **10** direct owners with
-positively matched live windows and explains reopening the owning session (or
-returning to its existing owner). Registry-content reads are limited to 1 MiB
-per tree and one **200 ms total cooperative notice budget**, which starts once
-tmux has listed its windows, with registry lock waits capped at the remaining
-budget or 20 ms. Discovery runs after `session_start` returns, so it never
-delays startup or a session switch; the tmux listing is bounded by the tmux
-client's own timeout, and a session that ends first reports nothing. The scan
-yields between trees and reports, once, a tmux failure with its message,
-unreadable owner records or truncated scope. Individual filesystem operations cannot be preempted.
-Directory names/mtimes are enumerated, but no recursive
-session search, mailbox search or other agent-directory search occurs. Exact-id
-restoration is not restricted by this notice budget.
+Fresh sessions neither adopt nor report earlier trees. Each session sees only
+its own tree; to collect the delegates of a session you closed, reopen that
+exact session, which restores its full tree.
 
 Both `delegation_status` and `/delegates` show descendants: a root sees its tree;
 a coordinator sees only its own subtree, not siblings or unrelated roots.

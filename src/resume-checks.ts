@@ -53,28 +53,32 @@ export function isDirectory(path: string): boolean {
 export type SessionFile = { path: string; cwd: string; dir: string };
 
 /** Step 5: the session file, and the directory its header says Pi will run it in. */
-export function sessionFor(record: StartedRecorded, ctx: ExtensionContext): SessionFile {
+export function sessionFor(
+	record: StartedRecorded,
+	ctx: ExtensionContext,
+	purpose: "resumable" | "forkable" = "resumable",
+): SessionFile {
 	const dir = record.sessionDir ?? ctx.sessionManager.getSessionDir();
 	const path = locateSession(record, ctx.sessionManager.getSessionDir());
 	if (path === undefined) {
 		throw new Error(
-			`no session file for session ${sessionIdOf(record)} was found in ${dir}, so delegation ${record.id} is not resumable`,
+			`no session file for session ${sessionIdOf(record)} was found in ${dir}, so delegation ${record.id} is not ${purpose}`,
 		);
 	}
 	if (!isAbsolute(path) || !isAbsolute(dir)) {
 		throw new Error(
-			`the session file ${path} or its directory ${dir} is not an absolute path, so delegation ${record.id} is not resumable`,
+			`the session file ${path} or its directory ${dir} is not an absolute path, so delegation ${record.id} is not ${purpose}`,
 		);
 	}
 	const cwd = sessionHeaderCwd(path);
 	if (cwd === undefined) {
 		throw new Error(
-			`could not read a working directory from the header of ${path}, so delegation ${record.id} is not resumable`,
+			`could not read a working directory from the header of ${path}, so delegation ${record.id} is not ${purpose}`,
 		);
 	}
 	if (!isDirectory(cwd)) {
 		throw new Error(
-			`delegation ${record.id}'s session runs in ${cwd}, which no longer exists, so it is not resumable (a removed worktree cannot be resumed)`,
+			`delegation ${record.id}'s session runs in ${cwd}, which no longer exists, so it is not ${purpose} (a removed worktree cannot be ${purpose === "resumable" ? "resumed" : "forked"})`,
 		);
 	}
 	return { path, cwd, dir };
@@ -144,7 +148,7 @@ export function recordCheck(
 
 /** The thinking level and model a resume runs with; throws when the level is invalid or no model can be used. */
 export async function settleModel(
-	deps: ResumeDeps,
+	deps: Pick<ResumeDeps, "parentDefaults" | "thinkingProblem" | "chooseModel">,
 	input: {
 		record: StartedRecorded;
 		agent: Agent;

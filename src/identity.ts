@@ -8,7 +8,13 @@ import type { Agent, Roster } from "./agents.ts";
 import { readState, writeState } from "./local-state.ts";
 import { assertRootPlacement } from "./window-placement.ts";
 
-export const DELEGATION_TOOLS = ["delegate", "delegation_status", "delegation_close", "delegation_resume"] as const;
+export const DELEGATION_TOOLS = [
+	"delegate",
+	"delegation_status",
+	"delegation_close",
+	"delegation_resume",
+	"delegation_fork",
+] as const;
 export type Identity = {
 	parent: string;
 	root: string;

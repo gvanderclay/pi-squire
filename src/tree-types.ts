@@ -16,6 +16,7 @@ export type TreeEntry = {
 	sessionDir?: string;
 	workspace?: Workspace;
 	resumedFrom?: string;
+	forkedFrom?: string;
 	launch?: Delegation;
 	finished?: boolean;
 	gone?: boolean;
@@ -28,5 +29,5 @@ export type TreeEntry = {
 export type TreeClose = { id: string; target: string; entries: string[] };
 export type TreeState = { version: 1; root: string; entries: TreeEntry[]; closes?: TreeClose[] };
 export type Reservation = { root: string; id: string };
-export type TreeIntent = Pick<TreeEntry, "id" | "sessionId" | "identity" | "resumedFrom" | "sessionDir">;
+export type TreeIntent = Pick<TreeEntry, "id" | "sessionId" | "identity" | "resumedFrom" | "forkedFrom" | "sessionDir">;
 export type TreeCounts = { concurrent: number; lifetime: number };

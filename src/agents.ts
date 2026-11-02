@@ -174,7 +174,7 @@ function warnDelegationTools(path: string, nested: unknown, tools: string[] | un
 	if (nested === true || (Array.isArray(nested) && nested.length > 0)) return;
 	if (
 		tools?.some((name) =>
-			["delegate", "delegation_status", "delegation_close", "delegation_resume"].some((tool) =>
+			["delegate", "delegation_status", "delegation_close", "delegation_resume", "delegation_fork"].some((tool) =>
 				toolMatches(name, tool),
 			),
 		)

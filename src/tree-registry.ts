@@ -82,7 +82,7 @@ function validateFields(entry: TreeEntry): void {
 	for (const key of ["finished", "gone", "closed", "closing", "createPending"] as const)
 		if (entry[key] !== undefined && typeof entry[key] !== "boolean")
 			throw new Error(`invalid ${key} in tree entry ${entry.id}`);
-	for (const key of ["requestId", "windowId", "windowName", "cwd", "sessionDir", "resumedFrom"] as const)
+	for (const key of ["requestId", "windowId", "windowName", "cwd", "sessionDir", "resumedFrom", "forkedFrom"] as const)
 		if (entry[key] !== undefined && typeof entry[key] !== "string")
 			throw new Error(`invalid ${key} in tree entry ${entry.id}`);
 }
@@ -264,6 +264,7 @@ export function publishTreeRecords(root: string, parent: string, records: Record
 					ownerPid: process.pid,
 					phase: "started",
 					resumedFrom: record.resumedFrom,
+					forkedFrom: record.forkedFrom,
 				};
 				state.entries.push(entry);
 			}

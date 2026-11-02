@@ -33,24 +33,35 @@ export function belongsTo(record: Recorded, ctx: ExtensionContext): boolean {
 	// never by a branch copied into a fresh session file.
 	return !ctx.sessionManager.getHeader?.()?.parentSession;
 }
-export function assertResumeAuthority(record: StartedRecorded, ctx: ExtensionContext): void {
+export function assertChildAuthority(
+	record: StartedRecorded,
+	ctx: ExtensionContext,
+	operation: "resume" | "fork",
+): void {
 	const child: Identity | undefined = recordedIdentity(record);
 	if (!belongsTo(record, ctx))
 		throw new Error(
-			`only direct parent ${child?.parent ?? "(original session)"} may resume delegation ${record.id}; reopen that parent session`,
+			`only direct parent ${child?.parent ?? "(original session)"} may ${operation} delegation ${record.id}; reopen that parent session`,
 		);
-	if (!child) throw new Error(`delegation ${record.id} has no original root placement identity; resume refused`);
+	if (!child) throw new Error(`delegation ${record.id} has no original root placement identity; ${operation} refused`);
 	const parent: Identity | undefined = readIdentity(ctx.sessionManager.getSessionId());
 	if (
 		child.root !== (parent?.root ?? ctx.sessionManager.getSessionId()) ||
 		child.depth !== (parent?.depth ?? 0) + 1 ||
 		(parent && child.rootPlacement !== parent.rootPlacement)
 	)
-		throw new Error(`delegation ${record.id} has inconsistent root/depth or rootPlacement ownership; resume refused`);
+		throw new Error(
+			`delegation ${record.id} has inconsistent root/depth or rootPlacement ownership; ${operation} refused`,
+		);
 	if (child.depth > maxDepth())
 		throw new Error(
 			`delegation ${record.id} depth ${child.depth} exceeds maxDepth ${maxDepth()} in squire/settings.json`,
 		);
+}
+export function assertResumeAuthority(record: StartedRecorded, ctx: ExtensionContext): void {
+	assertChildAuthority(record, ctx, "resume");
+	const child = recordedIdentity(record);
+	if (!child) throw new Error(`delegation ${record.id} has no original root placement identity; resume refused`);
 	const state = readTree(child.root);
 	const newer: TreeEntry | undefined = newestSuccessor(state.entries, record.id);
 	if (newer)
@@ -197,6 +208,7 @@ function registryView(entry: TreeEntry): StartedRecorded {
 		sessionDir: entry.sessionDir,
 		workspace: entry.workspace,
 		resumedFrom: entry.resumedFrom,
+		forkedFrom: entry.forkedFrom,
 	};
 }
 function hierarchy(records: Recorded[], viewer: string): Recorded[] {

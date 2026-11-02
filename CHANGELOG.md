@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `delegation_fork({ id, task })` starts a new delegation from a direct child's
+  session context using `pi --fork`, leaving the original session and window
+  untouched. It runs in the child's folder or a new managed worktree, inherits
+  resume-style model/thinking/auto-exit defaults, and reapplies current roster,
+  nesting, capacity and trust checks. New records, status and results carry
+  `forkedFrom`; replies use the new session's own address. The metadata budget
+  test increases from 10,000 to 12,000 characters to cover the fifth tool.
+
 ## [0.19.1] - 2026-11-02
 
 ### Removed

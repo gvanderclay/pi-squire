@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-02
+
 ### Changed
 
 - `delegation_fork` warns when its effective model differs from the source's
@@ -1119,7 +1121,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/gvanderclay/pi-squire/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/gvanderclay/pi-squire/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/gvanderclay/pi-squire/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/gvanderclay/pi-squire/compare/v0.18.4...v0.19.0

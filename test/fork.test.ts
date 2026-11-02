@@ -116,6 +116,63 @@ test("fork combines Pi flags, copies context to a new exact session id and leave
 	assert.equal(readFileSync(d.file, "utf8"), original);
 });
 
+function sourceUsage(file: string, usage: unknown): void {
+	const lines = readFileSync(file, "utf8").trimEnd().split("\n");
+	const answer = JSON.parse(lines.at(-1)!);
+	answer.message.usage = usage;
+	lines[lines.length - 1] = JSON.stringify(answer);
+	writeFileSync(file, `${lines.join("\n")}\n`);
+}
+
+test("fork warns about a different model's cache write using the latest source input usage", async () => {
+	const d = await source();
+	sourceUsage(d.file, { input: 4000, cacheRead: 60000, cacheWrite: 10000, output: 9999 });
+	const result = await fork(d.s, d.id, { model: "beta/other-model" });
+	const notice =
+		"beta/other-model differs from the source's alpha/deep-model: about 74k copied tokens will be written to a new cache.";
+	assert.ok((result.structuredContent as { notices: string[] }).notices.includes(notice));
+	assert.ok(result.content[0].text.includes(notice));
+});
+
+test("same-model forks have no cache notice, whether defaulted or explicit", async () => {
+	const d = await source();
+	sourceUsage(d.file, { input: 74000, cacheRead: 0, cacheWrite: 0 });
+	for (const more of [{}, { model: "alpha/deep-model" }]) {
+		const result = await fork(d.s, d.id, more);
+		assert.ok(
+			!(result.structuredContent as { notices: string[] }).notices.some((notice) => notice.includes("new cache")),
+		);
+	}
+});
+
+test("different-model forks omit the estimate when latest source usage is unavailable or invalid", async () => {
+	const d = await source();
+	for (const usage of [
+		undefined,
+		{},
+		{ input: -1, cacheRead: 0, cacheWrite: 0 },
+		{ input: 0, cacheRead: 0, cacheWrite: 0 },
+	]) {
+		sourceUsage(d.file, usage);
+		const result = await fork(d.s, d.id, { model: "beta/other-model" });
+		assert.ok(
+			(result.structuredContent as { notices: string[] }).notices.includes(
+				"beta/other-model differs from the source's alpha/deep-model: copied tokens will be written to a new cache.",
+			),
+		);
+	}
+});
+
+test("fork cache notice compares the effective locked model, not the requested model", async () => {
+	const d = await source();
+	writeAgent("scout", agentFile({ model: "alpha/deep-model", locked: "[model]" }));
+	const result = await fork(d.s, d.id, { model: "beta/other-model" });
+	assert.equal((result.structuredContent as { model: string }).model, "alpha/deep-model");
+	assert.ok(
+		!(result.structuredContent as { notices: string[] }).notices.some((notice) => notice.includes("new cache")),
+	);
+});
+
 test("fork does not warn about sharing a folder with an exited source", async () => {
 	const d = await source();
 	d.s.tmux.windows.delete(d.s.tmux.opened[0].windowId);

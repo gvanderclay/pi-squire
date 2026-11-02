@@ -3,6 +3,7 @@ import { Type } from "typebox";
 
 import { disabledProblem, THINKING_LEVELS } from "./agents.ts";
 import { dirtyNotice } from "./render.ts";
+import { finishedModel, sessionInputTokens } from "./result-sessions.ts";
 import { deriveState, isStarted, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, Resumed } from "./resume.ts";
 import { sessionFor, settleModel } from "./resume-checks.ts";
@@ -88,6 +89,14 @@ async function sharedFolderNotice(deps: ForkDeps, record: StartedRecorded, workt
 	return [`shares a working folder with running delegation ${record.id}; pass worktree to isolate`];
 }
 
+function modelNotice(record: StartedRecorded, sessionPath: string, model: string): string[] {
+	const sourceModel = finishedModel(sessionPath) ?? record.result?.finishedModel ?? record.model;
+	if (model === sourceModel) return [];
+	const tokens = sessionInputTokens(sessionPath);
+	const estimate = tokens === undefined ? "copied tokens" : `about ${Math.round(tokens / 1000)}k copied tokens`;
+	return [`${model} differs from the source's ${sourceModel}: ${estimate} will be written to a new cache.`];
+}
+
 function launchText(id: string, details: Forked, chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>): string {
 	const workspace = details.workspace;
 	const managed =
@@ -96,6 +105,13 @@ function launchText(id: string, details: Forked, chosen: Awaited<ReturnType<Resu
 			: "";
 	return `Forked delegation ${id} as ${details.id} in window ${details.windowName} in ${details.cwd}.${managed} The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote(chosen)}${details.notices.map((notice) => ` ${notice}`).join("")}`;
 }
+
+const modelParameter = Type.Optional(
+	Type.String({
+		description:
+			"provider/id; defaults to the source's last model. A different model re-reads the copied context without its cache; keep the source's model unless the task needs another role.",
+	}),
+);
 
 export function forkTool(deps: ForkDeps): ToolDef {
 	return {
@@ -106,7 +122,7 @@ export function forkTool(deps: ForkDeps): ToolDef {
 		parameters: Type.Object({
 			id: Type.String({ description: "The direct child's delegation id whose context to copy." }),
 			task: Type.String(),
-			model: Type.Optional(Type.String({ description: "provider/id; defaults to the source's last model." })),
+			model: modelParameter,
 			thinking: Type.Optional(
 				Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the source's last level.` }),
 			),
@@ -141,6 +157,7 @@ export function forkTool(deps: ForkDeps): ToolDef {
 				ctx,
 			);
 			const source = forkSource(record, session);
+			chosen.notices.push(...modelNotice(record, session.path, chosen.model));
 			chosen.notices.push(...(await sharedFolderNotice(deps, record, given(params.worktree))));
 			const details = await deps.launch(
 				{

@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `delegation_fork` warns when its effective model differs from the source's
+  last model: copied context will be written to a new cache, with an approximate
+  token count when source usage is available. The model parameter and README
+  explain the cost; same-model forks retain their cache behavior. New fork tests
+  cover changed/same models, effective model locks and missing or invalid usage.
+
 ## [0.20.0] - 2026-11-02
 
 ### Added

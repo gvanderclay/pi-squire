@@ -28,7 +28,7 @@ test("focused viewport exposes hidden above/below counts and only focused hints"
 	assert.match(focused, /\+3 more direct delegates/);
 	assert.match(focused, /▸ ├─ ◌ worker-4/);
 	assert.doesNotMatch(focused, /worker-0|worker-1|worker-5/);
-	assert.match(focused, /enter details/);
+	assert.match(focused, /enter open/);
 	assert.match(focused, /^ {2}Delegates\n {2}├─ ↑ 2 more direct delegates\n/);
 	assert.match(focused, /\n {2}└─ \+3 more direct delegates\n/);
 });

@@ -305,12 +305,12 @@ test("ancestors excluded from cap, summary shares activity line and wins narrow,
 	};
 	const theme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
 	const wide = renderDelegateWidget([row], 1, 140, theme, 0, { ancestors });
-	assert.equal(wide.length, 5);
+	assert.equal(wide.length, 6);
 	assert.match(wide[4], /reading.*2 tasks/);
 	const narrow = renderDelegateWidget([row], 1, 45, theme, 0, { ancestors });
 	assert.match(narrow[4], /2 tasks.*failed/);
 	assert.doesNotMatch(narrow[4], /reading/);
-	assert.equal(renderDelegateWidget([], 0, 100, theme, 0, { ancestors }).length, 2);
+	assert.equal(renderDelegateWidget([], 0, 100, theme, 0, { ancestors }).length, 3);
 	for (let width = 1; width < 100; width++)
 		assert.ok(
 			renderDelegateWidget([row], 1, width, theme, 0, { ancestors }).every((line) => visibleWidth(line) <= width),

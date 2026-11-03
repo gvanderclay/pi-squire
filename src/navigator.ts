@@ -357,6 +357,11 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 	if (items === undefined) return noTmux(ctx);
 	const item = items.find((candidate) => candidate.id === id);
 	if (item === undefined) {
+		if (env.results.find(id))
+			return ctx.ui.notify(
+				"delegate: no verified open window for this delegation; window changed or unavailable",
+				"error",
+			);
 		const known = items.map((candidate) => candidate.id).join(", ") || "none";
 		return ctx.ui.notify(`delegate: no open delegate ${JSON.stringify(id)}; open: ${known}`, "error");
 	}

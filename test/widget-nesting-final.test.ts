@@ -82,7 +82,7 @@ async function panel(s: Session, keys: string[]): Promise<ReturnType<typeof keyS
 	return script;
 }
 
-test("widget details close the entire subtree and dashboard resume inherits original placement across root cwd changes", async () => {
+test("dashboard closes the entire subtree and resume inherits original placement across root cwd changes", async () => {
 	const a = directory("original-root");
 	const b = directory("coordinator-cwd");
 	const d = directory("reopened-root");
@@ -102,14 +102,13 @@ test("widget details close the entire subtree and dashboard resume inherits orig
 	await coordinator.fire("tool_execution_start", { toolCallId: "read", toolName: "read", args: {} });
 	await until(async () => (await new LiveActivityReader().read(c.id, c.id))?.text === "reading…");
 	await until(() => /reading…/.test(frame(owner)));
-	assert.equal(owner.terminalKey("down"), true);
-	const detail = keyScript(["x"], 180);
+	const detail = keyScript(["enter", "x"], 180);
 	owner.queueCustom(detail);
-	owner.queueCustom(keyScript(["escape"], 180));
-	assert.equal(owner.terminalKey("enter"), true);
+	owner.queueCustom(keyScript(["escape", "escape"], 180));
+	await owner.command("delegates");
 	await until(() => tmux.killed.includes(c.windowId));
 	await until(() => owner.confirms.length === 1 && !frame(owner).includes("coordinator-cross-project"));
-	assert.match(detail.frames[0], /Delegate: coordinator-cross-project/);
+	assert.match(detail.frames[1], /Delegate: coordinator-cross-project/);
 	assert.deepEqual(tmux.killed, [w.windowId, c.windowId]);
 	assert.match(owner.confirms[0].message, /entire recorded subtree/);
 	assert.equal(local(owner, c.id).closed, true);
@@ -147,10 +146,10 @@ test("widget details close the entire subtree and dashboard resume inherits orig
 	assert.equal(tmux.windows.has("@user"), true);
 });
 
-test("widget branch browsing excludes siblings, keeps title/ancestors, and grandchild resume remains direct-parent-only", async () => {
+test("widget switches a renamed branch while grandchild resume remains direct-parent-only", async () => {
 	const { owner, coordinator, c, w, tmux } = await tree();
+	tmux.attachClient("attached-client", 1);
 	const sibling = await launch(owner, "worker", "sibling");
-	// Native metadata is read from the session file; no new naming transport.
 	mkdirSync(sessionDir, { recursive: true });
 	writeFileSync(
 		join(sessionDir, `saved_${c.id}.jsonl`),
@@ -161,30 +160,14 @@ test("widget branch browsing excludes siblings, keeps title/ancestors, and grand
 		].join("\n"),
 	);
 	await until(() => frame(owner).includes("Renamed branch"));
-	assert.match(frame(coordinator), /root \(parent\)/);
-	owner.terminalKey("down"); // Newer sibling first.
 	owner.terminalKey("down");
-	const branch = keyScript(["b", "down", "enter", "r"], 220);
-	const back = keyScript(["escape"], 220);
-	owner.queueCustom(branch);
-	owner.queueCustom(back);
+	owner.terminalKey("down");
 	owner.terminalKey("enter");
-	await until(() => branch.frames.some((text) => text.includes("Delegate: worker-nested")));
-	assert.match(branch.frames[0], /Delegate: coordinator-branch.*Renamed branch/);
-	assert.match(branch.frames[1], /Delegate branch:/);
-	assert.match(branch.frames[1], /worker-nested/);
-	assert.doesNotMatch(branch.frames[1], /worker-sibling/);
-	await until(() =>
-		[...owner.warnings, ...owner.notes].some((text) => /cannot be resumed|no delegation can be resumed/.test(text)),
-	);
-	// The widget's dashboard must consume its own escape before the next panel queues scripts.
-	await until(() => back.frames.length > 1);
+	await until(() => tmux.switches.length === 1);
+	assert.equal(tmux.switches[0].windowId, c.windowId);
+	assert.equal(owner.customs.length, 0);
 	await owner.command("delegate-resume", `${w.id} retry`);
 	assert.ok(owner.errors.some((text) => text.includes("only direct parent")));
-	assert.equal(tmux.opened.length, 3);
-	const overall = await panel(owner, ["escape"]);
-	assert.match(overall.frames[0], /worker-sibling/);
-	assert.match(overall.frames[0], /worker-nested/);
 	assert.equal(tmux.windows.has(sibling.windowId), true);
 	assert.equal(local(coordinator, w.id).closed, undefined);
 });

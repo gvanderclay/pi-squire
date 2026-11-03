@@ -154,7 +154,7 @@ test("secondary line is literal and bounded, absent at completion, summary wins 
 	}
 	const text = renderDelegateWidget([r], 1, 120, theme, 0).join("\n");
 	assert.match(text, /response: a response with controls/);
-	assert.equal(renderDelegateWidget([r], 1, 120, theme).length, 3);
+	assert.equal(renderDelegateWidget([r], 1, 120, theme).length, 4);
 	assert.ok(activityLine(r, 22, true, theme, "3 descendants")!.includes("3 descendants"));
 	r.running = false;
 	assert.equal(activityLine(r, 80, true, theme), undefined);

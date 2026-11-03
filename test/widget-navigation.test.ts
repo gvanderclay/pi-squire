@@ -42,14 +42,16 @@ async function launch(s: Session, label: string): Promise<Delegation> {
 	await settle();
 	return s.entries.filter((e) => e.data.requestId).at(-1)!.data as Delegation;
 }
-test("real direct launches: compact viewport scrolls, same dashboard target, Escape list then prompt in both modes", async () => {
+test("compact viewport scrolls, Enter switches directly, Escape returns prompt in both modes", async () => {
 	for (const mode of ["regular", "fullscreen"]) {
 		const s = instance();
 		await s.start();
 		s.switchRenderer(mode);
+		s.tmux.attachClient("attached-client", 1);
 		for (let n = 0; n < 5; n++) await launch(s, `child${n}`);
 		assert.equal(s.terminalListeners(), 1);
-		assert.doesNotMatch(frame(s), /enter details|▸/);
+		assert.match(frame(s), /↓ to manage delegates/);
+		assert.doesNotMatch(frame(s), /▸/);
 		assert.equal(s.terminalKey("down"), true);
 		assert.match(frame(s), /▸ ├─ ◌ worker-child4/);
 		for (let n = 0; n < 3; n++) s.terminalKey("down");
@@ -57,12 +59,12 @@ test("real direct launches: compact viewport scrolls, same dashboard target, Esc
 		assert.match(frame(s), /worker-child1/);
 		assert.doesNotMatch(frame(s), /worker-child4/);
 		assert.match(frame(s), /↑ 1 more direct delegate/);
-		const details = keyScript(["escape"], 150);
-		s.queueCustom(details);
+		const target = s.entries.filter((entry) => entry.data.windowName === "worker-child1").at(-1)!.data;
 		assert.equal(s.terminalKey("enter"), true);
 		await settle();
-		assert.match(details.frames[0], /Delegate: worker-child1/);
-		assert.match(details.frames[0], /delegation: .*session:/);
+		assert.deepEqual(s.tmux.switches, [{ client: "attached-client", windowId: target.windowId }]);
+		assert.equal(s.customs.length, 0);
+		assert.match(frame(s), /↑↓ select · enter open · esc prompt/);
 		assert.match(frame(s), /▸ .*worker-child1/);
 		assert.equal(s.terminalKey("escape"), true);
 		assert.doesNotMatch(frame(s), /▸|enter details/);
@@ -71,11 +73,23 @@ test("real direct launches: compact viewport scrolls, same dashboard target, Esc
 		await s.command("delegates");
 		assert.match(overall.frames[0], /^Delegates/);
 		assert.match(overall.frames[1], /Delegate: worker-child0/);
-		assert.equal(s.tmux.switches.length, 0);
+		assert.equal(s.tmux.switches.length, 1);
 		await s.shutdown();
 		assert.equal(s.terminalListeners(), 0);
 	}
 });
+test("Enter refuses a row whose window disappeared without opening a panel", async () => {
+	const s = instance();
+	const child = await launch(s, "disappeared");
+	s.terminalKey("down");
+	s.tmux.exit(child.windowId);
+	s.terminalKey("enter");
+	await settle();
+	assert.ok(s.errors.some((error) => error.includes("no verified open window")));
+	assert.equal(s.tmux.switches.length, 0);
+	assert.equal(s.customs.length, 0);
+});
+
 test("completion, nonempty prompt, dialogs, unknown focus and custom editors keep their keys", async () => {
 	const s = instance();
 	await launch(s, "focus");
@@ -143,7 +157,7 @@ test("dashboard resume uses existing eligibility/task flow, not renderer authori
 	assert.equal(s.editors.at(-1)?.title, "Follow-up for worker-resume");
 });
 
-test("pending opening and post-confirm re-list protect the empty prompt until dashboard focus mounts", async () => {
+test("pending switch protects the empty prompt until verification finishes", async () => {
 	const s = session({ mode: "tui", ui: { confirm: [false] } });
 	active.push(s);
 	await launch(s, "gated");
@@ -163,34 +177,13 @@ test("pending opening and post-confirm re-list protect the empty prompt until da
 		}
 		return original();
 	};
-	s.queueCustom(keyScript(["x"]));
-	s.queueCustom(keyScript(["escape"]));
+
 	s.terminalKey("down");
 	s.terminalKey("enter");
 	await ready;
 	for (const key of ["escape", "x", "p", "r", "enter"]) assert.equal(s.terminalKey(key), true);
-	let resume!: () => void, between!: () => void;
-	const loopGate = new Promise<void>((resolve) => {
-		resume = resolve;
-	});
-	const loopReady = new Promise<void>((resolve) => {
-		between = resolve;
-	});
-	s.tmux.listWindows = async () => {
-		if (s.confirms.length) {
-			between();
-			await loopGate;
-		}
-		return original();
-	};
 	initial = false;
 	release();
-	await loopReady;
-	// The real navigator has closed the confirmation and awaits its next listing.
-	for (const key of ["escape", "x", "p", "r"]) assert.equal(s.terminalKey(key), true);
-	assert.equal(s.confirms.length, 1);
-	assert.equal(s.tmux.killed.length, 0);
-	resume();
 	await settle();
 	assert.match(frame(s), /▸ .*worker-gated/);
 	assert.equal(s.terminalKey("escape"), true);

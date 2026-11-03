@@ -17,7 +17,7 @@ import { listWindows } from "./windows.ts";
 
 export const DELEGATE_WIDGET_KEY = "squire-delegates";
 export const WIDGET_REFRESH_MS = 1000;
-type OpenDashboard = (ctx: ExtensionContext, sessionId: string) => Promise<void>;
+type OpenDelegate = (ctx: ExtensionContext, id: string) => Promise<void>;
 
 /** Observation and UI only; direct Results/task authority and the configured editor/footer stay untouched. */
 class Overview {
@@ -45,13 +45,7 @@ class Overview {
 	private rows: DelegateRow[] = [];
 	private configuration: WidgetSettings = { ...DEFAULT_WIDGET_SETTINGS };
 
-	constructor(
-		results: Results,
-		tmux: TmuxClient,
-		ctx: ExtensionContext,
-		open: OpenDashboard,
-		assertActive: () => void,
-	) {
+	constructor(results: Results, tmux: TmuxClient, ctx: ExtensionContext, open: OpenDelegate, assertActive: () => void) {
 		this.results = results;
 		this.tmux = tmux;
 		this.ctx = ctx;
@@ -63,8 +57,9 @@ class Overview {
 				assertActive();
 				const ancestor: AncestorRow | undefined = this.ancestors.find((row) => row.key === key);
 				if (ancestor) return switchAncestor(ctx, ancestor.sessionId, tmux, assertActive, this.live);
-				if (!this.rows.some((row) => row.key === key)) throw new Error("delegate is no longer visible");
-				await open(ctx, key);
+				const row = this.rows.find((row) => row.key === key);
+				if (!row) throw new Error("delegate is no longer visible");
+				await open(ctx, row.launchId);
 			},
 			error: (error: unknown): void =>
 				ctx.ui.notify(`delegate: ${error instanceof Error ? error.message : String(error)}`, "error"),
@@ -245,7 +240,7 @@ export function registerDelegateWidget(
 	pi: ExtensionAPI,
 	results: Results,
 	tmux: TmuxClient,
-	open: OpenDashboard,
+	open: OpenDelegate,
 	assertActive: () => void,
 ): void {
 	let overview: Overview | undefined;

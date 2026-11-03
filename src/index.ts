@@ -758,9 +758,9 @@ export default function delegate(
 		pi,
 		results,
 		tmux,
-		async (ctx, sessionId) => {
+		async (ctx, id) => {
 			owner.assert();
-			await navigator.panel(ctx, sessionId);
+			await navigator.openDelegate(ctx, id, "switch");
 		},
 		() => owner.assert(),
 	);

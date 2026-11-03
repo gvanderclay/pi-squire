@@ -24,8 +24,8 @@ importers:
         specifier: 26.6.5
         version: 26.6.5
       pi-session-mail:
-        specifier: 0.6.0
-        version: 0.6.0(@earendil-works/pi-coding-agent@1.5.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(ws@8.22.0))(@earendil-works/pi-tui@1.5.0)(typebox@1.4.3)
+        specifier: 0.7.1
+        version: 0.7.1(@earendil-works/pi-coding-agent@1.5.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(ws@8.22.0))(@earendil-works/pi-tui@1.5.0)(typebox@1.4.3)
       typebox:
         specifier: 1.4.3
         version: 1.4.3
@@ -624,11 +624,11 @@ packages:
     resolution: {integrity: sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==}
     engines: {node: '>=8'}
 
-  pi-session-mail@0.6.0:
-    resolution: {integrity: sha512-T+noaGpVOk1K/YcIbXp3+y+WCPTZJCPrsV30jn9u6h2rY5O9BFdGMKsSmzTT0sxfegRafnUGnNENQL2BNouXrg==}
+  pi-session-mail@0.7.1:
+    resolution: {integrity: sha512-WHu1r8YRrX3KO3ygvE+GobtBc6HKsN50Tpe5WNlZWUB8jMSfmE/82ZppfK96L21oxJPuCjAZIRtiicCqKIVYkQ==}
     engines: {node: '>=22.19.0'}
     peerDependencies:
-      '@earendil-works/pi-coding-agent': '*'
+      '@earendil-works/pi-coding-agent': '>=1.5.0'
       '@earendil-works/pi-tui': '*'
       typebox: '*'
 
@@ -1373,7 +1373,7 @@ snapshots:
 
   path-key@3.1.1: {}
 
-  pi-session-mail@0.6.0(@earendil-works/pi-coding-agent@1.5.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(ws@8.22.0))(@earendil-works/pi-tui@1.5.0)(typebox@1.4.3):
+  pi-session-mail@0.7.1(@earendil-works/pi-coding-agent@1.5.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(ws@8.22.0))(@earendil-works/pi-tui@1.5.0)(typebox@1.4.3):
     dependencies:
       '@earendil-works/pi-coding-agent': 1.5.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(ws@8.22.0)
       '@earendil-works/pi-tui': 1.5.0

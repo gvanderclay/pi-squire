@@ -1935,7 +1935,7 @@ contract.
 
 The automated tests drive the extension through fake Pi lifecycles. The
 reusable `test/mail-harness.ts` runs multiple independent extension instances
-with the real, exactly pinned pi-session-mail 0.6.0 over an isolated shared
+with the real, exactly pinned pi-session-mail 0.7.1 over an isolated shared
 mail root. Protocol tests cover correlation, asks, stops, fallback, pending
 answers, retries and duplicate delivery after the write/completion crash
 window. These are not real model runs or real process-crash tests. They check

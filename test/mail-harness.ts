@@ -17,6 +17,8 @@ cpSync(packageRoot, copy, { recursive: true });
 symlinkSync(fileURLToPath(new URL("../node_modules/", import.meta.url)), join(root, "node_modules"), "dir");
 const provider: (pi: ExtensionAPI) => void = (await import(pathToFileURL(join(copy, "src", "index.ts")).href)).default;
 process.env.XDG_STATE_HOME = join(root, "mail-state");
+// pi-session-mail prefers PI_SESSION_MAIL_ROOT; an inherited one would move the mail out of root.
+delete process.env.PI_SESSION_MAIL_ROOT;
 delete process.env.PI_UNATTENDED;
 
 export function mailSession(options: SessionOptions = {}): ReturnType<typeof session> {

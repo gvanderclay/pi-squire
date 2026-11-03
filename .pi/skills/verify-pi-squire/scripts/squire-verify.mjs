@@ -104,8 +104,11 @@ function cleanEnv(p) {
 	for (const [k, v] of Object.entries(process.env))
 		if (!k.startsWith("PI_") && k !== "TMUX" && k !== "TMUX_PANE") env[k] = v;
 	env.PI_CODING_AGENT_DIR = p.agent;
-	// Keep pi-session-mail state and Squire's prompt files inside the run, not in the user's state.
-	env.XDG_STATE_HOME = join(p.dir, "state");
+	// Keep the run's mailboxes and Squire's prompt files inside the run. Only
+	// pi-session-mail's own root moves: redirecting XDG_STATE_HOME would also move
+	// the state of every tool the tmux server starts, such as the user's tmux
+	// config, which then rebuilds that state and can repoint the user's files at it.
+	env.PI_SESSION_MAIL_ROOT = join(p.dir, "state", "pi-session-mail");
 	env.TMPDIR = join(p.dir, "tmp");
 	env.PI_SKIP_VERSION_CHECK = "1";
 	const opencode = opencodeKey();

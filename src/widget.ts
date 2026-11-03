@@ -3,7 +3,7 @@ import { isStarted, type Recorded, type Results, type StartedRecorded } from "./
 import type { TmuxClient } from "./tmux.ts";
 import { visibleRecordFacts } from "./tree-view.ts";
 import { joinActivities } from "./widget-activity-join.ts";
-import { type AncestorRow, AncestorView, switchAncestor } from "./widget-ancestors.ts";
+import { type Breadcrumb, BreadcrumbView, switchAncestor } from "./widget-ancestors.ts";
 import { currentChildWindows } from "./widget-current.ts";
 import { type DelegateRow, DirectDelegateView, delegateTree } from "./widget-data.ts";
 import { WidgetFocus } from "./widget-focus.ts";
@@ -23,9 +23,9 @@ class Overview {
 	private readonly results: Results;
 	private readonly tmux: TmuxClient;
 	private readonly view = new DirectDelegateView();
-	private readonly ancestorView = new AncestorView();
+	private readonly breadcrumbView = new BreadcrumbView();
 	private readonly live = new LiveActivityReader();
-	private ancestors: AncestorRow[] = [];
+	private breadcrumb: Breadcrumb | undefined;
 	private ancestryError = "";
 	private readonly ctx: ExtensionContext;
 	private readonly selection = new WidgetSelection();
@@ -62,16 +62,15 @@ class Overview {
 			changed: (): void => this.changed(),
 			open: async (key: string): Promise<void> => {
 				assertActive();
-				const ancestor: AncestorRow | undefined = this.ancestors.find((row) => row.key === key);
-				if (ancestor) return switchAncestor(ctx, ancestor.sessionId, tmux, assertActive, this.live);
+				if (this.breadcrumb?.key === key)
+					return switchAncestor(ctx, this.breadcrumb.parentSessionId, tmux, assertActive, this.live);
 				const row = this.rows.find((row) => row.key === key);
 				if (!row) throw new Error("delegate is no longer visible");
 				await open(ctx, row.launchId);
 			},
 			close: async (key: string): Promise<void> => {
 				assertActive();
-				if (this.ancestors.some((row) => row.key === key))
-					return ctx.ui.notify("delegate: cannot close an ancestor", "warning");
+				if (this.breadcrumb?.key === key) return ctx.ui.notify("delegate: cannot close an ancestor", "warning");
 				const row = this.rows.find((row) => row.key === key);
 				if (!row) throw new Error("delegate is no longer visible");
 				await close(ctx, row.launchId);
@@ -118,7 +117,7 @@ class Overview {
 		this.unsubscribe?.();
 		this.focus.stop();
 		this.view.clear();
-		this.ancestorView.clear();
+		this.breadcrumbView.clear();
 		this.ctx.ui.setWidget(DELEGATE_WIDGET_KEY, undefined);
 	}
 
@@ -163,12 +162,12 @@ class Overview {
 		});
 	}
 
-	private async readAncestors(): Promise<void> {
+	private async readBreadcrumb(): Promise<void> {
 		try {
-			this.ancestors = await this.ancestorView.read(this.ctx, this.live);
+			this.breadcrumb = await this.breadcrumbView.read(this.ctx, this.live);
 			this.ancestryError = "";
 		} catch {
-			this.ancestors = [];
+			this.breadcrumb = undefined;
 			this.ancestryError = "Ancestor information unavailable";
 		}
 	}
@@ -181,7 +180,7 @@ class Overview {
 		this.selection.update(
 			rows.map((row) => row.key),
 			settings.maxEntries,
-			this.ancestors.map((row) => row.key),
+			this.breadcrumb?.key,
 		);
 	}
 
@@ -209,7 +208,7 @@ class Overview {
 			if (this.stopped || revision !== this.factsRevision) return;
 			const sessionDir: string = this.ctx.sessionManager.getSessionDir();
 			const current = await currentChildWindows(observed, this.tmux, windows, this.live);
-			await this.readAncestors();
+			await this.readBreadcrumb();
 			if (this.stopped || revision !== this.factsRevision) return;
 			const eligible: DelegateRow[] = this.view.read(observed, windows, sessionDir, { offset: 0, limit: 0 }, current);
 			const projected = this.treeRows(eligible);
@@ -245,13 +244,13 @@ class Overview {
 			offset: this.selection.offset,
 			selectedKey: this.selection.selectedKey,
 			focused: this.focus.focused,
-			ancestors: this.ancestors,
+			breadcrumb: this.breadcrumb,
 			ancestryError: this.ancestryError,
 		};
 		const signature: string = JSON.stringify([rows, settings, options, Math.floor(Date.now() / 60_000)]);
 		if (signature === this.signature) return;
 		this.signature = signature;
-		if (!this.ancestors.length && !this.ancestryError && (!rows.length || !settings.maxEntries)) {
+		if (!this.breadcrumb && !this.ancestryError && (!rows.length || !settings.maxEntries)) {
 			this.ctx.ui.setWidget(DELEGATE_WIDGET_KEY, undefined);
 			return;
 		}

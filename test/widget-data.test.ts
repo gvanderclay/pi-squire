@@ -7,7 +7,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import type { Results, StartedRecorded } from "../src/results.ts";
 import { ResultsPresentation } from "../src/results-presentation.ts";
 import { DirectDelegateView } from "../src/widget-data.ts";
-import { renderDelegateWidget, type WidgetTheme, widgetText } from "../src/widget-render.ts";
+import { renderDelegateWidget, type WidgetTheme, widgetName, widgetText } from "../src/widget-render.ts";
 import { widgetSettings } from "../src/widget-settings.ts";
 import {
 	mirroredTitle,
@@ -162,19 +162,31 @@ test("direct adapter is read-only, deduplicates resumes by stable id, excludes a
 	);
 });
 
-test("responsive style B keeps identity/state, hides model before file-age and clamps wide/malicious names at every width", () => {
+test("widget names remove only their own nonempty agent prefix", () => {
+	for (const [identity, agent, expected] of [
+		["worker-demo-sub", "worker", "demo-sub"],
+		["worker-", "worker", "worker-"],
+		["other-demo", "worker", "other-demo"],
+		["worker-demo", undefined, "worker-demo"],
+		["worker-worker-demo", "worker", "worker-demo"],
+		["name\n\u001b[31m red", "worker", "name red"],
+	])
+		assert.equal(widgetName({ identity: identity!, agent }), expected);
+});
+
+test("responsive style B keeps identity/state, hides model before active-age and clamps wide/malicious names at every width", () => {
 	const source = results([record("identity")]);
 	const rows = new DirectDelegateView().read(source, undefined, undefined);
 	rows[0].title = "Native title";
 	rows[0].lastActive = 1000;
 	const full = renderDelegateWidget(rows, 3, 120, theme, 1000).join("\n");
-	assert.match(full, /└─ ◌ worker-identity {2}Native title.*running.*file just now.*model-name/);
+	assert.match(full, /└─ ◌ identity {2}Native title.*running.*active just now.*model-name/);
 	const medium = renderDelegateWidget(rows, 3, 65, theme, 1000).join("\n");
-	assert.match(medium, /file just now/);
+	assert.match(medium, /active just now/);
 	assert.ok(!medium.includes("model-name"));
 	const narrow = renderDelegateWidget(rows, 3, 42, theme, 1000).join("\n");
 	assert.match(narrow, /running/);
-	assert.ok(!narrow.includes("file just now"));
+	assert.ok(!narrow.includes("active just now"));
 	rows[0].identity = "測試界👩‍💻-".repeat(100);
 	rows[0].title = "Bad\nline\u001b[31mred\u001b]0;terminal-title\u0007suffix";
 	for (let width = 0; width <= 150; width++) {

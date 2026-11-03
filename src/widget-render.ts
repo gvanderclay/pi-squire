@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { AncestorRow } from "./widget-ancestors.ts";
+import type { Breadcrumb, WidgetIdentity } from "./widget-ancestors.ts";
 import type { DelegateRow } from "./widget-data.ts";
 
 export type WidgetTheme = Pick<Theme, "fg" | "bold">;
@@ -16,6 +16,15 @@ export function widgetText(value: string): string {
 		.join("")
 		.trim()
 		.slice(0, 2048);
+}
+
+export function widgetName(row: WidgetIdentity): string {
+	const prefix = row.agent ? `${row.agent}-` : "";
+	return widgetText(
+		prefix && row.identity.startsWith(prefix) && row.identity.length > prefix.length
+			? row.identity.slice(prefix.length)
+			: row.identity,
+	);
 }
 
 function age(timestamp: number, now: number): string {
@@ -34,9 +43,9 @@ function appearance(row: DelegateRow): { icon: string; color: "accent" | "succes
 
 function metadata(row: DelegateRow, width: number, coreWidth: number, now: number): string {
 	const model: string = widgetText(row.model.split("/").slice(1).join("/") || row.model);
-	const seen: string = row.lastActive === undefined ? "" : `file ${age(row.lastActive, now)}`;
+	const seen: string = row.lastActive === undefined ? "" : `active ${age(row.lastActive, now)}`;
 	const columns: string[] = [seen, model].filter(Boolean);
-	// Remove model, then file-age, before sacrificing identity/state/title.
+	// Remove model, then active-age, before sacrificing identity/state/title.
 	while (columns.length && coreWidth + visibleWidth(` · ${columns.join(" · ")}`) > width) columns.pop();
 	return columns.length ? ` · ${columns.join(" · ")}` : "";
 }
@@ -44,7 +53,7 @@ function metadata(row: DelegateRow, width: number, coreWidth: number, now: numbe
 function entry(row: DelegateRow, width: number, connector: string, theme: WidgetTheme, now: number): string {
 	const { icon, color } = appearance(row);
 	const state: string = widgetText(row.state);
-	const name: string = widgetText(row.identity);
+	const name: string = widgetName(row);
 	if (width < 16) return truncateToWidth(`${theme.fg(color, icon)} ${theme.bold(name)}`, width);
 	const prefix: string = `${theme.fg("dim", connector)} ${theme.fg(color, icon)} `;
 	const suffix: string = ` · ${theme.fg(color, state)}`;
@@ -77,7 +86,7 @@ export type WidgetRenderOptions = {
 	offset?: number;
 	selectedKey?: string;
 	focused?: boolean;
-	ancestors?: readonly AncestorRow[];
+	breadcrumb?: Breadcrumb;
 	ancestryError?: string;
 };
 
@@ -96,19 +105,26 @@ function selectableEntry(
 	return marker + entry(row, width - visibleWidth(marker), last ? "└─" : "├─", theme, now);
 }
 
-function ancestorLines(ancestors: readonly AncestorRow[], options: WidgetRenderOptions, theme: WidgetTheme): string[] {
-	return ancestors.map((ancestor, index) => {
-		const marker: string = options.focused && ancestor.key === options.selectedKey ? theme.fg("accent", "▸ ") : GUTTER;
-		const connector: string = index ? `${"  ".repeat(index - 1)}└─ ` : "";
-		return (
-			marker +
-			connector +
-			"↑ " +
-			theme.bold(widgetText(ancestor.identity)) +
-			(ancestor.parent ? " (parent)" : "") +
-			(ancestor.title ? `  ${widgetText(ancestor.title)}` : "")
-		);
-	});
+function breadcrumbLine(
+	breadcrumb: Breadcrumb,
+	width: number,
+	options: WidgetRenderOptions,
+	theme: WidgetTheme,
+): string {
+	const marker = options.focused && breadcrumb.key === options.selectedKey ? theme.fg("accent", "▸ ") : GUTTER;
+	const names = breadcrumb.crumbs.map(widgetName);
+	const self = `${widgetName(breadcrumb.self)} (you)`;
+	let trail = [...names, self].join(" › ");
+	const room = Math.max(0, width - visibleWidth(marker));
+	if (visibleWidth(trail) > room && names.length > 2)
+		trail = [names[0], "…", names[names.length - 1], self].join(" › ");
+	const title = widgetText(breadcrumb.parentTitle ?? "");
+	const titleRoom = room - visibleWidth(trail) - 2;
+	return (
+		marker +
+		theme.bold(truncateToWidth(trail, room)) +
+		(title && titleRoom >= 4 ? `  ${truncateToWidth(title, titleRoom)}` : "")
+	);
 }
 
 function more(count: number): string {
@@ -123,28 +139,25 @@ function childLines(
 	now: number,
 	options: WidgetRenderOptions,
 ): string[] {
-	const depth: number = options.ancestors?.length ?? 0;
-	const indent: string = "  ".repeat(depth);
-	const branch: string = depth ? `${"  ".repeat(depth - 1)}└─ ` : "";
-	const lines: string[] = [GUTTER + branch + theme.fg("accent", theme.bold("Delegates"))];
+	const lines: string[] = options.breadcrumb ? [] : [GUTTER + theme.fg("accent", theme.bold("Delegates"))];
 	const start: number = Math.max(0, Math.min(options.offset ?? 0, rows.length - cap));
 	const visible: readonly DelegateRow[] = rows.slice(start, start + cap);
 	const hidden: number = rows.length - start - visible.length;
-	if (start) lines.push(GUTTER + indent + theme.fg("dim", `├─ ↑ ${more(start)}`));
+	if (start) lines.push(GUTTER + theme.fg("dim", `├─ ↑ ${more(start)}`));
 	for (const [index, row] of visible.entries()) {
 		const last: boolean = index === visible.length - 1 && hidden === 0;
-		const rowIndent = indent + "  ".repeat(row.depth ?? 0);
+		const rowIndent = "  ".repeat(row.depth ?? 0);
 		lines.push(rowIndent + selectableEntry(row, width - rowIndent.length, last, theme, now, options));
 		const secondary: string | undefined = activityLine(row, width - GUTTER.length - rowIndent.length, last, theme);
 		if (secondary) lines.push(GUTTER + rowIndent + secondary);
 	}
-	if (hidden) lines.push(GUTTER + indent + theme.fg("dim", `└─ +${more(hidden)}`));
+	if (hidden) lines.push(GUTTER + theme.fg("dim", `└─ +${more(hidden)}`));
 	return lines;
 }
 
 function focusedHint(rows: readonly DelegateRow[], options: WidgetRenderOptions): string {
-	if (options.ancestors?.some((ancestor) => ancestor.key === options.selectedKey))
-		return "↑↓ select · enter switch · esc prompt";
+	if (options.breadcrumb && options.breadcrumb.key === options.selectedKey)
+		return "↑↓ select · enter parent · esc prompt";
 	const selected = rows.find((row) => row.key === options.selectedKey);
 	let treeHint = "";
 	if (selected?.descendantCount) treeHint = selected.expanded ? " · ← collapse" : " · → expand";
@@ -162,9 +175,9 @@ export function renderDelegateWidget(
 	options: WidgetRenderOptions = {},
 ): string[] {
 	if (width <= 0) return [];
-	const ancestors: readonly AncestorRow[] = options.ancestors ?? [];
-	if (!ancestors.length && (cap === 0 || !rows.length) && !options.ancestryError) return [];
-	const lines: string[] = ancestorLines(ancestors, options, theme);
+	const breadcrumb = options.breadcrumb;
+	if (!breadcrumb && (cap === 0 || !rows.length) && !options.ancestryError) return [];
+	const lines: string[] = breadcrumb ? [breadcrumbLine(breadcrumb, width, options, theme)] : [];
 	if (options.ancestryError) lines.push(GUTTER + theme.fg("warning", widgetText(options.ancestryError)));
 	if (cap > 0 && rows.length) lines.push(...childLines(rows, cap, width, theme, now, options));
 	if (options.focused) lines.push(theme.fg("dim", focusedHint(rows, options)));

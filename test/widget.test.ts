@@ -73,22 +73,22 @@ test("real direct launches/results: running first, newest within groups, actual 
 	for (const label of ["first", "second", "third", "fourth"]) await s.delegate(`worker --label ${label} do it`);
 	await settle();
 	let text = frame(s);
-	assert.match(text, / {2}Delegates\n {2}├─ ◌ worker-fourth/);
+	assert.match(text, / {2}Delegates\n {2}├─ ◌ fourth/);
 	assert.match(text, /\+1 more delegate/);
 	assert.ok(!s.statuses.some(({ key, text }) => key === "delegate" && text), "list replaces Squire count only");
 	const records = starts(s);
 	reply(s, records[3], "failed");
 	await settle();
 	text = frame(s);
-	assert.ok(text.indexOf("worker-third") < text.indexOf("worker-second"));
-	assert.ok(!text.includes("worker-fourth"), "finished entries follow running entries, even when newer");
+	assert.ok(text.indexOf("third") < text.indexOf("second"));
+	assert.ok(!text.includes("fourth"), "finished entries follow running entries, even when newer");
 	reply(s, records[2], "stopped");
 	await settle();
-	assert.match(frame(s), /✗ worker-fourth.*failed/);
+	assert.match(frame(s), /✗ fourth.*failed/);
 	configure({ delegateWidgetMaxEntries: 5 });
 	await tick();
-	assert.match(frame(s), /! worker-third.*stopped/);
-	assert.ok(!frame(s).includes("✓ worker-fourth"));
+	assert.match(frame(s), /! third.*stopped/);
+	assert.ok(!frame(s).includes("✓ fourth"));
 });
 
 test("finished-open rows keep refreshing file-backed renames, clears and window exits after results stop running", async () => {
@@ -118,17 +118,13 @@ test("native rename events cover unflushed sessions without a naming tool; title
 	child.pi.setSessionName("Native before first transcript");
 	await child.start();
 	await tick();
-	assert.match(frame(parent), /worker-unflushed {2}Native before first transcript/);
+	assert.match(frame(parent), /unflushed {2}Native before first transcript/);
 	await child.fire("session_info_changed", { name: "Renamed locally" });
 	await tick();
-	assert.match(frame(parent), /worker-unflushed {2}Renamed locally/);
+	assert.match(frame(parent), /unflushed {2}Renamed locally/);
 	await child.fire("session_info_changed", { name: record.name });
 	await tick();
-	assert.equal(
-		frame(parent).split(record.name ?? "").length - 1,
-		1,
-		"do not repeat native title identical to identity",
-	);
+	assert.equal(frame(parent).split("unflushed").length - 1, 1, "do not repeat native title identical to identity");
 	await child.fire("session_info_changed", { name: undefined });
 	await tick();
 	assert.ok(!frame(parent).includes("Renamed locally"));
@@ -168,12 +164,12 @@ test("cap zero preserves count and own badge; placement and settings refresh use
 	configure({ maxDepth: 2, delegateWidgetPlacement: "below", delegateWidgetMaxEntries: 0 });
 	await s.delegate("worker inspect");
 	await settle();
-	assert.match(frame(s), /^ {2}↑ root \(parent\)\n↓ to manage delegates$/);
+	assert.match(frame(s), /^ {2}root › coordinator \(you\)\n↓ to manage delegates$/);
 	assert.ok(s.statuses.some(({ key, text }) => key === "delegate" && text?.includes("1 delegate running")));
 	assert.ok(s.statuses.some(({ key }) => key === "delegate-self"));
 	configure({ maxDepth: 2, delegateWidgetPlacement: "below", delegateWidgetMaxEntries: 1 });
 	await tick();
-	assert.match(frame(s), /worker-/);
+	assert.match(frame(s), /running/);
 	assert.deepEqual(s.widgetCalls.at(-1)?.placement, { placement: "belowEditor" });
 	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: undefined });
 });
@@ -253,7 +249,7 @@ test("running window exit stays observation-only until the existing mail-first p
 	await s.delegate("worker --label close inspect");
 	await settle();
 	const next = starts(s).at(-1)!;
-	assert.match(frame(s), /worker-close/);
+	assert.match(frame(s), /close/);
 	await s.toolCall("delegation_close", { id: next.id });
 	await settle();
 	assert.equal(frame(s), "");

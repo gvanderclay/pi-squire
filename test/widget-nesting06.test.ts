@@ -60,9 +60,9 @@ test("nested status views never broaden direct widget rows, completion barrier o
 	await worker.start();
 	scan(worker);
 	await settle();
-	assert.match(frame(owner), /coordinator-direct/);
-	assert.doesNotMatch(frame(owner), /worker-grandchild/);
-	assert.match(frame(coordinator), /worker-grandchild/);
+	assert.match(frame(owner), /direct/);
+	assert.doesNotMatch(frame(owner), /grandchild/);
+	assert.match(frame(coordinator), /grandchild/);
 	const status = (await owner.toolCall("delegation_status", {})).structuredContent as {
 		delegations: { id: string; parent: string; canResume: boolean }[];
 	};
@@ -76,12 +76,12 @@ test("nested status views never broaden direct widget rows, completion barrier o
 	assert.equal(envelopes(owner.parent, "new").filter((mail) => mail.in_reply_to.length).length, 0);
 	await worker.run();
 	scan(coordinator);
-	await frameMatches(coordinator, /worker-grandchild.*done/);
-	assert.doesNotMatch(frame(owner), /worker-grandchild/);
+	await frameMatches(coordinator, /grandchild.*done/);
+	assert.doesNotMatch(frame(owner), /grandchild/);
 	assert.equal(owner.sent.length, 0, "raw descendant reports remain at their direct parent");
 	await coordinator.run();
 	scan(owner);
-	await frameMatches(owner, /coordinator-direct.*done/);
+	await frameMatches(owner, /direct.*done/);
 	assert.equal(owner.sent.length, 1);
 	// Keep a new descendant running after the root's only direct task is done.
 	const later = await launch(coordinator, "worker", "later-descendant");
@@ -115,7 +115,7 @@ test("losing same-id runtimes cannot create widgets, overwrite native title mirr
 	await duplicate.fire("session_info_changed", { name: "Still losing" });
 	await duplicate.shutdown();
 	assert.equal(readFileSync(mirror, "utf8"), saved);
-	assert.match(frame(owner), /worker-owned/);
+	assert.match(frame(owner), /owned/);
 	await owner.fire("session_info_changed", { name: "Owner renamed" });
 	assert.equal(JSON.parse(readFileSync(mirror, "utf8")).name, "Owner renamed");
 	await assert.rejects(duplicate.toolCall("delegate", { agent: "worker", task: "no" }), /inactive/);
@@ -129,7 +129,7 @@ test("failed staged input still tears down widget observers and title publisher 
 	await child.start();
 	scan(child);
 	await settle();
-	assert.match(frame(owner), /worker-failed-drain/);
+	assert.match(frame(owner), /failed-drain/);
 	assert.equal(existsSync(titleMirrorPath(owner.parent)), true);
 	owner.pi.sendMessage = () => {
 		throw new Error("injected display failure");
@@ -148,9 +148,9 @@ test("failed staged input still tears down widget observers and title publisher 
 	const replacement = instance({ parent: owner.parent, tmux: owner.tmux, entries: owner.entries });
 	await replacement.start();
 	await settle();
-	assert.match(frame(replacement), /worker-failed-drain.*done/);
+	assert.match(frame(replacement), /failed-drain.*done/);
 	const mirror = readFileSync(titleMirrorPath(owner.parent), "utf8");
 	await owner.shutdown();
 	assert.equal(readFileSync(titleMirrorPath(owner.parent), "utf8"), mirror);
-	assert.match(frame(replacement), /worker-failed-drain.*done/);
+	assert.match(frame(replacement), /failed-drain.*done/);
 });

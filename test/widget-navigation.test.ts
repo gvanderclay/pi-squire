@@ -43,11 +43,11 @@ test("compact viewport scrolls, Enter switches directly, Escape returns prompt i
 		assert.match(frame(s), /↓ to manage delegates/);
 		assert.doesNotMatch(frame(s), /▸/);
 		assert.equal(s.terminalKey("down"), true);
-		assert.match(frame(s), /▸ ├─ ◌ worker-child4/);
+		assert.match(frame(s), /▸ ├─ ◌ child4/);
 		for (let n = 0; n < 3; n++) s.terminalKey("down");
 		await settle();
-		assert.match(frame(s), /worker-child1/);
-		assert.doesNotMatch(frame(s), /worker-child4/);
+		assert.match(frame(s), /child1/);
+		assert.doesNotMatch(frame(s), /child4/);
 		assert.match(frame(s), /↑ 1 more delegate/);
 		const target = s.entries.filter((entry) => entry.data.windowName === "worker-child1").at(-1)!.data;
 		assert.equal(s.terminalKey("enter"), true);
@@ -55,7 +55,7 @@ test("compact viewport scrolls, Enter switches directly, Escape returns prompt i
 		assert.deepEqual(s.tmux.switches, [{ client: "attached-client", windowId: target.windowId }]);
 		assert.equal(s.customs.length, 0);
 		assert.match(frame(s), /↑↓ select · enter open · x close · esc prompt/);
-		assert.match(frame(s), /▸ .*worker-child1/);
+		assert.match(frame(s), /▸ .*child1/);
 		assert.equal(s.terminalKey("escape"), true);
 		assert.doesNotMatch(frame(s), /▸|enter details/);
 		assert.equal(s.tmux.switches.length, 1);
@@ -138,15 +138,15 @@ test("stable row through completion reorder, selected disappearance and cap-zero
 	await launch(s, "newest");
 	s.terminalKey("down");
 	s.terminalKey("down");
-	assert.match(frame(s), /▸ .*worker-selected/);
+	assert.match(frame(s), /▸ .*selected/);
 	await s.fire("session_info_changed", { name: "parent rename" });
 	await s.toolCall("delegation_close", { id: older.id });
 	await settle();
-	assert.match(frame(s), /▸ .*worker-selected/);
+	assert.match(frame(s), /▸ .*selected/);
 	await s.toolCall("delegation_close", { id: selected.id });
 	await settle();
-	assert.doesNotMatch(frame(s), /worker-selected/);
-	assert.match(frame(s), /▸ .*worker-newest/);
+	assert.doesNotMatch(frame(s), /selected/);
+	assert.match(frame(s), /▸ .*newest/);
 	mkdirSync(join(agentDir, "squire"), { recursive: true });
 	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ delegateWidgetMaxEntries: 0 }));
 	// A real Results change queues configuration refresh without waiting on a cosmetic timer.
@@ -200,7 +200,7 @@ test("pending switch protects the empty prompt until verification finishes", asy
 	initial = false;
 	release();
 	await settle();
-	assert.match(frame(s), /▸ .*worker-gated/);
+	assert.match(frame(s), /▸ .*gated/);
 	assert.equal(s.terminalKey("escape"), true);
 	assert.equal(s.terminalKey("escape"), false, "only the first returned-list Escape is owned");
 });

@@ -18,7 +18,7 @@ Every command prints one JSON object. `"ok": false` means it failed, with the re
 ## Launch
 
 1. `pnpm install` once per checkout. The helper needs `node_modules/.bin/pi` and `node_modules/pi-session-mail`.
-2. `OPENCODE_API_KEY` must be set in your environment. The helper passes it to the private tmux server, and every Pi in the run reads it from there. No `auth.json` is read or copied.
+2. The helper needs an OpenCode key. It takes `OPENCODE_API_KEY` from your environment, or else the `api_key` entry for the model's provider in your own Pi `auth.json` (in `PI_CODING_AGENT_DIR`, or `~/.pi/agent`), running it first if it is a `!command`. It passes only that key to the private tmux server, and every Pi in the run reads it from there. The run's agent directory never gets your `auth.json`, so the run cannot write your credentials or use another provider's.
 3. Start a run:
 
    ```bash
@@ -50,7 +50,7 @@ Teardown is [Cleanup](#cleanup).
 node .pi/skills/verify-pi-squire/scripts/squire-verify.mjs doctor --run <id>
 ```
 
-Read-only. Exits 1 unless every check passes: `OPENCODE_API_KEY` set, tmux server up, root window alive, root footer shows the model, the run's settings load this checkout and pi-session-mail, and the checkout is still at the commit the run started on. It also reports the root session file, which Pi only writes with the session's first entry, so it reads "not written yet" before the first command. Run it first whenever anything looks off.
+Read-only. Exits 1 unless every check passes: an OpenCode key found, tmux server up, root window alive, root footer shows the model, the run's settings load this checkout and pi-session-mail, and the checkout is still at the commit the run started on. It also reports the root session file, which Pi only writes with the session's first entry, so it reads "not written yet" before the first command. Run it first whenever anything looks off.
 
 ## Drive
 

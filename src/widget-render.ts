@@ -174,7 +174,7 @@ export function renderDelegateWidget(
 				"dim",
 				ancestors.some((ancestor) => ancestor.key === options.selectedKey)
 					? "↑↓ select · enter switch · esc prompt"
-					: "↑↓ select · enter open · esc prompt",
+					: "↑↓ select · enter open · x close · esc prompt",
 			),
 		);
 	else lines.push(theme.fg("dim", "↓ to manage delegates"));

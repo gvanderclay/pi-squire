@@ -26,6 +26,7 @@ function fixture() {
 	const selection = new WidgetSelection();
 	selection.update(["a", "b", "c"], 2);
 	const opened: string[] = [];
+	const closed: string[] = [];
 	const errors: unknown[] = [];
 	let changed = 0;
 	let pending: Promise<void> = Promise.resolve();
@@ -35,6 +36,10 @@ function fixture() {
 		changed: () => changed++,
 		open: async (key) => {
 			opened.push(key);
+			await pending;
+		},
+		close: async (key) => {
+			closed.push(key);
 			await pending;
 		},
 		error: (error) => {
@@ -50,6 +55,7 @@ function fixture() {
 		focus,
 		selection,
 		opened,
+		closed,
 		errors,
 		key: (data: string) => handler?.(data),
 		text: (value: string) => {
@@ -217,6 +223,28 @@ test("pending open and between-action gaps consume only the exact empty prompt",
 	assert.equal(f.key("\x1b"), undefined);
 	done();
 	await settle();
+	f.focus.stop();
+});
+
+test("x closes only the selected row and cannot reenter while confirmation is pending", async () => {
+	const f = fixture();
+	let done!: () => void;
+	f.pending(
+		new Promise<void>((resolve) => {
+			done = resolve;
+		}),
+	);
+	assert.equal(f.key("x"), undefined);
+	f.key("\x1b[B");
+	f.key("\x1b[B");
+	assert.equal(f.key("x")?.consume, true);
+	assert.equal(f.key("x")?.consume, true);
+	await settle();
+	assert.deepEqual(f.closed, ["b"]);
+	assert.deepEqual(f.opened, []);
+	done();
+	await settle();
+	assert.equal(f.focus.focused, true);
 	f.focus.stop();
 });
 

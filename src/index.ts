@@ -762,6 +762,7 @@ export default function delegate(
 			owner.assert();
 			await navigator.openDelegate(ctx, id, "switch");
 		},
+		(ctx, id) => navigator.closeDelegate(ctx, id),
 		() => owner.assert(),
 	);
 

@@ -74,6 +74,7 @@ test("cap0 and no-candidate Overview refreshes never inspect/locate children ind
 			results(records),
 			tmux,
 			async () => {},
+			async () => {},
 			() => {},
 		);
 		const ctx = s.context as unknown as ExtensionContext;

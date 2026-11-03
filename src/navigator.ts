@@ -109,6 +109,7 @@ export type Navigator = {
 	panel(ctx: ExtensionContext, targetSessionId?: string): Promise<void>;
 	/** One action on one open delegation, for `/delegate-open`. */
 	openDelegate(ctx: ExtensionContext, id: string, mode: OpenMode): Promise<void>;
+	closeDelegate(ctx: ExtensionContext, id: string): Promise<void>;
 	/** Ids of the delegations whose window is open, for completions. */
 	openIds(): Promise<string[]>;
 };
@@ -224,10 +225,15 @@ function runningDescendants(item: OpenDelegate): boolean {
 }
 
 /** Close through the shared control path, confirming running/unknown descendant work. */
-async function close(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
-	if (item.state === "running" || (item.navigable && item.live !== undefined) || runningDescendants(item)) {
-		const reason: string = item.state === "running" ? "is still running" : "may have live or unfinished work";
-		const message = `${item.name} ${reason}. Close its entire recorded subtree and kill only verified shared-control windows? Reattached navigation windows may remain open.`;
+async function close(env: Env, ctx: ExtensionContext, item: OpenDelegate, alwaysConfirm = false): Promise<void> {
+	if (
+		alwaysConfirm ||
+		item.state === "running" ||
+		(item.navigable && item.live !== undefined) ||
+		runningDescendants(item)
+	) {
+		const running: string = item.state === "running" ? `${item.name} is still running. ` : "";
+		const message = `${running}Close ${item.name} and its delegates? Worktrees and branches stay.`;
 		if (!(await ctx.ui.confirm("Close delegate", message))) return;
 	}
 	try {
@@ -402,6 +408,12 @@ export function createNavigator(
 			}
 		},
 		openDelegate: (ctx: ExtensionContext, id: string, mode: OpenMode): Promise<void> => openOne(env, ctx, id, mode),
+		async closeDelegate(ctx: ExtensionContext, id: string): Promise<void> {
+			const item = (await env.view.items(true))?.find((candidate) => candidate.id === id);
+			actions.assertActive?.();
+			if (!item) return ctx.ui.notify("delegate: selected delegate is no longer available", "warning");
+			await close(env, ctx, item, true);
+		},
 		async openIds(): Promise<string[]> {
 			return (await env.view.items())?.map((item) => item.id) ?? [];
 		},

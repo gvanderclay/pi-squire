@@ -350,6 +350,12 @@ test("actual widget Enter switches live root, unavailable parent refuses without
 	await until(() => frame(leaf).includes("root (parent)"));
 	assert.equal(leaf.terminalKey("down"), true);
 	assert.match(frame(leaf), /▸ ↑ root \(parent\)/);
+	assert.doesNotMatch(frame(leaf), /x close/);
+	assert.equal(leaf.terminalKey("x"), true);
+	await until(() => leaf.warnings.some((warning) => warning.includes("cannot close an ancestor")));
+	assert.equal(leaf.confirms.length, 0);
+	assert.equal(leaf.tmux.killed.length, 0);
+	await new Promise<void>((resolve) => setImmediate(resolve));
 	assert.equal(leaf.terminalKey("enter"), true);
 	assert.equal(leaf.terminalKey("enter"), true, "busy gap is consumed, not a second action");
 	await until(() => leaf.tmux.switches.length === 1);

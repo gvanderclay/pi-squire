@@ -12,6 +12,13 @@ follows [Semantic Versioning](https://semver.org/).
   waking the model. UI closes still wake the model. The tool close regression in
   `test/tools.test.ts` now expects silence, and the stopped-root cancellation test
   in `test/subtree-close.test.ts` uses the UI close path to retain its wake check.
+- Press x in the focused compact widget to close the selected subtree. The widget
+  always asks for confirmation, including finished delegates, in plainer words
+  ("Close <name> and its delegates? Worktrees and branches stay."); the close
+  confirmation tests in `test/navigator-current.test.ts`, `test/widget-navigation.test.ts`
+  and `test/widget-nesting-final.test.ts` expect them. Ancestor rows
+  refuse close and omit x from their hint. New keyboard tests cover cancellation,
+  finished and running closes, and ancestor refusal.
 - Enter in the focused compact delegate widget switches straight to the selected
   delegate's verified tmux window. A dim hint explains how to focus the list;
   focused hints show the selected row's keys. Widget navigation and rendering
@@ -828,9 +835,5 @@ follows [Semantic Versioning](https://semver.org/).
 
 - Agent definitions now live under `<agent dir>/squire/agents/<name>/AGENT.md`,
   and only there. The old `<agent dir>/agents/<name>/AGENT.md` location is no
-  longer read, with no fallback or dual discovery, so an agent left there is
-  neither listed nor launched.
-- Pi 1.3.0 or later is now required. The raised floor supports structured
-  per-run system-prompt sections and `before_agent_start` preparation for runs
 
-[Showing lines 1-838 of 1180 (50.0KB limit). Use offset=839 to continue.]
+[Showing lines 1-838 of 844 (50.0KB limit). Use offset=839 to continue.]

@@ -131,7 +131,7 @@ test("real direct launches/results: running first, newest within groups, actual 
 	for (const label of ["first", "second", "third", "fourth"]) await s.delegate(`worker --label ${label} do it`);
 	await settle();
 	let text = frame(s);
-	assert.match(text, / {2}Delegates\n {2}├─ ◌ fourth/);
+	assert.match(text, / {2}Delegates\n {2}├─ ◌ worker-fourth/);
 	assert.match(text, /\+1 more delegate/);
 	assert.ok(!s.statuses.some(({ key, text }) => key === "delegate" && text), "list replaces Squire count only");
 	const records = starts(s);
@@ -142,10 +142,10 @@ test("real direct launches/results: running first, newest within groups, actual 
 	assert.ok(!text.includes("fourth"), "finished entries follow running entries, even when newer");
 	reply(s, records[2], "stopped");
 	await settle();
-	assert.match(frame(s), /✗ fourth.*failed/);
+	assert.match(frame(s), /✗ worker-fourth.*failed/);
 	configure({ delegateWidgetMaxEntries: 5 });
 	await tick();
-	assert.match(frame(s), /! third.*stopped/);
+	assert.match(frame(s), /! worker-third.*stopped/);
 	assert.ok(!frame(s).includes("✓ fourth"));
 });
 
@@ -176,7 +176,7 @@ test("native rename events cover unflushed sessions without a naming tool; title
 	child.pi.setSessionName("Native before first transcript");
 	await child.start();
 	await tick();
-	assert.match(frame(parent), /unflushed {2}Native before first transcript/);
+	assert.match(frame(parent), /worker-unflushed {2}Native before first transcript/);
 	await child.fire("session_info_changed", { name: "Renamed locally" });
 	await tick();
 	assert.match(frame(parent), /unflushed {2}Renamed locally/);

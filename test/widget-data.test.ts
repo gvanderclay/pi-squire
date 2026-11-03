@@ -174,12 +174,12 @@ test("widget names remove only their own nonempty agent prefix", () => {
 		assert.equal(widgetName({ identity: identity!, agent }), expected);
 });
 
-test("responsive rows keep identity/state, show model when space permits, have no age at any width and clamp malicious names", () => {
+test("responsive rows keep the recorded name and its agent prefix, show model when space permits, never show an age, and clamp malicious names", () => {
 	const source = results([record("identity")]);
 	const rows = new DirectDelegateView().read(source, undefined, undefined);
 	rows[0].title = "Native title";
 	const full = renderDelegateWidget(rows, 3, 120, theme).join("\n");
-	assert.match(full, /└─ ◌ identity {2}Native title.*running.*model-name/);
+	assert.match(full, /└─ ◌ worker-identity {2}Native title.*running.*model-name/);
 	const medium = renderDelegateWidget(rows, 3, 65, theme).join("\n");
 	assert.match(medium, /model-name/);
 	const narrow = renderDelegateWidget(rows, 3, 42, theme).join("\n");

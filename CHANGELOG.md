@@ -21,6 +21,8 @@ follows [Semantic Versioning](https://semver.org/).
   UTF-8 bytes. Bash shows `running…` for its whole call, with no command,
   arguments or program name. Squire never shows a delegate's message text. The
   active-age column is removed, and the renderer no longer takes a clock.
+- The widget row shows the recorded delegate name in full instead of dropping
+  its agent prefix, so the agent is visible at every width.
   Deliberate test changes:
   - `test/widget-activity.test.ts` expects the most recent leaf call instead
     of joined labels, checks sanitized bounded targets, and uses `thinking…`
@@ -33,6 +35,8 @@ follows [Semantic Versioning](https://semver.org/).
     Secondary-line assertions check tool targets instead of response excerpts.
   - `test/widget-activity-nesting06.test.ts` drops its per-token streaming
     test, because no `message_update` handler remains to observe.
+  - `test/widget.test.ts`, `test/widget-navigation.test.ts` and
+    `test/widget-data.test.ts` expect the full `worker-…` name in the row.
 - Trusted Pi sessions in this checkout allow the exact `pnpm lint`,
   `pnpm typecheck`, `pnpm test`, and `pnpm check` commands without a permission
   dialog or auto-mode judge call.

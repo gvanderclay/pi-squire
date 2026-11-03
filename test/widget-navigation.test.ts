@@ -43,7 +43,7 @@ test("compact viewport scrolls, Enter switches directly, Escape returns prompt i
 		assert.match(frame(s), /↓ to manage delegates/);
 		assert.doesNotMatch(frame(s), /▸/);
 		assert.equal(s.terminalKey("down"), true);
-		assert.match(frame(s), /▸ ├─ ◌ child4/);
+		assert.match(frame(s), /▸ ├─ ◌ worker-child4/);
 		for (let n = 0; n < 3; n++) s.terminalKey("down");
 		await settle();
 		assert.match(frame(s), /child1/);

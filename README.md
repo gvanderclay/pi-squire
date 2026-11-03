@@ -453,7 +453,8 @@ delegate keeps one row keyed by its stable Pi session id, not by its new
 delegation id or mutable title. Failed and stopped results keep their actual
 outcome labels; an open window or quiet session is not evidence of success.
 
-Rows show the recorded delegate identity in bold, the current native Pi session
+Rows show the recorded delegate identity, including its agent prefix, in bold,
+the current native Pi session
 title when available, and task state. While a delegate is running, its live phase
 label replaces the state, with the current tool's target on a dim secondary line
 when available. Squire never shows a delegate's message text.

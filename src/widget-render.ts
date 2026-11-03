@@ -43,7 +43,7 @@ function metadata(row: DelegateRow, width: number, coreWidth: number): string {
 function entry(row: DelegateRow, width: number, connector: string, theme: WidgetTheme): string {
 	const { icon, color } = appearance(row);
 	const state: string = widgetText(row.running && row.activity ? row.activity.text : row.state);
-	const name: string = widgetName(row);
+	const name: string = widgetText(row.identity);
 	if (width < 16) return truncateToWidth(`${theme.fg(color, icon)} ${theme.bold(name)}`, width);
 	const prefix: string = `${theme.fg("dim", connector)} ${theme.fg(color, icon)} `;
 	const suffix: string = ` · ${theme.fg(color, state)}`;

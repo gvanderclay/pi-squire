@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isStarted, type Recorded, type Results, type StartedRecorded } from "./results.ts";
 import type { TmuxClient } from "./tmux.ts";
+import { readTreeDisplay } from "./tree-registry.ts";
 import { visibleRecordFacts } from "./tree-view.ts";
 import { joinActivities } from "./widget-activity-join.ts";
 import { type Breadcrumb, BreadcrumbView, switchAncestor } from "./widget-ancestors.ts";
@@ -12,7 +13,7 @@ import { renderDelegateWidget } from "./widget-render.ts";
 import { WidgetSelection } from "./widget-selection.ts";
 import { DEFAULT_WIDGET_SETTINGS, type WidgetSettings, widgetSettings } from "./widget-settings.ts";
 import { titlePublisher } from "./widget-title.ts";
-import { listWindows } from "./windows.ts";
+import { listPanes } from "./windows.ts";
 
 export const DELEGATE_WIDGET_KEY = "squire-delegates";
 export const WIDGET_REFRESH_MS = 1000;
@@ -27,6 +28,8 @@ class Overview {
 	private readonly live = new LiveActivityReader();
 	private breadcrumb: Breadcrumb | undefined;
 	private ancestryError = "";
+	private breadcrumbRevision = -1;
+	private breadcrumbReadAt = 0;
 	private readonly ctx: ExtensionContext;
 	private readonly selection = new WidgetSelection();
 	private readonly focus: WidgetFocus;
@@ -163,6 +166,9 @@ class Overview {
 	}
 
 	private async readBreadcrumb(): Promise<void> {
+		if (this.breadcrumbRevision === this.factsRevision && Date.now() - this.breadcrumbReadAt < 30_000) return;
+		this.breadcrumbRevision = this.factsRevision;
+		this.breadcrumbReadAt = Date.now();
 		try {
 			this.breadcrumb = await this.breadcrumbView.read(this.ctx, this.live);
 			this.ancestryError = "";
@@ -193,7 +199,7 @@ class Overview {
 			let observed: Results = this.results;
 			if (settings.maxEntries > 0) {
 				try {
-					const records = visibleRecordFacts(this.results, this.ctx, 20, false).records;
+					const records = visibleRecordFacts(this.results, this.ctx, 20, false, readTreeDisplay).records;
 					observed = {
 						...this.results,
 						list: (): Recorded[] => records,
@@ -204,10 +210,12 @@ class Overview {
 					};
 				} catch {}
 			}
-			const windows = settings.maxEntries > 0 && this.view.needsWindows(observed) ? await listWindows(this.tmux) : [];
+			const listing =
+				settings.maxEntries > 0 && this.view.needsWindows(observed) ? await listPanes(this.tmux) : undefined;
+			const windows = listing?.windows;
 			if (this.stopped || revision !== this.factsRevision) return;
 			const sessionDir: string = this.ctx.sessionManager.getSessionDir();
-			const current = await currentChildWindows(observed, this.tmux, windows, this.live);
+			const current = await currentChildWindows(observed, listing, this.live);
 			await this.readBreadcrumb();
 			if (this.stopped || revision !== this.factsRevision) return;
 			const eligible: DelegateRow[] = this.view.read(observed, windows, sessionDir, { offset: 0, limit: 0 }, current);

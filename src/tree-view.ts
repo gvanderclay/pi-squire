@@ -97,6 +97,7 @@ export function visibleRecordFacts(
 	ctx: ExtensionContext,
 	timeoutMs = 5000,
 	notify = true,
+	read: typeof readTree = readTree,
 ): VisibleFacts {
 	const session: string = ctx.sessionManager.getSessionId();
 	const root: string = readIdentity(session)?.root ?? session;
@@ -106,7 +107,7 @@ export function visibleRecordFacts(
 	let complete = true;
 	let entries: TreeEntry[];
 	try {
-		entries = descendants(readTree(root, timeoutMs), session).filter((entry) => entry.phase !== "not-started");
+		entries = descendants(read(root, timeoutMs), session).filter((entry) => entry.phase !== "not-started");
 	} catch (error) {
 		if (notify)
 			ctx.ui.notify(

@@ -39,16 +39,45 @@ test("current child lookup does zero locator/inspect work for unavailable/empty 
 	const locate = t.mock.method(reader, "locator", async () => {
 		throw new Error("unexpected locator");
 	});
-	for (const windows of [undefined, []]) {
-		const found = await currentChildWindows(results([record]), tmux, windows, reader);
+	for (const listing of [undefined, await tmux.listPanes()]) {
+		const found = await currentChildWindows(results([record]), listing, reader);
 		assert.equal(found.size, 0);
 	}
-	const windows = [{ id: "@1", name: "child", session: "work", exited: false }];
+	tmux.addWindow("@1", "child");
+	const listing = await tmux.listPanes();
 	for (const records of [[], [record, { ...record, id: "newest", closed: true }]]) {
-		assert.equal((await currentChildWindows(results(records), tmux, windows, reader)).size, 0);
+		assert.equal((await currentChildWindows(results(records), listing, reader)).size, 0);
 	}
 	assert.equal(inspect.mock.callCount(), 0);
 	assert.equal(locate.mock.callCount(), 0);
+});
+
+test("only missing recorded windows read locators and resolve stable panes from the listing", async (t) => {
+	const tmux = new FakeTmux();
+	tmux.addWindow("@1", "child");
+	tmux.addWindow("@8", "renamed");
+	tmux.panes.set("%7", { windowId: "@8" });
+	const reader = new LiveActivityReader();
+	const scope = { ...tmux.scope };
+	const locate = t.mock.method(reader, "locator", async () => ({
+		locator: { ...scope, paneId: "%7", windowId: "@old", windowName: "old", exited: false },
+		generation: "g",
+		ownerToken: "owner",
+		pid: process.pid,
+	}));
+	const inspect = t.mock.method(tmux, "inspectPane");
+	assert.equal((await currentChildWindows(results([record]), await tmux.listPanes(), reader)).size, 0);
+	assert.equal(locate.mock.callCount(), 0);
+	tmux.windows.delete("@1");
+	let found = await currentChildWindows(results([record]), await tmux.listPanes(), reader);
+	assert.deepEqual(found.get(record.id), { windowId: "@8", windowName: "renamed" });
+	tmux.addWindow("@9", "broken-out");
+	tmux.panes.set("%7", { windowId: "@9" });
+	found = await currentChildWindows(results([record]), await tmux.listPanes(), reader);
+	assert.deepEqual(found.get(record.id), { windowId: "@9", windowName: "broken-out" });
+	tmux.scope = { ...tmux.scope, serverStarted: "new-server" };
+	assert.equal((await currentChildWindows(results([record]), await tmux.listPanes(), reader)).size, 0);
+	assert.equal(inspect.mock.callCount(), 0);
 });
 
 test("cap0 and no-candidate Overview refreshes never inspect/locate children independently of the publisher", async (t) => {
@@ -83,7 +112,7 @@ test("cap0 and no-candidate Overview refreshes never inspect/locate children ind
 			const deadline = Date.now() + 5000;
 			while (!s.widgetCalls.length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
 			assert.ok(s.widgetCalls.length, "observer completed an actual refresh");
-			assert.equal(tmux.listCalls, 0);
+			assert.equal(tmux.listCalls + tmux.paneListCalls, 0);
 			assert.equal(inspect.mock.callCount(), 0);
 			assert.equal(locate.mock.callCount(), 0);
 		} finally {

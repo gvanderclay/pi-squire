@@ -6,9 +6,11 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { type Identity, writeIdentity } from "../src/identity.ts";
 import type { Delegation } from "../src/results.ts";
+import { withTreeLock } from "../src/tree-lock.ts";
+import { readTree, readTreeDisplay, treePath } from "../src/tree-registry.ts";
 import { visibleRecordFacts } from "../src/tree-view.ts";
 import { DELEGATE_WIDGET_KEY, WIDGET_REFRESH_MS } from "../src/widget.ts";
-import { ancestorSessions } from "../src/widget-ancestors.ts";
+import { ancestorSessions, BreadcrumbView } from "../src/widget-ancestors.ts";
 import { DirectDelegateView } from "../src/widget-data.ts";
 import { LiveActivityReader } from "../src/widget-live.ts";
 import { renderDelegateWidget } from "../src/widget-render.ts";
@@ -205,6 +207,55 @@ test("corrupt descendant owner facts cannot freeze fresh ancestor titles or dire
 	assert.match(frame(current), /root › current \(you\).*Fresh ancestor title/);
 	assert.match(frame(current), /direct.*failed/);
 	assert.doesNotMatch(frame(current), /1 task: 1 missing|direct.*running/);
+});
+
+test("display tree projections and breadcrumb remain readable while a writer holds admission", async () => {
+	const root = instance();
+	const c = await launch(root, "coord", "parent");
+	const coord = instance({ parent: c.id, tmux: root.tmux });
+	await coord.start();
+	const w = await launch(coord, "leaf", "nested");
+	const results = {
+		list: () => root.entries.filter((e) => e.data.requestId).map((e) => e.data),
+	} as unknown as Parameters<typeof visibleRecordFacts>[0];
+	const ctx = root.context as unknown as ExtensionContext;
+	let breadcrumb: ReturnType<BreadcrumbView["read"]> | undefined;
+	withTreeLock(`${treePath(root.parent)}.lock`, () => {
+		assert.throws(() => readTree(root.parent, 0), /busy/);
+		assert.equal(readTreeDisplay(root.parent).entries.length, 2);
+		assert.ok(visibleRecordFacts(results, ctx, 0, false, readTreeDisplay).records.some((record) => record.id === w.id));
+		breadcrumb = new BreadcrumbView().read(coord.context as unknown as ExtensionContext, new LiveActivityReader());
+	});
+	assert.equal((await breadcrumb)?.parentSessionId, root.parent);
+});
+
+test("breadcrumb waits for slow title refresh but Results notifications refresh it immediately", async (t) => {
+	t.mock.timers.enable({ apis: ["setInterval", "Date"] });
+	const root = instance();
+	const c = await launch(root, "coord", "child");
+	const child = instance({ parent: c.id, tmux: root.tmux });
+	await child.start();
+	await until(() => frame(child).includes("(you)"));
+	const read = t.mock.method(BreadcrumbView.prototype, "read");
+	await root.fire("session_info_changed", { name: "Slow title" });
+	for (let n = 0; n < 2; n++) {
+		t.mock.timers.tick(WIDGET_REFRESH_MS);
+		await new Promise((resolve) => setTimeout(resolve, 30));
+	}
+	assert.equal(read.mock.callCount(), 0);
+	assert.doesNotMatch(frame(child), /Slow title/);
+	t.mock.timers.tick(30_000);
+	await until(() => frame(child).includes("Slow title"));
+	assert.ok(read.mock.callCount() > 0);
+	const d = await launch(child, "leaf", "notifies");
+	await root.fire("session_info_changed", { name: "Immediate title" });
+	child.events.emit("message:inbound", {
+		envelope: { id: "reply", from: d.id, to: c.id, in_reply_to: [d.requestId], status: "done", ts: "", body: "done" },
+		path: "/mail/reply",
+		requests: [],
+		handled: false,
+	});
+	await until(() => frame(child).includes("Immediate title"));
 });
 
 test("provenance exposes unoverlaid semantic facts, registry-only closed is unknown and unreadable tree retains saved facts", async () => {

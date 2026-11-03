@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { PaneLocator } from "../src/tmux.ts";
 import { LIVE_MAX_BYTES, LiveActivityPublisher, LiveActivityReader, liveSessionDir } from "../src/widget-live.ts";
-import { processStart } from "../src/widget-live-process.ts";
 import { titleMirrorPath } from "../src/widget-title.ts";
 import { agentDir, cleanup, resetRoot } from "./harness.ts";
 import { ActivityProcess } from "./widget-live-process-harness.ts";
@@ -118,7 +117,7 @@ test("live generations are ambiguous; unique shutdown cannot delete replacement;
 	await manual.flush();
 	assert.equal(await reader.read("manual", "manual"), undefined);
 });
-test("pid reuse, unknown probe, malformed/oversized/generation-mismatched files fail closed", async () => {
+test("live pid ignores legacy start token; unknown probe and malformed/oversized/generation-mismatched files fail closed", async () => {
 	const p = publisher();
 	p.publish({ kind: "tools", text: "reading…" });
 	await p.flush();
@@ -128,8 +127,8 @@ test("pid reuse, unknown probe, malformed/oversized/generation-mismatched files 
 	assert.equal(await unknown.read("stable", "launch"), undefined);
 	assert.ok((await readdir(liveSessionDir("stable"))).length > 0, "unknown is never cleanup evidence");
 	await writeFile(path, JSON.stringify({ ...original, processStart: "not-current-process" }));
-	assert.equal(await new LiveActivityReader().read("stable", "launch"), undefined);
-	assert.deepEqual(await readdir(liveSessionDir("stable")), []);
+	assert.equal((await new LiveActivityReader().read("stable", "launch"))?.text, "reading…");
+	assert.deepEqual(await readdir(liveSessionDir("stable")), [`${p.generation}.json`]);
 	for (const content of [
 		"null",
 		"bad",
@@ -140,6 +139,21 @@ test("pid reuse, unknown probe, malformed/oversized/generation-mismatched files 
 		assert.equal(await new LiveActivityReader().read("stable", "launch"), undefined);
 	}
 });
+test("only ESRCH removes activity snapshots; permission errors still count as live", async (t) => {
+	const p = publisher();
+	p.publish({ kind: "tools", text: "reading…" });
+	await p.flush();
+	let code = "EPERM";
+	t.mock.method(process, "kill", () => {
+		throw Object.assign(new Error(code), { code });
+	});
+	const reader = new LiveActivityReader();
+	assert.equal((await reader.read("stable", "launch"))?.text, "reading…");
+	code = "ESRCH";
+	assert.equal(await reader.read("stable", "launch"), undefined);
+	assert.deepEqual(await readdir(liveSessionDir("stable")), []);
+});
+
 test("directory work is bounded and corrupted storage cannot fail publishers or readers", async () => {
 	const p = publisher();
 	p.publish({ kind: "tools", text: "reading…" });
@@ -190,7 +204,6 @@ test("text publication coalesces to four writes per second and lifecycle clears 
 	t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
 	let writes = 0;
 	const p = publisher("throttle", "launch", {
-		start: async () => "test-start",
 		rename: async (a, b) => {
 			writes++;
 			await rename(a, b);
@@ -403,23 +416,11 @@ test("failed replacement removes its old snapshot without retry loops or task er
 	assert.equal(await new LiveActivityReader().read("write-failure", "launch"), undefined);
 });
 
-test("startup probe failure is unavailable; early stop cancels delayed initialization", async () => {
-	const missing = publisher("missing", "launch", { start: async () => undefined });
-	missing.publish({ kind: "tools", text: "read" });
-	await missing.flush();
-	assert.equal(await new LiveActivityReader().read("missing", "launch"), undefined);
-	let release!: (start: string | undefined) => void;
-	const pending = publisher("pending", "launch", {
-		start: () =>
-			new Promise((r) => {
-				release = r;
-			}),
-	});
+test("stop before flush cancels publication without process initialization", async () => {
+	const pending = publisher("pending", "launch");
 	pending.publish({ kind: "tools", text: "read" });
-	const writing = pending.flush();
 	pending.stop();
-	release(await processStart(process.pid));
-	await writing;
+	await pending.flush();
 	await pending.closed();
 	assert.equal(await new LiveActivityReader().read("pending", "launch"), undefined);
 });

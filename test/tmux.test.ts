@@ -78,6 +78,7 @@ async function withStub(mode: string, body: (log: () => string[]) => Promise<voi
 			'case "$1" in',
 			'-V) echo "tmux 3.7b";;',
 			`display-message) printf '$1\\t${parent}\\n';;`,
+			"list-panes) printf '/socket\\t42\\t123\\t%%1\\t@1\\t0\\t0\\tlegacy-squire\\ta\\tb\\n/socket\\t42\\t123\\t%%2\\t@1\\t1\\t1\\tlegacy-squire\\ta\\tb\\n/socket\\t42\\t123\\t%%3\\t@2\\t0\\t1\\twork\\tplain\\n';;",
 			"list-windows) printf '@1\\t0\\tlegacy-squire\\ta\\tb\\n@2\\t1\\twork\\tplain\\n';;",
 			`list-sessions) if [ -f '${dir}/gone' ] && [ '${mode}' = window-gone-read-error ]; then echo "server gone" >&2; exit 1; fi; if [ -f '${dir}/made' ] && [ '${mode}' = duplicate-read-error ]; then echo "server gone" >&2; exit 1; fi; printf '$1\\t\\twork\\n'; if [ -f '${dir}/made' ]; then case '${mode}' in unmarked|duplicate-unmarked) printf '$2\\t\\t${base}\\n';; *) printf '$2\\t1\\t${base}\\n';; esac; fi;;`,
 			`new-window) case '${mode}' in echo-args) printf '%s\\n' "$*" >&2; exit 1;; silent) exit 1;; window-gone|window-gone-read-error) rm '${dir}/made'; touch '${dir}/gone'; echo "can't find session: $2" >&2; exit 1;; window-full) echo "no space" >&2; exit 1;; window-malformed) printf 'warning\\n@8\\n'; exit 0;; esac; case "$*" in *'-t $1 '*) echo @8;; *'-t $2 '*) echo @8;; *) echo @99;; esac;;`,
@@ -279,6 +280,27 @@ test("listed windows carry their actual session and preserve tabs in names", asy
 			{ id: "@1", session: "legacy-squire", name: "a\tb", exited: false },
 			{ id: "@2", session: "work", name: "plain", exited: true },
 		]);
+	});
+});
+
+test("one pane listing includes server identity and uses each window's active pane for exit state", async () => {
+	await withStub("ok", async (log) => {
+		const listing = await createTmuxClient().listPanes();
+		assert.deepEqual(listing.server, { socket: "/socket", serverPid: 42, serverStarted: "123" });
+		assert.equal(listing.panes.size, 3);
+		assert.deepEqual(listing.panes.get("%1"), {
+			...listing.server,
+			paneId: "%1",
+			windowId: "@1",
+			windowName: "a\tb",
+			exited: false,
+		});
+		assert.deepEqual(listing.windows, [
+			{ id: "@1", session: "legacy-squire", name: "a\tb", exited: true },
+			{ id: "@2", session: "work", name: "plain", exited: false },
+		]);
+		assert.equal(log().length, 1);
+		assert.match(log()[0], /^list-panes -a -F /);
 	});
 });
 

@@ -98,6 +98,10 @@ export function treeTransaction<T>(root: string, work: (state: TreeState) => T):
 export function readTree(root: string, timeoutMs = 5000): TreeState {
 	return withTreeLock(`${treePath(root)}.lock`, () => load(root), timeoutMs);
 }
+/** Atomic file replacement gives display readers a whole snapshot without writer admission. */
+export function readTreeDisplay(root: string): TreeState {
+	return load(root);
+}
 export function treeCounts(state: TreeState): TreeCounts {
 	const charged: TreeEntry[] = state.entries.filter((entry) => entry.phase !== "not-started");
 	return {

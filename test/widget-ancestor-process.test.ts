@@ -57,7 +57,7 @@ async function locator(
 	}
 	assert.fail(`no current locator for ${id}: ${JSON.stringify(value)}`);
 }
-test("actual processes: root without launch/registry publishes, leaf switches directly, current pane names/moves and server mismatches fail closed", async () => {
+test("actual processes: startup pane locator follows names/moves at navigation time and server mismatches fail closed", async () => {
 	const root = processFixture();
 	const first = await root.command<{ entries: unknown[] }>("boot", { session: "root", server: server() });
 	assert.deepEqual(first.entries, []);
@@ -75,10 +75,9 @@ test("actual processes: root without launch/registry publishes, leaf switches di
 	await assert.rejects(child.command("switch", { target: "unrelated" }), /not a current ancestor/);
 	const renamed = server("@1", "renamed");
 	await child.command("server", { server: { ...renamed, ownPane: "%2" } });
-	await assert.rejects(child.command("switch", { target: "root" }), /verified live window|changed/);
-	await root.command("server", { server: renamed });
-	await locator(child, "root", (v) => v.locator.windowName === "renamed");
 	await child.command("switch", { target: "root" });
+	assert.equal((await locator(child, "root")).locator.windowName, initial.locator.windowName);
+	await root.command("server", { server: renamed });
 	await child.command("fail-list", { text: "unknown listing" });
 	await assert.rejects(child.command("switch", { target: "root" }), /verified live window/);
 	await child.command("fail-list");
@@ -106,10 +105,9 @@ test("actual processes: root without launch/registry publishes, leaf switches di
 	await assert.rejects(child.command("switch", { target: "root" }), /verified live window/);
 	const moved = server("@8", "moved", "new-current-session");
 	await child.command("server", { server: { ...moved, ownPane: "%2" } });
-	await assert.rejects(child.command("switch", { target: "root" }), /verified live window|changed/);
-	await root.command("server", { server: moved });
-	await locator(child, "root", (v) => v.locator.windowId === "@8");
 	await child.command("switch", { target: "root" });
+	assert.equal((await locator(child, "root")).locator.windowId, initial.locator.windowId);
+	await root.command("server", { server: moved });
 	await child.command("server", {
 		server: { ...moved, ownPane: "%2", scope: { socket: "other", serverPid: 1, serverStarted: "1" } },
 	});

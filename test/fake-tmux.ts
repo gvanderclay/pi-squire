@@ -10,6 +10,7 @@ import {
 	companionCandidate,
 	type OpenedWindow,
 	type OwnSession,
+	type PaneListing,
 	type PaneLocator,
 	parseTmuxVersion,
 	type TmuxClient,
@@ -47,6 +48,7 @@ export class FakeTmux implements TmuxClient {
 	readonly commands: string[] = [];
 	/** How many times `listWindows` was called. */
 	listCalls = 0;
+	paneListCalls = 0;
 	/** When set, `listWindows` rejects with this message. */
 	failList: string | undefined;
 	/** When set, `openWindow` rejects with this message instead of opening. */
@@ -152,6 +154,25 @@ export class FakeTmux implements TmuxClient {
 		this.detachOnDestroy.set(session, "off");
 		this.companions.add(session);
 		return record(windowId, session);
+	}
+
+	async listPanes(): Promise<PaneListing> {
+		this.paneListCalls++;
+		if (this.failList !== undefined) throw new Error(this.failList);
+		const panes = new Map<string, PaneLocator>();
+		for (const [paneId, pane] of this.panes) {
+			const window = this.windows.get(pane.windowId);
+			if (window)
+				panes.set(paneId, {
+					...this.scope,
+					paneId,
+					windowId: pane.windowId,
+					windowName: window.name,
+					exited: pane.exited ?? window.exited,
+				});
+		}
+		const windows = [...this.windows].map(([id, window]) => ({ id, ...window }));
+		return { server: this.scope, panes, windows };
 	}
 
 	async listWindows(): Promise<TmuxWindow[]> {

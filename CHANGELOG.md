@@ -16,6 +16,42 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Idle compact widgets use one server-wide pane listing per refresh instead of
+  inspecting each delegate pane. Sessions publish their pane locator once at
+  startup, and activity reads use `kill(pid, 0)` without spawning `ps`.
+  Breadcrumbs refresh on Results changes or every 30 seconds, and widget tree
+  reads no longer wait for the writer lock. Enter and peek still verify the
+  owner and the current pane at action time, including after window renames,
+  moves, joins, or breaks.
+  Deliberate test changes:
+  - `test/widget-activity-runtime.test.ts` replaces "locator ticks keep observing
+    without unchanged rewrites, publish rename/move/clear and reset per
+    session/generation" with "locator publishes once per session generation and
+    idle ticks spawn no pane probes". Idle ticks leave the startup snapshot alone.
+  - `test/widget-live.test.ts` replaces "pid reuse, unknown probe,
+    malformed/oversized/generation-mismatched files fail closed" with "live pid
+    ignores legacy start token; unknown probe and
+    malformed/oversized/generation-mismatched files fail closed". A live PID's
+    obsolete start token no longer removes its snapshot. "startup probe failure
+    is unavailable; early stop cancels delayed initialization" becomes "stop
+    before flush cancels publication without process initialization" because
+    publishers no longer run a process-start probe.
+  - `test/widget-ancestor-process.test.ts` replaces "actual processes: root
+    without launch/registry publishes, leaf switches directly, current pane
+    names/moves and server mismatches fail closed" with "actual processes:
+    startup pane locator follows names/moves at navigation time and server
+    mismatches fail closed". Navigation resolves current names and windows from
+    the stable pane instead of waiting for another publication.
+  - `test/widget-ancestor-real.test.ts` updates "real private tmux:
+    attached-client root switch, exact pane/server scope, rename and moved-window
+    reattachment" to expect an unchanged startup snapshot after rename or break.
+  - `test/widget.test.ts` updates "shutdown while a window read is pending cannot
+    resurrect a widget" and "cap zero and terminal-only history stop overview
+    tmux reads" to observe pane listings instead of window listings.
+  - `test/widget-current.test.ts` updates "current child lookup does zero
+    locator/inspect work for unavailable/empty windows and no current candidates"
+    and "cap0 and no-candidate Overview refreshes never inspect/locate children
+    independently of the publisher" to use the shared pane listing.
 - Child compact widgets replace ancestor rows and the `Delegates` header with one
   breadcrumb ending in `(you)`. Enter on it switches to the direct parent; x
   refuses close, and Left and Right do nothing. Children use the base indent,

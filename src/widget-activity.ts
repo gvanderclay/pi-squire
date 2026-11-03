@@ -38,7 +38,6 @@ const TARGET_KEYS: ReadonlyMap<string, string> = new Map([
 	["read", "path"],
 	["edit", "path"],
 	["write", "path"],
-	["bash", "command"],
 ]);
 
 function toolTarget(name: string, args: unknown): string | undefined {
@@ -46,8 +45,7 @@ function toolTarget(name: string, args: unknown): string | undefined {
 	if (!key || !args || typeof args !== "object" || Array.isArray(args)) return;
 	const value: unknown = (args as Record<string, unknown>)[key];
 	if (typeof value !== "string") return;
-	const target = name === "bash" ? (value.split(/\r\n|[\r\n]/).find((line) => line.trim()) ?? "") : value;
-	return activityText(target, name === "bash" ? 80 : 120) || undefined;
+	return activityText(value, 120) || undefined;
 }
 const LABELS: ReadonlyMap<string, string> = new Map([
 	["read", "reading…"],

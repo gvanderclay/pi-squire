@@ -522,9 +522,10 @@ observed before permission interception, so `running…` means an outstanding
 bash call, not proof that a subprocess started or permission was granted.
 
 For read, edit and write, the secondary line shows the path, bounded to 120
-UTF-8 bytes. For bash, it shows the first non-empty command line, bounded to
-80 UTF-8 bytes. Targets are sanitized to remove terminal controls. Other tools
-have no secondary line. Squire does not inspect commands to guess intent.
+UTF-8 bytes. Bash has no secondary line: Squire never shows a command, its
+arguments or the program name, and does not inspect commands to guess intent.
+Targets are sanitized to remove terminal controls. Other tools have no
+secondary line.
 
 While the assistant composes without an outstanding tool call, the label is
 `thinking…`. Squire never shows a delegate's message text, tool results,

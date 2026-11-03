@@ -81,7 +81,7 @@ test("collector storage and UTF-8/terminal projection are bounded and fail close
 	assert.equal(c.snapshot()?.text, "using constructor…");
 });
 
-test("targets use only known string arguments and the first non-empty bounded command line", () => {
+test("targets use only known string arguments, are bounded, and never quote a bash command", () => {
 	const c = new ActivityCollector();
 	for (const name of ["read", "edit", "write"]) {
 		c.clear();
@@ -89,11 +89,12 @@ test("targets use only known string arguments and the first non-empty bounded co
 		assert.equal(c.snapshot()?.target, "src/index.ts");
 	}
 	c.clear();
-	c.start("bash", "bash", undefined, { command: "\n \r\npnpm test\nsecret second line" });
-	assert.deepEqual(c.snapshot(), { text: "running…", target: "pnpm test" });
+	c.start("bash", "bash", undefined, { command: "pnpm test --filter @repo/api" });
+	assert.equal(c.snapshot()?.text, "running…");
+	assert.equal(c.snapshot()?.target, undefined, "bash shows no part of its command");
 	c.clear();
-	c.start("long", "bash", undefined, { command: "界🙂".repeat(100) });
-	assert.ok(Buffer.byteLength(c.snapshot()!.target!) <= 80);
+	c.start("long", "read", undefined, { path: "界🙂".repeat(100) });
+	assert.ok(Buffer.byteLength(c.snapshot()!.target!) <= 120);
 	assert.ok(!c.snapshot()!.target!.includes("�"));
 	for (const [name, args] of [
 		["read", { path: 42 }],
@@ -101,7 +102,6 @@ test("targets use only known string arguments and the first non-empty bounded co
 		["read", []],
 		["read", "path"],
 		["custom", { path: "hidden" }],
-		["bash", { command: "\n  " }],
 		["write", {}],
 	] as const) {
 		c.clear();

@@ -17,10 +17,10 @@ follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - The compact Delegates widget replaces streaming response excerpts with a
-  phase label and the current tool's target. Bash shows `running…` and the
-  first non-empty command line, bounded to 80 UTF-8 bytes. File targets keep
-  120 bytes. Squire never shows a delegate's message text. The active-age
-  column is removed, and the renderer no longer takes a clock.
+  phase label and, for read, edit and write, the current path bounded to 120
+  UTF-8 bytes. Bash shows `running…` for its whole call, with no command,
+  arguments or program name. Squire never shows a delegate's message text. The
+  active-age column is removed, and the renderer no longer takes a clock.
   Deliberate test changes:
   - `test/widget-activity.test.ts` expects the most recent leaf call instead
     of joined labels, checks sanitized bounded targets, and uses `thinking…`

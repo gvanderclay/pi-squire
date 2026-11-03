@@ -45,7 +45,14 @@ class Overview {
 	private rows: DelegateRow[] = [];
 	private configuration: WidgetSettings = { ...DEFAULT_WIDGET_SETTINGS };
 
-	constructor(results: Results, tmux: TmuxClient, ctx: ExtensionContext, open: OpenDelegate, assertActive: () => void) {
+	constructor(
+		results: Results,
+		tmux: TmuxClient,
+		ctx: ExtensionContext,
+		open: OpenDelegate,
+		close: OpenDelegate,
+		assertActive: () => void,
+	) {
 		this.results = results;
 		this.tmux = tmux;
 		this.ctx = ctx;
@@ -60,6 +67,14 @@ class Overview {
 				const row = this.rows.find((row) => row.key === key);
 				if (!row) throw new Error("delegate is no longer visible");
 				await open(ctx, row.launchId);
+			},
+			close: async (key: string): Promise<void> => {
+				assertActive();
+				if (this.ancestors.some((row) => row.key === key))
+					return ctx.ui.notify("delegate: cannot close an ancestor", "warning");
+				const row = this.rows.find((row) => row.key === key);
+				if (!row) throw new Error("delegate is no longer visible");
+				await close(ctx, row.launchId);
 			},
 			error: (error: unknown): void =>
 				ctx.ui.notify(`delegate: ${error instanceof Error ? error.message : String(error)}`, "error"),
@@ -241,6 +256,7 @@ export function registerDelegateWidget(
 	results: Results,
 	tmux: TmuxClient,
 	open: OpenDelegate,
+	close: OpenDelegate,
 	assertActive: () => void,
 ): void {
 	let overview: Overview | undefined;
@@ -256,7 +272,7 @@ export function registerDelegateWidget(
 		publisher = titlePublisher(ctx.sessionManager.getSessionId());
 		publisher.publish(pi.getSessionName());
 		if (ctx.hasUI && ctx.mode === "tui") {
-			overview = new Overview(results, tmux, ctx, open, assertActive);
+			overview = new Overview(results, tmux, ctx, open, close, assertActive);
 			overview.start();
 		}
 	});

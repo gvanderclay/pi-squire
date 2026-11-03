@@ -29,6 +29,7 @@ type FocusOptions = {
 	selection: WidgetSelection;
 	changed(): void;
 	open(key: string): Promise<void>;
+	close(key: string): Promise<void>;
 	error(error: unknown): void;
 };
 
@@ -101,7 +102,8 @@ export class WidgetFocus {
 		} else if (matchesKey(data, "down")) selection.move(1);
 		else if (matchesKey(data, "up")) selection.move(-1);
 		else if (matchesKey(data, "escape")) selection.leave();
-		else if (matchesKey(data, "enter")) this.open();
+		else if (matchesKey(data, "enter")) this.action("open");
+		else if (matchesKey(data, "x")) this.action("close");
 		else {
 			this.leave();
 			return;
@@ -114,13 +116,13 @@ export class WidgetFocus {
 		return promptState(this.tui, this.options.ui) === "empty" ? { consume: true } : undefined;
 	}
 
-	private open(): void {
+	private action(action: "open" | "close"): void {
 		const key: string | undefined = this.options.selection.selectedKey;
 		if (key === undefined) return;
 		this.busy = true; // Set before invoking async custom UI; repeated Enter cannot reenter.
 		void Promise.resolve()
 			.then(() => {
-				if (!this.stopped) return this.options.open(key);
+				if (!this.stopped) return this.options[action](key);
 			})
 			.catch((error: unknown) => {
 				if (!this.stopped) this.options.error(error);

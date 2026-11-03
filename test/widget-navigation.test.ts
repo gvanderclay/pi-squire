@@ -64,7 +64,7 @@ test("compact viewport scrolls, Enter switches directly, Escape returns prompt i
 		await settle();
 		assert.deepEqual(s.tmux.switches, [{ client: "attached-client", windowId: target.windowId }]);
 		assert.equal(s.customs.length, 0);
-		assert.match(frame(s), /↑↓ select · enter open · esc prompt/);
+		assert.match(frame(s), /↑↓ select · enter open · x close · esc prompt/);
 		assert.match(frame(s), /▸ .*worker-child1/);
 		assert.equal(s.terminalKey("escape"), true);
 		assert.doesNotMatch(frame(s), /▸|enter details/);
@@ -88,6 +88,38 @@ test("Enter refuses a row whose window disappeared without opening a panel", asy
 	assert.ok(s.errors.some((error) => error.includes("no verified open window")));
 	assert.equal(s.tmux.switches.length, 0);
 	assert.equal(s.customs.length, 0);
+});
+
+test("x always confirms finished and running delegates, cancellation retains focus and window", async () => {
+	for (const finished of [false, true]) {
+		const s = session({ mode: "tui", ui: { confirm: [false, true] } });
+		active.push(s);
+		const child = await launch(s, finished ? "finished" : "running");
+		if (finished) {
+			s.events.emit("message:inbound", {
+				envelope: { id: "reply", from: child.id, in_reply_to: [child.requestId], status: "done", ts: "", body: "ok" },
+				path: "/mail/reply.json",
+				requests: [],
+				handled: false,
+			});
+			await settle();
+			assert.match(frame(s), /done/);
+		}
+		assert.equal(s.terminalKey("x"), false, "prompt keeps x when the list is unfocused");
+		s.terminalKey("down");
+		assert.match(frame(s), /x close/);
+		assert.equal(s.terminalKey("x"), true);
+		await settle();
+		assert.equal(s.confirms.length, 1);
+		assert.match(s.confirms[0].message, /entire recorded subtree/);
+		assert.equal(s.tmux.killed.length, 0);
+		assert.match(frame(s), /▸/);
+		s.terminalKey("x");
+		await settle();
+		assert.equal(s.confirms.length, 2);
+		assert.deepEqual(s.tmux.killed, [child.windowId]);
+		assert.equal(frame(s), "");
+	}
 });
 
 test("completion, nonempty prompt, dialogs, unknown focus and custom editors keep their keys", async () => {

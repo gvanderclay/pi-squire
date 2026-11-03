@@ -16,6 +16,10 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The compact widget keeps its two-column selection gutter while unfocused, so
+  focusing the list no longer shifts the tree right. `test/widget-ancestors.test.ts`
+  and `test/widget.test.ts` now expect the indented unfocused rows; the first and checks that focusing keeps every
+  row in its column.
 - `delegation_close` records the close without posting a cancellation message or
   waking the model. UI closes still wake the model. The tool close regression in
   `test/tools.test.ts` now expects silence, and the stopped-root cancellation test

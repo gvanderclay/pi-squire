@@ -76,15 +76,22 @@ test("five view shapes, root-to-parent chain, leaf cap0 and parent-first selecti
 	await grandLeaf.start();
 	const h = await launch(grand, "leaf", "deep");
 	await until(() => frame(grand).includes("leaf-deep"));
-	assert.match(frame(root), /^Delegates/);
+	assert.match(frame(root), /^ {2}Delegates/);
 	assert.doesNotMatch(frame(root), /coord-second|leaf-deep|grand-leaf/);
-	assert.match(frame(coord), /^↑ root \(parent\)/);
+	assert.match(frame(coord), /^ {2}↑ root \(parent\)/);
 	assert.doesNotMatch(frame(coord), /leaf-sibling|leaf-deep/);
 	await until(() => frame(grandLeaf).includes("(parent)"));
 	assert.doesNotMatch(frame(grandLeaf), /Delegates|grand-leaf|\(you\)/);
-	assert.match(frame(grandLeaf), /^↑ root\n└─ ↑ coord-first \(parent\)/);
-	assert.match(frame(grand), /^↑ root\n└─ ↑ coord-first \(parent\)\n {2}└─ Delegates/);
+	assert.match(frame(grandLeaf), /^ {2}↑ root\n {2}└─ ↑ coord-first \(parent\)/);
+	const unfocused = frame(grand);
+	assert.match(unfocused, /^ {2}↑ root\n {2}└─ ↑ coord-first \(parent\)\n {4}└─ Delegates/);
 	assert.equal(grand.terminalKey("down"), true);
+	const rows = (text: string) =>
+		text
+			.split("\n")
+			.slice(0, -1)
+			.map((line) => line.slice(2));
+	assert.deepEqual(rows(frame(grand)), rows(unfocused), "focusing keeps every row in its column");
 	assert.match(frame(grand), /▸ └─ ↑ coord-first \(parent\)/);
 	grand.terminalKey("up");
 	assert.match(frame(grand), /▸ ↑ root/);

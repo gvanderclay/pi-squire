@@ -164,9 +164,9 @@ export type Results = {
 	/** Record a workspace attempt, or its next state; never counted as running. */
 	recordAttempt(attempt: WorkspaceAttempt, ctx: ExtensionContext): void;
 	/** Record a close; does nothing when there is no such delegation or it is already closed. */
-	recordClose(id: string): void;
+	recordClose(id: string, wake?: boolean): void;
 	/** Import only confirmed own direct-child closes; no foreign semantic writes. */
-	syncCloses(): void;
+	syncCloses(wake?: boolean): void;
 	/** Delegations with no result, no recorded close and no gone-window record. */
 	running(): StartedRecorded[];
 	/** Record that the window is gone with no result, and tell the parent once. False when it no longer applies. */

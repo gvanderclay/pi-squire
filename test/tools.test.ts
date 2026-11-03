@@ -730,7 +730,7 @@ test("delegation_status refuses an unknown id with the ones that exist", async (
 	);
 });
 
-test("delegation_close kills the window, records the close, and reports it once", async () => {
+test("delegation_close kills the window and records the close without a message or wake", async () => {
 	writeAgent("scout", SCOUT);
 	const s = session();
 	await s.start();
@@ -746,6 +746,11 @@ test("delegation_close kills the window, records the close, and reports it once"
 		new RegExp(`Closed delegation subtree ${id}.*\\n- ${id}: killed scout-${id.slice(0, 8)} \\(${windowId}\\)`),
 	);
 	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: undefined });
+	assert.deepEqual(s.sent, [], "the tool result is the only close message");
+	await s.fire("context", { messages: [] });
+	await s.fire("agent_before_settle", { entries: [], continue: false });
+	await s.fire("agent_settled");
+	assert.deepEqual(s.sent, [], "later close imports do not wake the model");
 
 	const again = await s.toolCall("delegation_close", { id });
 	assert.match(again.content[0].text, /already-closed/);

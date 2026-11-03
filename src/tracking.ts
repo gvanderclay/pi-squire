@@ -340,6 +340,7 @@ export async function closeDelegation(
 	id: string | undefined,
 	ctx: ExtensionContext,
 	assertActive: () => void,
+	wake = true,
 ): Promise<CloseResult> {
 	const local = id ? results.find(id) : undefined;
 	if (local && !isStarted(local))
@@ -350,7 +351,7 @@ export async function closeDelegation(
 	const root = readIdentity(actor)?.root ?? actor;
 	const result = await closeTree({ root, actor, id, tmux, assertActive });
 	assertActive();
-	results.syncCloses();
+	results.syncCloses(wake);
 	return result;
 }
 
@@ -372,7 +373,7 @@ function closeTool(results: Results, tmux: TmuxClient, assertActive: () => void)
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
-			const { text, details } = await closeDelegation(results, tmux, params.id, ctx, assertActive);
+			const { text, details } = await closeDelegation(results, tmux, params.id, ctx, assertActive, false);
 			return { ...toolResult(text, details), ...(!details.complete ? { isError: true } : {}) };
 		},
 	};

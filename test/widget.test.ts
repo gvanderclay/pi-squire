@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
 import { DELEGATE_WIDGET_KEY, WIDGET_REFRESH_MS } from "../src/widget.ts";
+import { LiveActivityPublisher, LiveActivityReader } from "../src/widget-live.ts";
 import { titleMirrorPath } from "../src/widget-title.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
@@ -26,6 +29,11 @@ function create(options: Parameters<typeof session>[0] = {}): Session {
 }
 async function settle(): Promise<void> {
 	for (let n = 0; n < 4; n++) await new Promise<void>((resolve) => setImmediate(resolve));
+}
+async function until(check: () => boolean): Promise<void> {
+	const deadline = Date.now() + 5000;
+	while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+	assert.ok(check(), "widget refresh completed");
 }
 async function tick(): Promise<void> {
 	await new Promise<void>((resolve) => setTimeout(resolve, WIDGET_REFRESH_MS + 80));
@@ -65,6 +73,56 @@ function configure(value: object): void {
 	mkdirSync(join(agentDir, "squire"), { recursive: true });
 	writeFileSync(settingsFile, JSON.stringify(value));
 }
+
+test("ten idle delegates use one pane listing and zero ps or per-pane calls per widget tick", async (t) => {
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	configure({ delegateWidgetMaxEntries: 10 });
+	const s = create();
+	for (let n = 0; n < 10; n++) await s.delegate(`worker --label idle-${n} inspect`);
+	const publishers = starts(s).map((record) => new LiveActivityPublisher(record.id, record.id));
+	for (const publisher of publishers) publisher.publish(undefined);
+	await Promise.all(publishers.map((publisher) => publisher.flush()));
+	await until(() => frame(s).includes("idle-0") && frame(s).includes("idle-9"));
+	await settle();
+	let completedReads = 0;
+	const read = LiveActivityReader.prototype.read;
+	t.mock.method(
+		LiveActivityReader.prototype,
+		"read",
+		async function (this: LiveActivityReader, id: string, launch: string): ReturnType<LiveActivityReader["read"]> {
+			const value = await read.call(this, id, launch);
+			completedReads++;
+			return value;
+		},
+	);
+	const listCalls = s.tmux.listCalls;
+	const inspect = t.mock.method(s.tmux, "inspectPane");
+	const locate = t.mock.method(LiveActivityReader.prototype, "locator");
+	const exec = t.mock.method(childProcess, "execFile");
+	const execSync = t.mock.method(childProcess, "execFileSync");
+	syncBuiltinESMExports();
+	try {
+		for (let n = 0; n < 3; n++) {
+			const calls = s.tmux.paneListCalls;
+			t.mock.timers.tick(WIDGET_REFRESH_MS);
+			await until(() => completedReads >= (n + 1) * 10);
+			await settle();
+			assert.equal(s.tmux.paneListCalls, calls + 1);
+			assert.match(frame(s), /idle-0/);
+			assert.match(frame(s), /idle-9/);
+		}
+		assert.equal(s.tmux.listCalls, listCalls);
+		assert.equal(inspect.mock.callCount(), 0);
+		assert.equal(locate.mock.callCount(), 0, "recorded open windows never read locators");
+		assert.equal(exec.mock.callCount(), 0);
+		assert.equal(execSync.mock.callCount(), 0);
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		for (const publisher of publishers) publisher.stop();
+		await Promise.all(publishers.map((publisher) => publisher.closed()));
+	}
+});
 
 test("real direct launches/results: running first, newest within groups, actual outcomes and overflow", async () => {
 	const s = create();
@@ -273,9 +331,9 @@ test("shutdown while a window read is pending cannot resurrect a widget", async 
 	const s = create();
 	await s.delegate("worker inspect");
 	await settle();
-	const windows = await s.tmux.listWindows();
-	let release: (value: typeof windows) => void = () => {};
-	s.tmux.listWindows = () =>
+	const listing = await s.tmux.listPanes();
+	let release: (value: typeof listing) => void = () => {};
+	s.tmux.listPanes = () =>
 		new Promise((resolve) => {
 			release = resolve;
 		});
@@ -283,7 +341,7 @@ test("shutdown while a window read is pending cannot resurrect a widget", async 
 	await settle();
 	await s.shutdown();
 	const calls = s.widgetCalls.length;
-	release(windows);
+	release(listing);
 	await settle();
 	assert.equal(frame(s), "");
 	assert.equal(s.widgetCalls.length, calls);
@@ -295,20 +353,20 @@ test("cap zero and terminal-only history stop overview tmux reads", async (t) =>
 	const s = create();
 	await s.delegate("worker inspect");
 	await settle();
-	let calls = s.tmux.listCalls;
+	let calls = s.tmux.paneListCalls;
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
 	await settle();
-	assert.equal(s.tmux.listCalls, calls, "cap zero does not list windows");
+	assert.equal(s.tmux.paneListCalls, calls, "cap zero does not list panes");
 	const record = starts(s)[0];
 	await s.toolCall("delegation_close", { id: record.id });
 	await settle();
 	configure({ delegateWidgetMaxEntries: 3 });
 	t.mock.timers.tick(5000);
 	await settle(); // The unchanged task poll can now stop too.
-	calls = s.tmux.listCalls;
+	calls = s.tmux.paneListCalls;
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
 	await settle();
-	assert.equal(s.tmux.listCalls, calls, "closed history does not keep the view listing forever");
+	assert.equal(s.tmux.paneListCalls, calls, "closed history does not keep the view listing forever");
 	await s.delegate("worker --label gone inspect");
 	await settle();
 	const vanished = starts(s).at(-1)!;
@@ -316,10 +374,10 @@ test("cap zero and terminal-only history stop overview tmux reads", async (t) =>
 	t.mock.timers.tick(5000);
 	await settle();
 	assert.ok(s.entries.some((entry) => entry.data.id === vanished.id && entry.data.gone));
-	calls = s.tmux.listCalls;
+	calls = s.tmux.paneListCalls;
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
 	await settle();
-	assert.equal(s.tmux.listCalls, calls, "gone history without a result needs no view listing");
+	assert.equal(s.tmux.paneListCalls, calls, "gone history without a result needs no view listing");
 	await s.shutdown();
 });
 

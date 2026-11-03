@@ -136,9 +136,9 @@ test("real private tmux: attached-client root switch, exact pane/server scope, r
 		assert.equal(run("display-message", "-p", "-c", client, "#{window_id}"), rootWindow);
 		run("switch-client", "-c", client, "-t", childWindow);
 		run("rename-window", "-t", rootWindow, "root-renamed");
-		await until(
-			() => child.command<LiveLocator | null>("locator", { target: "real-root" }),
-			(v) => v?.locator.windowName === "root-renamed",
+		assert.notEqual(
+			(await child.command<LiveLocator>("locator", { target: "real-root" })).locator.windowName,
+			"root-renamed",
 		);
 		run("move-window", "-s", rootWindow, "-t", "moved-root:2");
 		await child.command("switch", { target: "real-root" });
@@ -159,10 +159,7 @@ test("real private tmux: attached-client root switch, exact pane/server scope, r
 		run("break-pane", "-d", "-s", rootPane, "-t", "moved-root:3");
 		const newWindow = run("display-message", "-p", "-t", rootPane, "#{window_id}");
 		assert.notEqual(newWindow, rootWindow);
-		await until(
-			() => child.command<LiveLocator | null>("locator", { target: "real-root" }),
-			(v) => v?.locator.windowId === newWindow,
-		);
+		assert.equal((await child.command<LiveLocator>("locator", { target: "real-root" })).locator.windowId, rootWindow);
 		await child.command("switch", { target: "real-root" });
 		assert.equal(run("display-message", "-p", "-c", client, "#{window_id}"), newWindow);
 		const commands = readFileSync(log, "utf8").trim().split("\n");

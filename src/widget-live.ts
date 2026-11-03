@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { matchesSessionOwner } from "./session-owner.ts";
 import type { PaneLocator } from "./tmux.ts";
+import { processAlive } from "./tree-lock.ts";
 import { type Activity, activityText } from "./widget-activity.ts";
-import { type Liveness, processLiveness, processStart } from "./widget-live-process.ts";
 
 export const LIVE_LAUNCH_ENV = "PI_SQUIRE_LIVE_LAUNCH";
 export const LIVE_MAX_BYTES = 8192;
@@ -29,7 +29,6 @@ type Snapshot = {
 	launchId?: string;
 	generation: string;
 	pid: number;
-	processStart: string;
 	revision: number;
 	observedAt: number;
 	activity: Activity | null;
@@ -97,7 +96,6 @@ function validSnapshot(value: Partial<Snapshot>, sessionId: string, generation: 
 		(value.launchId === undefined || validString(value.launchId)) &&
 		Number.isSafeInteger(value.pid) &&
 		(value.pid ?? 0) > 0 &&
-		validString(value.processStart) &&
 		Number.isSafeInteger(value.revision) &&
 		(value.revision ?? -1) >= 0 &&
 		typeof value.observedAt === "number" &&
@@ -131,13 +129,17 @@ function snapshotFile(name: string, file: boolean): boolean {
 	return file && /^[a-f0-9-]{36}\.json$/.test(name);
 }
 
-type Probe = (owner: { pid: number; processStart: string }) => Promise<Liveness>;
+type Liveness = "live" | "dead" | "unknown";
+type Probe = (owner: { pid: number }) => Promise<Liveness>;
 
 export class LiveActivityReader {
 	private readonly agentDir: string;
 	private readonly probe: Probe;
 
-	constructor(agentDir = getAgentDir(), probe: Probe = processLiveness) {
+	constructor(
+		agentDir = getAgentDir(),
+		probe: Probe = async ({ pid }: { pid: number }): Promise<Liveness> => (processAlive(pid) ? "live" : "dead"),
+	) {
 		this.agentDir = agentDir;
 		this.probe = probe;
 	}
@@ -209,7 +211,6 @@ export class LiveActivityReader {
 }
 
 type PublisherOptions = {
-	start?: () => Promise<string | undefined>;
 	rename?: typeof rename;
 };
 
@@ -221,7 +222,6 @@ export class LiveActivityPublisher {
 	private readonly dir: string;
 	private readonly path: string;
 	private readonly temporary: string;
-	private readonly start: Promise<string | undefined>;
 	private readonly replace: typeof rename;
 	private activity: Activity | null = null;
 	private locator: PaneLocator | undefined;
@@ -243,9 +243,6 @@ export class LiveActivityPublisher {
 		this.dir = liveSessionDir(sessionId);
 		this.path = join(this.dir, `${this.generation}.json`);
 		this.temporary = `${this.path}.tmp`;
-		this.start = (options.start ?? ((): Promise<string | undefined> => processStart(process.pid)))().catch(
-			() => undefined,
-		);
 		this.replace = options.rename ?? rename;
 	}
 
@@ -311,11 +308,6 @@ export class LiveActivityPublisher {
 	}
 
 	private async drain(): Promise<void> {
-		const start: string | undefined = await this.start;
-		if (!start || this.stopped) {
-			this.dirty = false;
-			return;
-		}
 		if (this.dirty && !this.stopped) {
 			this.dirty = false;
 			this.urgent = false;
@@ -326,7 +318,6 @@ export class LiveActivityPublisher {
 				launchId: this.launchId,
 				generation: this.generation,
 				pid: process.pid,
-				processStart: start,
 				revision: this.revision,
 				observedAt: this.observedAt,
 				activity: this.activity,

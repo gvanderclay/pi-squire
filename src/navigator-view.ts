@@ -96,9 +96,11 @@ export class NavigatorView {
 		live: LiveLocator | undefined,
 		windows: TmuxWindow[] | undefined,
 	): Promise<TmuxWindow | undefined> {
-		if (!live || !windows || !(await verifyLiveWindow(this.tmux, live).catch(() => false))) return undefined;
+		if (!live || !windows) return undefined;
+		const pane = await verifyLiveWindow(this.tmux, live).catch(() => undefined);
+		if (!pane) return undefined;
 		const found: TmuxWindow | undefined = windows.find(
-			(entry) => entry.id === live.locator.windowId && entry.name === live.locator.windowName,
+			(entry) => entry.id === pane.windowId && entry.name === pane.windowName,
 		);
 		// Exact Pi pane, not a different active pane's pane_dead.
 		return found ? { ...found, exited: false } : undefined;

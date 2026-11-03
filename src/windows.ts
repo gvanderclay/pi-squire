@@ -1,11 +1,19 @@
 // Reading tmux's window list against the delegation records.
 import type { StartedRecorded, WindowState } from "./results.ts";
-import type { TmuxClient, TmuxWindow } from "./tmux.ts";
+import type { PaneListing, TmuxClient, TmuxWindow } from "./tmux.ts";
 
 /** Every window on the server, asked once; a failed ask is `undefined`, never an empty list. */
 export async function listWindows(tmux: TmuxClient): Promise<TmuxWindow[] | undefined> {
 	try {
 		return await tmux.listWindows();
+	} catch {
+		return undefined;
+	}
+}
+
+export async function listPanes(tmux: TmuxClient): Promise<PaneListing | undefined> {
+	try {
+		return await tmux.listPanes();
 	} catch {
 		return undefined;
 	}

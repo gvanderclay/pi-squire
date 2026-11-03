@@ -73,7 +73,7 @@ test("real direct launches/results: running first, newest within groups, actual 
 	for (const label of ["first", "second", "third", "fourth"]) await s.delegate(`worker --label ${label} do it`);
 	await settle();
 	let text = frame(s);
-	assert.match(text, /Delegates\n├─ ◌ worker-fourth/);
+	assert.match(text, / {2}Delegates\n {2}├─ ◌ worker-fourth/);
 	assert.match(text, /\+1 more delegate/);
 	assert.ok(!s.statuses.some(({ key, text }) => key === "delegate" && text), "list replaces Squire count only");
 	const records = starts(s);
@@ -168,7 +168,7 @@ test("cap zero preserves count and own badge; placement and settings refresh use
 	configure({ maxDepth: 2, delegateWidgetPlacement: "below", delegateWidgetMaxEntries: 0 });
 	await s.delegate("worker inspect");
 	await settle();
-	assert.match(frame(s), /^↑ root \(parent\)\n↓ to manage delegates$/);
+	assert.match(frame(s), /^ {2}↑ root \(parent\)\n↓ to manage delegates$/);
 	assert.ok(s.statuses.some(({ key, text }) => key === "delegate" && text?.includes("1 delegate running")));
 	assert.ok(s.statuses.some(({ key }) => key === "delegate-self"));
 	configure({ maxDepth: 2, delegateWidgetPlacement: "below", delegateWidgetMaxEntries: 1 });

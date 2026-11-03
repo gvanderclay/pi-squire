@@ -47,19 +47,22 @@ export function agentFile(fields: Record<string, string>, body = "Do the task an
 	return `---\n${front}\n---\n\n${body}\n`;
 }
 
+// A widget publisher left over from the previous test can still write while a directory is removed.
+const CLEAR = { recursive: true, force: true, maxRetries: 3 } as const;
+
 /** Empty the roster and the session directory; the next write into either is the whole of it. */
 export function resetRoot(): void {
-	rmSync(rosterDir, { recursive: true, force: true });
-	rmSync(legacyRosterDir, { recursive: true, force: true });
-	rmSync(delegationPromptPath, { recursive: true, force: true });
-	rmSync(sessionDir, { recursive: true, force: true });
+	rmSync(rosterDir, CLEAR);
+	rmSync(legacyRosterDir, CLEAR);
+	rmSync(delegationPromptPath, CLEAR);
+	rmSync(sessionDir, CLEAR);
 	// Project trust decisions and Pi's own settings, so a saved answer cannot carry into the next test.
 	for (const name of ["trust.json", "trust.json.lock", "settings.json"]) {
-		rmSync(join(agentDir, name), { recursive: true, force: true });
+		rmSync(join(agentDir, name), CLEAR);
 	}
-	rmSync(join(agentDir, "squire", "settings.json"), { recursive: true, force: true });
+	rmSync(join(agentDir, "squire", "settings.json"), CLEAR);
 	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles", "live-sessions", "owners"])
-		rmSync(join(agentDir, "squire", name), { recursive: true, force: true });
+		rmSync(join(agentDir, "squire", name), CLEAR);
 	delete process.env.PI_SQUIRE_LIVE_LAUNCH;
 	delete process.env.PI_DELEGATE_PARENT;
 	delete process.env.PI_DELEGATE_AUTO_EXIT;

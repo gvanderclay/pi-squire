@@ -3,8 +3,9 @@
 // tmux server with a scratch agent directory, for verification runs.
 // Usage: node .pi/skills/verify-pi-squire/scripts/squire-verify.mjs <command> [options]
 // Every command prints one JSON object; ok:false means the command failed.
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,7 +35,8 @@ const HELP = [
 	"  capture --run <id> --name <n>  Save every window's pane text into the run's evidence folder.",
 	"  cleanup --run <id>           Kill only this run's tmux server. Evidence stays.",
 	"",
-	"Needs OPENCODE_API_KEY in the environment. SQUIRE_VERIFY_MODEL and",
+	"Needs OPENCODE_API_KEY in the environment, or an API key for the model's provider in your",
+	"Pi auth.json. SQUIRE_VERIFY_MODEL and",
 	"SQUIRE_VERIFY_THINKING override the defaults " + MODEL + " / " + THINKING + ".",
 ].join("\n");
 
@@ -83,6 +85,20 @@ function requireRun(opts) {
 	if (!existsSync(p.meta)) fail("no such run: " + p.dir);
 	return p;
 }
+let key;
+/** The run's agent dir is scratch, so a key saved with /login must be read from the user's own auth.json. */
+function opencodeKey() {
+	if (key !== undefined) return key || undefined;
+	key = process.env.OPENCODE_API_KEY ?? "";
+	const file = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "auth.json");
+	if (key || !existsSync(file)) return key || undefined;
+	const saved = JSON.parse(readFileSync(file, "utf8"))[MODEL.split("/")[0]];
+	if (saved?.type !== "api_key" || typeof saved.key !== "string") return undefined;
+	key = saved.key.startsWith("!")
+		? execSync(saved.key.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim()
+		: saved.key;
+	return key || undefined;
+}
 function cleanEnv(p) {
 	const env = {};
 	for (const [k, v] of Object.entries(process.env))
@@ -92,6 +108,8 @@ function cleanEnv(p) {
 	env.XDG_STATE_HOME = join(p.dir, "state");
 	env.TMPDIR = join(p.dir, "tmp");
 	env.PI_SKIP_VERSION_CHECK = "1";
+	const opencode = opencodeKey();
+	if (opencode) env.OPENCODE_API_KEY = opencode;
 	return env;
 }
 function tmux(p, list, allowFail = false) {
@@ -141,7 +159,7 @@ function rootSession(p) {
 }
 
 function launch(opts) {
-	if (!process.env.OPENCODE_API_KEY) fail("OPENCODE_API_KEY is not set; the run's Pi sessions need it");
+	if (!opencodeKey()) fail("no OpenCode key: set OPENCODE_API_KEY, or /login to " + MODEL.split("/")[0] + " in your own Pi");
 	if (!existsSync(PI) || !existsSync(MAIL)) fail("node_modules/.bin/pi or pi-session-mail is missing; run pnpm install");
 	const run = typeof opts.run === "string" ? opts.run : "v" + new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 	const p = paths(run);
@@ -224,7 +242,7 @@ function doctor(p) {
 	const meta = readMeta(p);
 	const checks = [];
 	const check = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail });
-	check("OPENCODE_API_KEY set", process.env.OPENCODE_API_KEY, "the run's Pi sessions read it from the tmux server environment");
+	check("OpenCode key found", opencodeKey(), "from OPENCODE_API_KEY or your auth.json; the run's Pi sessions read it from the tmux server environment");
 	const wins = listWindows(p);
 	check("tmux server up", wins !== undefined, p.socket);
 	const root = wins?.find((w) => w.target.startsWith("root:") && w.name === "root");

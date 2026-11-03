@@ -78,14 +78,16 @@ class Overview {
 			},
 			horizontal: (direction: -1 | 1): void => {
 				const row = this.rows.find((candidate) => candidate.key === this.selection.selectedKey);
-				if (!row?.descendantCount) return;
-				if (direction === 1) {
-					if (this.selection.expanded.has(row.key)) {
-						const child = this.rows.find((candidate) => candidate.parentKey === row.key);
-						if (child) this.selection.select(child.key);
-					} else this.selection.expanded.add(row.key);
-				} else if (this.selection.expanded.has(row.key)) this.selection.expanded.delete(row.key);
-				else if (row.parentKey) this.selection.select(row.parentKey);
+				if (!row) return;
+				const expanded = this.selection.expanded;
+				if (direction === -1) {
+					if (!expanded.delete(row.key) && row.parentKey) this.selection.select(row.parentKey);
+					return;
+				}
+				if (!row.descendantCount) return;
+				if (!expanded.has(row.key)) return void expanded.add(row.key);
+				const child = this.rows.find((candidate) => candidate.parentKey === row.key);
+				if (child) this.selection.select(child.key);
 			},
 			error: (error: unknown): void =>
 				ctx.ui.notify(`delegate: ${error instanceof Error ? error.message : String(error)}`, "error"),

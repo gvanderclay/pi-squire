@@ -13,8 +13,9 @@ follows [Semantic Versioning](https://semver.org/).
   `test/tools.test.ts` now expects silence, and the stopped-root cancellation test
   in `test/subtree-close.test.ts` uses the UI close path to retain its wake check.
 - Browse open delegate descendants in the compact widget with Right to expand
-  or enter a branch and Left to collapse or return to its parent. Childless rows
-  and ancestors ignore Left and Right. A collapsed row shows its open-descendant
+  or enter a branch and Left to collapse or return to its parent. Right does
+  nothing on a childless row, Left on any nested row returns to its parent, and
+  ancestors ignore both. A collapsed row shows its open-descendant
   count as +N instead of a task-count secondary line. Leaving the list collapses
   all branches. Enter and confirmed x work at every depth. Widget tests now pin
   collapsed counts, tree keyboard behavior, and mixed-depth overflow wording;

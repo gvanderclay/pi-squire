@@ -148,6 +148,7 @@ function focusedHint(rows: readonly DelegateRow[], options: WidgetRenderOptions)
 	const selected = rows.find((row) => row.key === options.selectedKey);
 	let treeHint = "";
 	if (selected?.descendantCount) treeHint = selected.expanded ? " · ← collapse" : " · → expand";
+	if (!selected?.expanded && selected?.depth) treeHint += " · ← parent";
 	return `↑↓ select · enter open · x close${treeHint} · esc prompt`;
 }
 

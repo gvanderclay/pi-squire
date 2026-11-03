@@ -361,8 +361,12 @@ test("tree expands at every depth, switches and closes nested rows, and collapse
 	root.terminalKey("right");
 	assert.match(frame(root), /▸ .*leaf-sibling/);
 	assert.doesNotMatch(frame(root), /→ expand|← collapse/);
+	assert.match(frame(root), /← parent/);
+	root.terminalKey("right");
+	assert.match(frame(root), /▸ .*leaf-sibling/, "Right on a childless row does nothing");
 	root.terminalKey("left");
-	assert.match(frame(root), /▸ .*leaf-sibling/);
+	assert.match(frame(root), /▸ .*coord-branch/, "Left on a childless child jumps to its parent");
+	root.terminalKey("down");
 	root.terminalKey("down");
 	root.terminalKey("left");
 	assert.match(frame(root), /▸ .*coord-branch/, "Left on collapsed child jumps to its parent");

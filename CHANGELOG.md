@@ -16,6 +16,9 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Trusted Pi sessions in this checkout allow the exact `pnpm lint`,
+  `pnpm typecheck`, `pnpm test`, and `pnpm check` commands without a permission
+  dialog or auto-mode judge call.
 - Idle compact widgets use one server-wide pane listing per refresh instead of
   inspecting each delegate pane. Sessions publish their pane locator once at
   startup, and activity reads use `kill(pid, 0)` without spawning `ps`.

@@ -1,0 +1,10 @@
+{
+	"permission": {
+		"bash": {
+			"pnpm lint": "allow",
+			"pnpm typecheck": "allow",
+			"pnpm test": "allow",
+			"pnpm check": "allow"
+		}
+	}
+}

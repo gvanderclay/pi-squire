@@ -6,6 +6,7 @@ export class WidgetSelection {
 	private index = 0;
 	private start = 0;
 	active = false;
+	readonly expanded = new Set<string>();
 
 	get selectedKey(): string | undefined {
 		return this.keys[this.index];
@@ -34,7 +35,15 @@ export class WidgetSelection {
 		return true;
 	}
 
+	select(key: string): void {
+		const index = this.keys.indexOf(key);
+		if (index < 0) return;
+		this.index = index;
+		this.scroll();
+	}
+
 	leave(): void {
+		this.expanded.clear();
 		this.active = false;
 		this.start = 0;
 	}

@@ -51,31 +51,26 @@ function entry(row: DelegateRow, width: number, connector: string, theme: Widget
 	const title: string = widgetText(row.title ?? "");
 	const preferred: number = visibleWidth(prefix + name + suffix) + (title ? Math.min(24, visibleWidth(title)) + 2 : 0);
 	const extra: string = metadata(row, width, preferred, now);
-	const room: number = Math.max(1, width - visibleWidth(prefix + suffix + extra));
+	const count = !row.expanded && row.descendantCount ? theme.fg("dim", ` +${row.descendantCount}`) : "";
+	const room: number = Math.max(1, width - visibleWidth(prefix + suffix + extra + count));
 	const identity: string = truncateToWidth(name, room);
 	const titleRoom: number = room - visibleWidth(identity) - 2;
 	const description: string = title && title !== name && titleRoom >= 4 ? `  ${truncateToWidth(title, titleRoom)}` : "";
-	return truncateToWidth(`${prefix}${theme.bold(identity)}${description}${suffix}${theme.fg("dim", extra)}`, width);
+	return truncateToWidth(
+		`${prefix}${theme.bold(identity)}${description}${suffix}${theme.fg("dim", extra)}${count}`,
+		width,
+	);
 }
 
-/** One secondary line; descendant task counts take priority when both do not fit. */
-export function activityLine(
-	row: DelegateRow,
-	width: number,
-	last: boolean,
-	theme: WidgetTheme,
-	summary = "",
-): string | undefined {
+/** One secondary line for live task activity. */
+export function activityLine(row: DelegateRow, width: number, last: boolean, theme: WidgetTheme): string | undefined {
 	const activity: string =
 		row.running && row.activity
 			? `${row.activity.kind === "response" ? "response: " : ""}${widgetText(row.activity.text)}`
 			: "";
-	const facts: string = widgetText(summary);
-	if (!activity && !facts) return;
+	if (!activity) return;
 	const prefix: string = last ? "   └─ " : "│  └─ ";
-	let text: string = [activity, facts].filter(Boolean).join(" · ");
-	if (facts && visibleWidth(prefix + text) > width) text = facts;
-	return truncateToWidth(theme.fg("dim", prefix + text), width);
+	return truncateToWidth(theme.fg("dim", prefix + activity), width);
 }
 
 export type WidgetRenderOptions = {
@@ -116,7 +111,7 @@ function ancestorLines(ancestors: readonly AncestorRow[], options: WidgetRenderO
 }
 
 function more(count: number): string {
-	return `${count} more direct delegate${count === 1 ? "" : "s"}`;
+	return `${count} more delegate${count === 1 ? "" : "s"}`;
 }
 
 function childLines(
@@ -138,18 +133,23 @@ function childLines(
 	if (start) lines.push(gutter + indent + theme.fg("dim", `├─ ↑ ${more(start)}`));
 	for (const [index, row] of visible.entries()) {
 		const last: boolean = index === visible.length - 1 && hidden === 0;
-		lines.push(indent + selectableEntry(row, width - indent.length, last, theme, now, options));
-		const secondary: string | undefined = activityLine(
-			row,
-			width - gutter.length - indent.length,
-			last,
-			theme,
-			row.summary,
-		);
-		if (secondary) lines.push(gutter + indent + secondary);
+		const rowIndent = indent + "  ".repeat(row.depth ?? 0);
+		lines.push(rowIndent + selectableEntry(row, width - rowIndent.length, last, theme, now, options));
+		const secondary: string | undefined = activityLine(row, width - gutter.length - rowIndent.length, last, theme);
+		if (secondary) lines.push(gutter + rowIndent + secondary);
 	}
 	if (hidden) lines.push(gutter + indent + theme.fg("dim", `└─ +${more(hidden)}`));
 	return lines;
+}
+
+function focusedHint(rows: readonly DelegateRow[], options: WidgetRenderOptions): string {
+	if (options.ancestors?.some((ancestor) => ancestor.key === options.selectedKey))
+		return "↑↓ select · enter switch · esc prompt";
+	const selected = rows.find((row) => row.key === options.selectedKey);
+	let treeHint = "";
+	if (selected?.descendantCount) treeHint = selected.expanded ? " · ← collapse" : " · → expand";
+	if (!selected?.expanded && selected?.depth) treeHint += " · ← parent";
+	return `↑↓ select · enter open · x close${treeHint} · esc prompt`;
 }
 
 /** Pure layout: the cap counts child entries, not physical lines or hidden children. */
@@ -168,15 +168,7 @@ export function renderDelegateWidget(
 	const lines: string[] = ancestorLines(ancestors, options, theme);
 	if (options.ancestryError) lines.push(gutter + theme.fg("warning", widgetText(options.ancestryError)));
 	if (cap > 0 && rows.length) lines.push(...childLines(rows, cap, width, theme, now, options));
-	if (options.focused)
-		lines.push(
-			theme.fg(
-				"dim",
-				ancestors.some((ancestor) => ancestor.key === options.selectedKey)
-					? "↑↓ select · enter switch · esc prompt"
-					: "↑↓ select · enter open · x close · esc prompt",
-			),
-		);
+	if (options.focused) lines.push(theme.fg("dim", focusedHint(rows, options)));
 	else lines.push(theme.fg("dim", "↓ to manage delegates"));
 	return lines.map((line) => truncateToWidth(line, width));
 }

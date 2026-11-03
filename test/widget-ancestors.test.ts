@@ -5,15 +5,14 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { type Identity, writeIdentity } from "../src/identity.ts";
-import type { Delegation, Recorded } from "../src/results.ts";
-import { type VisibleFacts, visibleRecordFacts } from "../src/tree-view.ts";
+import type { Delegation } from "../src/results.ts";
+import { visibleRecordFacts } from "../src/tree-view.ts";
 import { DELEGATE_WIDGET_KEY, WIDGET_REFRESH_MS } from "../src/widget.ts";
 import { ancestorSessions } from "../src/widget-ancestors.ts";
 import { DirectDelegateView } from "../src/widget-data.ts";
 import { LiveActivityReader } from "../src/widget-live.ts";
 import { renderDelegateWidget } from "../src/widget-render.ts";
 import { WidgetSelection } from "../src/widget-selection.ts";
-import { taskSummary } from "../src/widget-summary.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, session, sessionDir, writeAgent } from "./harness.ts";
 import { mailSession, scan } from "./mail-harness.ts";
@@ -107,7 +106,7 @@ test("five view shapes, root-to-parent chain, leaf cap0 and parent-first selecti
 	assert.equal(h.identity?.parent, g.id);
 });
 
-test("real-provider nested failure/resume/close/late result summaries retain every task without foreign context or barrier writes", async (t) => {
+test("collapsed counts follow open stable sessions through failure, resume, close and late result without barrier writes", async (t) => {
 	t.mock.timers.enable({ apis: ["setInterval"] });
 	const root = instance();
 	const c = await launch(root, "coord", "direct");
@@ -125,7 +124,7 @@ test("real-provider nested failure/resume/close/late result summaries retain eve
 	leaf.events.emit("message:reply", { to: g.id, inReplyTo: [w.requestId], body: "failure", status: "failed" });
 	scan(grand);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /2 tasks: 1 failed · 1 running/.test(frame(root)), frame(root));
+	await until(() => /coord-direct.*\+2/.test(frame(root)), frame(root));
 	assert.doesNotMatch(frame(root), /leaf-failed|coord-grand/);
 	await leaf.shutdown();
 	root.tmux.exit(w.windowId);
@@ -139,10 +138,10 @@ test("real-provider nested failure/resume/close/late result summaries retain eve
 	const retry = grand.entries.find((entry) => entry.data.id === retryId)!.data as Delegation;
 	assert.equal(retry.sessionId, w.id);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /3 tasks: 1 failed · 2 running/.test(frame(root)), frame(root));
+	await until(() => /coord-direct.*\+2/.test(frame(root)), frame(root));
 	await grand.toolCall("delegation_close", { id: retry.id });
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /3 tasks: 1 failed · 1 missing · 1 running/.test(frame(root)), frame(root));
+	await until(() => /coord-direct.*\+1/.test(frame(root)), frame(root));
 	// A genuine late correlated result supersedes missing, never the earlier failed task.
 	const late = instance({ parent: w.id, tmux: root.tmux, mode: "json" });
 	await late.start();
@@ -154,7 +153,7 @@ test("real-provider nested failure/resume/close/late result summaries retain eve
 	});
 	scan(grand);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /3 tasks: 1 failed · 1 running · 1 done/.test(frame(root)), frame(root));
+	await until(() => /coord-direct.*\+1/.test(frame(root)), frame(root));
 	assert.equal(root.sent.length, 0);
 	assert.equal(coord.sent.length, 0);
 	assert.equal(
@@ -185,54 +184,17 @@ test("corrupt descendant owner facts cannot freeze fresh ancestor titles or dire
 	t.mock.timers.tick(5000);
 	await until(() => direct.entries.some((entry) => entry.data.id === w.id && entry.data.gone === true));
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /1 task: 1 missing/.test(frame(current)));
+	await until(() => /coord-direct/.test(frame(current)) && !/\+1/.test(frame(current)));
 	const owner = join(agentDir, "squire", "owners", `${encodeURIComponent(w.id)}.json`);
 	writeFileSync(owner, "corrupt owner facts");
 	await root.fire("session_info_changed", { name: "Fresh ancestor title" });
 	direct.events.emit("message:reply", { to: c.id, inReplyTo: [d.requestId], body: "failed result", status: "failed" });
 	scan(current);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(
-		() => /coverage unavailable/.test(frame(current)),
-		"corrupt owner must mark unavailable coverage, not retain stale summary",
-	);
+	await until(() => /coord-direct.*failed/.test(frame(current)));
 	assert.match(frame(current), /↑ root \(parent\).*Fresh ancestor title/);
 	assert.match(frame(current), /coord-direct.*failed/);
 	assert.doesNotMatch(frame(current), /1 task: 1 missing|coord-direct.*running/);
-});
-
-test("all-depth semantic task summary preserves failed retry, missing, stopped, closed results and unknown accounting", () => {
-	const record = (id: string, parent: string, depth: number, extra: object = {}): Recorded => ({
-		id,
-		sessionId: id,
-		identity: own(parent, "r", depth),
-		agent: "coord",
-		model: "m",
-		thinking: "off",
-		windowId: `@${id}`,
-		windowName: id,
-		requestId: id,
-		...extra,
-	});
-	const result = (status: string) => ({ status, replyId: status, envelopePath: "no-body" });
-	const records = [
-		record("a", "c", 2),
-		record("b", "a", 3, { result: result("failed"), closed: true }),
-		record("retry", "a", 3, { sessionId: "b", resumedFrom: "b", result: result("done") }),
-		record("missing", "b", 4, { gone: true }),
-		record("stopped", "c", 2, { result: result("stopped") }),
-		record("closed", "c", 2, { closed: true }),
-		record("foreign", "sibling", 2),
-		record("unknown", "c", 2, { accountingOnly: true }),
-	];
-	const view: VisibleFacts = { records, complete: false, facts: records.map((r) => ({ record: r, semantic: r })) };
-	assert.equal(
-		taskSummary(view, "c", [{ id: "@a", name: "a", session: "x", exited: false }]),
-		"7 tasks: 1 failed · 1 stopped · 2 missing · 1 running · 1 unknown · 1 done · partial coverage",
-	);
-	const noSemantic: VisibleFacts = { records: [records[0]], facts: [{ record: records[0] }], complete: false };
-	assert.equal(taskSummary(noSemantic, "c", []), "1 task: 1 unknown · partial coverage");
-	assert.equal(taskSummary({ records: [], facts: [], complete: false }, "c", []), "tasks: coverage unavailable");
 });
 
 test("provenance exposes unoverlaid semantic facts, registry-only closed is unknown and unreadable tree retains saved facts", async () => {
@@ -250,7 +212,6 @@ test("provenance exposes unoverlaid semantic facts, registry-only closed is unkn
 	view = visibleRecordFacts(results, ctx, 20, false);
 	assert.equal(view.facts.find((f) => f.record.id === w.id)?.semantic, undefined);
 	assert.equal(view.complete, false);
-	assert.match(taskSummary(view, c.id, []), /unknown.*partial/);
 	writeFileSync(join(agentDir, "squire", "trees", `${encodeURIComponent(root.parent)}.json`), "broken");
 	view = visibleRecordFacts(results, ctx, 20, false);
 	assert.equal(view.complete, false);
@@ -284,7 +245,7 @@ test("reopened gone direct child can be inspected at current window without rewr
 	assert.equal(record.gone, true);
 });
 
-test("ancestors excluded from cap, summary shares activity line and wins narrow, no empty headings or self rows", () => {
+test("ancestors excluded from cap, activity stays on one line, no empty headings or self rows", () => {
 	const ancestors = [
 		{ key: "ar", sessionId: "r", identity: "root", parent: false },
 		{ key: "ap", sessionId: "p", identity: "coord", parent: true },
@@ -301,15 +262,13 @@ test("ancestors excluded from cap, summary shares activity line and wins narrow,
 		model: "m",
 		lastActive: undefined,
 		activity: { kind: "tools" as const, text: "reading very long command description…" },
-		summary: "2 tasks: 1 failed · 1 running",
 	};
 	const theme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
 	const wide = renderDelegateWidget([row], 1, 140, theme, 0, { ancestors });
 	assert.equal(wide.length, 6);
-	assert.match(wide[4], /reading.*2 tasks/);
+	assert.match(wide[4], /reading/);
 	const narrow = renderDelegateWidget([row], 1, 45, theme, 0, { ancestors });
-	assert.match(narrow[4], /2 tasks.*failed/);
-	assert.doesNotMatch(narrow[4], /reading/);
+	assert.match(narrow[4], /reading/);
 	assert.equal(renderDelegateWidget([], 0, 100, theme, 0, { ancestors }).length, 3);
 	for (let width = 1; width < 100; width++)
 		assert.ok(
@@ -370,6 +329,78 @@ test("actual widget Enter switches live root, unavailable parent refuses without
 	assert.equal(leaf.tmux.switches.length, 1);
 	assert.equal(leaf.tmux.opened.length, 0);
 	assert.equal(leaf.tmux.killed.length, 0);
+});
+
+test("tree expands at every depth, switches and closes nested rows, and collapses on every focus exit", async (t) => {
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	writeFileSync(
+		join(agentDir, "squire", "settings.json"),
+		JSON.stringify({ maxDepth: 5, delegateWidgetMaxEntries: 8 }),
+	);
+	const root = instance({ ui: { confirm: [false, true] } });
+	root.tmux.attachClient("client", 1);
+	const c = await launch(root, "coord", "branch");
+	const coordinator = instance({ parent: c.id, tmux: root.tmux });
+	await coordinator.start();
+	const g = await launch(coordinator, "coord", "nested");
+	const grand = instance({ parent: g.id, tmux: root.tmux });
+	await grand.start();
+	const deep = await launch(grand, "leaf", "deep");
+	const sibling = await launch(coordinator, "leaf", "sibling");
+	t.mock.timers.tick(WIDGET_REFRESH_MS);
+	await until(() => /coord-branch.*\+3/.test(frame(root)));
+	assert.doesNotMatch(frame(root), /coord-nested|leaf-deep|leaf-sibling|tasks:/);
+	root.terminalKey("down");
+	assert.match(frame(root), /→ expand/);
+	root.terminalKey("right");
+	assert.match(frame(root), /▸ .*coord-branch/);
+	assert.match(frame(root), /leaf-sibling/);
+	assert.match(frame(root), /coord-nested.*\+1/);
+	assert.doesNotMatch(frame(root), /leaf-deep/);
+	assert.match(frame(root), /← collapse/);
+	root.terminalKey("right");
+	assert.match(frame(root), /▸ .*leaf-sibling/);
+	assert.doesNotMatch(frame(root), /→ expand|← collapse/);
+	assert.match(frame(root), /← parent/);
+	root.terminalKey("right");
+	assert.match(frame(root), /▸ .*leaf-sibling/, "Right on a childless row does nothing");
+	root.terminalKey("left");
+	assert.match(frame(root), /▸ .*coord-branch/, "Left on a childless child jumps to its parent");
+	root.terminalKey("down");
+	root.terminalKey("down");
+	root.terminalKey("left");
+	assert.match(frame(root), /▸ .*coord-branch/, "Left on collapsed child jumps to its parent");
+	root.terminalKey("down");
+	root.terminalKey("down");
+	root.terminalKey("right");
+	assert.match(frame(root), /leaf-deep/);
+	root.terminalKey("right");
+	assert.match(frame(root), /▸ .*leaf-deep/);
+	root.terminalKey("enter");
+	await until(() => root.tmux.switches.length === 1);
+	assert.equal(root.tmux.switches[0].windowId, deep.windowId);
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	root.terminalKey("x");
+	await until(() => root.confirms.length === 1);
+	assert.equal(root.tmux.killed.length, 0);
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	root.terminalKey("x");
+	await until(() => root.tmux.killed.includes(deep.windowId));
+	t.mock.timers.tick(WIDGET_REFRESH_MS);
+	await until(() => !frame(root).includes("leaf-deep"));
+	assert.equal(root.tmux.windows.has(sibling.windowId), true);
+	assert.equal(root.tmux.windows.has(c.windowId), true);
+	root.terminalKey("escape");
+	assert.doesNotMatch(frame(root), /coord-nested|leaf-sibling|▸/);
+	assert.match(frame(root), /coord-branch.*\+2/);
+	for (const exit of ["typing", "up"]) {
+		root.terminalKey("down");
+		root.terminalKey("right");
+		assert.match(frame(root), /coord-nested/);
+		assert.equal(root.terminalKey(exit), exit === "up");
+		assert.doesNotMatch(frame(root), /coord-nested|leaf-sibling|▸/);
+		assert.match(frame(root), /↓ to manage delegates/);
+	}
 });
 
 test("invalid ancestry refuses cycles and copied/new sessions gain no parent chain", async () => {

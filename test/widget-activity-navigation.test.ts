@@ -67,7 +67,7 @@ test("activity is joined only to the selected viewport, with stable selection an
 		assert.match(frame(s), /▸ .*worker-child1/);
 		assert.doesNotMatch(frame(s), /worker-child4/);
 		assert.deepEqual(new Set(reads.slice(-3)), new Set([records[3].id, records[2].id, records[1].id]));
-		assert.match(frame(s), /^ {2}Delegates\n {2}├─ ↑ 1 more direct delegate\n/);
+		assert.match(frame(s), /^ {2}Delegates\n {2}├─ ↑ 1 more delegate\n/);
 		assert.match(frame(s), /\n {2}│ {2}└─ using /);
 		await launch(s, "newest");
 		await settle();

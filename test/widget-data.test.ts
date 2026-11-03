@@ -224,7 +224,7 @@ test("metadata work is capped after full eligibility/order, with an offset seam 
 	assert.deepEqual(located, read);
 	assert.equal(rows.filter((row) => row.title !== undefined).length, 3);
 	assert.equal(rows[12].state, "failed", "hidden outcome facts remain available without metadata I/O");
-	assert.match(renderDelegateWidget(rows, 3, 100, theme).join("\n"), /\+13 more direct delegates/);
+	assert.match(renderDelegateWidget(rows, 3, 100, theme).join("\n"), /\+13 more delegates/);
 
 	read.length = mirrored.length = located.length = 0;
 	rows = view.read(source, windows, undefined);

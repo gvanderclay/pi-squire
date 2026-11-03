@@ -58,7 +58,7 @@ test("compact viewport scrolls, Enter switches directly, Escape returns prompt i
 		await settle();
 		assert.match(frame(s), /worker-child1/);
 		assert.doesNotMatch(frame(s), /worker-child4/);
-		assert.match(frame(s), /↑ 1 more direct delegate/);
+		assert.match(frame(s), /↑ 1 more delegate/);
 		const target = s.entries.filter((entry) => entry.data.windowName === "worker-child1").at(-1)!.data;
 		assert.equal(s.terminalKey("enter"), true);
 		await settle();

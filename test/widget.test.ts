@@ -74,7 +74,7 @@ test("real direct launches/results: running first, newest within groups, actual 
 	await settle();
 	let text = frame(s);
 	assert.match(text, /Delegates\n├─ ◌ worker-fourth/);
-	assert.match(text, /\+1 more direct delegate/);
+	assert.match(text, /\+1 more delegate/);
 	assert.ok(!s.statuses.some(({ key, text }) => key === "delegate" && text), "list replaces Squire count only");
 	const records = starts(s);
 	reply(s, records[3], "failed");

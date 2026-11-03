@@ -166,7 +166,14 @@ export type PrepareEvent = {
 };
 
 /** The raw input each named key sends; any other key is typed as is. */
-const KEY_DATA: Record<string, string> = { up: "\x1b[A", down: "\x1b[B", enter: "\r", escape: "\x1b" };
+const KEY_DATA: Record<string, string> = {
+	up: "\x1b[A",
+	down: "\x1b[B",
+	left: "\x1b[D",
+	right: "\x1b[C",
+	enter: "\r",
+	escape: "\x1b",
+};
 
 /**
  * A key-driven `ctx.ui.custom` answer: the harness builds the component the

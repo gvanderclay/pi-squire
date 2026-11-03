@@ -12,6 +12,10 @@ export type DelegateRow = {
 	key: string;
 	sessionId: string;
 	launchId: string;
+	parentKey?: string;
+	depth?: number;
+	descendantCount?: number;
+	expanded?: boolean;
 	identity: string;
 	title: string | undefined;
 	state: string;
@@ -21,7 +25,6 @@ export type DelegateRow = {
 	/** Transcript mtime is a last-active hint, not proof of tool activity. */
 	lastActive: number | undefined;
 	activity?: Activity;
-	summary?: string;
 };
 
 /** All eligible rows remain available; only this viewport incurs metadata I/O. */
@@ -82,6 +85,7 @@ export class DirectDelegateView {
 		sessionDir: string | undefined,
 		viewport: MetadataViewport = { offset: 0, limit: 3 },
 		currentWindows: ReadonlyMap<string, { windowId: string; windowName: string }> = new Map(),
+		visibleKeys?: ReadonlySet<string>,
 	): DelegateRow[] {
 		const running: Set<string> = new Set(results.running().map((record) => record.id));
 		const entries: Entry[] = [];
@@ -100,7 +104,8 @@ export class DirectDelegateView {
 			...entries.filter(({ row }) => !row.running),
 		];
 		return ordered.map(({ record, row }, index) => {
-			if (index >= viewport.offset && index < viewport.offset + viewport.limit) this.enrich(record, row, sessionDir);
+			if (visibleKeys ? visibleKeys.has(row.key) : index >= viewport.offset && index < viewport.offset + viewport.limit)
+				this.enrich(record, row, sessionDir);
 			return row;
 		});
 	}
@@ -111,6 +116,7 @@ export class DirectDelegateView {
 			key: sessionId,
 			sessionId,
 			launchId: record.id,
+			parentKey: record.identity?.parent,
 			identity: recordedName(record),
 			title: undefined,
 			lastActive: undefined,
@@ -144,4 +150,29 @@ export class DirectDelegateView {
 		row.title = name && name !== row.identity ? name : undefined;
 		row.lastActive = disk?.modified;
 	}
+}
+
+export function delegateTree(rows: DelegateRow[], viewer: string, expanded: ReadonlySet<string>): DelegateRow[] {
+	const children = new Map<string, DelegateRow[]>();
+	const keys = new Set(rows.map((row) => row.key));
+	for (const row of rows) {
+		const parent = row.parentKey && keys.has(row.parentKey) ? row.parentKey : viewer;
+		const siblings = children.get(parent) ?? [];
+		siblings.push(row);
+		children.set(parent, siblings);
+	}
+	const count = (key: string): number =>
+		(children.get(key) ?? []).reduce((total, child) => total + 1 + count(child.key), 0);
+	const visible: DelegateRow[] = [];
+	const walk = (parent: string, depth: number): void => {
+		for (const row of children.get(parent) ?? []) {
+			row.depth = depth;
+			row.descendantCount = count(row.key);
+			row.expanded = expanded.has(row.key);
+			visible.push(row);
+			if (expanded.has(row.key)) walk(row.key, depth + 1);
+		}
+	};
+	walk(viewer, 0);
+	return visible;
 }

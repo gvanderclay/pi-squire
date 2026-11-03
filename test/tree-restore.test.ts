@@ -7,7 +7,7 @@ import { readIdentity } from "../src/identity.ts";
 import type { Delegation } from "../src/results.ts";
 import { readTree, reconcileTree, treeCounts, treeTransaction } from "../src/tree-registry.ts";
 import { FakeTmux } from "./fake-tmux.ts";
-import { agentDir, agentFile, cleanup, keyScript, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
 
 type Session = ReturnType<typeof mailSession>;
@@ -86,15 +86,6 @@ test("registry views are subtree scoped and never inject grandchildren's raw rep
 	assert.equal(tmux.switches.at(-1)?.windowId, w.windowId);
 	await coordinator.command("delegate-open", `${other.id} --peek`);
 	assert.equal(tmux.captures.length, 0);
-	const script = keyScript(["enter", "escape", "escape"], 250);
-	owner.queueCustom(script);
-	await owner.command("delegates");
-	assert.match(script.frames[1], /depth: 1/);
-	assert.ok(script.frames[0].includes("coordinator") && script.frames[0].includes("worker"));
-	assert.ok(
-		script.frames[0].indexOf(w.windowName) < script.frames[0].indexOf(sibling.windowName),
-		"worker belongs below its own parent, not after a sibling branch",
-	);
 	const before = tmux.killed.length;
 	await assert.rejects(owner.toolCall("delegation_resume", { id: w.id, task: "again" }), /only direct parent/);
 	assert.equal(tmux.killed.length, before);

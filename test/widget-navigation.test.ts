@@ -4,17 +4,7 @@ import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
 import { DELEGATE_WIDGET_KEY } from "../src/widget.ts";
-import {
-	agentDir,
-	agentFile,
-	cleanup,
-	keyScript,
-	resetRoot,
-	root,
-	session,
-	sessionDir,
-	writeAgent,
-} from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
 type Session = ReturnType<typeof session>;
 const active: Session[] = [];
@@ -68,11 +58,6 @@ test("compact viewport scrolls, Enter switches directly, Escape returns prompt i
 		assert.match(frame(s), /▸ .*worker-child1/);
 		assert.equal(s.terminalKey("escape"), true);
 		assert.doesNotMatch(frame(s), /▸|enter details/);
-		const overall = keyScript(["enter", "escape", "escape"], 150);
-		s.queueCustom(overall);
-		await s.command("delegates");
-		assert.match(overall.frames[0], /^Delegates/);
-		assert.match(overall.frames[1], /Delegate: worker-child0/);
 		assert.equal(s.tmux.switches.length, 1);
 		await s.shutdown();
 		assert.equal(s.terminalListeners(), 0);
@@ -169,7 +154,7 @@ test("stable row through completion reorder, selected disappearance and cap-zero
 	assert.equal(frame(s), "");
 	assert.equal(s.terminalKey("down"), false);
 });
-test("dashboard resume uses existing eligibility/task flow, not renderer authority", async () => {
+test("resume command uses existing eligibility and task flow", async () => {
 	const s = session({ mode: "tui", ui: { editor: ["continue locally"] } });
 	active.push(s);
 	const child = await launch(s, "resume");
@@ -179,14 +164,12 @@ test("dashboard resume uses existing eligibility/task flow, not renderer authori
 		join(sessionDir, `saved_${child.id}.jsonl`),
 		`${JSON.stringify({ type: "session", id: child.id, cwd: root })}\n`,
 	);
-	s.queueCustom(keyScript(["r"]));
-	s.queueCustom(keyScript(["escape"]));
-	await s.command("delegates");
+	await s.command("delegate-resume", `${child.id} continue locally`);
 	assert.equal(s.tmux.opened.length, 2);
 	const latest = s.entries.filter((e) => e.data.requestId).at(-1)!.data;
 	assert.equal(latest.sessionId, child.id);
 	assert.equal(latest.resumedFrom, child.id);
-	assert.equal(s.editors.at(-1)?.title, "Follow-up for worker-resume");
+	assert.equal(s.sendCalls.at(-1)?.body, "continue locally");
 });
 
 test("pending switch protects the empty prompt until verification finishes", async () => {

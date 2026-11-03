@@ -327,7 +327,7 @@ Fresh sessions neither adopt nor report earlier trees. Each session sees only
 its own tree; to collect the delegates of a session you closed, reopen that
 exact session, which restores its full tree.
 
-Both `delegation_status` and `/delegates` show descendants: a root sees its tree;
+Both `delegation_status` and the compact widget show descendants: a root sees its tree;
 a coordinator sees only its own subtree, not siblings or unrelated roots.
 Hierarchy uses stable Pi session ids, not the new delegation id of a resume.
 Parent/root/depth, launch/result/session paths, workspaces, current verified
@@ -461,19 +461,13 @@ dropped first, then file age, before identity/state are compressed. At very
 narrow widths the state glyph remains beside the truncated identity.
 `file … ago` is only a last-active hint from transcript mtime, not live tool
 activity. When available, a second line shows factual live activity (below).
-Each coordinator row summarizes **all descendant tasks**, at every depth,
-including tasks whose windows have exited. Counts are per delegation/launch id,
-not per stable session: a failed task and its resumed successor both count, so
-a retry cannot erase a known failure. Actual replies supply done/failed/stopped;
-saved gone/closed-without-result tasks count as missing. Shared registry
-finished/closed/closing flags are not successful replies or proof another
-parent processed an outcome. Missing parent facts or tree coverage are labeled
-unknown/partial/unavailable, never all done. Summary and activity share one
-secondary line; when both do not fit, the task summary wins.
+A collapsed delegate with open descendants shows **+N** at the end of its row.
+This counts open stable sessions, not historical attempts or results.
 
 Delegates also see their ancestors vertically, root to direct parent, with the
 direct parent marked `(parent)` (including `root (parent)`). A connected
-**Delegates** branch contains only the current session's direct children.
+**Delegates** branch starts with the current session's direct children and
+expands to show their open descendants.
 There is no current-session row or empty child heading; leaves show ancestors
 only. Ancestor rows and secondary lines do not consume child-entry slots.
 
@@ -489,8 +483,8 @@ Configure it in the existing `<agent dir>/squire/settings.json`, alongside
 
 - `delegateWidgetPlacement`: `above` (default) or `below` the editor.
 - `delegateWidgetMaxEntries`: nonnegative safe integer, default **3**. Each
-  direct child consumes one slot. `+N more direct delegates` counts hidden
-  eligible direct children, not descendants. **0** hides child rows and restores
+  visible delegate consumes one slot, at any expanded depth. `+N more delegates`
+  counts eligible rows beyond the viewport. **0** hides child rows and restores
   Squire's running-count footer while preserving ancestor rows/navigation;
   zero children never produce an empty heading.
 - These preferences apply equally to roots and coordinators. Interactive views
@@ -498,8 +492,8 @@ Configure it in the existing `<agent dir>/squire/settings.json`, alongside
   distinct error and use the defaults without changing task state.
 
 Launch/result/close changes refresh promptly; an independent one-second observer
-keeps finished-open rows, window eligibility and later native title changes
-fresh even when the result poll has stopped. Only visible rows resolve titles and
+keeps finished-open rows, descendant membership, window eligibility, and later
+native title changes fresh even when the result poll has stopped. Only visible rows resolve titles and
 file metadata and live activity; overflow counts still include every eligible child. Closed/gone-only
 history without a live reattached session does not keep the observer listing
 windows. A positively reopened gone coordinator may appear at its current window
@@ -556,27 +550,29 @@ line or tool-use counter.
 
 At an **empty built-in prompt**, press **Down** to select the direct parent in a
 delegate session, or the first child at root. Up/Down traverse ancestors and
-eligible children in display order; only children scroll within the configured cap;
-hidden-above/below counts refer to direct children. Selection follows stable
-session identity through renames, reordering and resumes. Enter opens that
-child's details in the **same dashboard** as /delegates, scoped to that child's
-branch (including descendant and resume history, not its siblings). Press **b**
-for the branch list to select and inspect its workers. Initial details Escape
-returns directly to the compact list; details opened from the branch list return
-to that branch list first. Branch-list Escape returns to the compact list, then
-Escape again returns to the prompt; Up past the first compact row also leaves
-the list. A short hint appears only while the list owns these keys.
-Typing or any unrelated key leaves list navigation and passes that key through.
-While a widget-opened dashboard is loading or re-listing between actions, keys
-are absorbed only if the exact empty built-in prompt still owns focus: Escape
-cannot abort a run and action letters cannot leak into that prompt. Once a
-real dashboard, dialog, completion menu or unknown component owns input, its
-keys pass through normally.
-Cap zero never creates invisible selectable children; ancestors remain selectable
-and /delegates still works.
+open delegates in display order. Only delegate rows scroll within the configured
+cap. Selection follows stable session identity through renames, reordering and
+resumes. Enter switches directly to the selected delegate's verified tmux window.
+Press **x** to close its recorded subtree. Every close asks for confirmation,
+including finished delegates. Ancestors cannot be closed.
+
+Right expands a delegate with children. Right again selects its first child.
+Left collapses an expanded delegate; on a collapsed child with children, Left
+selects its parent. Ancestors and childless rows ignore Left and Right.
+Collapsed delegates show **+N** open descendants at the end of their row.
+Esc, typing, or Up past the first row returns focus to the prompt and collapses
+every branch. Typing passes the key through to the prompt.
+
+A dim **↓ to manage delegates** hint appears when the widget is not focused.
+Focused hints show the selected row's valid actions, including expand or
+collapse when applicable. Cap zero never creates invisible selectable
+delegates; ancestors remain selectable.
+
+Pending actions absorb keys only while the exact empty built-in prompt still
+owns focus. Dialogs, completion menus, and unknown components keep their keys.
 
 Enter on an ancestor switches directly to its verified **current live tmux
-window**, not to the dashboard or a historical launch window. Root and leaf
+window**, not to a historical launch window. Root and leaf
 processes publish their own positive pane/window observation in the same
 disposable generation snapshot used for activity. The reader checks the elected
 exact-session owner, process incarnation, tmux server socket/PID/start identity,
@@ -602,54 +598,25 @@ It relies on **Pi TUI internals**, isolated in a small compatibility adapter:
 the concrete focus getter and exact built-in editor identity. Compatibility was
 tested with the installed **Pi 1.4.0 bundled CLI**, including regular/fullscreen
 mode changes. Unknown focus/editor/completion capabilities disable key capture
-rather than guessing; /delegates remains available. This is not a generic
+rather than guessing; `/delegate-open` remains available. This is not a generic
 custom-editor integration or a supported Pi focus hook. JSON/RPC hosts retain
 the running-count status rather than receiving a terminal widget.
 
 ## Reaching delegates
 
-Delegate windows sit out of your way, so reach them from the parent. `/delegates`
-(or `alt+shift+d`) opens the same dashboard used by widget Enter, at the overall
-view of its descendant hierarchy, including
-closed/history rows. Parents precede their children; resume history stays
-visible. Each row shows stable launch identity, the available current native Pi
-title, agent display label, semantic state/outcome and verified window availability.
-Enter opens selected details with identities, paths, result envelope, workspace
-and resume information. Historical launch windows are labeled separately from
-current verified windows. Lists and details scroll within the available screen.
-Widget entry uses the same screen for only its selected branch; `b` exposes that
-branch's list without widening its scope. A title change never changes routing.
-Metadata is refreshed when opening/reopening the screen after an action; the
-compact overview remains the live activity/summary view.
-Only a verified live window supports switch/peek; the model has no
-tool that moves the terminal. Any ancestor can explicitly close a selected
-subtree. The root also has a confirmed close-all action; shared companion names
-never grant control over another root.
-
-| Key | Does |
-|---|---|
-| `↑` / `↓` | select a delegation in the list; scroll in details |
-| `enter` | open selected details; from details, switch your tmux client to its verified window |
-| `esc` | details → overall list → prompt; initial widget details → compact list; branch-list details → branch list → compact list |
-| `b` | widget entry only: show the selected branch list, preserving its target and history |
-| `p` | peek: a snapshot of the window's pane (`capture-pane`) in an overlay; `r` refreshes, `enter` switches, `esc` returns to the list |
-| `x` | explicitly close the selected subtree as `delegation_close` does; confirms running work and verified live navigation rows |
-| `a` | root only: confirm closing **all root** descendant subtrees, including absent coordinators, even when viewing one branch |
-| `r` | resume the selected eligible direct child, collecting a follow-up through the existing resume flow; descendants without authority are refused |
-| `n` | new child of the invoking session, not of the selected remote row: the same form `/delegate` opens with no arguments (see [First use](#first-use)) |
+Use the compact widget to switch to a delegate or close its subtree.
+Use `/delegate-open <id> [--switch|--peek]` to reach one delegate by id.
+With no flag or with `--switch`, it switches your tmux client to that delegate's
+verified window. `--peek` opens a pane snapshot in an overlay, where `r`
+refreshes, Enter switches, and Esc returns to the prompt. Ids complete from the
+open delegations. The model has no tool that moves your terminal.
 
 Switch acts on the most recently active tmux client attached to the parent's
 session. With none attached it refuses with a notice; peek and close still
-work. No tmux key bindings or options are added.
+work. No tmux key bindings or options are added. To return, use your own tmux
+last-session key, which defaults to `prefix L`. The switch notice reminds you.
 
-To come back, use your own tmux last-session key (tmux's default is `prefix L`,
-often rebound); the notice after a switch says so.
-
-`/delegate-open <id> [--switch|--peek]` does one of these on one delegation
-without the panel: with no flag or with `--switch`, it switches; `--peek` opens
-the peek overlay. Ids complete from the open delegations.
-
-Dashboard switch/peek and `/delegate-open` share current-locator verification.
+The compact widget and `/delegate-open` share current-locator verification.
 For the latest known launch of a stable session, a positively observed current
 runtime supersedes its old launch window; a later lost/changed locator refuses
 rather than falling back to an old still-open window. Exact Pi pane liveness
@@ -933,7 +900,7 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | Field | Meaning |
 | --- | --- |
 | `description` | Shown in the roster and the `delegate` tool's description. Defaults to the name. |
-| `display_name` | Shown instead of the name on the delegate card, in `/delegates` and in the window title (`<display_name>-<label>`). The agent is still called by its name. It may hold only ASCII letters, digits, `-` and `_`; any other value (a space, `#`, `.`, a non-ASCII letter, or an empty value) makes the file invalid, so the agent is disabled. |
+| `display_name` | Shown instead of the name on the delegate card, in the compact widget and in the window title (`<display_name>-<label>`). The agent is still called by its name. It may hold only ASCII letters, digits, `-` and `_`; any other value (a space, `#`, `.`, a non-ASCII letter, or an empty value) makes the file invalid, so the agent is disabled. |
 | `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model. |
 | `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
 | `tools` | The delegate's tools (see below): tool names and `$bundle` entries for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
@@ -1250,12 +1217,11 @@ even when no delegation is recorded. The details gain a `marks` array of
 
 ## Explicit subtree close
 
-`delegation_close` and the `/delegates` close actions enumerate persistent
+`delegation_close` and the compact widget close action enumerate persistent
 records and close the selected session and all its descendants, including work
 whose coordinator is offline. Any ancestor may close; unrelated trees, siblings
-outside the selected subtree and user windows remain untouched. Only the root
-has the panel's `a` close-all action. Close-all fences new root admissions too;
-neither action kills a companion tmux session wholesale.
+outside the selected subtree and user windows remain untouched. Neither action
+kills a companion tmux session wholesale.
 
 Admission is fenced under the shared tree lock **before** window effects.
 Already-reserved pre-dispatch launches cannot dispatch; an already-dispatched
@@ -2009,8 +1975,7 @@ Other extensions may rely on:
 - the `/delegate` and `/delegate-resume` syntax and flags, and their
   no-argument forms: `/delegate` opens the new-delegate form and
   `/delegate-resume` the resume picker;
-- the `/delegates` command and its `alt+shift+d` shortcut, and `/delegate-open <id>` with its
-  `--switch` and `--peek` flags;
+- `/delegate-open <id>` with its `--switch` and `--peek` flags;
 - the `[delegate]` result text and the closed-without-a-result text;
 - the agent file's frontmatter keys and its locations,
   `<agent dir>/agents/<name>.md` and, in a trusted project,

@@ -1,33 +1,22 @@
-// The delegate navigator: the `/delegates` panel and `/delegate-open`. It lists
-// the descendant hierarchy, retains history and reaches a verified open window: a switch of
-// the user's tmux client to its window, a peek at the pane, or a close. Everything here is a command or a key; the model gets no tool that
-// moves the user's terminal.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { Dashboard, type DashboardIntent, type DashboardPosition } from "./dashboard.ts";
-import { readIdentity } from "./identity.ts";
-import { branchItems, dashboardRows, NavigatorView, type OpenDelegate } from "./navigator-view.ts";
-
-import { type Results, sessionIdOf } from "./results.ts";
+import { NavigatorView, type OpenDelegate } from "./navigator-view.ts";
+import { isStarted, type Results, recordedName } from "./results.ts";
 import type { TmuxClient } from "./tmux.ts";
 import type { Tracking } from "./tracking.ts";
-import { descendants, readTree } from "./tree-registry.ts";
 
-/** What `/delegate-open` does; dashboard Enter opens details before switching. */
+/** What `/delegate-open` does with a verified window. */
 export type OpenMode = "switch" | "peek";
 
 export const OPEN_USAGE = "/delegate-open <id> [--switch|--peek]";
 const OPEN_FLAGS = ["--switch", "--peek"] as const;
-
-/** What the panel hands back: the action the user chose on one delegation, or none. */
-type PanelResult = DashboardIntent;
 
 /** What the peek hands back: switch to the delegate, or nothing. */
 type PeekResult = { action: "switch" } | undefined;
 
 const PEEK_HINT = "r refresh · enter switch · esc back";
 
-/** Where a peek shows: over the panel or the editor, not in its place. */
+/** A peek overlays the editor without replacing it. */
 const PEEK_OPTIONS = { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } } as const;
 
 type PanelTheme = { fg(color: string, text: string): string; bold(text: string): string };
@@ -105,8 +94,6 @@ class PeekView implements Component {
 
 /** What `src/index.ts` needs from the navigator. */
 export type Navigator = {
-	/** The panel, looping back after a close. */
-	panel(ctx: ExtensionContext, targetSessionId?: string): Promise<void>;
 	/** One action on one open delegation, for `/delegate-open`. */
 	openDelegate(ctx: ExtensionContext, id: string, mode: OpenMode): Promise<void>;
 	closeDelegate(ctx: ExtensionContext, id: string): Promise<void>;
@@ -139,19 +126,18 @@ export function openCompletions(prefix: string, ids: readonly string[]): { value
 	return hits.length > 0 ? hits.map((value) => ({ value: head + value, label: value })) : null;
 }
 
-/** Context-bearing action seam; presentation never owns close/resume scope or result wording. */
+/** Context-bearing action seam; presentation never owns close scope or result wording. */
 export type NavigatorActions = {
 	assertActive(): void;
 	close(
 		id: string,
 		ctx: ExtensionContext,
 	): Promise<{ text: string; isError?: boolean; details?: { complete: boolean } }>;
-	resume(id: string, ctx: ExtensionContext): Promise<void>;
 };
 type Env = {
 	results: Results;
 	tmux: TmuxClient;
-	tracking: Pick<Tracking, "close" | "closeAll">;
+	tracking: Pick<Tracking, "close">;
 	actions: Partial<NavigatorActions>;
 	view: NavigatorView;
 };
@@ -213,32 +199,20 @@ async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Pr
 	);
 }
 
-function runningDescendants(item: OpenDelegate): boolean {
-	if (!item.record.identity) return false;
-	try {
-		return descendants(readTree(item.record.identity.root), sessionIdOf(item.record)).some(
-			(entry) => !entry.closed && !entry.finished && entry.phase !== "not-started",
-		);
-	} catch {
-		return true; // Unavailable descendant state is not proof that closing is harmless.
-	}
-}
-
-/** Close through the shared control path, confirming running/unknown descendant work. */
-async function close(env: Env, ctx: ExtensionContext, item: OpenDelegate, alwaysConfirm = false): Promise<void> {
+async function close(env: Env, ctx: ExtensionContext, id: string): Promise<void> {
+	env.actions.assertActive?.();
+	const record = env.results.find(id);
+	if (!record || !isStarted(record))
+		return ctx.ui.notify("delegate: selected delegate is no longer available", "warning");
+	const name = recordedName(record);
+	const running = record.result || record.closed || record.gone ? "" : `${name} is still running. `;
 	if (
-		alwaysConfirm ||
-		item.state === "running" ||
-		(item.navigable && item.live !== undefined) ||
-		runningDescendants(item)
-	) {
-		const running: string = item.state === "running" ? `${item.name} is still running. ` : "";
-		const message = `${running}Close ${item.name} and its delegates? Worktrees and branches stay.`;
-		if (!(await ctx.ui.confirm("Close delegate", message))) return;
-	}
+		!(await ctx.ui.confirm("Close delegate", `${running}Close ${name} and its delegates? Worktrees and branches stay.`))
+	)
+		return;
 	try {
 		env.actions.assertActive?.();
-		const result = await (env.actions.close?.(item.id, ctx) ?? env.tracking.close(item.id, ctx));
+		const result = await (env.actions.close?.(id, ctx) ?? env.tracking.close(id, ctx));
 		env.actions.assertActive?.();
 		ctx.ui.notify(
 			`delegate: ${result.text}`,
@@ -247,30 +221,6 @@ async function close(env: Env, ctx: ExtensionContext, item: OpenDelegate, always
 	} catch (err) {
 		ctx.ui.notify(`delegate: ${(err as Error).message}`, "error");
 	}
-}
-
-/** Both entry points use this exact dashboard, differing only in initial focus/back destination. */
-function show(
-	ctx: ExtensionContext,
-	items: readonly OpenDelegate[],
-	position: DashboardPosition,
-	branch: string | undefined,
-): Promise<PanelResult> {
-	return ctx.ui.custom<PanelResult>(
-		(tui, theme, _keybindings, done) =>
-			new Dashboard({
-				items: dashboardRows(items),
-				root: readIdentity(ctx.sessionManager.getSessionId()) === undefined,
-				position,
-				detailBack: branch === undefined ? "list" : "exit",
-				branch,
-				theme,
-				done,
-				redraw: () => tui.requestRender(),
-				rows: () => tui.terminal.rows,
-			}),
-		{ blocked: { kind: "question", message: "Choose a delegate action" } },
-	);
 }
 
 /** Peek at a delegate's pane in an overlay; true when the user chose to switch to it. */
@@ -296,66 +246,6 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 const noUi = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: this needs an interactive session", "error");
 const noTmux = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: could not ask tmux for its windows", "error");
 
-async function closeAll(env: Env, ctx: ExtensionContext): Promise<void> {
-	if (
-		!(await ctx.ui.confirm(
-			"Close all delegate subtrees",
-			"Close every recorded descendant of this root? Worktrees and branches are retained.",
-		))
-	)
-		return;
-	try {
-		env.actions.assertActive?.();
-		const closed = await env.tracking.closeAll(ctx);
-		env.actions.assertActive?.();
-		ctx.ui.notify(`delegate: ${closed.text}`, closed.details.complete ? "info" : "error");
-	} catch (error) {
-		ctx.ui.notify(`delegate: ${String(error)}`, "error");
-	}
-}
-
-/** Carry out what the panel returned; true when the panel should open again. */
-async function act(
-	env: Env,
-	startNew: (ctx: ExtensionContext) => Promise<void> | void,
-	ctx: ExtensionContext,
-	items: OpenDelegate[],
-	result: PanelResult,
-): Promise<boolean> {
-	if (result === undefined) return false;
-	env.actions.assertActive?.();
-	if (result.action === "new") {
-		await startNew(ctx);
-		return false;
-	}
-	if (result.action === "close-all") {
-		await closeAll(env, ctx);
-		return true;
-	}
-	const item = items.find((candidate) => candidate.id === result.id);
-	if (item === undefined) return false;
-	if (result.action === "resume") {
-		if (env.actions.resume) await env.actions.resume(item.id, ctx);
-		else ctx.ui.notify("delegate: resume is unavailable in this dashboard", "warning");
-		return true;
-	}
-	if (result.action === "close") {
-		await close(env, ctx, item);
-		return true;
-	}
-	if (result.action === "peek") {
-		if (!item.navigable) {
-			ctx.ui.notify("delegate: no verified open window to peek", "warning");
-			return true;
-		}
-		if (!(await peek(env, ctx, item))) return true; // back to the panel
-		await switchTo(env, ctx, item);
-		return false;
-	}
-	await switchTo(env, ctx, item);
-	return false;
-}
-
 /** One action on one open delegate, as `/delegate-open` runs it. */
 async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMode): Promise<void> {
 	const items = await env.view.items();
@@ -376,46 +266,20 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 	if (await peek(env, ctx, item)) await switchTo(env, ctx, item);
 }
 
-function focusTarget(items: OpenDelegate[], target: string | undefined, position: DashboardPosition): boolean {
-	if (target === undefined) return true;
-	position.id = items.filter((item) => sessionIdOf(item.record) === target).at(-1)?.id;
-	return position.id !== undefined;
-}
-
-/** The navigator over the records, tmux and tracking. `startNew` is wired by the entry. */
+/** The command and compact-widget actions over the same verified navigation view. */
 export function createNavigator(
 	results: Results,
 	tmux: TmuxClient,
-	tracking: Pick<Tracking, "close" | "closeAll">,
-	startNew: (ctx: ExtensionContext) => Promise<void> | void,
+	tracking: Pick<Tracking, "close">,
 	actions: Partial<NavigatorActions> = {},
 ): Navigator {
 	const env: Env = { results, tmux, tracking, actions, view: new NavigatorView(results, tmux) };
 	return {
-		async panel(ctx: ExtensionContext, targetSessionId?: string): Promise<void> {
-			if (ctx.mode !== "tui") return noUi(ctx);
-			const position: DashboardPosition = { detail: targetSessionId !== undefined, offset: 0 };
-			let initial = true;
-			for (;;) {
-				actions.assertActive?.();
-				const items = branchItems((await env.view.items(true)) ?? [], targetSessionId);
-				actions.assertActive?.();
-				if (initial && !focusTarget(items, targetSessionId, position))
-					return ctx.ui.notify("delegate: selected delegate is no longer available", "warning");
-				initial = false;
-				const result: PanelResult = await show(ctx, items, position, targetSessionId);
-				if (!(await act(env, startNew, ctx, items, result))) return;
-			}
-		},
 		openDelegate: (ctx: ExtensionContext, id: string, mode: OpenMode): Promise<void> => openOne(env, ctx, id, mode),
-		async closeDelegate(ctx: ExtensionContext, id: string): Promise<void> {
-			const item = (await env.view.items(true))?.find((candidate) => candidate.id === id);
-			actions.assertActive?.();
-			if (!item) return ctx.ui.notify("delegate: selected delegate is no longer available", "warning");
-			await close(env, ctx, item, true);
-		},
+		closeDelegate: (ctx: ExtensionContext, id: string): Promise<void> => close(env, ctx, id),
 		async openIds(): Promise<string[]> {
-			return (await env.view.items())?.map((item) => item.id) ?? [];
+			actions.assertActive?.();
+			return ((await env.view.items()) ?? []).map((item) => item.id);
 		},
 	};
 }

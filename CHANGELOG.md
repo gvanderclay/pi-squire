@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `delegation_close` records the close without posting a cancellation message or
+  waking the model. UI closes still wake the model. The tool close regression in
+  `test/tools.test.ts` now expects silence, and the stopped-root cancellation test
+  in `test/subtree-close.test.ts` uses the UI close path to retain its wake check.
+
 ## [0.20.1] - 2026-11-02
 
 ### Changed

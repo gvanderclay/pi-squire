@@ -165,10 +165,13 @@ test("cancellation arriving after the last request forces another coordinator pr
 	assert.equal(finals(owner).length, 1);
 });
 
-test("fresh live cancellation wakes a stopped root, but stopped prior outcomes stay held on reopen", async () => {
-	const { owner, c, tmux } = await tree();
+test("UI cancellation wakes a stopped root, but stopped prior outcomes stay held on reopen", async () => {
+	const { owner, c, tmux } = await tree({ ui: { confirm: [true] } });
 	await owner.run("aborted");
-	await close(owner, c.id);
+	owner.queueCustom(keyScript(["x"]));
+	owner.queueCustom(keyScript(["escape"]));
+	await owner.command("delegates");
+	assert.equal(record(owner, c.id).closed, true);
 	const notice = owner.sent.find(({ message }) => String(message.content).includes("canceled by explicit close"));
 	assert.equal((notice?.options as { triggerTurn?: boolean } | undefined)?.triggerTurn, true);
 	await owner.run("aborted");

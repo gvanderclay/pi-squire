@@ -42,6 +42,7 @@ function fixture() {
 			closed.push(key);
 			await pending;
 		},
+		horizontal: () => {},
 		error: (error) => {
 			errors.push(error);
 		},

@@ -24,13 +24,13 @@ test("focused viewport exposes hidden above/below counts and only focused hints"
 	const focused = renderDelegateWidget(rows, 3, 100, theme, 0, { offset: 2, focused: true, selectedKey: "4" }).join(
 		"\n",
 	);
-	assert.match(focused, /↑ 2 more direct delegates/);
-	assert.match(focused, /\+3 more direct delegates/);
+	assert.match(focused, /↑ 2 more delegates/);
+	assert.match(focused, /\+3 more delegates/);
 	assert.match(focused, /▸ ├─ ◌ worker-4/);
 	assert.doesNotMatch(focused, /worker-0|worker-1|worker-5/);
 	assert.match(focused, /enter open/);
-	assert.match(focused, /^ {2}Delegates\n {2}├─ ↑ 2 more direct delegates\n/);
-	assert.match(focused, /\n {2}└─ \+3 more direct delegates\n/);
+	assert.match(focused, /^ {2}Delegates\n {2}├─ ↑ 2 more delegates\n/);
+	assert.match(focused, /\n {2}└─ \+3 more delegates\n/);
 });
 test("selection gutter and overflow remain width-safe on tiny/wide terminals", () => {
 	for (let width = 1; width <= 120; width++) {

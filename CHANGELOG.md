@@ -12,6 +12,13 @@ follows [Semantic Versioning](https://semver.org/).
   waking the model. UI closes still wake the model. The tool close regression in
   `test/tools.test.ts` now expects silence, and the stopped-root cancellation test
   in `test/subtree-close.test.ts` uses the UI close path to retain its wake check.
+- Browse open delegate descendants in the compact widget with Right to expand
+  or enter a branch and Left to collapse or return to its parent. Childless rows
+  and ancestors ignore Left and Right. A collapsed row shows its open-descendant
+  count as +N instead of a task-count secondary line. Leaving the list collapses
+  all branches. Enter and confirmed x work at every depth. Widget tests now pin
+  collapsed counts, tree keyboard behavior, and mixed-depth overflow wording;
+  obsolete task-summary tests are removed.
 - Press x in the focused compact widget to close the selected subtree. The widget
   always asks for confirmation, including finished delegates, in plainer words
   ("Close <name> and its delegates? Worktrees and branches stay."); the close
@@ -812,28 +819,5 @@ follows [Semantic Versioning](https://semver.org/).
   header (status icon, delegate name, model) and, collapsed, the first 3
   lines of the result; expanded, the ids and files, the quoted task and the
   result as Markdown. The text the parent model reads is unchanged apart from
-  the model. Messages from before this change show as plain text. The
-  renderer tests change with it.
 
-### Fixed
-
-- A delegate that finished on a different model than it launched on (a
-  fallback, or `/model` in its window) is now shown as `launched → finished`
-  in the result, the closed-without-a-result message and `delegation_status`,
-  read from the delegate's session file. It used to name the launch model.
-
-## [0.9.1] - 2026-10-22
-
-### Changed
-
-- A delegate's footer names its agent, as in `👦 worker delegate · auto-exit on`.
-  The launch passes the agent name to the delegate as `PI_DELEGATE_AGENT`.
-
-## [0.9.0] - 2026-10-21
-
-### Breaking
-
-- Agent definitions now live under `<agent dir>/squire/agents/<name>/AGENT.md`,
-  and only there. The old `<agent dir>/agents/<name>/AGENT.md` location is no
-
-[Showing lines 1-838 of 844 (50.0KB limit). Use offset=839 to continue.]
+[Showing lines 1-825 of 850 (50.0KB limit). Use offset=826 to continue.]

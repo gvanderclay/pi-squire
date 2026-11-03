@@ -30,6 +30,7 @@ type FocusOptions = {
 	changed(): void;
 	open(key: string): Promise<void>;
 	close(key: string): Promise<void>;
+	horizontal(direction: -1 | 1): void;
 	error(error: unknown): void;
 };
 
@@ -99,17 +100,25 @@ export class WidgetFocus {
 		const selection: WidgetSelection = this.options.selection;
 		if (!selection.active) {
 			if (!matchesKey(data, "down") || !selection.enter()) return;
-		} else if (matchesKey(data, "down")) selection.move(1);
-		else if (matchesKey(data, "up")) selection.move(-1);
-		else if (matchesKey(data, "escape")) selection.leave();
-		else if (matchesKey(data, "enter")) this.action("open");
-		else if (matchesKey(data, "x")) this.action("close");
-		else {
+		} else if (!this.navigate(data)) {
 			this.leave();
 			return;
 		}
 		this.options.changed();
 		return { consume: true };
+	}
+
+	private navigate(data: string): boolean {
+		const selection = this.options.selection;
+		if (matchesKey(data, "down")) selection.move(1);
+		else if (matchesKey(data, "up")) selection.move(-1);
+		else if (matchesKey(data, "escape")) selection.leave();
+		else if (matchesKey(data, "left")) this.options.horizontal(-1);
+		else if (matchesKey(data, "right")) this.options.horizontal(1);
+		else if (matchesKey(data, "enter")) this.action("open");
+		else if (matchesKey(data, "x")) this.action("close");
+		else return false;
+		return true;
 	}
 
 	private pendingInput(): { consume: true } | undefined {

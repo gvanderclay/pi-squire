@@ -1,17 +1,16 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Results } from "./results.ts";
-import type { TmuxClient, TmuxWindow } from "./tmux.ts";
-import { type VisibleFacts, visibleRecordFacts } from "./tree-view.ts";
+import { isStarted, type Recorded, type Results, type StartedRecorded } from "./results.ts";
+import type { TmuxClient } from "./tmux.ts";
+import { visibleRecordFacts } from "./tree-view.ts";
 import { joinActivities } from "./widget-activity-join.ts";
 import { type AncestorRow, AncestorView, switchAncestor } from "./widget-ancestors.ts";
 import { currentChildWindows } from "./widget-current.ts";
-import { type DelegateRow, DirectDelegateView, type MetadataViewport } from "./widget-data.ts";
+import { type DelegateRow, DirectDelegateView, delegateTree } from "./widget-data.ts";
 import { WidgetFocus } from "./widget-focus.ts";
 import { LiveActivityReader } from "./widget-live.ts";
 import { renderDelegateWidget } from "./widget-render.ts";
 import { WidgetSelection } from "./widget-selection.ts";
 import { DEFAULT_WIDGET_SETTINGS, type WidgetSettings, widgetSettings } from "./widget-settings.ts";
-import { taskSummary } from "./widget-summary.ts";
 import { titlePublisher } from "./widget-title.ts";
 import { listWindows } from "./windows.ts";
 
@@ -43,6 +42,7 @@ class Overview {
 	private factsRevision = 0;
 	private layoutRevision = 0;
 	private rows: DelegateRow[] = [];
+	private allRows: DelegateRow[] = [];
 	private configuration: WidgetSettings = { ...DEFAULT_WIDGET_SETTINGS };
 
 	constructor(
@@ -75,6 +75,17 @@ class Overview {
 				const row = this.rows.find((row) => row.key === key);
 				if (!row) throw new Error("delegate is no longer visible");
 				await close(ctx, row.launchId);
+			},
+			horizontal: (direction: -1 | 1): void => {
+				const row = this.rows.find((candidate) => candidate.key === this.selection.selectedKey);
+				if (!row?.descendantCount) return;
+				if (direction === 1) {
+					if (this.selection.expanded.has(row.key)) {
+						const child = this.rows.find((candidate) => candidate.parentKey === row.key);
+						if (child) this.selection.select(child.key);
+					} else this.selection.expanded.add(row.key);
+				} else if (this.selection.expanded.has(row.key)) this.selection.expanded.delete(row.key);
+				else if (row.parentKey) this.selection.select(row.parentKey);
 			},
 			error: (error: unknown): void =>
 				ctx.ui.notify(`delegate: ${error instanceof Error ? error.message : String(error)}`, "error"),
@@ -112,7 +123,9 @@ class Overview {
 	private changed(): void {
 		if (this.stopped) return;
 		this.layoutRevision++;
-		this.show(this.rows, this.configuration);
+		const rows = this.treeRows(this.allRows);
+		this.updateSelection(rows, this.configuration);
+		this.show(rows, this.configuration);
 		this.queue();
 	}
 
@@ -158,16 +171,16 @@ class Overview {
 		}
 	}
 
-	private summarize(rows: DelegateRow[], viewport: MetadataViewport, windows: TmuxWindow[] | undefined): void {
-		const visible: DelegateRow[] = rows.slice(viewport.offset, viewport.offset + viewport.limit);
-		if (!visible.length) return;
-		try {
-			const facts: VisibleFacts = visibleRecordFacts(this.results, this.ctx, 20, false);
-			for (const row of visible) row.summary = taskSummary(facts, row.sessionId, windows);
-		} catch {
-			// Optional descendant facts must not freeze fresh ancestors or direct-child state.
-			for (const row of visible) row.summary = "tasks: coverage unavailable";
-		}
+	private treeRows(rows: DelegateRow[]): DelegateRow[] {
+		return delegateTree(rows, this.ctx.sessionManager.getSessionId(), this.selection.expanded);
+	}
+
+	private updateSelection(rows: DelegateRow[], settings: WidgetSettings): void {
+		this.selection.update(
+			rows.map((row) => row.key),
+			settings.maxEntries,
+			this.ancestors.map((row) => row.key),
+		);
 	}
 
 	private async refresh(): Promise<void> {
@@ -176,33 +189,41 @@ class Overview {
 		try {
 			const settings: WidgetSettings = this.settings();
 			this.configureCount(settings.maxEntries === 0);
-			const windows =
-				settings.maxEntries > 0 && this.view.needsWindows(this.results) ? await listWindows(this.tmux) : [];
+			let observed: Results = this.results;
+			if (settings.maxEntries > 0) {
+				try {
+					const records = visibleRecordFacts(this.results, this.ctx, 20, false).records;
+					observed = {
+						...this.results,
+						list: (): Recorded[] => records,
+						running: (): StartedRecorded[] =>
+							records
+								.filter(isStarted)
+								.filter((record) => !record.closed && !record.result && !record.gone && !record.accountingOnly),
+					};
+				} catch {}
+			}
+			const windows = settings.maxEntries > 0 && this.view.needsWindows(observed) ? await listWindows(this.tmux) : [];
 			if (this.stopped || revision !== this.factsRevision) return;
 			const sessionDir: string = this.ctx.sessionManager.getSessionDir();
-			const current = await currentChildWindows(this.results, this.tmux, windows, this.live);
+			const current = await currentChildWindows(observed, this.tmux, windows, this.live);
 			await this.readAncestors();
 			if (this.stopped || revision !== this.factsRevision) return;
-			const eligible: DelegateRow[] = this.view.read(
-				this.results,
-				windows,
-				sessionDir,
-				{ offset: 0, limit: 0 },
-				current,
-			);
-			this.selection.update(
-				eligible.map((row) => row.key),
-				settings.maxEntries,
-				this.ancestors.map((row) => row.key),
-			);
+			const eligible: DelegateRow[] = this.view.read(observed, windows, sessionDir, { offset: 0, limit: 0 }, current);
+			const projected = this.treeRows(eligible);
+			this.updateSelection(projected, settings);
 			const viewport = { offset: this.selection.offset, limit: settings.maxEntries };
 			const layout: number = this.layoutRevision;
-			const rows: DelegateRow[] = this.view.read(this.results, windows, sessionDir, viewport, current);
-			this.summarize(rows, viewport, windows);
-			await joinActivities(rows, viewport, this.results);
+			const visibleKeys = new Set(
+				projected.slice(viewport.offset, viewport.offset + viewport.limit).map((row) => row.key),
+			);
+			const allRows = this.view.read(observed, windows, sessionDir, viewport, current, visibleKeys);
+			const rows = this.treeRows(allRows);
+			await joinActivities(rows, viewport, observed);
 			// Only Results notifications change factsRevision; timer ticks must not
 			// starve a read, and selection changes must discard/requeue its old viewport.
 			if (this.stopped || revision !== this.factsRevision || layout !== this.layoutRevision) return;
+			this.allRows = allRows;
 			this.show(rows, settings);
 		} catch {
 			// Optional metadata/UI failures cannot interrupt launch, poll or result processing.

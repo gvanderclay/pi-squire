@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
@@ -40,33 +40,26 @@ async function live(id: string, launch: string, text: string | null): Promise<vo
 	}, `live projection did not become ${text}`);
 }
 async function tool(s: Session, id = "call", name = "read"): Promise<void> {
-	await s.fire("tool_execution_start", { toolCallId: id, toolName: name, args: { SECRET_ARGUMENT: "not persisted" } });
+	await s.fire("tool_execution_start", {
+		toolCallId: id,
+		toolName: name,
+		args: { path: "src/index.ts", SECRET_ARGUMENT: "not persisted" },
+	});
 }
-test("all modes register factual collector, reject thinking/results, clear on message/run boundaries and reload", async () => {
+test("all modes register the phase collector, publish targets and clear on run boundaries and reload", async () => {
 	const s = create("runtime", "launch");
 	await s.start();
 	await s.fire("agent_start");
 	await s.fire("message_start", { message: { role: "assistant", content: [] } });
-	await s.fire("message_update", {
-		message: { role: "assistant" },
-		assistantMessageEvent: { type: "thinking_delta", delta: "THINKING_SECRET" },
-	});
-	await s.fire("message_update", {
-		message: { role: "toolResult" },
-		assistantMessageEvent: { type: "text_delta", delta: "RESULT_SECRET" },
-	});
-	await s.fire("message_update", {
-		message: { role: "assistant" },
-		assistantMessageEvent: { type: "text_delta", delta: "literal text" },
-	});
-	await live("runtime", "launch", "literal text");
-	const files = await readdir(liveSessionDir("runtime"));
-	const json = await readFile(join(liveSessionDir("runtime"), files.find((f) => f.endsWith(".json"))!), "utf8");
-	assert.ok(!json.includes("THINKING_SECRET") && !json.includes("RESULT_SECRET"));
+	await live("runtime", "launch", "thinking…");
 	await s.fire("message_end", { message: { role: "assistant" } });
-	await live("runtime", "launch", null);
+	await live("runtime", "launch", "thinking…");
 	await tool(s);
 	await live("runtime", "launch", "reading…");
+	assert.deepEqual(await new LiveActivityReader().read("runtime", "launch"), {
+		text: "reading…",
+		target: "src/index.ts",
+	});
 	await s.fire("message_end", { message: { role: "toolResult", content: [{ type: "text", text: "OUTPUT_SECRET" }] } });
 	await live("runtime", "launch", "reading…");
 	for (const boundary of ["agent_end", "agent_settled", "agent_start"]) {
@@ -78,7 +71,7 @@ test("all modes register factual collector, reject thinking/results, clear on me
 	await s.fire("session_start", { reason: "reload" });
 	await live("runtime", "launch", null);
 	await tool(s, "after-reload", "bash");
-	await live("runtime", "launch", "command call…");
+	await live("runtime", "launch", "running…");
 	assert.equal(s.widgets.size, 0, "non-TUI collector does not require a widget");
 });
 test("locator publishes once per session generation and idle ticks spawn no pane probes", async (t) => {
@@ -236,7 +229,7 @@ test("observer ticks during slow activity reads do not starve rendering, and shu
 	LiveActivityReader.prototype.read = async () => {
 		entered();
 		await gate;
-		return { kind: "tools", text: "reading…" };
+		return { text: "reading…" };
 	};
 	try {
 		const s = create("slow-observer", undefined, { mode: "tui" });
@@ -255,7 +248,7 @@ test("observer ticks during slow activity reads do not starve rendering, and shu
 		LiveActivityReader.prototype.read = async () => {
 			nextRead();
 			await stopped;
-			return { kind: "tools", text: "editing…" };
+			return { text: "editing…" };
 		};
 		await s.delegate("worker another task");
 		await started;
@@ -280,7 +273,7 @@ test("a result during async activity I/O cannot paint a stale running/activity r
 	LiveActivityReader.prototype.read = async () => {
 		entered();
 		await gate;
-		return { kind: "tools", text: "reading…" };
+		return { text: "reading…" };
 	};
 	try {
 		const s = create("result-race", undefined, { mode: "tui" });

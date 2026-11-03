@@ -54,7 +54,7 @@ test("activity is joined only to the selected viewport, with stable selection an
 	const reads: string[] = [];
 	LiveActivityReader.prototype.read = async (id) => {
 		reads.push(id);
-		return { kind: "tools", text: `using ${id}…` };
+		return { text: "reading…", target: `path-${id}` };
 	};
 	try {
 		const s = instance();
@@ -68,7 +68,7 @@ test("activity is joined only to the selected viewport, with stable selection an
 		assert.doesNotMatch(frame(s), /child4/);
 		assert.deepEqual(new Set(reads.slice(-3)), new Set([records[3].id, records[2].id, records[1].id]));
 		assert.match(frame(s), /^ {2}Delegates\n {2}├─ ↑ 1 more delegate\n/);
-		assert.match(frame(s), /\n {2}│ {2}└─ using /);
+		assert.match(frame(s), /\n {2}│ {2}└─ path-/);
 		await launch(s, "newest");
 		await settle();
 		assert.match(frame(s), /▸ .*child1/);
@@ -85,9 +85,9 @@ test("selection changes during awaited activity discard the stale viewport and r
 		if (block) {
 			entered.release();
 			await gate.promise;
-			return { kind: "tools", text: "STALE VIEWPORT" };
+			return { text: "STALE VIEWPORT" };
 		}
-		return { kind: "tools", text: "fresh viewport" };
+		return { text: "fresh viewport" };
 	};
 	try {
 		const s = instance();
@@ -117,7 +117,7 @@ test("terminal result during selected activity read cannot resurrect running sta
 			entered.release();
 			await gate.promise;
 		}
-		return { kind: "tools", text: "stale running call" };
+		return { text: "stale running call" };
 	};
 	try {
 		const s = instance();

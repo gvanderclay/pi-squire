@@ -152,7 +152,7 @@ async function start(): Promise<string> {
 					name: "read",
 					label: "read",
 					description: "local gated probe",
-					parameters: Type.Object({}),
+					parameters: Type.Object({ path: Type.String() }),
 					async execute() {
 						const index = entered++;
 						if (entered === 2) toolsReady.release();
@@ -166,7 +166,10 @@ async function start(): Promise<string> {
 					description: "parallel nested probes",
 					parameters: Type.Object({}),
 					async execute(_id, _args, signal, _update, ctx) {
-						await Promise.all([ctx.executeTool("read", {}, { signal }), ctx.executeTool("read", {}, { signal })]);
+						await Promise.all([
+							ctx.executeTool("read", { path: "first.ts" }, { signal }),
+							ctx.executeTool("read", { path: "second.ts" }, { signal }),
+						]);
 						return { content: [{ type: "text", text: "DRIVER_RESULT_SECRET" }], details: undefined };
 					},
 				});

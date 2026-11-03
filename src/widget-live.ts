@@ -62,9 +62,10 @@ function validActivity(value: unknown): value is Activity | null {
 	if (!value || typeof value !== "object") return false;
 	const activity = value as Partial<Activity>;
 	return (
-		(activity.kind === "tools" || activity.kind === "response") &&
 		typeof activity.text === "string" &&
-		Buffer.byteLength(activity.text) <= 512
+		Buffer.byteLength(activity.text) <= 512 &&
+		(activity.target === undefined ||
+			(typeof activity.target === "string" && Buffer.byteLength(activity.target) <= 512))
 	);
 }
 
@@ -206,7 +207,8 @@ export class LiveActivityReader {
 	private project(value: Snapshot, launchId: string): Activity | undefined {
 		if (value.launchId !== launchId || !value.activity) return;
 		const text: string = activityText(value.activity.text);
-		return text ? { kind: value.activity.kind, text } : undefined;
+		const target = value.activity.target === undefined ? undefined : activityText(value.activity.target);
+		return text ? { text, ...(target ? { target } : {}) } : undefined;
 	}
 }
 
@@ -258,7 +260,12 @@ export class LiveActivityPublisher {
 
 	publish(activity: Activity | undefined, immediate = true): void {
 		if (this.stopped) return;
-		this.activity = activity ? { kind: activity.kind, text: activityText(activity.text) } : null;
+		this.activity = activity
+			? {
+					text: activityText(activity.text),
+					target: activity.target === undefined ? undefined : activityText(activity.target),
+				}
+			: null;
 		this.revision++;
 		this.observedAt = Date.now();
 		this.dirty = true;

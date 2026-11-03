@@ -15,15 +15,12 @@ const rows: DelegateRow[] = Array.from({ length: 8 }, (_, index) => ({
 	running: true,
 	window: "open",
 	model: "provider/model",
-	lastActive: undefined,
 }));
 test("focused viewport exposes hidden above/below counts and only focused hints", () => {
 	const normal = renderDelegateWidget(rows, 3, 100, theme).join("\n");
 	assert.match(normal, /worker-0/);
 	assert.doesNotMatch(normal, /select|details|prompt|▸/);
-	const focused = renderDelegateWidget(rows, 3, 100, theme, 0, { offset: 2, focused: true, selectedKey: "4" }).join(
-		"\n",
-	);
+	const focused = renderDelegateWidget(rows, 3, 100, theme, { offset: 2, focused: true, selectedKey: "4" }).join("\n");
 	assert.match(focused, /↑ 2 more delegates/);
 	assert.match(focused, /\+3 more delegates/);
 	assert.match(focused, /▸ ├─ ◌ worker-4/);
@@ -34,8 +31,8 @@ test("focused viewport exposes hidden above/below counts and only focused hints"
 });
 test("selection gutter and overflow remain width-safe on tiny/wide terminals", () => {
 	for (let width = 1; width <= 120; width++) {
-		const lines = renderDelegateWidget(rows, 1, width, theme, 0, { offset: 7, focused: true, selectedKey: "7" });
+		const lines = renderDelegateWidget(rows, 1, width, theme, { offset: 7, focused: true, selectedKey: "7" });
 		for (const line of lines) assert.ok(visibleWidth(line) <= width, JSON.stringify({ width, line }));
 	}
-	assert.deepEqual(renderDelegateWidget(rows, 0, 80, theme, 0, { focused: true }), []);
+	assert.deepEqual(renderDelegateWidget(rows, 0, 80, theme, { focused: true }), []);
 });

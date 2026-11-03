@@ -174,23 +174,23 @@ test("widget names remove only their own nonempty agent prefix", () => {
 		assert.equal(widgetName({ identity: identity!, agent }), expected);
 });
 
-test("responsive style B keeps identity/state, hides model before active-age and clamps wide/malicious names at every width", () => {
+test("responsive rows keep identity/state, show model when space permits, have no age at any width and clamp malicious names", () => {
 	const source = results([record("identity")]);
 	const rows = new DirectDelegateView().read(source, undefined, undefined);
 	rows[0].title = "Native title";
-	rows[0].lastActive = 1000;
-	const full = renderDelegateWidget(rows, 3, 120, theme, 1000).join("\n");
-	assert.match(full, /└─ ◌ identity {2}Native title.*running.*active just now.*model-name/);
-	const medium = renderDelegateWidget(rows, 3, 65, theme, 1000).join("\n");
-	assert.match(medium, /active just now/);
-	assert.ok(!medium.includes("model-name"));
-	const narrow = renderDelegateWidget(rows, 3, 42, theme, 1000).join("\n");
+	const full = renderDelegateWidget(rows, 3, 120, theme).join("\n");
+	assert.match(full, /└─ ◌ identity {2}Native title.*running.*model-name/);
+	const medium = renderDelegateWidget(rows, 3, 65, theme).join("\n");
+	assert.match(medium, /model-name/);
+	const narrow = renderDelegateWidget(rows, 3, 42, theme).join("\n");
 	assert.match(narrow, /running/);
-	assert.ok(!narrow.includes("active just now"));
+	assert.ok(!narrow.includes("model-name"));
+	for (let width = 0; width <= 150; width++)
+		assert.doesNotMatch(renderDelegateWidget(rows, 3, width, theme).join("\n"), /active |file .*ago|just now/);
 	rows[0].identity = "測試界👩‍💻-".repeat(100);
 	rows[0].title = "Bad\nline\u001b[31mred\u001b]0;terminal-title\u0007suffix";
 	for (let width = 0; width <= 150; width++) {
-		for (const line of renderDelegateWidget(rows, 3, width, theme, 1000)) {
+		for (const line of renderDelegateWidget(rows, 3, width, theme)) {
 			assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
 			assert.ok(!line.includes("\n") && !line.includes("\u001b[31m") && !line.includes("\u001b]"));
 		}
@@ -393,16 +393,15 @@ test("ANSI-themed long/wide rows fit every width without losing terminal state s
 	const rows = new DirectDelegateView().read(results([record("ansi")]), undefined, undefined);
 	rows[0].identity = "界👩‍💻-".repeat(30);
 	rows[0].title = "長い title ".repeat(30);
-	rows[0].lastActive = 1000;
 	const ansi: WidgetTheme = {
 		fg: (_color, text) => `\u001b[36m${text}\u001b[39m`,
 		bold: (text) => `\u001b[1m${text}\u001b[22m`,
 	};
 	for (let width = 0; width <= 150; width++) {
-		const lines = renderDelegateWidget(rows, 3, width, ansi, 1000);
+		const lines = renderDelegateWidget(rows, 3, width, ansi);
 		for (const line of lines) assert.ok(visibleWidth(line) <= width, `ANSI row exceeds ${width} columns`);
 	}
-	assert.ok(renderDelegateWidget(rows, 3, 150, ansi, 1000).some((line) => line.includes("\u001b[")));
+	assert.ok(renderDelegateWidget(rows, 3, 150, ansi).some((line) => line.includes("\u001b[")));
 });
 
 test("presentation observers unsubscribe and cannot break result processing or custom status keys", () => {

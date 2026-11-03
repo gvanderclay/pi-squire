@@ -52,7 +52,7 @@ export function registerActivityRuntime(
 		if (tmux && ownerToken) void observeLocator(publisher, id, ownerToken, tmux, ctx);
 	});
 	pi.on("tool_execution_start", (event) => {
-		collector?.start(event.toolCallId, event.toolName, event.parentToolCallId);
+		collector?.start(event.toolCallId, event.toolName, event.parentToolCallId, event.args);
 		publish();
 	});
 	pi.on("tool_execution_end", (event) => {
@@ -62,20 +62,6 @@ export function registerActivityRuntime(
 	pi.on("message_start", (event) => {
 		if (event.message.role === "assistant") {
 			collector?.messageStart();
-			publish();
-		}
-	});
-	pi.on("message_update", (event) => {
-		if (event.message.role !== "assistant") return;
-		const update = event.assistantMessageEvent;
-		if (update.type === "text_delta") {
-			collector?.delta(update.delta);
-			publish(false);
-		} else if (update.type === "text_start") collector?.delta(" ");
-	});
-	pi.on("message_end", (event) => {
-		if (event.message.role === "assistant") {
-			collector?.messageEnd();
 			publish();
 		}
 	});

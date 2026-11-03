@@ -27,13 +27,6 @@ export function widgetName(row: WidgetIdentity): string {
 	);
 }
 
-function age(timestamp: number, now: number): string {
-	const minutes: number = Math.floor(Math.max(0, now - timestamp) / 60_000);
-	if (minutes < 1) return "just now";
-	if (minutes < 60) return `${minutes}m ago`;
-	return `${Math.floor(minutes / 60)}h ago`;
-}
-
 function appearance(row: DelegateRow): { icon: string; color: "accent" | "success" | "warning" | "error" } {
 	if (row.running) return { icon: "◌", color: "accent" };
 	if (row.state === "done") return { icon: "✓", color: "success" };
@@ -41,25 +34,22 @@ function appearance(row: DelegateRow): { icon: string; color: "accent" | "succes
 	return { icon: "!", color: "warning" };
 }
 
-function metadata(row: DelegateRow, width: number, coreWidth: number, now: number): string {
+function metadata(row: DelegateRow, width: number, coreWidth: number): string {
 	const model: string = widgetText(row.model.split("/").slice(1).join("/") || row.model);
-	const seen: string = row.lastActive === undefined ? "" : `active ${age(row.lastActive, now)}`;
-	const columns: string[] = [seen, model].filter(Boolean);
-	// Remove model, then active-age, before sacrificing identity/state/title.
-	while (columns.length && coreWidth + visibleWidth(` · ${columns.join(" · ")}`) > width) columns.pop();
-	return columns.length ? ` · ${columns.join(" · ")}` : "";
+	const extra = model ? ` · ${model}` : "";
+	return coreWidth + visibleWidth(extra) <= width ? extra : "";
 }
 
-function entry(row: DelegateRow, width: number, connector: string, theme: WidgetTheme, now: number): string {
+function entry(row: DelegateRow, width: number, connector: string, theme: WidgetTheme): string {
 	const { icon, color } = appearance(row);
-	const state: string = widgetText(row.state);
+	const state: string = widgetText(row.running && row.activity ? row.activity.text : row.state);
 	const name: string = widgetName(row);
 	if (width < 16) return truncateToWidth(`${theme.fg(color, icon)} ${theme.bold(name)}`, width);
 	const prefix: string = `${theme.fg("dim", connector)} ${theme.fg(color, icon)} `;
 	const suffix: string = ` · ${theme.fg(color, state)}`;
 	const title: string = widgetText(row.title ?? "");
 	const preferred: number = visibleWidth(prefix + name + suffix) + (title ? Math.min(24, visibleWidth(title)) + 2 : 0);
-	const extra: string = metadata(row, width, preferred, now);
+	const extra: string = metadata(row, width, preferred);
 	const count = !row.expanded && row.descendantCount ? theme.fg("dim", ` +${row.descendantCount}`) : "";
 	const room: number = Math.max(1, width - visibleWidth(prefix + suffix + extra + count));
 	const identity: string = truncateToWidth(name, room);
@@ -71,12 +61,9 @@ function entry(row: DelegateRow, width: number, connector: string, theme: Widget
 	);
 }
 
-/** One secondary line for live task activity. */
+/** One secondary line naming the running tool's target. */
 export function activityLine(row: DelegateRow, width: number, last: boolean, theme: WidgetTheme): string | undefined {
-	const activity: string =
-		row.running && row.activity
-			? `${row.activity.kind === "response" ? "response: " : ""}${widgetText(row.activity.text)}`
-			: "";
+	const activity: string = row.running && row.activity?.target ? widgetText(row.activity.target) : "";
 	if (!activity) return;
 	const prefix: string = last ? "   └─ " : "│  └─ ";
 	return truncateToWidth(theme.fg("dim", prefix + activity), width);
@@ -98,11 +85,10 @@ function selectableEntry(
 	width: number,
 	last: boolean,
 	theme: WidgetTheme,
-	now: number,
 	options: WidgetRenderOptions,
 ): string {
 	const marker: string = options.focused && row.key === options.selectedKey ? theme.fg("accent", "▸ ") : GUTTER;
-	return marker + entry(row, width - visibleWidth(marker), last ? "└─" : "├─", theme, now);
+	return marker + entry(row, width - visibleWidth(marker), last ? "└─" : "├─", theme);
 }
 
 function breadcrumbLine(
@@ -136,7 +122,6 @@ function childLines(
 	cap: number,
 	width: number,
 	theme: WidgetTheme,
-	now: number,
 	options: WidgetRenderOptions,
 ): string[] {
 	const lines: string[] = options.breadcrumb ? [] : [GUTTER + theme.fg("accent", theme.bold("Delegates"))];
@@ -147,7 +132,7 @@ function childLines(
 	for (const [index, row] of visible.entries()) {
 		const last: boolean = index === visible.length - 1 && hidden === 0;
 		const rowIndent = "  ".repeat(row.depth ?? 0);
-		lines.push(rowIndent + selectableEntry(row, width - rowIndent.length, last, theme, now, options));
+		lines.push(rowIndent + selectableEntry(row, width - rowIndent.length, last, theme, options));
 		const secondary: string | undefined = activityLine(row, width - GUTTER.length - rowIndent.length, last, theme);
 		if (secondary) lines.push(GUTTER + rowIndent + secondary);
 	}
@@ -171,7 +156,6 @@ export function renderDelegateWidget(
 	cap: number,
 	width: number,
 	theme: WidgetTheme,
-	now: number = Date.now(),
 	options: WidgetRenderOptions = {},
 ): string[] {
 	if (width <= 0) return [];
@@ -179,7 +163,7 @@ export function renderDelegateWidget(
 	if (!breadcrumb && (cap === 0 || !rows.length) && !options.ancestryError) return [];
 	const lines: string[] = breadcrumb ? [breadcrumbLine(breadcrumb, width, options, theme)] : [];
 	if (options.ancestryError) lines.push(GUTTER + theme.fg("warning", widgetText(options.ancestryError)));
-	if (cap > 0 && rows.length) lines.push(...childLines(rows, cap, width, theme, now, options));
+	if (cap > 0 && rows.length) lines.push(...childLines(rows, cap, width, theme, options));
 	if (options.focused) lines.push(theme.fg("dim", focusedHint(rows, options)));
 	else lines.push(theme.fg("dim", "↓ to manage delegates"));
 	return lines.map((line) => truncateToWidth(line, width));

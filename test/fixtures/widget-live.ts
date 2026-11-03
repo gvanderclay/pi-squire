@@ -16,6 +16,7 @@ type Command = {
 	name?: string;
 	parent?: string;
 	text?: string;
+	args?: unknown;
 };
 async function command(c: Command): Promise<unknown> {
 	if (c.op === "titlePublish") {
@@ -34,13 +35,9 @@ async function command(c: Command): Promise<unknown> {
 		return publisher.generation;
 	}
 	if (c.op === "read") return (await reader.read(c.sessionId!, c.launchId!)) ?? null;
-	if (c.op === "start") collector.start(c.id!, c.name!, c.parent);
+	if (c.op === "start") collector.start(c.id!, c.name!, c.parent, c.args);
 	if (c.op === "end") collector.end(c.id!);
-	if (c.op === "message") {
-		collector.messageStart();
-		collector.delta(c.text!);
-	}
-	if (c.op === "messageEnd") collector.messageEnd();
+	if (c.op === "message") collector.messageStart();
 	if (c.op === "settled") collector.clear();
 	if (c.op === "stop") {
 		title?.stop();

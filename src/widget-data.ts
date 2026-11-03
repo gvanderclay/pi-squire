@@ -23,8 +23,6 @@ export type DelegateRow = {
 	running: boolean;
 	window: "open" | "gone" | "unknown";
 	model: string;
-	/** Transcript mtime is a last-active hint, not proof of tool activity. */
-	lastActive: number | undefined;
 	activity?: Activity;
 };
 
@@ -121,7 +119,6 @@ export class DirectDelegateView {
 			identity: recordedName(record),
 			agent: record.agent,
 			title: undefined,
-			lastActive: undefined,
 			state: running ? "running" : (record.result?.status ?? (record.gone ? "missing" : "unknown")),
 			running,
 			window,
@@ -150,7 +147,6 @@ export class DirectDelegateView {
 		if (!disk) this.paths.delete(record.id); // Missing/replaced/mismatched files are rediscovered next refresh.
 		const name: string | undefined = disk?.name ?? this.metadata.mirrors.read(row.sessionId);
 		row.title = name && name !== row.identity ? name : undefined;
-		row.lastActive = disk?.modified;
 	}
 }
 

@@ -268,7 +268,7 @@ class Overview {
 				this.focus.attach(tui); // Pi 1.4.0 stable proxy follows renderer replacement.
 				return {
 					render: (width: number) =>
-						renderDelegateWidget(rows, settings.maxEntries, width, this.ctx.ui.theme, Date.now(), {
+						renderDelegateWidget(rows, settings.maxEntries, width, this.ctx.ui.theme, {
 							...options,
 							focused: this.focus.focused,
 						}),

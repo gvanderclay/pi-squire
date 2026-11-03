@@ -1,7 +1,7 @@
 // Event-derived presentation only. No transcript replay, intent or task state.
 import { stripVTControlCharacters } from "node:util";
 
-export type Activity = { kind: "tools" | "response"; text: string };
+export type Activity = { text: string; target?: string };
 export const ACTIVITY_TEXT_BYTES = 512;
 const BUFFER_BYTES = 2048;
 const MAX_CALLS = 256;
@@ -33,36 +33,48 @@ export function activityText(value: string, max = ACTIVITY_TEXT_BYTES): string {
 	return byteTail(clean, max);
 }
 
-type Call = { name: string; parent?: string };
+type Call = { name: string; parent?: string; target?: string };
+const TARGET_KEYS: ReadonlyMap<string, string> = new Map([
+	["read", "path"],
+	["edit", "path"],
+	["write", "path"],
+	["bash", "command"],
+]);
+
+function toolTarget(name: string, args: unknown): string | undefined {
+	const key = TARGET_KEYS.get(name);
+	if (!key || !args || typeof args !== "object" || Array.isArray(args)) return;
+	const value: unknown = (args as Record<string, unknown>)[key];
+	if (typeof value !== "string") return;
+	const target = name === "bash" ? (value.split(/\r\n|[\r\n]/).find((line) => line.trim()) ?? "") : value;
+	return activityText(target, name === "bash" ? 80 : 120) || undefined;
+}
 const LABELS: ReadonlyMap<string, string> = new Map([
 	["read", "reading…"],
 	["edit", "editing…"],
 	["write", "writing…"],
-	["bash", "command call…"],
+	["bash", "running…"],
 ]);
 
 export class ActivityCollector {
 	private readonly calls = new Map<string, Call>();
-	private text = "";
-	private message = false;
+	private composing = false;
 	private suppressed = false;
 
 	clear(): void {
 		this.calls.clear();
-		this.text = "";
-		this.message = false;
+		this.composing = false;
 		this.suppressed = false;
 	}
 
-	start(id: string, name: string, parent?: string): void {
-		this.text = "";
+	start(id: string, name: string, parent?: string, args?: unknown): void {
 		if (this.calls.has(id) || this.suppressed) return;
 		if (this.calls.size >= MAX_CALLS || !this.validId(id) || (parent !== undefined && !this.validId(parent))) {
 			this.suppressed = true;
 			this.calls.clear();
 			return;
 		}
-		this.calls.set(id, { name: activityText(name, 128), parent });
+		this.calls.set(id, { name: activityText(name, 128), parent, target: toolTarget(name, args) });
 	}
 
 	end(id: string): void {
@@ -70,17 +82,7 @@ export class ActivityCollector {
 	}
 
 	messageStart(): void {
-		this.text = "";
-		this.message = true;
-	}
-
-	delta(text: string): void {
-		if (this.message && !this.suppressed) this.text = byteTail(this.text + byteTail(text, BUFFER_BYTES), BUFFER_BYTES);
-	}
-
-	messageEnd(): void {
-		this.text = "";
-		this.message = false;
+		this.composing = true;
 	}
 
 	snapshot(): Activity | undefined {
@@ -88,13 +90,10 @@ export class ActivityCollector {
 		if (this.calls.size) {
 			const parents = new Set([...this.calls.values()].map((call) => call.parent));
 			const leaves: Call[] = [...this.calls].filter(([id]) => !parents.has(id)).map(([, call]) => call);
-			const labels: string[] = [
-				...new Set(leaves.reverse().map((call) => LABELS.get(call.name) ?? `using ${call.name || "tool"}…`)),
-			];
-			return { kind: "tools", text: activityText(labels.slice(0, 2).join(" · ")) };
+			const call = leaves.at(-1);
+			if (call) return { text: LABELS.get(call.name) ?? `using ${call.name || "tool"}…`, target: call.target };
 		}
-		const text: string = activityText(this.text);
-		if (text) return { kind: "response", text };
+		if (this.composing) return { text: "thinking…" };
 		return;
 	}
 

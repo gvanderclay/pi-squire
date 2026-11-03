@@ -4,7 +4,6 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
-import { SessionOwner } from "../src/session-owner.ts";
 import { LIVE_LAUNCH_ENV, LiveActivityReader, liveSessionDir } from "../src/widget-live.ts";
 import { agentDir, agentFile, cleanup, resetRoot, writeAgent } from "./harness.ts";
 import { mailSession, scan } from "./mail-harness.ts";
@@ -83,20 +82,6 @@ test("owner-record read errors never drop factual ends or grant control authorit
 	} finally {
 		await writeFile(path, saved);
 	}
-});
-test("assistant streaming observes no per-token owner checks", async (t) => {
-	const owner = instance("streaming-owner", "launch");
-	await owner.start();
-	await owner.fire("message_start", { message: { role: "assistant" } });
-	const checks = t.mock.method(SessionOwner.prototype, "active");
-	for (let n = 0; n < 100; n++)
-		await owner.fire("message_update", {
-			message: { role: "assistant" },
-			assistantMessageEvent: { type: "text_delta", delta: "x" },
-		});
-	assert.equal(checks.mock.callCount(), 0, "text deltas must not synchronously probe owner storage");
-	checks.mock.restore();
-	await live(owner.parent, "launch", "x".repeat(100));
 });
 async function tool(s: Session, id: string, name: string): Promise<void> {
 	await s.fire("tool_execution_start", { toolCallId: id, toolName: name, args: {} });

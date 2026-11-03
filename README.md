@@ -454,13 +454,13 @@ delegation id or mutable title. Failed and stopped results keep their actual
 outcome labels; an open window or quiet session is not evidence of success.
 
 Rows show the recorded delegate identity in bold, the current native Pi session
-title when available, and task state. No title is repeated when it matches the
-identity. The recorded launch model (or result model when available) and
-transcript-file age appear when space permits: model is
-dropped first, then file age, before identity/state are compressed. At very
-narrow widths the state glyph remains beside the truncated identity.
-`file … ago` is only a last-active hint from transcript mtime, not live tool
-activity. When available, a second line shows factual live activity (below).
+title when available, and task state. While a delegate is running, its live phase
+label replaces the state, with the current tool's target on a dim secondary line
+when available. Squire never shows a delegate's message text.
+No title is repeated when it matches the identity. The recorded launch model
+(or result model when available) appears when space permits and is dropped
+before identity/state are compressed. At very narrow widths the state glyph
+remains beside the truncated identity.
 A collapsed delegate with open descendants shows **+N** at the end of its row.
 This counts open stable sessions, not historical attempts or results.
 
@@ -513,20 +513,24 @@ refresh; very large existing transcripts may take several refreshes to catch up.
 
 ### Factual live activity
 
-The secondary line follows actual Pi tool-execution events: `reading…`,
-`editing…`, `writing…`, `command call…`, or `using <tool name>…`. Parallel
-and nested calls are tracked by their actual call ids, not by tool name.
+The row's phase label follows actual Pi tool-execution events: `reading…`,
+`editing…`, `writing…`, `running…` for bash, or `using <tool name>…`.
+Parallel and nested calls are tracked by their actual call ids, not by tool
+name. The most recently started leaf call supplies the label and target.
 Active nested calls take precedence over their orchestrator. A tool start is
-observed before permission interception: `command call…` means an outstanding
-call, not proof that a subprocess started or permission was granted. Squire
-does not inspect commands to guess intent, or display arguments, paths, tool
-results, thinking or provider payloads.
+observed before permission interception, so `running…` means an outstanding
+bash call, not proof that a subprocess started or permission was granted.
 
-Otherwise, while an assistant response streams, `response: …` shows a literal
-single-line excerpt bounded to 512 UTF-8 bytes. It clears when that message
-ends; a quick response may finish between refreshes and never appear. Calls
-clear on matching end, run end/settlement, stop, reload and shutdown. Known
-task results/close suppress activity even if a delegate's last snapshot remains.
+For read, edit and write, the secondary line shows the path, bounded to 120
+UTF-8 bytes. For bash, it shows the first non-empty command line, bounded to
+80 UTF-8 bytes. Targets are sanitized to remove terminal controls. Other tools
+have no secondary line. Squire does not inspect commands to guess intent.
+
+While the assistant composes without an outstanding tool call, the label is
+`thinking…`. Squire never shows a delegate's message text, tool results,
+internal reasoning or provider payloads. Calls clear on matching end, run
+end/settlement, stop, reload and shutdown. Known task results/close suppress
+activity even if a delegate's last snapshot remains.
 A settled or silent coordinator can still own unfinished child tasks: activity
 does not determine task completion, thinking or waiting for a human.
 

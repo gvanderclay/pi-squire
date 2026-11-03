@@ -11,14 +11,15 @@ import { activityLine, renderDelegateWidget } from "../src/widget-render.ts";
 test("actual ids retain concurrent same-name and nested leaf calls without counting parents", () => {
 	const c = new ActivityCollector();
 	c.start("a", "codemode");
-	c.start("a/1", "read", "a");
+	c.start("a/1", "read", "a", { path: "src/index.ts" });
+	assert.deepEqual(c.snapshot(), { text: "reading…", target: "src/index.ts" });
 	c.start("a/2", "read", "a");
 	assert.equal(c.snapshot()?.text, "reading…");
 	c.end("a/2");
 	c.end("unknown");
 	assert.equal(c.snapshot()?.text, "reading…");
 	c.start("a/1/1", "bash", "a/1");
-	assert.equal(c.snapshot()?.text, "command call…");
+	assert.equal(c.snapshot()?.text, "running…");
 	c.end("a/1/1");
 	assert.equal(c.snapshot()?.text, "reading…");
 	c.end("a/1");
@@ -27,24 +28,23 @@ test("actual ids retain concurrent same-name and nested leaf calls without count
 	assert.equal(c.snapshot(), undefined);
 	c.start("x", "edit");
 	c.start("y", "write");
-	assert.equal(c.snapshot()?.text, "writing… · editing…");
+	assert.equal(c.snapshot()?.text, "writing…", "the most recent leaf wins");
 	c.start("y", "bash");
-	assert.equal(c.snapshot()?.text, "writing… · editing…", "duplicate id is not another call");
+	assert.equal(c.snapshot()?.text, "writing…", "duplicate id is not another call");
+	c.end("y");
+	assert.equal(c.snapshot()?.text, "editing…");
 });
 
-test("only open response text is retained, tools clear pre-tool excerpts, all boundaries reset", () => {
+test("composing uses thinking, tools take precedence, and run boundaries reset", () => {
 	const c = new ActivityCollector();
-	c.delta("closed");
 	assert.equal(c.snapshot(), undefined);
 	c.messageStart();
-	c.delta("Literal response");
-	assert.deepEqual(c.snapshot(), { kind: "response", text: "Literal response" });
+	assert.deepEqual(c.snapshot(), { text: "thinking…" });
 	c.start("read", "read");
+	assert.equal(c.snapshot()?.text, "reading…");
 	c.end("read");
-	assert.equal(c.snapshot(), undefined);
-	c.delta("more");
-	c.messageEnd();
-	assert.equal(c.snapshot(), undefined);
+	assert.deepEqual(c.snapshot(), { text: "thinking…" });
+	c.clear();
 	c.start("denied", "bash");
 	c.end("denied");
 	assert.equal(c.snapshot(), undefined, "denied/failed calls end by the same id");
@@ -53,27 +53,22 @@ test("only open response text is retained, tools clear pre-tool excerpts, all bo
 	c.end("aborted");
 	assert.equal(c.snapshot(), undefined);
 	c.messageStart();
-	c.delta("retry");
-	assert.equal(c.snapshot()?.text, "retry");
+	assert.equal(c.snapshot()?.text, "thinking…");
 });
 
 test("collector storage and UTF-8/terminal projection are bounded and fail closed on untracked ids", () => {
 	const c = new ActivityCollector();
-	c.messageStart();
-	c.delta("界🙂".repeat(100000));
-	assert.ok(Buffer.byteLength(c.snapshot()!.text) <= 512);
-	assert.ok(!c.snapshot()!.text.includes("�"));
+	c.start("wide", "read", undefined, { path: "界🙂".repeat(100000) });
+	assert.ok(Buffer.byteLength(c.snapshot()!.target!) <= 120);
+	assert.ok(!c.snapshot()!.target!.includes("�"));
 	assert.equal(byteTail("a界", 3), "界");
 	assert.equal(activityText("\x1b[31mred\x1b[0m\n\x00safe"), "red safe");
 	c.clear();
-	c.messageStart();
-	c.delta("\x1b[");
-	c.delta("31mred\x1b[0m");
-	assert.equal(c.snapshot()?.text, "red");
+	c.start("safe", "read", undefined, { path: "\x1b[31mred\x1b[0m\n\x00safe" });
+	assert.equal(c.snapshot()?.target, "red safe");
 	for (let n = 0; n < 257; n++) c.start(String(n), "read");
 	assert.equal(c.snapshot(), undefined);
 	c.messageStart();
-	c.delta("not misleading text");
 	assert.equal(c.snapshot(), undefined);
 	c.clear();
 	c.start("x".repeat(513), "read");
@@ -84,6 +79,35 @@ test("collector storage and UTF-8/terminal projection are bounded and fail close
 	c.clear();
 	c.start("custom", "constructor");
 	assert.equal(c.snapshot()?.text, "using constructor…");
+});
+
+test("targets use only known string arguments and the first non-empty bounded command line", () => {
+	const c = new ActivityCollector();
+	for (const name of ["read", "edit", "write"]) {
+		c.clear();
+		c.start("path", name, undefined, { path: "src/index.ts" });
+		assert.equal(c.snapshot()?.target, "src/index.ts");
+	}
+	c.clear();
+	c.start("bash", "bash", undefined, { command: "\n \r\npnpm test\nsecret second line" });
+	assert.deepEqual(c.snapshot(), { text: "running…", target: "pnpm test" });
+	c.clear();
+	c.start("long", "bash", undefined, { command: "界🙂".repeat(100) });
+	assert.ok(Buffer.byteLength(c.snapshot()!.target!) <= 80);
+	assert.ok(!c.snapshot()!.target!.includes("�"));
+	for (const [name, args] of [
+		["read", { path: 42 }],
+		["read", null],
+		["read", []],
+		["read", "path"],
+		["custom", { path: "hidden" }],
+		["bash", { command: "\n  " }],
+		["write", {}],
+	] as const) {
+		c.clear();
+		c.start("invalid", name, undefined, args);
+		assert.equal(c.snapshot()?.target, undefined);
+	}
 });
 
 test("launch seed matches native session identity and keeps launch separate on resume", () => {
@@ -103,7 +127,6 @@ const row = (id: string): DelegateRow => ({
 	running: true,
 	window: "open",
 	model: "provider/model",
-	lastActive: undefined,
 });
 test("async join only reads viewport/running rows and masks results/close/resume arriving during read", async () => {
 	const rows = [row("one"), row("two"), row("three")];
@@ -114,7 +137,7 @@ test("async join only reads viewport/running rows and masks results/close/resume
 		read: async (id) => {
 			reads.push(id);
 			running = [];
-			return { kind: "tools", text: "reading…" };
+			return { text: "reading…" };
 		},
 	});
 	assert.deepEqual(reads, ["two"]);
@@ -132,13 +155,13 @@ test("async join only reads viewport/running rows and masks results/close/resume
 	});
 	assert.ok(rows.every((r) => r.activity === undefined));
 	await joinActivities(rows, { offset: 0, limit: 1 }, results, {
-		read: async () => ({ kind: "tools", text: "reading…" }),
+		read: async () => ({ text: "reading…" }),
 	});
 	assert.equal(rows[0].activity?.text, "reading…");
 	await joinActivities(rows, { offset: 0, limit: 1 }, results, {
 		read: async () => {
 			running.push({ id: "new-launch", sessionId: rows[0].sessionId });
-			return { kind: "tools", text: "must not reappear on old launch" };
+			return { text: "must not reappear on old launch" };
 		},
 	});
 	assert.equal(rows[0].activity, undefined, "same stable id resumed during the read");
@@ -147,13 +170,16 @@ test("async join only reads viewport/running rows and masks results/close/resume
 test("secondary activity line is literal and bounded, absent at completion, without extra child slots", () => {
 	const theme = { fg: (_color: string, text: string) => `\x1b[31m${text}\x1b[0m`, bold: (s: string) => s };
 	const r = row("界🙂worker");
-	r.activity = { kind: "response", text: "a response\nwith \x1b[2Jcontrols" };
+	r.activity = { text: "reading…", target: "a path\nwith \x1b[2Jcontrols" };
 	for (let width = 0; width <= 150; width++) {
-		const lines = renderDelegateWidget([r], 1, width, theme, 0);
+		const lines = renderDelegateWidget([r], 1, width, theme);
 		assert.ok(lines.every((line) => visibleWidth(line) <= width));
 	}
-	const text = renderDelegateWidget([r], 1, 120, theme, 0).join("\n");
-	assert.match(text, /response: a response with controls/);
+	const text = renderDelegateWidget([r], 1, 120, theme).join("\n");
+	assert.match(text, /reading…/);
+	assert.match(text, /a path with controls/);
+	assert.doesNotMatch(text, /running/);
+	assert.equal(activityLine({ ...r, activity: { text: "thinking…" } }, 80, true, theme), undefined);
 	assert.equal(renderDelegateWidget([r], 1, 120, theme).length, 4);
 	r.running = false;
 	assert.equal(activityLine(r, 80, true, theme), undefined);

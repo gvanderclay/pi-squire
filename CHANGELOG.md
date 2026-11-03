@@ -16,6 +16,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The compact Delegates widget replaces streaming response excerpts with a
+  phase label and the current tool's target. Bash shows `running…` and the
+  first non-empty command line, bounded to 80 UTF-8 bytes. File targets keep
+  120 bytes. Squire never shows a delegate's message text. The active-age
+  column is removed.
+  Deliberate test changes:
+  - `test/widget-activity.test.ts` expects the most recent leaf call instead
+    of joined labels, checks sanitized bounded targets, and uses `thinking…`
+    while composing instead of streamed text.
+  - `test/widget-data.test.ts` checks that no width shows an age and that the
+    model remains visible when space permits.
+  - Activity, live-reader, SDK, runtime, ancestor and navigation fixtures use
+    `{ text, target? }`. Streaming tests in `test/widget-activity-sdk.test.ts`,
+    `test/widget-activity-runtime.test.ts` and
+    `test/widget-activity-nesting06.test.ts` now expect `thinking…`.
+    Secondary-line assertions check tool targets instead of response excerpts.
 - Trusted Pi sessions in this checkout allow the exact `pnpm lint`,
   `pnpm typecheck`, `pnpm test`, and `pnpm check` commands without a permission
   dialog or auto-mode judge call.

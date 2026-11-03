@@ -323,19 +323,18 @@ test("breadcrumb excluded from cap, activity stays on one line, no empty heading
 		running: true,
 		window: "open" as const,
 		model: "m",
-		lastActive: undefined,
-		activity: { kind: "tools" as const, text: "reading very long command description…" },
+		activity: { text: "reading…", target: "reading-a-very-long-path.ts" },
 	};
 	const theme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
-	const wide = renderDelegateWidget([row], 1, 140, theme, 0, { breadcrumb });
+	const wide = renderDelegateWidget([row], 1, 140, theme, { breadcrumb });
 	assert.equal(wide.length, 4);
 	assert.match(wide[2], /reading/);
-	const narrow = renderDelegateWidget([row], 1, 45, theme, 0, { breadcrumb });
+	const narrow = renderDelegateWidget([row], 1, 45, theme, { breadcrumb });
 	assert.match(narrow[2], /reading/);
-	assert.equal(renderDelegateWidget([], 0, 100, theme, 0, { breadcrumb }).length, 2);
+	assert.equal(renderDelegateWidget([], 0, 100, theme, { breadcrumb }).length, 2);
 	for (let width = 1; width < 100; width++)
 		assert.ok(
-			renderDelegateWidget([row], 1, width, theme, 0, { breadcrumb }).every((line) => visibleWidth(line) <= width),
+			renderDelegateWidget([row], 1, width, theme, { breadcrumb }).every((line) => visibleWidth(line) <= width),
 		);
 	const selection = new WidgetSelection();
 	selection.update(["c", "d", "e"], 1, "ap");
@@ -363,7 +362,7 @@ test("breadcrumb collapses middle crumbs, drops title before names, and keeps th
 		parentTitle: "Parent title that truncates first",
 	};
 	const theme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
-	const render = (width: number) => renderDelegateWidget([], 0, width, theme, 0, { breadcrumb });
+	const render = (width: number) => renderDelegateWidget([], 0, width, theme, { breadcrumb });
 	assert.equal(
 		render(120)[0],
 		"  root › middle-one › middle-two › parent › self (you)  Parent title that truncates first",
@@ -372,7 +371,7 @@ test("breadcrumb collapses middle crumbs, drops title before names, and keeps th
 	assert.equal(render(35)[0], "  root › … › parent › self (you)");
 	assert.match(render(45)[0], /^ {2}root › … › parent › self \(you\) {2}Parent/);
 	assert.match(
-		renderDelegateWidget([], 0, 100, theme, 0, { breadcrumb, ancestryError: "Ancestor information unavailable" }).join(
+		renderDelegateWidget([], 0, 100, theme, { breadcrumb, ancestryError: "Ancestor information unavailable" }).join(
 			"\n",
 		),
 		/\n {2}Ancestor information unavailable\n/,

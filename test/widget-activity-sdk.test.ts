@@ -28,16 +28,15 @@ test("real local Pi synthetic stream and nested tools reach an independent OS re
 	const writer = processFixture("widget-activity-sdk.ts"),
 		reader = processFixture();
 	const id = await writer.command<string>("start");
-	assert.deepEqual(await observed(reader, id, "Literal live response"), {
-		kind: "response",
-		text: "Literal live response",
+	assert.deepEqual(await observed(reader, id, "thinking…"), {
+		text: "thinking…",
 	});
 	const calls = await writer.command<{ id: string; parent?: string; phase: string }[]>("tools");
 	assert.ok(calls.some((c) => c.id === "outer/1" && c.parent === "outer"));
 	assert.ok(calls.some((c) => c.id === "outer/2" && c.parent === "outer"));
-	assert.deepEqual(await observed(reader, id, "reading…"), { kind: "tools", text: "reading…" });
+	assert.deepEqual(await observed(reader, id, "reading…"), { text: "reading…", target: "second.ts" });
 	await writer.command("first");
-	assert.deepEqual(await observed(reader, id, "reading…"), { kind: "tools", text: "reading…" });
+	assert.deepEqual(await observed(reader, id, "reading…"), { text: "reading…", target: "second.ts" });
 	const completed = await writer.command<{ id: string; phase: string }[]>("finish");
 	assert.ok(completed.some((c) => c.id === "outer/1" && c.phase === "end"));
 	assert.ok(completed.some((c) => c.id === "outer/2" && c.phase === "end"));

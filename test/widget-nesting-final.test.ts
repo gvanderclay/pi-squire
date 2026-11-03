@@ -110,7 +110,7 @@ test("dashboard closes the entire subtree and resume inherits original placement
 	await until(() => owner.confirms.length === 1 && !frame(owner).includes("coordinator-cross-project"));
 	assert.match(detail.frames[1], /Delegate: coordinator-cross-project/);
 	assert.deepEqual(tmux.killed, [w.windowId, c.windowId]);
-	assert.match(owner.confirms[0].message, /entire recorded subtree/);
+	assert.match(owner.confirms[0].message, /and its delegates\? Worktrees and branches stay/);
 	assert.equal(local(owner, c.id).closed, true);
 	assert.equal(local(coordinator, w.id).closed, undefined, "ancestor never writes foreign semantic records");
 	await coordinator.fire("context", { messages: [] });

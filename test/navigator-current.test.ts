@@ -253,7 +253,7 @@ test("close confirms verified live gone/done/window-closed rows but passes only 
 			await navigator.panel(ctx);
 			assert.equal(closes, 1);
 			assert.equal(confirmations.length, 2);
-			assert.match(confirmations[0], /verified shared-control windows.*Reattached navigation windows may remain open/);
+			assert.match(confirmations[0], /Close .* and its delegates\? Worktrees and branches stay\./);
 			assert.deepEqual(f.tmux.killed, [], "presentation never retargets a close with its live locator");
 			assert.equal(f.tmux.windows.has("@2"), true);
 			assert.equal(JSON.stringify(f.records), before);

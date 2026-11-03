@@ -111,7 +111,7 @@ test("x always confirms finished and running delegates, cancellation retains foc
 		assert.equal(s.terminalKey("x"), true);
 		await settle();
 		assert.equal(s.confirms.length, 1);
-		assert.match(s.confirms[0].message, /entire recorded subtree/);
+		assert.match(s.confirms[0].message, /and its delegates\? Worktrees and branches stay/);
 		assert.equal(s.tmux.killed.length, 0);
 		assert.match(frame(s), /▸/);
 		s.terminalKey("x");

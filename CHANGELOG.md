@@ -13,7 +13,10 @@ follows [Semantic Versioning](https://semver.org/).
   `test/tools.test.ts` now expects silence, and the stopped-root cancellation test
   in `test/subtree-close.test.ts` uses the UI close path to retain its wake check.
 - Press x in the focused compact widget to close the selected subtree. The widget
-  always asks for confirmation, including finished delegates. Ancestor rows
+  always asks for confirmation, including finished delegates, in plainer words
+  ("Close <name> and its delegates? Worktrees and branches stay."); the close
+  confirmation tests in `test/navigator-current.test.ts`, `test/widget-navigation.test.ts`
+  and `test/widget-nesting-final.test.ts` expect them. Ancestor rows
   refuse close and omit x from their hint. New keyboard tests cover cancellation,
   finished and running closes, and ancestor refusal.
 - Enter in the focused compact delegate widget switches straight to the selected

@@ -31,7 +31,7 @@ Every command prints one JSON object. `"ok": false` means it failed, with the re
    | --- | --- |
    | `agent/` | Scratch `PI_CODING_AGENT_DIR`: `settings.json` loading this checkout and `node_modules/pi-session-mail`, `defaultProjectTrust: "never"`, and `agents/verifier.md` (deepseek, low, tools `read, ls`) |
    | `work/` | A one-commit Git repository; the root and its delegates run here |
-   | `state/` | `XDG_STATE_HOME`, so pi-session-mail's mailboxes stay in the run |
+   | `state/` | Holds `pi-session-mail/`, the run's `PI_SESSION_MAIL_ROOT`, so its mailboxes stay in the run. `XDG_STATE_HOME` is left alone, so other tools keep the user's state |
    | `tmp/` | `TMPDIR`, so Squire's prompt files stay in the run |
    | `evidence/` | Proof artifacts; cleanup never touches it |
    | `run.json` | Commit under test, whether `src/` was dirty, model, tmux socket, root session file |

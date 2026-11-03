@@ -28,7 +28,7 @@ async function pair(autoExitEnv = "0", fallbackEnv?: string) {
 	return { parent, child, task };
 }
 
-test("real 0.6.0 provider receives exact explicit correlation and status before leaf exit", async () => {
+test("real pinned provider receives exact explicit correlation and status before leaf exit", async () => {
 	const { parent, child, task } = await pair("1");
 	assert.equal(child.userMessages.length, 1);
 	await child.run();

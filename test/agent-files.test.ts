@@ -16,7 +16,6 @@ import {
 	agentDir,
 	agentFile,
 	cleanup,
-	keyScript,
 	resetRoot,
 	root,
 	rosterDir,
@@ -808,7 +807,7 @@ test("a locked field the file leaves unset keeps the parent's value, and a call'
 // ---------------------------------------------------------------------------
 // display_name
 
-test("display_name names the window and the /delegates row; the agent's name still reaches session:launch", async () => {
+test("display_name names the window and the compact widget row; the agent's name still reaches session:launch", async () => {
 	writeAgent("reviewer", agentFile({ ...SCOUT, display_name: "Code_Reviewer-2" }));
 	const s = session({ mode: "tui" });
 	await s.start();
@@ -822,10 +821,9 @@ test("display_name names the window and the /delegates row; the agent's name sti
 	assert.equal(launches[0].agent, "reviewer");
 	assert.equal(opened.env.PI_DELEGATE_AGENT, "reviewer");
 	assert.equal(s.entries[0].data.displayName, "Code_Reviewer-2");
-	const script = keyScript(["escape"]);
-	s.queueCustom(script);
-	await s.command("delegates");
-	assert.match(script.frames[0], /Code_Reviewer-2-pr-12 · Code_Reviewer-2 · running/);
+	for (let n = 0; n < 8; n++) await new Promise<void>((resolve) => setImmediate(resolve));
+	const widget = s.widgets.get("squire-delegates")?.render(120).join("\n") ?? "";
+	assert.match(widget, /Code_Reviewer-2-pr-12.*running/);
 });
 
 test("a display_name with anything but ASCII letters, digits, - and _ makes the file invalid, so the agent is disabled", async () => {

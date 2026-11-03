@@ -9,7 +9,7 @@ import type { Delegation, StartedRecorded } from "../src/results.ts";
 import type { CloseDetails } from "../src/tree-close.ts";
 import { readTree, reconcileTree, treeCounts, treePath } from "../src/tree-registry.ts";
 import { FakeTmux } from "./fake-tmux.ts";
-import { agentDir, agentFile, cleanup, keyScript, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
 
 type Session = ReturnType<typeof mailSession>;
@@ -168,9 +168,9 @@ test("cancellation arriving after the last request forces another coordinator pr
 test("UI cancellation wakes a stopped root, but stopped prior outcomes stay held on reopen", async () => {
 	const { owner, c, tmux } = await tree({ ui: { confirm: [true] } });
 	await owner.run("aborted");
-	owner.queueCustom(keyScript(["x"]));
-	owner.queueCustom(keyScript(["escape"]));
-	await owner.command("delegates");
+	owner.terminalKey("down");
+	owner.terminalKey("x");
+	for (let n = 0; n < 20 && !record(owner, c.id).closed; n++) await new Promise<void>((r) => setTimeout(r, 10));
 	assert.equal(record(owner, c.id).closed, true);
 	const notice = owner.sent.find(({ message }) => String(message.content).includes("canceled by explicit close"));
 	assert.equal((notice?.options as { triggerTurn?: boolean } | undefined)?.triggerTurn, true);
@@ -223,27 +223,6 @@ test("partial kill errors persist successes, fence descendants, and explicit ret
 	const retry = await close(owner, c.id);
 	assert.equal(retry.complete, true);
 	assert.equal(readTree(owner.parent).closes?.length, 0);
-});
-
-test("root panel close-all confirmation is root-only and preserves shared companion windows", async () => {
-	const { owner, coordinator, c, w, tmux } = await tree({ ui: { confirm: [false, true] } });
-	const other = instance({ tmux });
-	await other.start();
-	const foreign = await launch(other, "coordinator");
-	owner.queueCustom(keyScript(["a"]));
-	owner.queueCustom(keyScript(["escape"]));
-	await owner.command("delegates");
-	assert.equal(tmux.killed.length, 0);
-	owner.queueCustom(keyScript(["a"]));
-	owner.queueCustom(keyScript(["escape"]));
-	await owner.command("delegates");
-	assert.deepEqual(new Set(tmux.killed), new Set([c.windowId, w.windowId]));
-	assert.ok(tmux.windows.has(foreign.windowId));
-	coordinator.context.mode = "tui";
-	const script = keyScript(["a", "escape"]);
-	coordinator.queueCustom(script);
-	await coordinator.command("delegates");
-	assert.ok(!script.frames[0].includes("a close all"));
 });
 
 test("closed coordinator can be resumed by direct parent, with a new lifetime charge and usable branch", async () => {

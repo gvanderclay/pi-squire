@@ -1,7 +1,4 @@
-// The delegates panel and /delegate-open: which delegations they list, how
-// they reach a window (switch, peek, close), which tmux client they
-// act on, and that the poll runs only while a delegation does. Tmux is the harness's fake
-// and the panel is driven by keys through the scripted `ctx.ui.custom`.
+// Command navigation uses verified windows and the caller's attached tmux client.
 
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -10,17 +7,7 @@ import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
 import { placementProject } from "../src/window-placement.ts";
 
-import {
-	agentDir,
-	agentFile,
-	cleanup,
-	type KeyScript,
-	keyScript,
-	resetRoot,
-	root,
-	session,
-	writeAgent,
-} from "./harness.ts";
+import { agentDir, agentFile, cleanup, keyScript, resetRoot, root, session, writeAgent } from "./harness.ts";
 
 const companion = placementProject(root).companion;
 
@@ -80,99 +67,22 @@ const tick = async (t: TestContext, times = 1): Promise<void> => {
 	}
 };
 
-/** Run a command with the panel's key script queued; returns the script for its frames. */
-async function panel(s: Session, ...scripts: KeyScript[]): Promise<void> {
-	// The harness reads its queue from the options, so scripts are pushed through the session's own queue.
-	for (const script of scripts) s.queueCustom(script);
-	await s.command("delegates");
-}
-
-test("the extension registers /delegates, /delegate-open and the alt+shift+d shortcut", async () => {
+test("delegate commands remain registered without the old panel or shortcut", async () => {
 	const s = await started();
-	assert.ok(s.commands().includes("delegates"));
+	assert.ok(!s.commands().includes("delegates"));
+	assert.ok(s.commands().includes("delegate"));
+	assert.ok(s.commands().includes("delegate-resume"));
 	assert.ok(s.commands().includes("delegate-open"));
-	assert.deepEqual(s.shortcuts(), ["alt+shift+d"]);
-});
-
-test("the panel retains closed/history rows and verified open windows, and the shortcut opens it", async () => {
-	const s = await started();
-	const first = await launch(s, "first");
-	const second = await launch(s, "second");
-	const third = await launch(s, "third");
-	const fourth = await launch(s, "fourth");
-	s.tmux.exit(third.windowId); // its program exited: not open
-	s.tmux.windows.delete(first.windowId); // its window is gone
-	await s.toolCall("delegation_close", { id: fourth.id }); // closed
-	const script = keyScript(["escape"]);
-	s.queueCustom(script);
-	await s.shortcut("alt+shift+d");
-	const [frame] = script.frames;
-	assert.match(frame, /second/);
-	assert.match(frame, /first.*window-closed/);
-	assert.match(frame, /third.*window-closed/);
-	assert.match(frame, /fourth.*closed/);
-	assert.ok(frame.includes(`${second.windowId} in ${companion}`), frame);
-	assert.match(frame, /↑↓ select · enter details · p peek · x close · r resume · n new · esc leave/);
-});
-
-test("the hierarchy preserves parent-first history and a finished open delegation stays listed", async () => {
-	const s = await started();
-	const first = await launch(s, "alpha-one");
-	await launch(s, "beta-two");
-	s.events.emit("message:inbound", reply(s, first.id));
-	const script = keyScript(["escape"]);
-	await panel(s, script);
-	const [frame] = script.frames;
-	assert.ok(frame.indexOf("alpha-one") < frame.indexOf("beta-two"), frame);
-	assert.match(frame, /alpha-one · scout · done/);
-	assert.match(frame, /beta-two · scout · running/);
-});
-
-test("with nothing open the panel says so, and n starts a new delegate", async () => {
-	const s = await started();
-	const script = keyScript(["escape"]);
-	await panel(s, script);
-	assert.match(script.frames[0], /No open delegates · n new · esc close/);
-	assert.equal(script.result, undefined);
-	const choose = keyScript(["n"]);
-	await panel(s, choose);
-	assert.deepEqual(choose.result, { action: "new" });
-});
-
-test("down selects; enter opens details and a second enter switches with a notice", async () => {
-	const s = await started();
-	await launch(s, "older");
-	const newer = await launch(s, "newer");
-	await launch(s, "newest");
-	s.tmux.attachClient("c1", 100);
-	const script = keyScript(["down", "enter", "enter"]);
-	await panel(s, script);
-	assert.match(script.frames[1], /▸ scout-newer/);
-	assert.deepEqual(script.result, { action: "switch", id: newer.id });
-	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: newer.windowId }]);
-	assert.ok(
-		s.notes.some((note) => note.includes("your tmux last-session key returns you")),
-		s.notes.join("|"),
-	);
-});
-
-test("s does nothing in the panel", async () => {
-	const s = await started();
-	await launch(s, "one");
-	s.tmux.attachClient("c1", 100);
-	const script = keyScript(["s", "escape"]);
-	await panel(s, script);
-	assert.equal(script.result, undefined);
-	assert.deepEqual(s.tmux.switches, []);
+	assert.deepEqual(s.shortcuts(), []);
 });
 
 test("the client is the most recently active one attached to the parent's session", async () => {
 	const s = await started();
-	await launch(s, "one");
+	const one = await launch(s, "one");
 	s.tmux.attachClient("stale", 10);
 	s.tmux.attachClient("fresh", 90);
 	s.tmux.attachClient("elsewhere", 500, "other-session");
-	await panel(s, keyScript(["enter", "enter"]));
+	await s.command("delegate-open", one.id);
 	assert.deepEqual(s.tmux.clientLookups, ["work"]);
 	assert.deepEqual(
 		s.tmux.switches.map((sw) => sw.client),
@@ -180,17 +90,17 @@ test("the client is the most recently active one attached to the parent's sessio
 	);
 });
 
-test("with no client attached switch refuses with a notice and peek and close still work", async () => {
+test("with no client attached switch refuses with a notice and peek still works", async () => {
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.screens.set(one.windowId, "hello from the pane");
-	await panel(s, keyScript(["enter", "enter"]));
+	await s.command("delegate-open", one.id);
 	assert.deepEqual(s.tmux.switches, []);
 	assert.equal(s.warnings.length, 1);
 	assert.match(s.warnings[0], /cannot switch: no tmux client is attached to session work/);
-	const list = keyScript(["p"]);
 	const peek = keyScript(["x", "escape"]);
-	await panel(s, list, peek, keyScript(["escape"]));
+	s.queueCustom(peek);
+	await s.command("delegate-open", `${one.id} --peek`);
 	assert.match(peek.frames[1], /hello from the pane/);
 });
 
@@ -219,10 +129,9 @@ test("peek captures the pane in an overlay, r refreshes it and enter switches to
 		s.tmux.screens.set(id, "second screen");
 		return text;
 	};
-	const list = keyScript(["p"]);
-	const peek = keyScript(["x", "r", "enter"]); // x is ignored: it only lets the first capture show
-	await panel(s, list, peek);
-	assert.deepEqual(list.result, { action: "peek", id: one.id });
+	const peek = keyScript(["x", "r", "enter"]);
+	s.queueCustom(peek);
+	await s.command("delegate-open", `${one.id} --peek`);
 	assert.match(peek.frames[1], /Peek: scout-one/);
 	assert.match(peek.frames[1], /first screen/);
 	assert.match(peek.frames[2], /second screen/);
@@ -230,58 +139,30 @@ test("peek captures the pane in an overlay, r refreshes it and enter switches to
 	assert.deepEqual(peek.result, { action: "switch" });
 	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: one.windowId }]);
 	assert.deepEqual(s.customOptions[0], {
-		blocked: { kind: "question", message: "Choose a delegate action" },
-	});
-	assert.deepEqual(s.customOptions[1], {
 		overlay: true,
 		overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" },
 	});
 });
 
-test("esc in a peek returns to the list", async () => {
+test("esc in a peek returns to the prompt", async () => {
 	const s = await started();
-	await launch(s, "one");
-	const list = keyScript(["p"]);
+	const one = await launch(s, "one");
 	const peek = keyScript(["escape"]);
-	const again = keyScript(["escape"]);
-	await panel(s, list, peek, again);
+	s.queueCustom(peek);
+	await s.command("delegate-open", `${one.id} --peek`);
 	assert.match(peek.frames[0], /r refresh · enter switch · esc back/);
-	assert.match(again.frames[0], /↑↓ select/);
+	assert.equal(s.customs.length, 1);
 	assert.deepEqual(s.tmux.switches, []);
 });
 
 test("a failing capture is shown in the peek", async () => {
 	const s = await started();
-	await launch(s, "one");
+	const one = await launch(s, "one");
 	s.tmux.fail.capture = "can't find pane";
 	const peek = keyScript(["x", "escape"]);
-	await panel(s, keyScript(["p"]), peek, keyScript(["escape"]));
+	s.queueCustom(peek);
+	await s.command("delegate-open", `${one.id} --peek`);
 	assert.match(peek.frames[1], /Could not capture the pane: can't find pane/);
-});
-
-test("closing a running delegate asks first; no leaves it open, yes kills it and records the close", async () => {
-	const s = await started({ ui: { confirm: [false, true] } });
-	const one = await launch(s, "one");
-	// x, answered no: the panel reopens; x again, answered yes; the panel reopens on an empty list.
-	const list = keyScript(["x"]);
-	await panel(s, list, keyScript(["x"]), keyScript(["escape"]));
-	assert.equal(s.confirms.length, 2);
-	assert.match(s.confirms[0].message, /scout-one is still running/);
-	assert.deepEqual(s.tmux.killed, [one.windowId]);
-	const status = (await s.toolCall("delegation_status", { id: one.id })).structuredContent as {
-		delegations: { state: string }[];
-	};
-	assert.equal(status.delegations[0].state, "closed");
-	assert.ok(s.notes.some((note) => note.includes(`Closed delegation subtree ${one.id}`)));
-});
-
-test("closing a finished delegate does not ask", async () => {
-	const s = await started();
-	const one = await launch(s, "one");
-	s.events.emit("message:inbound", reply(s, one.id));
-	await panel(s, keyScript(["x"]), keyScript(["escape"]));
-	assert.equal(s.confirms.length, 0);
-	assert.deepEqual(s.tmux.killed, [one.windowId]);
 });
 
 test("/delegate-open takes an id and at most one mode flag", async () => {
@@ -348,26 +229,6 @@ test("/delegate-open completes the ids of open delegations, then the flags", asy
 	);
 	assert.deepEqual(await values(`${open.id} --s`), [`${open.id} --switch`]);
 	assert.equal(await values(`${open.id} --peek `), null);
-});
-
-test("n in the empty panel starts the new-delegate flow, which launches as /delegate does", async () => {
-	const s = await started({ ui: { select: ["scout — Looks things up"], editor: ["look around"], input: [""] } });
-	s.queueCustom(keyScript(["n"]));
-	s.queueCustom({}); // the form's settings screen: Start with every default
-	await s.command("delegates");
-	assert.equal(s.selects[0].title, "New delegate: agent");
-	assert.equal(s.tmux.opened.length, 1);
-	assert.match(s.notes.join("\n"), /scout \S+ started in window scout-/);
-});
-
-test("n from a populated panel opens the form, and cancelling it starts nothing", async () => {
-	const s = await started({ ui: { select: [undefined] } });
-	await launch(s, "one");
-	const before = s.tmux.opened.length;
-	await panel(s, keyScript(["n"]));
-	assert.equal(s.selects.length, 1);
-	assert.equal(s.selects[0].title, "New delegate: agent");
-	assert.equal(s.tmux.opened.length, before);
 });
 
 test("the poll runs only while a delegation is running", async (t) => {

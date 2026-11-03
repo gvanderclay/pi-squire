@@ -50,7 +50,7 @@ const DISPLAY_NAME = /^[A-Za-z0-9_-]+$/;
 
 export type Agent = {
 	name: string;
-	/** Shown instead of the name on the delegate card, `/delegates` and the window title; from `display_name`, `[A-Za-z0-9_-]+`. */
+	/** Shown instead of the name on the delegate card, compact widget and window title; from `display_name`, `[A-Za-z0-9_-]+`. */
 	displayName?: string;
 	description: string;
 	/** Passed to the child's `--model` unchanged; undefined means the parent's model. */

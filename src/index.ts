@@ -1450,7 +1450,7 @@ export default function delegate(
 		}
 	}
 
-	/** What the new-delegate form needs, shared by `/delegate` and the panel's `n`. */
+	/** What the no-argument `/delegate` form needs. */
 	const newDelegateDeps: NewDelegateDeps = {
 		unavailable: () => (tmux.insideTmux() ? undefined : NOT_IN_TMUX),
 		roster: rosterFor,
@@ -1704,26 +1704,9 @@ export default function delegate(
 		handler: resumeCommand,
 	});
 
-	const navigator = createNavigator(
-		viewResults,
-		tmux,
-		tracking,
-		(ctx: ExtensionContext) => startNewDelegate(ctx, newDelegateDeps),
-		{
-			assertActive: () => owner.assert(),
-			close: (id, ctx) => tracking.close(id, ctx),
-			resume: (id, ctx) => resumePicker(ctx, id),
-		},
-	);
-
-	pi.registerCommand("delegates", {
-		description: "Open the shared delegate dashboard: details, switch, peek, close, resume",
-		handler: async (_args: string, ctx: ExtensionContext) => navigator.panel(ctx),
-	});
-
-	pi.registerShortcut("alt+shift+d", {
-		description: "Open the delegates panel",
-		handler: (ctx: ExtensionContext) => navigator.panel(ctx),
+	const navigator = createNavigator(viewResults, tmux, tracking, {
+		assertActive: () => owner.assert(),
+		close: (id, ctx) => tracking.close(id, ctx),
 	});
 
 	pi.registerCommand("delegate-open", {

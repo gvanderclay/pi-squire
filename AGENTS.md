@@ -14,7 +14,7 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   semantic records fail-closed), `render.ts` draws the
   delegate messages, `tracking.ts` holds the status and close
   tools, `poll.ts` the poll (with `windows.ts`), `navigator.ts`
-  the `/delegates` panel and `/delegate-open`, `new-delegate.ts` the new-delegate
+  `/delegate-open` and the compact widget close action, `new-delegate.ts` the new-delegate
   form, `resume-picker.ts` the resume picker, `resume.ts` the resume launch (`resume-checks.ts` the checks the picker shares) and the `delegation_resume` tool, `workspace.ts` resolves a
   delegate's directory, its Git checkout at launch and its project trust,
   `trust-prompt.ts` serializes local/root trust choices, `trust-control.ts`

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { readChildRecords } from "../src/child-tasks.ts";
@@ -10,8 +10,8 @@ import { DELEGATE_WIDGET_KEY } from "../src/widget.ts";
 import { LIVE_LAUNCH_ENV, LiveActivityReader } from "../src/widget-live.ts";
 import { placementProject } from "../src/window-placement.ts";
 import { FakeTmux } from "./fake-tmux.ts";
-import { agentDir, agentFile, cleanup, keyScript, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
-import { mailSession, nextTurn, scan } from "./mail-harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
+import { mailSession, scan } from "./mail-harness.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -37,16 +37,13 @@ function instance(options: Parameters<typeof mailSession>[0] = {}, launchId?: st
 	active.push(s);
 	return s;
 }
-async function settle(): Promise<void> {
-	for (let n = 0; n < 10; n++) await nextTurn();
-}
 async function until(check: () => boolean | Promise<boolean>): Promise<void> {
 	const deadline = Date.now() + 5000;
 	while (Date.now() < deadline) {
 		if (await check()) return;
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
-	assert.fail("combined dashboard/nesting observation timed out");
+	assert.fail("combined widget/nesting observation timed out");
 }
 function frame(s: Session): string {
 	return s.widgets.get(DELEGATE_WIDGET_KEY)?.render(150).join("\n") ?? "";
@@ -74,15 +71,7 @@ async function tree(options: Parameters<typeof mailSession>[0] = {}) {
 	const w = await launch(coordinator, "worker", "nested");
 	return { owner, coordinator, c, w, tmux };
 }
-async function panel(s: Session, keys: string[]): Promise<ReturnType<typeof keyScript>> {
-	const script = keyScript(keys, 180);
-	s.queueCustom(script);
-	s.queueCustom(keyScript(["escape"], 180));
-	await s.command("delegates");
-	return script;
-}
-
-test("dashboard closes the entire subtree and resume inherits original placement across root cwd changes", async () => {
+test("widget closes the subtree and resume command inherits original placement across root cwd changes", async () => {
 	const a = directory("original-root");
 	const b = directory("coordinator-cwd");
 	const d = directory("reopened-root");
@@ -102,13 +91,10 @@ test("dashboard closes the entire subtree and resume inherits original placement
 	await coordinator.fire("tool_execution_start", { toolCallId: "read", toolName: "read", args: {} });
 	await until(async () => (await new LiveActivityReader().read(c.id, c.id))?.text === "reading…");
 	await until(() => /reading…/.test(frame(owner)));
-	const detail = keyScript(["enter", "x"], 180);
-	owner.queueCustom(detail);
-	owner.queueCustom(keyScript(["escape", "escape"], 180));
-	await owner.command("delegates");
+	owner.terminalKey("down");
+	owner.terminalKey("x");
 	await until(() => tmux.killed.includes(c.windowId));
 	await until(() => owner.confirms.length === 1 && !frame(owner).includes("coordinator-cross-project"));
-	assert.match(detail.frames[1], /Delegate: coordinator-cross-project/);
 	assert.deepEqual(tmux.killed, [w.windowId, c.windowId]);
 	assert.match(owner.confirms[0].message, /and its delegates\? Worktrees and branches stay/);
 	assert.equal(local(owner, c.id).closed, true);
@@ -127,7 +113,7 @@ test("dashboard closes the entire subtree and resume inherits original placement
 	);
 	const reopened = instance({ parent: owner.parent, cwd: d, tmux, ui: { editor: ["new task"] } });
 	await reopened.start();
-	await panel(reopened, ["r"]);
+	await reopened.command("delegate-resume", `${c.id} new task`);
 	const resumed = reopened.entries.filter((entry) => entry.data.requestId).at(-1)!.data as Delegation;
 	assert.equal(resumed.sessionId, c.id);
 	assert.equal(resumed.identity?.rootPlacement, base);
@@ -172,14 +158,17 @@ test("widget switches a renamed branch while grandchild resume remains direct-pa
 	assert.equal(local(coordinator, w.id).closed, undefined);
 });
 
-test("dashboard subtree close preserves successful members and reports partial errors before explicit retry", async () => {
+test("widget subtree close reports partial errors and explicit tool retry preserves successful members", async () => {
 	const { owner, coordinator, c, w, tmux } = await tree({ ui: { confirm: [true, true] } });
 	const kill = tmux.kill.bind(tmux);
 	tmux.kill = async (id) => {
 		if (id === w.windowId) throw new Error("injected worker kill refusal");
 		await kill(id);
 	};
-	await panel(owner, ["x"]);
+	await until(() => frame(owner).includes(c.windowName));
+	owner.terminalKey("down");
+	owner.terminalKey("x");
+	await until(() => owner.errors.some((error) => error.includes("injected worker kill refusal")));
 	assert.deepEqual(tmux.killed, [c.windowId]);
 	assert.ok(owner.errors.some((error) => /Partial close of/.test(error) && error.includes(w.id)));
 	assert.ok(owner.errors.some((error) => error.includes("injected worker kill refusal")));
@@ -188,85 +177,10 @@ test("dashboard subtree close preserves successful members and reports partial e
 	assert.equal(readTree(owner.parent).closes?.length, 1);
 	assert.equal(local(coordinator, w.id).closed, undefined);
 	tmux.kill = kill;
-	await panel(owner, ["x"]);
+	await owner.toolCall("delegation_close", { id: c.id });
 	assert.deepEqual(tmux.killed, [c.windowId, w.windowId], "confirmed successes are not killed twice");
 	assert.equal(readTree(owner.parent).closes?.length, 0);
-	assert.ok(owner.notes.some((note) => /Closed delegation subtree/.test(note)));
 	assert.equal(local(coordinator, w.id).closed, undefined);
 	await coordinator.fire("context", { messages: [] });
 	assert.equal(local(coordinator, w.id).closed, true);
-});
-
-test("one dashboard offers confirmed root close-all, never coordinator close-all or foreign-root kills", async () => {
-	const { owner, coordinator, c, w, tmux } = await tree({ ui: { confirm: [false, true] } });
-	const direct = await launch(owner, "worker", "other-branch");
-	const foreign = instance({ tmux });
-	const untouched = await launch(foreign, "worker", "foreign");
-	const childScript = keyScript(["a", "escape"], 180);
-	coordinator.queueCustom(childScript);
-	await coordinator.command("delegates");
-	assert.doesNotMatch(childScript.frames[0], /a close all subtrees/);
-	assert.equal(coordinator.confirms.length, 0);
-	const canceled = await panel(owner, ["a"]);
-	assert.match(canceled.frames[0], /a close all subtrees/);
-	assert.equal(tmux.killed.length, 0);
-	await panel(owner, ["a"]);
-	assert.equal(owner.confirms.length, 2);
-	assert.equal(owner.confirms[1].title, "Close all delegate subtrees");
-	assert.deepEqual(new Set(tmux.killed), new Set([c.windowId, w.windowId, direct.windowId]));
-	assert.equal(tmux.windows.has(untouched.windowId), true);
-	assert.equal(readTree(owner.parent).closes?.length, 0);
-	assert.equal(local(coordinator, w.id).closed, undefined);
-	const empty = instance({ ui: { confirm: [true] } });
-	const script = await panel(empty, ["a"]);
-	assert.match(script.frames[0], /No open delegates.*a close all subtrees/);
-	assert.equal(empty.confirms.length, 1, "root close-all is reachable even with no rows");
-});
-
-test("root close-all partial failure stays an error and fenced until a confirmed retry", async () => {
-	const { owner, w, tmux } = await tree({ ui: { confirm: [true, true] } });
-	const kill = tmux.kill.bind(tmux);
-	tmux.kill = async (id) => {
-		if (id === w.windowId) throw new Error("close-all member unavailable");
-		await kill(id);
-	};
-	await panel(owner, ["a"]);
-	assert.ok(owner.errors.some((error) => error.includes("Partial close of") && error.includes(w.id)));
-	assert.equal(readTree(owner.parent).closes?.length, 1);
-	await assert.rejects(owner.toolCall("delegate", { agent: "worker", task: "fenced" }), /closing/);
-	tmux.kill = kill;
-	await panel(owner, ["a"]);
-	assert.equal(readTree(owner.parent).closes?.length, 0);
-	assert.ok(owner.notes.some((note) => note.includes("Closed delegation subtree")));
-});
-
-test("ownership loss during dashboard close-all confirmation refuses before any fence or window effect", async () => {
-	const { owner, tmux } = await tree();
-	await settle();
-	const ownerFile = join(agentDir, "squire", "owners", `${owner.parent}.json`);
-	const saved = readFileSync(ownerFile, "utf8");
-	let release!: () => void, entered!: () => void;
-	const ready = new Promise<void>((resolve) => {
-		entered = resolve;
-	});
-	const pending = new Promise<void>((resolve) => {
-		release = resolve;
-	});
-	owner.context.ui.confirm = async () => {
-		entered();
-		await pending;
-		return true;
-	};
-	owner.queueCustom(keyScript(["a"], 180));
-	const action = owner.command("delegates");
-	await ready;
-	writeFileSync(ownerFile, JSON.stringify({ ...JSON.parse(saved), token: "replacement-runtime" }));
-	try {
-		release();
-		await assert.rejects(action, /inactive/);
-		assert.equal(tmux.killed.length, 0);
-		assert.equal(readTree(owner.parent).closes?.length ?? 0, 0);
-	} finally {
-		writeFileSync(ownerFile, saved);
-	}
 });

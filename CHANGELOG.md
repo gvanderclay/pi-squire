@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- The `/delegates` panel and its alt+shift+d shortcut are removed. Manage open
+  delegates in the compact widget, use `/delegate-open` for switch or peek,
+  `/delegate` for new tasks, and `/delegate-resume` for follow-ups. Panel-only
+  tests are deleted; remaining navigation, close, and resume tests now drive
+  those public entry points. README and older panel descriptions are removed.
+
 ### Changed
 
 - `delegation_close` records the close without posting a cancellation message or
@@ -57,8 +65,8 @@ follows [Semantic Versioning](https://semver.org/).
   test increases from 10,000 to 12,000 characters to cover the fifth tool.
   Managed forks report their cwd, branch, base and uncopied changes, and their
   prompt directs them away from the original checkout; non-isolated forks warn
-  about sharing a folder with a running source. Dashboard details show the
-  source id, foreign callers get an explicit direct-parent refusal, and the
+  about sharing a folder with a running source. Foreign callers get an explicit
+  direct-parent refusal, and the
   fork tool declares its destructive-operation hint.
 
 ## [0.19.1] - 2026-11-02
@@ -77,10 +85,10 @@ follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - **Breaking:** Pi 1.5.0 or later is now required. Delegate result expand hints use Pi's
-  configured keybinding, and the inline delegate dashboard and new-delegate
-  settings form report that Pi is waiting for a choice. The render tests now
+  configured keybinding, and the new-delegate settings form reports that Pi is
+  waiting for a choice. The render tests now
   require the configured key in the hint instead of accepting a missing key;
-  dashboard and form tests pin their blocked-input status. The active-tools
+  form tests pin its blocked-input status. The active-tools
   test fake now preserves retained tools' order, matching Pi 1.5.
 
 ## [0.18.4] - 2026-11-02
@@ -185,7 +193,7 @@ follows [Semantic Versioning](https://semver.org/).
   partial failures return `isError:true` with details rather than discarding
   successful members in a thrown tmux error. Close requires a readable shared
   fence before kills. Old single-window wording/schema, direct-close-on-corrupt-
-  registry, panel/poll/placement text assertions deliberately change; local
+  registry, poll and placement text assertions deliberately change; local
   genuine result publication remains warning-only. Unknown/foreign/obsolete
   target ids refuse before effects. Canceling unfinished children now requires
   direct-parent processing rather than silently releasing the task barrier.
@@ -213,44 +221,17 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Complete branch-focused widget entry in the same dashboard: initial details
-  retain their Escape-to-compact-list behavior, while `b` opens only the selected
-  branch's descendant/resume history and worker details return to that list.
-  Overall `/delegates` stays scoped to the invoking session's whole subtree.
-  Root close-all remains explicitly all root subtrees, not only displayed rows.
-- Dashboard switch/peek and `/delegate-open` now reuse positively verified
+- `/delegate-open` now reuses positively verified
   current pane/server/owner locators for reattached latest sessions, without
   rewriting historical launch/result facts or changing close authority.
   A lost or replaced current locator never falls back to an old still-open
-  window; peek captures the exact verified Pi pane. Details distinguish launch
-  and current windows and reflect native session titles and actual outcomes.
+  window; peek captures the exact verified Pi pane.
   Verified live latest rows remain navigable even before historical disappearance
   is polled. Closing live navigation rows confirms the separate durable control
   scope; telemetry never retargets a kill, and reattached windows may remain open.
   Post-switch ownership loss reports the completed switch honestly.
-  Add `test/navigator-current.test.ts`, extend `test/dashboard.test.ts` and
-  `test/widget-nesting-final.test.ts` for deliberate branch-list behavior,
-  current-window races, title composition and direct-parent resume refusal.
-- Compose the shared widget/dashboard actions with context-aware subtree close:
-  selected close reports aggregate partial errors, and the root retains confirmed
-  `a` close-all from the same dashboard, including empty/history views. Keep
-  direct-widget activity/focus and direct-parent resume checks unchanged; no
-  second panel or row-by-row close authority. Add combined coverage in
-  `test/widget-nesting-final.test.ts` and root action intent coverage in
-  `test/dashboard.test.ts`; extend `test/dashboard-actions.test.ts` control stubs.
-- Make the direct-delegate widget keyboard-navigable and reuse one dashboard for
-  widget Enter, `/delegates` and its shortcut. Down at an empty built-in prompt
-  selects children; stable selection scrolls through the cap. Enter opens details,
-  and Escape returns to list then prompt. Dashboard list Enter now opens details
-  before a second Enter switches (a deliberate navigation change); peek, close,
-  new and authorized resume remain behind existing action/ownership checks.
-  Custom editors, autocomplete, dialogs and unknown focus pass through unchanged.
-  The isolated Pi-internals adapter was tested with installed Pi 1.4.0 in both
-  regular and fullscreen modes; no Pi change or editor/footer replacement.
-  Protect the empty prompt while a widget-opened dashboard is loading or
-  re-listing between actions, without intercepting real dashboard/dialog input.
-  Update `test/navigator.test.ts` for the deliberate two-Enter details/switch
-  flow and `test/tree-restore.test.ts` to inspect metadata in details.
+  Add `test/navigator-current.test.ts` for current-window races and extend
+  `test/widget-nesting-final.test.ts` for direct-parent resume refusal.
 - The interactive direct-delegate overview deliberately replaces only Squire’s
   running-count entry when its cap is positive, preserving custom footers/editors
   and the own-delegate badge. Cap zero and non-TUI hosts retain the running count.
@@ -305,7 +286,7 @@ follows [Semantic Versioning](https://semver.org/).
   Consumers can observe ordinary reopen and runtime replacement without
   treating launch environment variables as identity authority.
 
-- Explicit ancestor-scoped subtree close and root-only confirmed panel close-all.
+- Explicit ancestor-scoped subtree close.
   Shared admission/own-entry dispatch fences precede effects, including root
   reservations. Already-dispatched unknown creates remain charged/fenced and
   partial; bounded explicit retries never guess no-start. Current verified
@@ -436,12 +417,6 @@ follows [Semantic Versioning](https://semver.org/).
   retaining root/depth, live-session/obsolete-chain protections and current
   grants, caps, tool ceiling and trust resolver. Fork/clone copies are history,
   not authority; inherited launch environment no longer assigns identity.
-- Deliberately change the delegates panel to retain hierarchical history and
-  details rather than only open windows; only verified windows support
-  navigation. Descendant close stays with the separate explicit-close slice.
-  Reattachment tests now reopen the same id after shutdown rather than copying
-  starts into a fresh/live duplicate session. Root outcomes retain processing
-  durability with a non-displaying recovery wake instead of a repeated final.
 
 - Keep durable local result/gone delivery, coordinator wakes and close tracking
   working when shared fact publication fails; warn and reconcile those saved
@@ -551,7 +526,7 @@ follows [Semantic Versioning](https://semver.org/).
   each resolving to one model; a `*` pattern makes the file invalid, so the
   agent is disabled. A body may be empty.
 - New agent fields: `display_name` (shown on the delegate card, in
-  `/delegates` and in the window title; it may hold only ASCII letters,
+  the compact widget and in the window title; it may hold only ASCII letters,
   digits, `-` and `_`, and any other value, a space, `#`, `.`, a non-ASCII
   letter or an empty value among them, makes the file invalid, so the agent is
   disabled), `enabled: false` (leaves the agent
@@ -603,21 +578,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
-- The delegate popup: `enter` in `/delegates` and `/delegate-open --popup` no
-  longer open a tmux popup, and the popup title from 0.13.1 (the close key in
+- `/delegate-open --popup` no longer opens a tmux popup, and the popup title from 0.13.1 (the close key in
   its title) goes with it. `--popup` is now an unknown-flag usage error. The
   poll runs again only while a delegation is running. The close hint was hard to
   see in some themes, and a switch covers the need.
 
 ### Changed
 
-- `enter` in the `/delegates` panel, and in its peek, now switches your tmux
-  client to the delegate's window (the notice says your tmux last-session key returns you); `/delegate-open
-  <id>` with no flag switches too. The `s` key is gone. With no client attached,
+- `/delegate-open <id>` with no flag switches your tmux client to the delegate's
+  window. The switch notice says your tmux last-session key returns you. The `s` key is gone. With no client attached,
   switch still refuses; peek and close still work. tmux 3.2 stays the minimum,
   for `new-session -e`.
-- Tests changed with it: in `test/navigator.test.ts` the panel hint, `enter`,
-  peek, no-client, failure, `/delegate-open` parsing, default and completion
+- Tests changed with it: in `test/navigator.test.ts` peek, no-client, failure, `/delegate-open` parsing, default and completion
   tests now expect a switch, and the popup lifecycle tests are replaced by one
   test that the poll runs only while a delegation does; `test/tmux.test.ts` no
   longer tests `popup` and `closePopup`, and `test/popup-parent.ts` and the
@@ -646,14 +618,6 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `/delegates`, also on `alt+shift+d`, opens a panel of the delegations whose
-  window is open (newest first): `enter` opens one in a tmux popup, or switches
-  to it when it is in your own session; `p` peeks at its pane in an overlay (`r` refreshes,
-  `enter` opens); `s` switches your client to it; `x` closes it, asking only
-  while it runs; `n` opens the new-delegate form. `/delegate-open <id> [--popup|--switch|--peek]` does one of
-  these directly. Popup and switch act on the most recently active client of the
-  parent's session; the parent closes a popup once its delegate's window is gone.
-  Commands and a shortcut only: the model gets no new tool.
 - `/delegate` with no arguments opens a new-delegate form: pick an agent, write
   the task, name it, then a settings screen for model, thinking level (only the
   levels the model supports, clamped, visibly, when the agent's default or a new model does not support it), auto-exit,

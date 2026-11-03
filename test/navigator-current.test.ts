@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createNavigator } from "../src/navigator.ts";
-import { branchItems, dashboardRows, NavigatorView } from "../src/navigator-view.ts";
+import { NavigatorView } from "../src/navigator-view.ts";
 import type { Results, StartedRecorded } from "../src/results.ts";
 import { LiveActivityReader, type LiveLocator } from "../src/widget-live.ts";
 import { FakeTmux } from "./fake-tmux.ts";
@@ -61,45 +61,32 @@ test("current navigation preserves gone/failed launch facts and exact-pane liven
 	f.record.result = { status: "failed", replyId: "reply", envelopePath: "/result" };
 	f.tmux.exit("@2"); // A DIFFERENT active pane is dead; the exact Pi pane is alive.
 	const before = JSON.stringify(f.records);
-	const [item] = (await f.view.items(true))!;
+	const [item] = (await f.view.items())!;
 	assert.equal(item.window.id, "@2");
 	assert.equal(item.navigable, true);
 	assert.equal(item.state, "done");
-	assert.match(dashboardRows([item])[0].label, /done \(failed\)/);
-	assert.match(dashboardRows([item])[0].details.join("\n"), /launch window: historical \(@1\)/);
-	assert.match(
-		dashboardRows([item])[0].details.join("\n"),
-		/current verified window: reattached \(@2\) in new-session/,
-	);
 	assert.equal(await f.view.verified(item), true);
 	assert.equal(JSON.stringify(f.records), before);
 });
 
-test("dashboard details show a fork's source delegation", async () => {
-	const f = setup();
-	f.record.forkedFrom = "source-delegation";
-	const [item] = (await f.view.items(true))!;
-	assert.match(dashboardRows([item])[0].details.join("\n"), /forked from: source-delegation/);
-});
-
 test("lost/invalid current evidence never falls back to an old still-open window, including later refreshes", async () => {
 	const f = setup();
-	const [item] = (await f.view.items(true))!;
+	const [item] = (await f.view.items())!;
 	f.live = undefined;
 	assert.equal(await f.view.verified(item), false);
-	assert.equal((await f.view.items(true))![0].navigable, false);
+	assert.deepEqual(await f.view.items(), []);
 	assert.deepEqual(await f.view.items(), []);
 	f.live = { ...item.live!, locator: { ...item.live!.locator, serverStarted: "other-incarnation" } };
-	assert.equal((await f.view.items(true))![0].navigable, false);
+	assert.deepEqual(await f.view.items(), []);
 	assert.equal(f.tmux.windows.has("@1"), true);
 });
 
 test("generation/owner/pane changes across verification refuse and obsolete attempts cannot acquire successor locators", async () => {
 	const f = setup();
-	const [item] = (await f.view.items(true))!;
+	const [item] = (await f.view.items())!;
 	f.live = { ...f.live!, generation: "replacement", ownerToken: "replacement-token" };
 	assert.equal(await f.view.verified(item), false);
-	const current = (await f.view.items(true))![0];
+	const current = (await f.view.items())![0];
 	const inspect = f.tmux.inspectPane.bind(f.tmux);
 	f.tmux.inspectPane = async (pane) => {
 		const found = await inspect(pane);
@@ -110,24 +97,26 @@ test("generation/owner/pane changes across verification refuse and obsolete atte
 	f.tmux.inspectPane = inspect;
 	f.records.push({ ...f.record, id: "successor", resumedFrom: f.record.id, gone: undefined });
 	f.live = item.live;
-	const items = (await f.view.items(true))!;
-	assert.equal(items[0].navigable, false);
-	assert.equal(items[1].window.id, "@2");
+	const items = (await f.view.items())!;
+	assert.deepEqual(
+		items.map((entry) => entry.id),
+		["successor"],
+	);
+	assert.equal(items[0].window.id, "@2");
 });
 
 test("legacy id+name verification stays available without snapshots; listing failure is unknown and refuses actions", async () => {
 	const f = setup();
 	f.live = undefined;
-	const [item] = (await f.view.items(true))!;
+	const [item] = (await f.view.items())!;
 	assert.equal(item.window.id, "@1");
 	assert.equal(await f.view.verified(item), true);
 	f.tmux.failList = "unavailable";
 	assert.equal(await f.view.verified(item), false);
-	assert.equal((await f.view.items(true))![0].navigable, false);
 	assert.equal(await f.view.items(), undefined);
 });
 
-test("shared navigator command/dashboard peek targets current exact pane and switch rechecks after client lookup", async () => {
+test("shared navigator command peek targets current exact pane and switch rechecks after client lookup", async () => {
 	const f = setup();
 	const original = LiveActivityReader.prototype.locator;
 	LiveActivityReader.prototype.locator = f.reader.locator;
@@ -155,7 +144,7 @@ test("shared navigator command/dashboard peek targets current exact pane and swi
 					}),
 			},
 		} as unknown as ExtensionContext;
-		const navigator = createNavigator(f.results, f.tmux, {} as never, () => {});
+		const navigator = createNavigator(f.results, f.tmux, {} as never);
 		await navigator.openDelegate(ctx, f.record.id, "peek");
 		assert.deepEqual(f.tmux.captures, ["%2"]);
 		await navigator.openDelegate(ctx, f.record.id, "switch");
@@ -192,7 +181,7 @@ test("verified latest live window-closed rows stay in command/completions withou
 			mode: "tui",
 			ui: { notify: () => {} },
 		} as unknown as ExtensionContext;
-		const navigator = createNavigator(f.results, f.tmux, {} as never, () => {});
+		const navigator = createNavigator(f.results, f.tmux, {} as never);
 		assert.deepEqual(await navigator.openIds(), [f.record.id]);
 		await navigator.openDelegate(ctx, f.record.id, "switch");
 		assert.equal(f.tmux.switches.at(-1)?.windowId, "@2");
@@ -218,7 +207,6 @@ test("close confirms verified live gone/done/window-closed rows but passes only 
 			if (state === "window-closed") f.tmux.windows.delete("@1");
 			LiveActivityReader.prototype.locator = f.reader.locator;
 			const before = JSON.stringify(f.records);
-			let choose = true;
 			let consent = false;
 			let closes = 0;
 			const confirmations: string[] = [];
@@ -231,14 +219,9 @@ test("close confirms verified live gone/done/window-closed rows but passes only 
 						confirmations.push(message);
 						return consent;
 					},
-					custom: async () => {
-						if (!choose) return undefined;
-						choose = false;
-						return { action: "close", id: f.record.id };
-					},
 				},
 			} as unknown as ExtensionContext;
-			const navigator = createNavigator(f.results, f.tmux, {} as never, () => {}, {
+			const navigator = createNavigator(f.results, f.tmux, {} as never, {
 				close: async (id, context) => {
 					assert.equal(id, f.record.id);
 					assert.equal(context, ctx);
@@ -246,11 +229,10 @@ test("close confirms verified live gone/done/window-closed rows but passes only 
 					return { text: "Durable control result, not a telemetry-targeted kill" };
 				},
 			});
-			await navigator.panel(ctx);
+			await navigator.closeDelegate(ctx, f.record.id);
 			assert.equal(closes, 0, "No cancels before control effects");
-			choose = true;
 			consent = true;
-			await navigator.panel(ctx);
+			await navigator.closeDelegate(ctx, f.record.id);
 			assert.equal(closes, 1);
 			assert.equal(confirmations.length, 2);
 			assert.match(confirmations[0], /Close .* and its delegates\? Worktrees and branches stay\./);
@@ -280,7 +262,7 @@ test("ownership loss after successful switch reports the completed effect, not a
 			mode: "tui",
 			ui: { notify: (text: string, type: string) => notes.push({ text, type }) },
 		} as unknown as ExtensionContext;
-		const navigator = createNavigator(f.results, f.tmux, {} as never, () => {}, {
+		const navigator = createNavigator(f.results, f.tmux, {} as never, {
 			assertActive: () => {
 				if (!active) throw Error("replacement owner");
 			},
@@ -292,37 +274,4 @@ test("ownership loss after successful switch reports the completed effect, not a
 	} finally {
 		LiveActivityReader.prototype.locator = original;
 	}
-});
-
-test("branch projection retains all historical attempts and depth, but never siblings or an unrelated root", async () => {
-	const f = setup();
-	const identity = (parent: string, root: string, depth: number) => ({
-		parent,
-		root,
-		depth,
-		agent: "worker",
-		chain: [],
-		autoExit: false,
-		rootPlacement: "project-delegate-session",
-	});
-	f.record.identity = identity("root", "root", 1);
-	f.records.push(
-		{ ...f.record, id: "grandchild", sessionId: "grandchild", identity: identity("child", "root", 2) },
-		{ ...f.record, id: "retry", resumedFrom: f.record.id },
-		{ ...f.record, id: "deep", sessionId: "deep", identity: identity("grandchild", "root", 3) },
-		{ ...f.record, id: "sibling", sessionId: "sibling" },
-		{ ...f.record, id: "foreign", sessionId: "foreign", identity: identity("foreign-root", "foreign-root", 1) },
-	);
-	const all = (await f.view.items(true))!;
-	const branch = branchItems(all, "child");
-	assert.deepEqual(
-		branch.map((item) => item.id),
-		["old-launch", "grandchild", "retry", "deep"],
-	);
-	assert.deepEqual(
-		dashboardRows(branch).map((row) => row.depth),
-		[0, 1, 0, 2],
-	);
-	assert.deepEqual(branchItems(all, "absent"), []);
-	assert.equal(branchItems(all, undefined), all);
 });

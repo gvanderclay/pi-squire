@@ -34,7 +34,7 @@ type FocusOptions = {
 	error(error: unknown): void;
 };
 
-/** Pseudo-focus: real Pi focus stays with the prompt until Pi mounts a dashboard/dialog. */
+/** Pseudo-focus leaves real Pi focus with the prompt or its confirmation dialog. */
 export class WidgetFocus {
 	private readonly options: FocusOptions;
 	private tui: unknown;
@@ -70,7 +70,7 @@ export class WidgetFocus {
 	suspend(suspended: boolean): void {
 		if (this.stopped) return;
 		this.suspended = suspended;
-		// Our own dashboard keeps selection; unrelated prompts relinquish pseudo-focus.
+		// Our own confirmation keeps selection; unrelated prompts relinquish pseudo-focus.
 		if (suspended && !this.busy) this.options.selection.leave();
 		this.options.changed();
 	}
@@ -90,8 +90,7 @@ export class WidgetFocus {
 
 	private input(data: string): { consume: true } | undefined {
 		if (this.stopped || isKeyRelease(data)) return;
-		// Async listing/action loops temporarily return focus to the prompt. Do not
-		// let dashboard Escape abort a run or action letters leak into that editor.
+		// Pending actions consume keys only while the exact empty prompt still owns focus.
 		if (this.busy) return this.pendingInput();
 		if (this.suspended || promptState(this.tui, this.options.ui) !== "empty") {
 			this.leave();

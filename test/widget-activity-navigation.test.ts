@@ -64,14 +64,14 @@ test("activity is joined only to the selected viewport, with stable selection an
 		s.terminalKey("down");
 		for (let n = 0; n < 3; n++) s.terminalKey("down");
 		await settle();
-		assert.match(frame(s), /▸ .*worker-child1/);
-		assert.doesNotMatch(frame(s), /worker-child4/);
+		assert.match(frame(s), /▸ .*child1/);
+		assert.doesNotMatch(frame(s), /child4/);
 		assert.deepEqual(new Set(reads.slice(-3)), new Set([records[3].id, records[2].id, records[1].id]));
 		assert.match(frame(s), /^ {2}Delegates\n {2}├─ ↑ 1 more delegate\n/);
 		assert.match(frame(s), /\n {2}│ {2}└─ using /);
 		await launch(s, "newest");
 		await settle();
-		assert.match(frame(s), /▸ .*worker-child1/);
+		assert.match(frame(s), /▸ .*child1/);
 	} finally {
 		LiveActivityReader.prototype.read = original;
 	}
@@ -99,7 +99,7 @@ test("selection changes during awaited activity discard the stale viewport and r
 		block = false;
 		gate.release();
 		await settle();
-		assert.match(frame(s), /▸ .*worker-child1/);
+		assert.match(frame(s), /▸ .*child1/);
 		assert.match(frame(s), /fresh viewport/);
 		assert.doesNotMatch(frame(s), /STALE VIEWPORT/);
 	} finally {
@@ -143,8 +143,8 @@ test("terminal result during selected activity read cannot resurrect running sta
 		gate.release();
 		await settle();
 		const text = frame(s);
-		assert.match(text, /▸ .*worker-selected.*failed/);
-		const selectedLine = text.split("\n").findIndex((line) => line.includes("worker-selected"));
+		assert.match(text, /▸ .*selected.*failed/);
+		const selectedLine = text.split("\n").findIndex((line) => line.includes("selected"));
 		assert.ok(!text.split("\n")[selectedLine + 1]?.includes("stale running call"));
 	} finally {
 		gate.release();

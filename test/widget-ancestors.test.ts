@@ -75,16 +75,16 @@ test("five view shapes, root-to-parent chain, leaf cap0 and parent-first selecti
 	const grandLeaf = instance({ parent: l.id, tmux: root.tmux });
 	await grandLeaf.start();
 	const h = await launch(grand, "leaf", "deep");
-	await until(() => frame(grand).includes("leaf-deep"));
+	await until(() => frame(grand).includes("deep"));
 	assert.match(frame(root), /^ {2}Delegates/);
-	assert.doesNotMatch(frame(root), /coord-second|leaf-deep|grand-leaf/);
-	assert.match(frame(coord), /^ {2}↑ root \(parent\)/);
-	assert.doesNotMatch(frame(coord), /leaf-sibling|leaf-deep/);
-	await until(() => frame(grandLeaf).includes("(parent)"));
-	assert.doesNotMatch(frame(grandLeaf), /Delegates|grand-leaf|\(you\)/);
-	assert.match(frame(grandLeaf), /^ {2}↑ root\n {2}└─ ↑ coord-first \(parent\)/);
+	assert.doesNotMatch(frame(root), /second|deep|grand-leaf/);
+	assert.match(frame(coord), /^ {2}root › first \(you\)/);
+	assert.doesNotMatch(frame(coord), /sibling|deep/);
+	await until(() => frame(grandLeaf).includes("(you)"));
+	assert.doesNotMatch(frame(grandLeaf), /Delegates|\(parent\)/);
+	assert.match(frame(grandLeaf), /^ {2}root › first › grand-leaf \(you\)/);
 	const unfocused = frame(grand);
-	assert.match(unfocused, /^ {2}↑ root\n {2}└─ ↑ coord-first \(parent\)\n {4}└─ Delegates/);
+	assert.match(unfocused, /^ {2}root › first › second \(you\)\n {2}└─/);
 	assert.equal(grand.terminalKey("down"), true);
 	const rows = (text: string) =>
 		text
@@ -92,24 +92,27 @@ test("five view shapes, root-to-parent chain, leaf cap0 and parent-first selecti
 			.slice(0, -1)
 			.map((line) => line.slice(2));
 	assert.deepEqual(rows(frame(grand)), rows(unfocused), "focusing keeps every row in its column");
-	assert.match(frame(grand), /▸ └─ ↑ coord-first \(parent\)/);
+	assert.match(frame(grand), /▸ root › first › second \(you\)/);
 	grand.terminalKey("up");
-	assert.match(frame(grand), /▸ ↑ root/);
+	assert.doesNotMatch(frame(grand), /▸/);
 	grand.terminalKey("down");
 	grand.terminalKey("down");
-	assert.match(frame(grand), /▸ .*leaf-deep/);
+	assert.match(frame(grand), /▸ .*deep/);
+	grand.terminalKey("up");
+	assert.match(frame(grand), /▸ root › first › second \(you\)/);
+	assert.match(frame(grand), /enter parent/);
 	writeFileSync(
 		join(agentDir, "squire", "settings.json"),
 		JSON.stringify({ maxDepth: 5, delegateWidgetMaxEntries: 0 }),
 	);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => !frame(grand).includes("leaf-deep"));
-	assert.match(frame(grand), /↑ root/);
+	await until(() => !frame(grand).includes("deep"));
+	assert.match(frame(grand), /root › first › second \(you\)/);
 	assert.doesNotMatch(frame(grand), /Delegates/);
 	assert.ok(grand.statuses.some(({ key, text }) => key === "delegate" && text?.includes("1 delegate running")));
 	assert.equal(grand.terminalKey("down"), true);
 	assert.equal(leaf.terminalKey("down"), true);
-	assert.match(frame(leaf), /▸ ↑ root \(parent\)/);
+	assert.match(frame(leaf), /▸ root › sibling \(you\)/);
 	assert.equal(h.identity?.parent, g.id);
 });
 
@@ -131,8 +134,8 @@ test("collapsed counts follow open stable sessions through failure, resume, clos
 	leaf.events.emit("message:reply", { to: g.id, inReplyTo: [w.requestId], body: "failure", status: "failed" });
 	scan(grand);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /coord-direct.*\+2/.test(frame(root)), frame(root));
-	assert.doesNotMatch(frame(root), /leaf-failed|coord-grand/);
+	await until(() => /direct.*\+2/.test(frame(root)), frame(root));
+	assert.doesNotMatch(frame(root), /failed|grand/);
 	await leaf.shutdown();
 	root.tmux.exit(w.windowId);
 	mkdirSync(sessionDir, { recursive: true });
@@ -145,10 +148,10 @@ test("collapsed counts follow open stable sessions through failure, resume, clos
 	const retry = grand.entries.find((entry) => entry.data.id === retryId)!.data as Delegation;
 	assert.equal(retry.sessionId, w.id);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /coord-direct.*\+2/.test(frame(root)), frame(root));
+	await until(() => /direct.*\+2/.test(frame(root)), frame(root));
 	await grand.toolCall("delegation_close", { id: retry.id });
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /coord-direct.*\+1/.test(frame(root)), frame(root));
+	await until(() => /direct.*\+1/.test(frame(root)), frame(root));
 	// A genuine late correlated result supersedes missing, never the earlier failed task.
 	const late = instance({ parent: w.id, tmux: root.tmux, mode: "json" });
 	await late.start();
@@ -160,7 +163,7 @@ test("collapsed counts follow open stable sessions through failure, resume, clos
 	});
 	scan(grand);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /coord-direct.*\+1/.test(frame(root)), frame(root));
+	await until(() => /direct.*\+1/.test(frame(root)), frame(root));
 	assert.equal(root.sent.length, 0);
 	assert.equal(coord.sent.length, 0);
 	assert.equal(
@@ -191,17 +194,17 @@ test("corrupt descendant owner facts cannot freeze fresh ancestor titles or dire
 	t.mock.timers.tick(5000);
 	await until(() => direct.entries.some((entry) => entry.data.id === w.id && entry.data.gone === true));
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /coord-direct/.test(frame(current)) && !/\+1/.test(frame(current)));
+	await until(() => /direct/.test(frame(current)) && !/\+1/.test(frame(current)));
 	const owner = join(agentDir, "squire", "owners", `${encodeURIComponent(w.id)}.json`);
 	writeFileSync(owner, "corrupt owner facts");
 	await root.fire("session_info_changed", { name: "Fresh ancestor title" });
 	direct.events.emit("message:reply", { to: c.id, inReplyTo: [d.requestId], body: "failed result", status: "failed" });
 	scan(current);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /coord-direct.*failed/.test(frame(current)));
-	assert.match(frame(current), /↑ root \(parent\).*Fresh ancestor title/);
-	assert.match(frame(current), /coord-direct.*failed/);
-	assert.doesNotMatch(frame(current), /1 task: 1 missing|coord-direct.*running/);
+	await until(() => /direct.*failed/.test(frame(current)));
+	assert.match(frame(current), /root › current \(you\).*Fresh ancestor title/);
+	assert.match(frame(current), /direct.*failed/);
+	assert.doesNotMatch(frame(current), /1 task: 1 missing|direct.*running/);
 });
 
 test("provenance exposes unoverlaid semantic facts, registry-only closed is unknown and unreadable tree retains saved facts", async () => {
@@ -252,11 +255,13 @@ test("reopened gone direct child can be inspected at current window without rewr
 	assert.equal(record.gone, true);
 });
 
-test("ancestors excluded from cap, activity stays on one line, no empty headings or self rows", () => {
-	const ancestors = [
-		{ key: "ar", sessionId: "r", identity: "root", parent: false },
-		{ key: "ap", sessionId: "p", identity: "coord", parent: true },
-	];
+test("breadcrumb excluded from cap, activity stays on one line, no empty headings", () => {
+	const breadcrumb = {
+		key: "ap",
+		parentSessionId: "p",
+		crumbs: [{ identity: "root" }, { identity: "coord" }],
+		self: { identity: "worker-self", agent: "worker" },
+	};
 	const row = {
 		key: "c",
 		sessionId: "c",
@@ -271,71 +276,110 @@ test("ancestors excluded from cap, activity stays on one line, no empty headings
 		activity: { kind: "tools" as const, text: "reading very long command description…" },
 	};
 	const theme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
-	const wide = renderDelegateWidget([row], 1, 140, theme, 0, { ancestors });
-	assert.equal(wide.length, 6);
-	assert.match(wide[4], /reading/);
-	const narrow = renderDelegateWidget([row], 1, 45, theme, 0, { ancestors });
-	assert.match(narrow[4], /reading/);
-	assert.equal(renderDelegateWidget([], 0, 100, theme, 0, { ancestors }).length, 3);
+	const wide = renderDelegateWidget([row], 1, 140, theme, 0, { breadcrumb });
+	assert.equal(wide.length, 4);
+	assert.match(wide[2], /reading/);
+	const narrow = renderDelegateWidget([row], 1, 45, theme, 0, { breadcrumb });
+	assert.match(narrow[2], /reading/);
+	assert.equal(renderDelegateWidget([], 0, 100, theme, 0, { breadcrumb }).length, 2);
 	for (let width = 1; width < 100; width++)
 		assert.ok(
-			renderDelegateWidget([row], 1, width, theme, 0, { ancestors }).every((line) => visibleWidth(line) <= width),
+			renderDelegateWidget([row], 1, width, theme, 0, { breadcrumb }).every((line) => visibleWidth(line) <= width),
 		);
 	const selection = new WidgetSelection();
-	selection.update(["c", "d", "e"], 1, ["ar", "ap"]);
+	selection.update(["c", "d", "e"], 1, "ap");
 	selection.enter();
 	assert.equal(selection.selectedKey, "ap");
 	selection.move(1);
 	selection.move(1);
 	assert.equal(selection.offset, 1);
-	selection.update(["c"], 0, ["ar", "ap"]);
+	selection.update(["c"], 0, "ap");
 	assert.equal(selection.active, true);
 	assert.equal(selection.selectedKey, "ap");
 });
 
-test("actual widget Enter switches live root, unavailable parent refuses without dashboard/resume or window effects", async () => {
-	const server = (ownPane: string): FakeTmux => {
-		const fake = new FakeTmux();
-		fake.ownPane = ownPane;
-		fake.addWindow("@1", "root", "root-session");
-		fake.addWindow("@2", "leaf", "leaf-session");
-		fake.panes.set("%1", { windowId: "@1" });
-		fake.panes.set("%2", { windowId: "@2" });
-		fake.parentSession = ownPane === "%1" ? "root-session" : "leaf-session";
-		fake.attachClient("attached-client", 1);
-		return fake;
+test("breadcrumb collapses middle crumbs, drops title before names, and keeps the warning", () => {
+	const breadcrumb = {
+		key: "parent",
+		parentSessionId: "p",
+		crumbs: [
+			{ identity: "root" },
+			{ identity: "coord-middle-one", agent: "coord" },
+			{ identity: "coord-middle-two", agent: "coord" },
+			{ identity: "coord-parent", agent: "coord" },
+		],
+		self: { identity: "leaf-self", agent: "leaf" },
+		parentTitle: "Parent title that truncates first",
 	};
-	const root = instance({ parent: "live-root", tmux: server("%1") });
-	await root.start();
-	writeIdentity("live-leaf", own("live-root", "live-root", 1));
-	const leaf = instance({ parent: "live-leaf", tmux: server("%2") });
-	await leaf.start();
-	const reader = new LiveActivityReader();
-	for (let n = 0; n < 200 && !(await reader.locator("live-root")); n++) await new Promise((r) => setTimeout(r, 10));
-	assert.ok(await reader.locator("live-root"));
-	await until(() => frame(leaf).includes("root (parent)"));
-	assert.equal(leaf.terminalKey("down"), true);
-	assert.match(frame(leaf), /▸ ↑ root \(parent\)/);
-	assert.doesNotMatch(frame(leaf), /x close/);
-	assert.equal(leaf.terminalKey("x"), true);
-	await until(() => leaf.warnings.some((warning) => warning.includes("cannot close an ancestor")));
-	assert.equal(leaf.confirms.length, 0);
-	assert.equal(leaf.tmux.killed.length, 0);
-	await new Promise<void>((resolve) => setImmediate(resolve));
-	assert.equal(leaf.terminalKey("enter"), true);
-	assert.equal(leaf.terminalKey("enter"), true, "busy gap is consumed, not a second action");
-	await until(() => leaf.tmux.switches.length === 1);
-	assert.deepEqual(leaf.tmux.switches, [{ client: "attached-client", windowId: "@1" }]);
-	assert.equal(leaf.customs.length, 0, "ancestors bypass dashboard");
-	await root.shutdown();
-	await until(() => !frame(leaf).includes("enter details"));
-	// Wait until the previous switch's finally releases the busy flag.
-	await new Promise((r) => setTimeout(r, 20));
-	leaf.terminalKey("enter");
-	await until(() => leaf.errors.some((error) => error.includes("verified live window")));
-	assert.equal(leaf.tmux.switches.length, 1);
-	assert.equal(leaf.tmux.opened.length, 0);
-	assert.equal(leaf.tmux.killed.length, 0);
+	const theme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
+	const render = (width: number) => renderDelegateWidget([], 0, width, theme, 0, { breadcrumb });
+	assert.equal(
+		render(120)[0],
+		"  root › middle-one › middle-two › parent › self (you)  Parent title that truncates first",
+	);
+	assert.equal(render(55)[0], "  root › middle-one › middle-two › parent › self (you)");
+	assert.equal(render(35)[0], "  root › … › parent › self (you)");
+	assert.match(render(45)[0], /^ {2}root › … › parent › self \(you\) {2}Parent/);
+	assert.match(
+		renderDelegateWidget([], 0, 100, theme, 0, { breadcrumb, ancestryError: "Ancestor information unavailable" }).join(
+			"\n",
+		),
+		/\n {2}Ancestor information unavailable\n/,
+	);
+});
+
+test("actual widget Enter switches only the direct parent at either depth and refuses an unavailable parent", async () => {
+	for (const nested of [false, true]) {
+		const server = (ownPane: string): FakeTmux => {
+			const fake = new FakeTmux();
+			fake.ownPane = ownPane;
+			fake.addWindow("@1", "root", "root-session");
+			fake.addWindow("@2", "leaf", "leaf-session");
+			fake.panes.set("%1", { windowId: "@1" });
+			fake.panes.set("%2", { windowId: "@2" });
+			fake.parentSession = ownPane === "%1" ? "root-session" : "leaf-session";
+			fake.attachClient("attached-client", 1);
+			return fake;
+		};
+		if (nested) writeIdentity("live-root", own("grand-root", "grand-root", 1));
+		const root = instance({ parent: "live-root", tmux: server("%1") });
+		await root.start();
+		writeIdentity("live-leaf", own("live-root", nested ? "grand-root" : "live-root", nested ? 2 : 1));
+		const leaf = instance({ parent: "live-leaf", tmux: server("%2") });
+		await leaf.start();
+		const reader = new LiveActivityReader();
+		for (let n = 0; n < 200 && !(await reader.locator("live-root")); n++) await new Promise((r) => setTimeout(r, 10));
+		assert.ok(await reader.locator("live-root"));
+		const trail = nested ? "root › coord › coord (you)" : "root › coord (you)";
+		await until(() => frame(leaf).includes(trail));
+		assert.equal(leaf.terminalKey("down"), true);
+		assert.ok(frame(leaf).startsWith(`▸ ${trail}`));
+		const focused = frame(leaf);
+		leaf.terminalKey("left");
+		leaf.terminalKey("right");
+		assert.equal(frame(leaf), focused, "breadcrumb ignores horizontal keys");
+		assert.doesNotMatch(frame(leaf), /x close/);
+		assert.equal(leaf.terminalKey("x"), true);
+		await until(() => leaf.warnings.some((warning) => warning.includes("cannot close an ancestor")));
+		assert.equal(leaf.confirms.length, 0);
+		assert.equal(leaf.tmux.killed.length, 0);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.equal(leaf.terminalKey("enter"), true);
+		assert.equal(leaf.terminalKey("enter"), true, "busy gap is consumed, not a second action");
+		await until(() => leaf.tmux.switches.length === 1);
+		assert.deepEqual(leaf.tmux.switches, [{ client: "attached-client", windowId: "@1" }]);
+		assert.equal(leaf.customs.length, 0, "ancestors bypass dashboard");
+		await root.shutdown();
+		await until(() => !frame(leaf).includes("enter details"));
+		// Wait until the previous switch's finally releases the busy flag.
+		await new Promise((r) => setTimeout(r, 20));
+		leaf.terminalKey("enter");
+		await until(() => leaf.errors.some((error) => error.includes("verified live window")));
+		assert.equal(leaf.tmux.switches.length, 1);
+		assert.equal(leaf.tmux.opened.length, 0);
+		assert.equal(leaf.tmux.killed.length, 0);
+		await leaf.shutdown();
+	}
 });
 
 test("tree expands at every depth, switches and closes nested rows, and collapses on every focus exit", async (t) => {
@@ -355,34 +399,34 @@ test("tree expands at every depth, switches and closes nested rows, and collapse
 	const deep = await launch(grand, "leaf", "deep");
 	const sibling = await launch(coordinator, "leaf", "sibling");
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => /coord-branch.*\+3/.test(frame(root)));
-	assert.doesNotMatch(frame(root), /coord-nested|leaf-deep|leaf-sibling|tasks:/);
+	await until(() => /branch.*\+3/.test(frame(root)));
+	assert.doesNotMatch(frame(root), /nested|deep|sibling|tasks:/);
 	root.terminalKey("down");
 	assert.match(frame(root), /→ expand/);
 	root.terminalKey("right");
-	assert.match(frame(root), /▸ .*coord-branch/);
-	assert.match(frame(root), /leaf-sibling/);
-	assert.match(frame(root), /coord-nested.*\+1/);
-	assert.doesNotMatch(frame(root), /leaf-deep/);
+	assert.match(frame(root), /▸ .*branch/);
+	assert.match(frame(root), /sibling/);
+	assert.match(frame(root), /nested.*\+1/);
+	assert.doesNotMatch(frame(root), /deep/);
 	assert.match(frame(root), /← collapse/);
 	root.terminalKey("right");
-	assert.match(frame(root), /▸ .*leaf-sibling/);
+	assert.match(frame(root), /▸ .*sibling/);
 	assert.doesNotMatch(frame(root), /→ expand|← collapse/);
 	assert.match(frame(root), /← parent/);
 	root.terminalKey("right");
-	assert.match(frame(root), /▸ .*leaf-sibling/, "Right on a childless row does nothing");
+	assert.match(frame(root), /▸ .*sibling/, "Right on a childless row does nothing");
 	root.terminalKey("left");
-	assert.match(frame(root), /▸ .*coord-branch/, "Left on a childless child jumps to its parent");
+	assert.match(frame(root), /▸ .*branch/, "Left on a childless child jumps to its parent");
 	root.terminalKey("down");
 	root.terminalKey("down");
 	root.terminalKey("left");
-	assert.match(frame(root), /▸ .*coord-branch/, "Left on collapsed child jumps to its parent");
+	assert.match(frame(root), /▸ .*branch/, "Left on collapsed child jumps to its parent");
 	root.terminalKey("down");
 	root.terminalKey("down");
 	root.terminalKey("right");
-	assert.match(frame(root), /leaf-deep/);
+	assert.match(frame(root), /deep/);
 	root.terminalKey("right");
-	assert.match(frame(root), /▸ .*leaf-deep/);
+	assert.match(frame(root), /▸ .*deep/);
 	root.terminalKey("enter");
 	await until(() => root.tmux.switches.length === 1);
 	assert.equal(root.tmux.switches[0].windowId, deep.windowId);
@@ -394,18 +438,18 @@ test("tree expands at every depth, switches and closes nested rows, and collapse
 	root.terminalKey("x");
 	await until(() => root.tmux.killed.includes(deep.windowId));
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
-	await until(() => !frame(root).includes("leaf-deep"));
+	await until(() => !frame(root).includes("deep"));
 	assert.equal(root.tmux.windows.has(sibling.windowId), true);
 	assert.equal(root.tmux.windows.has(c.windowId), true);
 	root.terminalKey("escape");
-	assert.doesNotMatch(frame(root), /coord-nested|leaf-sibling|▸/);
-	assert.match(frame(root), /coord-branch.*\+2/);
+	assert.doesNotMatch(frame(root), /nested|sibling|▸/);
+	assert.match(frame(root), /branch.*\+2/);
 	for (const exit of ["typing", "up"]) {
 		root.terminalKey("down");
 		root.terminalKey("right");
-		assert.match(frame(root), /coord-nested/);
+		assert.match(frame(root), /nested/);
 		assert.equal(root.terminalKey(exit), exit === "up");
-		assert.doesNotMatch(frame(root), /coord-nested|leaf-sibling|▸/);
+		assert.doesNotMatch(frame(root), /nested|sibling|▸/);
 		assert.match(frame(root), /↓ to manage delegates/);
 	}
 });

@@ -94,7 +94,7 @@ test("widget closes the subtree and resume command inherits original placement a
 	owner.terminalKey("down");
 	owner.terminalKey("x");
 	await until(() => tmux.killed.includes(c.windowId));
-	await until(() => owner.confirms.length === 1 && !frame(owner).includes("coordinator-cross-project"));
+	await until(() => owner.confirms.length === 1 && !frame(owner).includes("cross-project"));
 	assert.deepEqual(tmux.killed, [w.windowId, c.windowId]);
 	assert.match(owner.confirms[0].message, /and its delegates\? Worktrees and branches stay/);
 	assert.equal(local(owner, c.id).closed, true);
@@ -165,7 +165,7 @@ test("widget subtree close reports partial errors and explicit tool retry preser
 		if (id === w.windowId) throw new Error("injected worker kill refusal");
 		await kill(id);
 	};
-	await until(() => frame(owner).includes(c.windowName));
+	await until(() => frame(owner).includes("branch"));
 	owner.terminalKey("down");
 	owner.terminalKey("x");
 	await until(() => owner.errors.some((error) => error.includes("injected worker kill refusal")));

@@ -16,6 +16,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Child compact widgets replace ancestor rows and the `Delegates` header with one
+  breadcrumb ending in `(you)`. Enter on it switches to the direct parent; x
+  refuses close, and Left and Right do nothing. Children use the base indent,
+  and the two-column selection gutter stays fixed. Root widgets keep their
+  `Delegates` header. Names omit their own nonempty agent prefix, and transcript
+  ages say `active` instead of `file`. Deliberate frame and navigation expectation
+  changes are in `test/widget-ancestors.test.ts`, `test/widget.test.ts`,
+  `test/widget-data.test.ts`, `test/widget-navigation.test.ts`,
+  `test/widget-activity-navigation.test.ts`, `test/widget-nesting06.test.ts`, and
+  `test/widget-nesting-final.test.ts`.
 - The compact widget keeps its two-column selection gutter while unfocused, so
   focusing the list no longer shifts the tree right. `test/widget-ancestors.test.ts`
   and `test/widget.test.ts` now expect the indented unfocused rows; the first and checks that focusing keeps every

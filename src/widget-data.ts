@@ -17,6 +17,7 @@ export type DelegateRow = {
 	descendantCount?: number;
 	expanded?: boolean;
 	identity: string;
+	agent?: string;
 	title: string | undefined;
 	state: string;
 	running: boolean;
@@ -118,6 +119,7 @@ export class DirectDelegateView {
 			launchId: record.id,
 			parentKey: record.identity?.parent,
 			identity: recordedName(record),
+			agent: record.agent,
 			title: undefined,
 			lastActive: undefined,
 			state: running ? "running" : (record.result?.status ?? (record.gone ? "missing" : "unknown")),

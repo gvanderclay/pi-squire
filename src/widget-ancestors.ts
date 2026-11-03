@@ -10,14 +10,24 @@ import { WidgetTitleMirrors } from "./widget-title.ts";
 import { WidgetTitleFiles } from "./widget-title-file.ts";
 import { listWindows } from "./windows.ts";
 
-export type AncestorRow = { key: string; sessionId: string; identity: string; parent: boolean; title?: string };
+export type WidgetIdentity = { identity: string; agent?: string };
+export type Breadcrumb = {
+	key: string;
+	parentSessionId: string;
+	crumbs: WidgetIdentity[];
+	self: WidgetIdentity;
+	parentTitle?: string;
+};
 type Ancestor = { sessionId: string; identity?: Identity };
 
 /** Durable parent ids only. A broken/cyclic chain refuses rather than inventing ancestry. */
 export function ancestorSessions(ctx: ExtensionContext): Ancestor[] {
 	const session: string = ctx.sessionManager.getSessionId();
 	const own: Identity | undefined = readIdentity(session);
-	if (!own) return [];
+	return own ? ancestorChain(session, own) : [];
+}
+
+function ancestorChain(session: string, own: Identity): Ancestor[] {
 	const found: Ancestor[] = [];
 	const seen: Set<string> = new Set([session]);
 	let child: Identity = own;
@@ -44,7 +54,7 @@ export function ancestorSessions(ctx: ExtensionContext): Ancestor[] {
 	throw new Error("ancestor identity chain does not reach root");
 }
 
-export class AncestorView {
+export class BreadcrumbView {
 	private readonly titles: WidgetTitleFiles = new WidgetTitleFiles();
 	private readonly mirrors: WidgetTitleMirrors = new WidgetTitleMirrors();
 
@@ -53,33 +63,40 @@ export class AncestorView {
 		this.mirrors.clear();
 	}
 
-	async read(ctx: ExtensionContext, reader: LiveActivityReader): Promise<AncestorRow[]> {
-		const ancestors: Ancestor[] = ancestorSessions(ctx);
+	async read(ctx: ExtensionContext, reader: LiveActivityReader): Promise<Breadcrumb | undefined> {
+		const session = ctx.sessionManager.getSessionId();
+		const own = readIdentity(session);
+		if (!own) return;
+		const ancestors = ancestorChain(session, own);
 		let entries: TreeEntry[] = [];
 		try {
-			if (ancestors.length) entries = readTree(ancestors[0].sessionId, 20).entries;
+			entries = readTree(ancestors[0].sessionId, 20).entries;
 		} catch {
 			/* labels optional */
 		}
-		return Promise.all(
-			ancestors.map(async (ancestor: Ancestor, index: number): Promise<AncestorRow> => {
-				const entry: TreeEntry | undefined = entries.findLast((item) => item.sessionId === ancestor.sessionId);
-				const live: LiveLocator | undefined = await reader.locator(ancestor.sessionId);
-				const path: string | undefined =
-					live?.sessionFile ?? (entry?.launch ? locateSession(entry.launch, undefined) : undefined);
-				const name: string | undefined =
-					this.titles.read(path, ancestor.sessionId)?.name ?? this.mirrors.read(ancestor.sessionId);
-				let label = "root";
-				if (ancestor.identity) label = entry?.launch ? recordedName(entry.launch) : ancestor.identity.agent;
-				return {
-					key: `ancestor:${ancestor.sessionId}`,
-					sessionId: ancestor.sessionId,
-					identity: label,
-					parent: index === ancestors.length - 1,
-					title: name,
-				};
-			}),
-		);
+		const crumbs = ancestors.map((ancestor): WidgetIdentity => {
+			const entry = entries.findLast((item) => item.sessionId === ancestor.sessionId);
+			const label = entry?.launch ? recordedName(entry.launch) : ancestor.identity?.agent;
+			return {
+				identity: ancestor.identity ? (label ?? ancestor.identity.agent) : "root",
+				agent: ancestor.identity?.agent,
+			};
+		});
+		const parent = ancestors[ancestors.length - 1];
+		const entry = entries.findLast((item) => item.sessionId === parent.sessionId);
+		const live = await reader.locator(parent.sessionId);
+		const path = live?.sessionFile ?? (entry?.launch ? locateSession(entry.launch, undefined) : undefined);
+		const self = entries.findLast((item) => item.sessionId === session);
+		return {
+			key: `ancestor:${parent.sessionId}`,
+			parentSessionId: parent.sessionId,
+			crumbs,
+			self: {
+				identity: self?.launch ? recordedName(self.launch) : own.agent,
+				agent: own.agent,
+			},
+			parentTitle: this.titles.read(path, parent.sessionId)?.name ?? this.mirrors.read(parent.sessionId),
+		};
 	}
 }
 

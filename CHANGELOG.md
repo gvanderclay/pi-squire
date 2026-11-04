@@ -16,6 +16,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Running delegate widget rows now show a fixed `working...` secondary line,
+  independent of live activity telemetry; finished rows show no secondary line.
+  Updated behavior assertions in `test/widget-activity.test.ts`,
+  `test/widget-activity-navigation.test.ts`, `test/widget-activity-runtime.test.ts`,
+  `test/widget-ancestors.test.ts`, and `test/widget-nesting-final.test.ts` to expect
+  the fixed indicator while retaining separate live-reader checks.
 - Trusted Pi sessions in this checkout allow the exact `pnpm lint`,
   `pnpm typecheck`, `pnpm test`, and `pnpm check` commands without a permission
   dialog or auto-mode judge call.

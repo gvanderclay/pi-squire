@@ -460,7 +460,8 @@ transcript-file age appear when space permits: model is
 dropped first, then file age, before identity/state are compressed. At very
 narrow widths the state glyph remains beside the truncated identity.
 `file … ago` is only a last-active hint from transcript mtime, not live tool
-activity. When available, a second line shows factual live activity (below).
+activity. Each running row has a second line showing `working...`, regardless
+of live telemetry; finished rows have no second line.
 A collapsed delegate with open descendants shows **+N** at the end of its row.
 This counts open stable sessions, not historical attempts or results.
 
@@ -511,9 +512,9 @@ over that mirror: an external picker rename may differ temporarily from the
 child's own in-memory name. Files are read incrementally, with bounded work per
 refresh; very large existing transcripts may take several refreshes to catch up.
 
-### Factual live activity
+### Live activity telemetry
 
-The secondary line follows actual Pi tool-execution events: `reading…`,
+The internal feed follows actual Pi tool-execution events: `reading…`,
 `editing…`, `writing…`, `command call…`, or `using <tool name>…`. Parallel
 and nested calls are tracked by their actual call ids, not by tool name.
 Active nested calls take precedence over their orchestrator. A tool start is
@@ -522,9 +523,9 @@ call, not proof that a subprocess started or permission was granted. Squire
 does not inspect commands to guess intent, or display arguments, paths, tool
 results, thinking or provider payloads.
 
-Otherwise, while an assistant response streams, `response: …` shows a literal
-single-line excerpt bounded to 512 UTF-8 bytes. It clears when that message
-ends; a quick response may finish between refreshes and never appear. Calls
+Otherwise, while an assistant response streams, the feed holds a literal
+single-line excerpt bounded to 512 UTF-8 bytes. These details are not shown in
+the widget. The excerpt clears when that message ends. Calls
 clear on matching end, run end/settlement, stop, reload and shutdown. Known
 task results/close suppress activity even if a delegate's last snapshot remains.
 A settled or silent coordinator can still own unfinished child tasks: activity
@@ -543,8 +544,8 @@ calls. Publication requires positive Squire ownership at startup; later factual
 end/settlement observation continues even if task-owner processing fails or its
 record becomes unreadable, without re-enabling actions. Event publishing works
 in non-TUI delegates and with the list hidden.
-One child-entry slot may occupy two physical lines; there is no empty secondary
-line or tool-use counter.
+One running child-entry slot occupies two physical lines; there is no empty
+secondary line or tool-use counter.
 
 ### Navigation
 

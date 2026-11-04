@@ -136,7 +136,8 @@ test("real launch seed correlates activity in the actual widget and terminal out
 	const child = create(first.id, first.id);
 	await child.start();
 	await tool(child);
-	await until(async () => frame(parent).includes("reading…"), "widget did not observe child");
+	await live(first.id, first.id, "reading…");
+	await until(async () => frame(parent).includes("working..."), "widget did not show running child");
 	parent.events.emit("message:inbound", {
 		envelope: {
 			id: "answer",
@@ -151,7 +152,7 @@ test("real launch seed correlates activity in the actual widget and terminal out
 		handled: false,
 	});
 	await until(
-		async () => frame(parent).includes("failed") && !frame(parent).includes("reading…"),
+		async () => frame(parent).includes("failed") && !frame(parent).includes("working..."),
 		"terminal result did not mask live data",
 	);
 	assert.equal(
@@ -219,9 +220,9 @@ test("real resume preserves stable id but refreshes launch correlation; old laun
 	await next.start();
 	await tool(next, "new", "edit");
 	await live(first.id, resumed.id, "editing…");
-	await until(async () => frame(parent).includes("editing…"), "resumed row did not get its exact-launch activity");
+	await until(async () => frame(parent).includes("working..."), "resumed row did not show running state");
 	await parent.toolCall("delegation_close", { id: resumed.id });
-	await until(async () => !frame(parent).includes("editing…"), "close did not mask activity");
+	await until(async () => !frame(parent).includes("working..."), "close did not mask running state");
 });
 
 test("observer ticks during slow activity reads do not starve rendering, and shutdown cannot resurrect it", async () => {
@@ -244,7 +245,7 @@ test("observer ticks during slow activity reads do not starve rendering, and shu
 		await ready;
 		await new Promise((resolve) => setTimeout(resolve, 1100));
 		release();
-		await until(async () => frame(s).includes("reading…"), "timer tick incorrectly discarded the slow snapshot");
+		await until(async () => frame(s).includes("working..."), "timer tick did not render the running row");
 		let finish!: () => void, nextRead!: () => void;
 		const stopped = new Promise<void>((resolve) => {
 			finish = resolve;
@@ -302,7 +303,7 @@ test("a result during async activity I/O cannot paint a stale running/activity r
 		});
 		release();
 		await until(async () => frame(s).includes("failed"), "final task state was not repainted");
-		assert.ok(!frame(s).includes("reading…") && !frame(s).includes("running"));
+		assert.ok(!frame(s).includes("working...") && !frame(s).includes("running"));
 	} finally {
 		release();
 		LiveActivityReader.prototype.read = original;

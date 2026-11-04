@@ -71,15 +71,11 @@ function entry(row: DelegateRow, width: number, connector: string, theme: Widget
 	);
 }
 
-/** One secondary line for live task activity. */
+/** One secondary line for each running task. */
 export function activityLine(row: DelegateRow, width: number, last: boolean, theme: WidgetTheme): string | undefined {
-	const activity: string =
-		row.running && row.activity
-			? `${row.activity.kind === "response" ? "response: " : ""}${widgetText(row.activity.text)}`
-			: "";
-	if (!activity) return;
+	if (!row.running) return;
 	const prefix: string = last ? "   └─ " : "│  └─ ";
-	return truncateToWidth(theme.fg("dim", prefix + activity), width);
+	return truncateToWidth(theme.fg("dim", `${prefix}working...`), width);
 }
 
 export type WidgetRenderOptions = {

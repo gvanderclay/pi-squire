@@ -90,7 +90,7 @@ test("widget closes the subtree and resume command inherits original placement a
 	assert.equal(tmux.opened[1].session, `${base}-2`);
 	await coordinator.fire("tool_execution_start", { toolCallId: "read", toolName: "read", args: {} });
 	await until(async () => (await new LiveActivityReader().read(c.id, c.id))?.text === "reading…");
-	await until(() => /reading…/.test(frame(owner)));
+	await until(() => /working\.\.\./.test(frame(owner)));
 	owner.terminalKey("down");
 	owner.terminalKey("x");
 	await until(() => tmux.killed.includes(c.windowId));
@@ -102,7 +102,7 @@ test("widget closes the subtree and resume command inherits original placement a
 	await coordinator.fire("context", { messages: [] });
 	assert.equal(local(coordinator, w.id).closed, true);
 	assert.equal(local(coordinator, w.id).result, undefined);
-	assert.doesNotMatch(frame(owner), /reading…/);
+	assert.doesNotMatch(frame(owner), /working\.\.\./);
 	assert.equal(tmux.windows.has("@user"), true);
 	await coordinator.shutdown();
 	await owner.shutdown();

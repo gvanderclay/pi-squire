@@ -144,7 +144,7 @@ test("async join only reads viewport/running rows and masks results/close/resume
 	assert.equal(rows[0].activity, undefined, "same stable id resumed during the read");
 });
 
-test("secondary activity line is literal and bounded, absent at completion, without extra child slots", () => {
+test("running secondary line is fixed and bounded, absent at completion, without extra child slots", () => {
 	const theme = { fg: (_color: string, text: string) => `\x1b[31m${text}\x1b[0m`, bold: (s: string) => s };
 	const r = row("界🙂worker");
 	r.activity = { kind: "response", text: "a response\nwith \x1b[2Jcontrols" };
@@ -153,7 +153,13 @@ test("secondary activity line is literal and bounded, absent at completion, with
 		assert.ok(lines.every((line) => visibleWidth(line) <= width));
 	}
 	const text = renderDelegateWidget([r], 1, 120, theme, 0).join("\n");
-	assert.match(text, /response: a response with controls/);
+	assert.match(text, /working\.\.\./);
+	assert.doesNotMatch(text, /response|controls/);
+	assert.equal(activityLine(r, 80, true, theme), "\x1b[31m   └─ working...\x1b[0m");
+	r.activity = undefined;
+	assert.equal(activityLine(r, 80, true, theme), "\x1b[31m   └─ working...\x1b[0m");
+	r.activity = { kind: "tools", text: "reading…" };
+	assert.equal(activityLine(r, 80, false, theme), "\x1b[31m│  └─ working...\x1b[0m");
 	assert.equal(renderDelegateWidget([r], 1, 120, theme).length, 4);
 	r.running = false;
 	assert.equal(activityLine(r, 80, true, theme), undefined);

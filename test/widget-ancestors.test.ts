@@ -306,7 +306,7 @@ test("reopened gone direct child can be inspected at current window without rewr
 	assert.equal(record.gone, true);
 });
 
-test("breadcrumb excluded from cap, activity stays on one line, no empty headings", () => {
+test("breadcrumb excluded from cap, running indicator stays on one line, no empty headings", () => {
 	const breadcrumb = {
 		key: "ap",
 		parentSessionId: "p",
@@ -329,9 +329,9 @@ test("breadcrumb excluded from cap, activity stays on one line, no empty heading
 	const theme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
 	const wide = renderDelegateWidget([row], 1, 140, theme, 0, { breadcrumb });
 	assert.equal(wide.length, 4);
-	assert.match(wide[2], /reading/);
+	assert.match(wide[2], /working\.\.\./);
 	const narrow = renderDelegateWidget([row], 1, 45, theme, 0, { breadcrumb });
-	assert.match(narrow[2], /reading/);
+	assert.match(narrow[2], /working\.\.\./);
 	assert.equal(renderDelegateWidget([], 0, 100, theme, 0, { breadcrumb }).length, 2);
 	for (let width = 1; width < 100; width++)
 		assert.ok(

@@ -958,6 +958,16 @@ child.
   deferred. An extension can deselect optional tools during child startup and
   enable them later. A parent with only `read` available gives such a delegate
   only `read`.
+
+  Only tools that are active, or reachable through codemode or deferred
+  exposure, when the launch starts are inherited. A tool an extension
+  registers inactive and turns on later, for example through a loader tool
+  that enables a group of tools on demand, does not reach a delegate unless
+  the parent has already turned it on. To give every delegate such tools
+  whatever the parent has active, list them in the `delegateTools` setting;
+  to give them to particular agents, name them in those agents' `tools`. The
+  child's own copy of the extension can then turn them on as it would in any
+  session.
 - An empty `tools` field, `tools:` or `tools: []`: the delegate gets no tools
   except the `delegateTools` entries. With none of those either, it starts
   with `--no-tools`.

@@ -7,8 +7,9 @@ import { finishedModel, sessionInputTokens } from "./result-sessions.ts";
 import { deriveState, isStarted, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, Resumed } from "./resume.ts";
 import { sessionFor, settleModel } from "./resume-checks.ts";
-import { listWindows, type ToolDef, toolResult, windowState } from "./tracking.ts";
+import { type ToolDef, toolResult } from "./tracking.ts";
 import { assertChildAuthority, recordedIdentity } from "./tree-view.ts";
+import { askWindowStates } from "./window-state.ts";
 
 export type ForkSource = {
 	id: string;
@@ -85,7 +86,7 @@ function fallbackNote(chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>): s
 }
 
 async function sharedFolderNotice(deps: ForkDeps, record: StartedRecorded, worktree?: string): Promise<string[]> {
-	if (worktree || deriveState(record, windowState(await listWindows(deps.tmux), record)) !== "running") return [];
+	if (worktree || deriveState(record, (await askWindowStates(deps.tmux)).state(record)) !== "running") return [];
 	return [`shares a working folder with running delegation ${record.id}; pass worktree to isolate`];
 }
 

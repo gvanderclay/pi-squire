@@ -24,10 +24,11 @@ import {
 	windowCheck,
 } from "./resume-checks.ts";
 import type { OpenedWindow, TmuxClient } from "./tmux.ts";
-import { listWindows, type ToolDef, toolResult } from "./tracking.ts";
+import { type ToolDef, toolResult } from "./tracking.ts";
 import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
 import { recordedIdentity } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
+import { askWindowStates } from "./window-state.ts";
 import type { Workspace } from "./workspace.ts";
 
 /** What a resume asks for; the fields after `task` are optional overrides. */
@@ -154,12 +155,12 @@ function newestStarted(results: Results, id: string): StartedRecorded {
 	return record;
 }
 
-/** Steps 3 and 4, then the kill of an exited window; `windowCheck` is the part the picker shares. */
+/** Steps 3 and 4, then the idempotent close of an exited window; `windowCheck` is the part the picker shares. */
 async function ensureExited(record: StartedRecorded, tmux: TmuxClient): Promise<void> {
-	const own = windowCheck(record, await listWindows(tmux));
-	if (own === undefined) return;
+	const windows = await askWindowStates(tmux);
+	windowCheck(record, windows);
 	try {
-		await tmux.kill(own.id);
+		await windows.close(record);
 	} catch (err) {
 		throw new Error(
 			`could not kill the exited window ${record.windowName} (${record.windowId}): ${(err as Error).message}`,
@@ -360,14 +361,14 @@ async function resume(
 
 /**
  * The delegations that pass every check `resume` makes, newest first, read
- * with one `listWindows` and changing nothing: an exited window is left for
- * the resume itself to kill and trust is left for its prompt. The call-wide
+ * with one window-state ask and changing nothing: an exited window is left for
+ * the resume itself to close and trust is left for its prompt. The call-wide
  * prerequisites are checked once and refuse as `resume` does.
  */
 async function eligible(deps: ResumeDeps, ctx: ExtensionContext): Promise<StartedRecorded[]> {
 	await preflight(deps);
-	const windows = await listWindows(deps.tmux);
-	if (windows === undefined) return [];
+	const windows = await askWindowStates(deps.tmux);
+	if (!windows.answered) return [];
 	const ids = new Set(resumableIds(deps.results));
 	const models = new Map<string, boolean>();
 	const found: StartedRecorded[] = [];

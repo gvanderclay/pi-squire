@@ -12,32 +12,31 @@ import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-session
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
-import { requireTmuxVersion, type TmuxWindow } from "./tmux.ts";
-import { ownWindow, windowState } from "./tracking.ts";
+import { requireTmuxVersion } from "./tmux.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
+import type { WindowStates } from "./window-state.ts";
 
 /**
  * Steps 3 and 4: no process of this delegate is left. A running delegate is
- * mailed instead; tmux that cannot be asked proves nothing; a window with the
- * record's id and name that still runs its program is refused, and one whose
- * program exited is killed first.
+ * mailed instead; tmux that cannot be asked proves nothing; a window of the
+ * record that still runs its program is refused. A window whose program exited
+ * passes, and the resume closes it first.
  */
-export function windowCheck(record: StartedRecorded, windows: TmuxWindow[] | undefined): TmuxWindow | undefined {
-	const state = deriveState(record, windowState(windows, record));
+export function windowCheck(record: StartedRecorded, windows: WindowStates): void {
+	const window = windows.state(record);
+	const state = deriveState(record, window);
 	if (state === "running") {
 		throw new Error(`delegation ${record.id} is running; send it a message instead of resuming it`);
 	}
-	if (windows === undefined || state === "unknown") {
+	if (window === "unknown" || state === "unknown") {
 		throw new Error(`could not ask tmux whether delegation ${record.id}'s window is open, so it is not resumed`);
 	}
-	const own = ownWindow(windows, record);
-	if (own !== undefined && !own.exited) {
+	if (window === "running") {
 		throw new Error(
 			`delegation ${record.id}'s window ${record.windowName} (${record.windowId}) is still open; its Pi may still be running, so it is not resumed. Close it with delegation_close, or send it a message`,
 		);
 	}
-	return own;
 }
 
 /** Whether `path` is an existing directory. */
@@ -184,7 +183,7 @@ export const inFlight = new Set<string>();
 export async function passes(
 	deps: ResumeDeps,
 	record: StartedRecorded,
-	windows: TmuxWindow[],
+	windows: WindowStates,
 	ctx: ExtensionContext,
 	models: Map<string, boolean>,
 ): Promise<boolean> {

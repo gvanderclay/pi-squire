@@ -2,10 +2,11 @@
 // separately imports confirmed closes into its own semantic processing inbox.
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
-import type { TmuxClient, TmuxWindow } from "./tmux.ts";
+import type { TmuxClient } from "./tmux.ts";
 import { below } from "./tree-fence.ts";
 import { descendants, readTree, treeTransaction } from "./tree-registry.ts";
 import type { TreeClose, TreeEntry, TreeState } from "./tree-types.ts";
+import { askToClose, type ClosableStates } from "./window-state.ts";
 
 const MemberSchema = Type.Object({
 	id: Type.String(),
@@ -136,20 +137,17 @@ async function closeMember(
 			"pending",
 			"create outcome/current window locator is unknown; reservation remains charged and fenced",
 		);
-	const windows: TmuxWindow[] = await tmux.listWindows();
+	const windows: ClosableStates = await askToClose(tmux);
 	assertActive();
 	const current: TreeEntry | undefined = readTree(root).entries.find((item) => item.id === entry.id);
 	if (!current || !sameLocator(entry, current))
 		return member(entry, "pending", "current window locator changed; retry close");
 	if (current.closed) return member(current, "already-closed");
-	const window: TmuxWindow | undefined = windows.find(
-		(item) => item.id === entry.windowId && item.name === entry.windowName,
-	);
-	if (window) await tmux.kill(window.id);
+	const window: boolean = await windows.close(entry);
 	assertActive();
 	try {
 		if (!confirm(root, close, entry))
-			return { ...member(entry, "pending", "window changed before close publication; retry close"), killed: !!window };
+			return { ...member(entry, "pending", "window changed before close publication; retry close"), killed: window };
 	} catch (error) {
 		return {
 			...member(
@@ -157,7 +155,7 @@ async function closeMember(
 				"error",
 				`window was ${window ? "killed" : "already absent"}, but close publication failed: ${String(error)}`,
 			),
-			killed: !!window,
+			killed: window,
 		};
 	}
 	return member(entry, window ? "killed" : "absent");

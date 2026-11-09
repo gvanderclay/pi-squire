@@ -11,8 +11,7 @@ import {
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import { verifyLiveWindow } from "./widget-ancestors.ts";
 import { LiveActivityReader, type LiveLocator } from "./widget-live.ts";
-import { findWindow, windowStates } from "./window-state.ts";
-import { listWindows } from "./windows.ts";
+import { askWindowStates, type WindowRecord, type WindowStates } from "./window-state.ts";
 
 export type OpenDelegate = {
 	id: string;
@@ -37,6 +36,14 @@ function sameTarget(a: OpenDelegate, b: OpenDelegate): boolean {
 	);
 }
 
+/** The record's own window when its program runs, as the navigator switches to it. */
+function runningWindow(windows: WindowStates, record: StartedRecorded): TmuxWindow | undefined {
+	const look = windows.look(record);
+	return look.state === "running"
+		? { id: record.windowId, name: record.windowName, session: look.session ?? "", exited: false }
+		: undefined;
+}
+
 /** Current evidence supersedes historical navigation, but never mutates a saved launch/result. */
 export class NavigatorView {
 	private readonly results: Results;
@@ -56,8 +63,8 @@ export class NavigatorView {
 	}
 
 	async items(): Promise<OpenDelegate[] | undefined> {
-		const windows: TmuxWindow[] | undefined = await listWindows(this.tmux);
-		if (!windows) return undefined;
+		const windows: WindowStates = await askWindowStates(this.tmux);
+		if (!windows.answered) return undefined;
 		const all: StartedRecorded[] = this.results.list().filter(isStarted);
 		const latest: Map<string, string> = new Map(all.map((record) => [sessionIdOf(record), record.id]));
 		const items: OpenDelegate[] = await Promise.all(
@@ -68,12 +75,8 @@ export class NavigatorView {
 		return items.filter(openItem).reverse();
 	}
 
-	private async item(
-		record: StartedRecorded,
-		latest: boolean,
-		windows: TmuxWindow[] | undefined,
-	): Promise<OpenDelegate> {
-		const historical: TmuxWindow | undefined = windows ? findWindow(windows, record) : undefined;
+	private async item(record: StartedRecorded, latest: boolean, windows: WindowStates): Promise<OpenDelegate> {
+		const historical: TmuxWindow | undefined = runningWindow(windows, record);
 		const live: LiveLocator | undefined =
 			latest && !record.closed ? await this.reader.locator(sessionIdOf(record)) : undefined;
 		if (live) this.current.add(record.id);
@@ -83,26 +86,23 @@ export class NavigatorView {
 		return {
 			id: record.id,
 			name: recordedName(record),
-			state: deriveState(record, windowStates(windows).state(record)),
+			state: deriveState(record, windows.state(record)),
 			record,
 			live,
-			navigable: !!window && !window.exited,
+			navigable: window !== undefined,
 			window: window ?? { id: record.windowId, name: record.windowName, exited: true, session: "" },
 		};
 	}
 
-	private async liveWindow(
-		live: LiveLocator | undefined,
-		windows: TmuxWindow[] | undefined,
-	): Promise<TmuxWindow | undefined> {
-		if (!live || !windows) return undefined;
+	private async liveWindow(live: LiveLocator | undefined, windows: WindowStates): Promise<TmuxWindow | undefined> {
+		if (!live || !windows.answered) return undefined;
 		const pane = await verifyLiveWindow(this.tmux, live).catch(() => undefined);
 		if (!pane) return undefined;
-		const found: TmuxWindow | undefined = windows.find(
-			(entry) => entry.id === pane.windowId && entry.name === pane.windowName,
-		);
-		// Exact Pi pane, not a different active pane's pane_dead.
-		return found ? { ...found, exited: false } : undefined;
+		const own: WindowRecord = { windowId: pane.windowId, windowName: pane.windowName };
+		// Exact Pi pane, not a different active pane's pane_dead: a listed window counts as running.
+		return windows.listed(own)
+			? { id: pane.windowId, name: pane.windowName, session: windows.look(own).session ?? "", exited: false }
+			: undefined;
 	}
 
 	async verified(item: OpenDelegate): Promise<boolean> {
@@ -110,7 +110,7 @@ export class NavigatorView {
 		const record: StartedRecorded | undefined = all.find((entry) => entry.id === item.id);
 		if (!record || sessionIdOf(record) !== sessionIdOf(item.record)) return false;
 		const latest: boolean = all.filter((entry) => sessionIdOf(entry) === sessionIdOf(record)).at(-1)?.id === record.id;
-		const current: OpenDelegate = await this.item(record, latest, await listWindows(this.tmux));
+		const current: OpenDelegate = await this.item(record, latest, await askWindowStates(this.tmux));
 		if (!current.navigable || !sameTarget(item, current)) return false;
 		if (!current.live) return true;
 		const final: LiveLocator | undefined = await this.reader.locator(sessionIdOf(record));

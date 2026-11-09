@@ -30,11 +30,10 @@ import { type CloseResult, CloseSchema, closeTree } from "./tree-close.ts";
 import { accountingFor } from "./tree-view.ts";
 import type { ReadingError } from "./usage.ts";
 import { askWindowStates, type WindowStates } from "./window-state.ts";
-import { listWindows, ownWindow, windowState } from "./windows.ts";
 import { WorkspaceSchema } from "./workspace.ts";
 
 export type { CloseResult };
-export { CloseSchema, listWindows, ownWindow, windowState };
+export { CloseSchema };
 
 /** What `src/index.ts` needs from tracking. */
 export type Tracking = {

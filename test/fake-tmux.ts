@@ -8,20 +8,28 @@
 // covers those against a stub `tmux`). The real tmux is exercised by hand, never here.
 import {
 	companionCandidate,
+	navigationVerbs,
 	type OpenedWindow,
 	type OwnSession,
 	type PaneListing,
 	type PaneLocator,
 	parseTmuxVersion,
+	type ShowResult,
 	type TmuxClient,
+	type TmuxNavigation,
 	type TmuxVersion,
 	type TmuxWindow,
 	WindowOpenError,
 	type WindowSpec,
+	type WindowTarget,
 } from "../src/tmux.ts";
 import type { WindowPlacement } from "../src/window-placement.ts";
 
-export class FakeTmux implements TmuxClient {
+// The tmux calls (`insideTmux`, `ownSession`, `clientFor`, `switchTo`, `capture`)
+// stay here as the fake's model; the verbs `TmuxClient` asks for run the real
+// adapter's protocol over them, so tests that set or replace a call still see it used.
+export class FakeTmux implements TmuxClient, TmuxNavigation {
+	private readonly verbs = navigationVerbs(this);
 	/** Whether the session looks like it runs inside tmux. */
 	inside = true;
 	/** The session the parent's pane is in. */
@@ -96,6 +104,24 @@ export class FakeTmux implements TmuxClient {
 
 	insideTmux(): boolean {
 		return this.inside;
+	}
+
+	unavailable(): string | undefined;
+	unavailable(checkVersion: true): Promise<string | undefined>;
+	unavailable(checkVersion?: true): string | undefined | Promise<string | undefined> {
+		return checkVersion ? this.verbs.unavailable(true) : this.verbs.unavailable();
+	}
+
+	get windowListRefusal(): string {
+		return this.verbs.windowListRefusal;
+	}
+
+	show(target: WindowTarget, verify: () => Promise<boolean>): Promise<ShowResult> {
+		return this.verbs.show(target, verify);
+	}
+
+	peek(target: WindowTarget): Promise<string> {
+		return this.verbs.peek(target);
 	}
 
 	async version(): Promise<TmuxVersion> {

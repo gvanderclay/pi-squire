@@ -80,7 +80,7 @@ import { createResume, type ResumeRequest, resumableIds, startedLine } from "./r
 import { pickResume } from "./resume-picker.ts";
 import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
-import { createTmuxClient, type OpenedWindow, requireTmuxVersion, type TmuxClient, WindowOpenError } from "./tmux.ts";
+import { createTmuxClient, type OpenedWindow, type TmuxClient, WindowOpenError } from "./tmux.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import {
@@ -200,8 +200,6 @@ export const DelegateSchema = Type.Object({
 	sessionDir: Type.String(),
 	workspace: WorkspaceSchema,
 });
-
-const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
 
 const USAGE =
 	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task>";
@@ -1127,8 +1125,8 @@ export default function delegate(
 	): Promise<Launched> {
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
-		if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
-		await requireTmuxVersion(tmux);
+		const refusal = await tmux.unavailable(true);
+		if (refusal !== undefined) throw new Error(refusal);
 		// Read once, before anything is created or mailed; the launch keeps these values.
 		const { placement, companionSuffix } = windowSettings(getAgentDir());
 		const parentIdentity = identity.current();
@@ -1356,7 +1354,6 @@ export default function delegate(
 		results,
 		tmux,
 		delegateSchema: DelegateSchema,
-		notInTmux: NOT_IN_TMUX,
 		startPolling: tracking.startPolling,
 		placement: () => windowSettings(getAgentDir()).placement,
 		roster: rosterFor,
@@ -1452,7 +1449,7 @@ export default function delegate(
 
 	/** What the no-argument `/delegate` form needs. */
 	const newDelegateDeps: NewDelegateDeps = {
-		unavailable: () => (tmux.insideTmux() ? undefined : NOT_IN_TMUX),
+		unavailable: () => tmux.unavailable(),
 		roster: rosterFor,
 		noAgents,
 		defaults: (agent, ctx) => {
@@ -1482,7 +1479,7 @@ export default function delegate(
 		await pickResume(
 			ctx,
 			{
-				unavailable: () => (tmux.insideTmux() ? undefined : NOT_IN_TMUX),
+				unavailable: () => tmux.unavailable(),
 				eligible: resumer.eligible,
 				resume: async (request, context) => {
 					try {
@@ -1570,7 +1567,8 @@ export default function delegate(
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		) {
-			if (!tmux.insideTmux()) throw new Error(NOT_IN_TMUX);
+			const refusal = tmux.unavailable();
+			if (refusal !== undefined) throw new Error(refusal);
 			// Some models fill every optional field with null or the string "null"; both mean unset.
 			const given = (value: string | null | undefined) => (value == null || value === "null" ? undefined : value);
 			const cwd = normalizeWorkspaceValue(params.cwd, "cwd");

@@ -135,20 +135,20 @@ export async function switchAncestor(
 	const pane = live ? await verifyLiveWindow(tmux, live) : undefined;
 	if (!live || !pane) throw new Error("no verified live window for this ancestor");
 	assertActive();
-	const own = await tmux.ownSession();
-	const client: string | undefined = own ? await tmux.clientFor(own.name) : undefined;
-	if (!client) throw new Error("no tmux client attached to this session");
-	const current: LiveLocator | undefined = await reader.locator(sessionId);
+	const shown = await tmux.show({ windowId: pane.windowId }, async () => {
+		const current: LiveLocator | undefined = await reader.locator(sessionId);
+		assertActive();
+		const verified = current ? await verifyLiveWindow(tmux, current) : undefined;
+		if (!current || !sameTarget(live, current) || !verified || JSON.stringify(pane) !== JSON.stringify(verified))
+			throw new Error("ancestor window changed or is unavailable");
+		assertActive();
+		if (!ancestorSessions(ctx).some((ancestor) => ancestor.sessionId === sessionId))
+			throw new Error("ancestor identity changed");
+		if (!matchesSessionOwner(sessionId, current.pid, current.ownerToken) || !sessionIsOwned(sessionId))
+			throw new Error("ancestor owner changed or is unavailable");
+		return true;
+	});
+	if ("text" in shown) throw shown.cause ?? new Error(shown.brief);
 	assertActive();
-	const verified = current ? await verifyLiveWindow(tmux, current) : undefined;
-	if (!current || !sameTarget(live, current) || !verified || JSON.stringify(pane) !== JSON.stringify(verified))
-		throw new Error("ancestor window changed or is unavailable");
-	assertActive();
-	if (!ancestorSessions(ctx).some((ancestor) => ancestor.sessionId === sessionId))
-		throw new Error("ancestor identity changed");
-	if (!matchesSessionOwner(sessionId, current.pid, current.ownerToken) || !sessionIsOwned(sessionId))
-		throw new Error("ancestor owner changed or is unavailable");
-	await tmux.switchTo(client, verified.windowId);
-	assertActive();
-	ctx.ui.notify(`delegate: switched to ancestor ${sessionId} (${verified.windowId})`, "info");
+	ctx.ui.notify(`delegate: switched to ancestor ${sessionId} (${pane.windowId})`, "info");
 }

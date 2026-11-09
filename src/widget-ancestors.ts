@@ -8,7 +8,7 @@ import { readTreeDisplay, type TreeEntry } from "./tree-registry.ts";
 import { LiveActivityReader, type LiveLocator } from "./widget-live.ts";
 import { WidgetTitleMirrors } from "./widget-title.ts";
 import { WidgetTitleFiles } from "./widget-title-file.ts";
-import { listWindows } from "./windows.ts";
+import { askWindowStates } from "./window-state.ts";
 
 export type WidgetIdentity = { identity: string; agent?: string };
 export type Breadcrumb = {
@@ -117,8 +117,8 @@ export async function verifyLiveWindow(tmux: TmuxClient, live: LiveLocator): Pro
 	if (!own || !sameServer(own, live.locator)) return undefined;
 	const pane: PaneLocator | undefined = await tmux.inspectPane?.(live.locator.paneId);
 	if (!pane || pane.exited || !sameServer(pane, live.locator)) return undefined;
-	const windows = await listWindows(tmux);
-	return windows?.some((window) => window.id === pane.windowId && window.name === pane.windowName) ? pane : undefined;
+	const windows = await askWindowStates(tmux);
+	return windows.listed({ windowId: pane.windowId, windowName: pane.windowName }) ? pane : undefined;
 }
 
 export async function switchAncestor(

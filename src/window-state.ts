@@ -1,6 +1,7 @@
 // A delegation's window state: the one place that matches a delegation record
-// to a window tmux lists. Callers ask once per multiplexer read and look up as
-// many records as they need; they never match ids or names themselves.
+// to a window tmux lists, and closes it. Callers ask once per multiplexer read and
+// look up as many records as they need; they never match ids or names or read
+// whether a window's program exited themselves.
 import type { StartedRecorded } from "./results.ts";
 import type { PaneListing, TmuxClient, TmuxWindow } from "./tmux.ts";
 
@@ -11,23 +12,38 @@ import type { PaneListing, TmuxClient, TmuxWindow } from "./tmux.ts";
  */
 export type WindowState = "running" | "gone" | "unknown";
 
-/** The fields of a record that locate its window. */
-export type WindowRecord = Pick<StartedRecorded, "windowId" | "windowName">;
+/** The fields of a record that locate its window; a record missing either has no window to find. */
+export type WindowRecord = Partial<Pick<StartedRecorded, "windowId" | "windowName">>;
 
 /** A record's window as one ask saw it. `session` is the tmux session the matching window is listed in, exited or not. */
 export type WindowLook = { state: WindowState; session?: string };
 
 /** One ask of the multiplexer, read for any number of records. */
 export type WindowStates = {
+	/** Whether the multiplexer answered; when it did not, every record is `unknown`. */
+	readonly answered: boolean;
 	look(record: WindowRecord): WindowLook;
 	state(record: WindowRecord): WindowState;
+	/** Whether the ask listed the record's window at all, its program running or exited. */
+	listed(record: WindowRecord): boolean;
+};
+
+/** Window states that can also close what they saw. */
+export type ClosableStates = WindowStates & {
+	/**
+	 * Close the record's window when this ask listed it, its program running or
+	 * exited, and resolve whether one was closed. Idempotent: a window already
+	 * gone resolves `false` without asking the multiplexer. Rejects when the ask
+	 * failed, since an unknown window is never taken as gone.
+	 */
+	close(record: WindowRecord): Promise<boolean>;
 };
 
 /** One `list-panes` ask: the window states, plus the pane listing a caller verifying a live pane reads. */
 export type PaneStates = WindowStates & { readonly listing: PaneListing | undefined };
 
 /** The window a record owns: both its recorded id and its recorded name, since tmux ids restart with every server. */
-export function findWindow(windows: readonly TmuxWindow[], record: WindowRecord): TmuxWindow | undefined {
+function findWindow(windows: readonly TmuxWindow[], record: WindowRecord): TmuxWindow | undefined {
 	return windows.find((window) => window.id === record.windowId && window.name === record.windowName);
 }
 
@@ -40,21 +56,45 @@ export function windowStates(windows: readonly TmuxWindow[] | undefined): Window
 		// A window whose program exited counts as gone.
 		return { state: own.exited ? "gone" : "running", session: own.session };
 	};
-	return { look, state: (record: WindowRecord): WindowState => look(record).state };
+	return {
+		answered: windows !== undefined,
+		look,
+		state: (record: WindowRecord): WindowState => look(record).state,
+		listed: (record: WindowRecord): boolean => windows !== undefined && findWindow(windows, record) !== undefined,
+	};
+}
+
+/** States from one window listing, bound to the client that closes them. */
+function closableStates(tmux: TmuxClient, windows: readonly TmuxWindow[] | undefined): ClosableStates {
+	return {
+		...windowStates(windows),
+		async close(record: WindowRecord): Promise<boolean> {
+			if (windows === undefined) throw new Error("could not ask tmux which windows are open, so none was closed");
+			const own: TmuxWindow | undefined = findWindow(windows, record);
+			if (own === undefined) return false;
+			await tmux.kill(own.id);
+			return true;
+		},
+	};
 }
 
 /** Every record `unknown`: nothing was asked. */
 export const UNASKED: PaneStates = { ...windowStates(undefined), listing: undefined };
 
 /** One `list-windows` ask; a failed ask yields `unknown` for every record, never `gone`. */
-export async function askWindowStates(tmux: TmuxClient): Promise<WindowStates> {
+export async function askWindowStates(tmux: TmuxClient): Promise<ClosableStates> {
 	let windows: TmuxWindow[] | undefined;
 	try {
 		windows = await tmux.listWindows();
 	} catch {
 		windows = undefined;
 	}
-	return windowStates(windows);
+	return closableStates(tmux, windows);
+}
+
+/** One `list-windows` ask before a close; a failed ask rejects with the multiplexer's error, since close never guesses. */
+export async function askToClose(tmux: TmuxClient): Promise<ClosableStates> {
+	return closableStates(tmux, await tmux.listWindows());
 }
 
 /** One `list-panes` ask; a failed ask yields `unknown` for every record and no listing. */

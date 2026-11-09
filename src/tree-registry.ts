@@ -7,13 +7,13 @@ import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Recorded } from "./result-types.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import { readTaskState, taskStatePath } from "./task-store.ts";
-import type { TmuxClient, TmuxWindow } from "./tmux.ts";
+import type { TmuxClient } from "./tmux.ts";
 import { checkResumeFence, fenced } from "./tree-fence.ts";
 import { processAlive, withTreeLock } from "./tree-lock.ts";
 import { treeCaps } from "./tree-settings.ts";
 import type { Reservation, TreeCounts, TreeEntry, TreeIntent, TreeState } from "./tree-types.ts";
 import { assertRootPlacement } from "./window-placement.ts";
-import { listWindows } from "./windows.ts";
+import { askWindowStates, type WindowStates } from "./window-state.ts";
 
 export type { Reservation, TreeCounts, TreeEntry, TreeIntent, TreeState } from "./tree-types.ts";
 
@@ -329,27 +329,24 @@ function reconcileFacts(state: TreeState): void {
 		if (entry.phase === "reserved" && !processAlive(entry.ownerPid)) entry.phase = "not-started";
 	}
 }
-function reconcileWindows(state: TreeState, snapshot: TreeState, windows: TmuxWindow[]): void {
+function reconcileWindows(state: TreeState, snapshot: TreeState, windows: WindowStates): void {
 	for (const previous of snapshot.entries) {
 		if (previous.phase !== "started" || !previous.windowId) continue;
 		const entry: TreeEntry | undefined = state.entries.find((item) => item.id === previous.id);
 		if (!entry || entry.windowId !== previous.windowId || entry.windowName !== previous.windowName) continue;
-		const window: TmuxWindow | undefined = windows.find(
-			(window) => window.id === entry.windowId && window.name === entry.windowName,
-		);
-		if (!window || window.exited) entry.gone = true;
+		if (windows.state(entry) === "gone") entry.gone = true;
 	}
 }
 /** Snapshot before tmux: a newly started child cannot be judged by an old list. */
 export async function reconcileTree(root: string, tmux: TmuxClient): Promise<void> {
 	const snapshot: TreeState = readTree(root);
-	const windows: TmuxWindow[] | undefined = snapshot.entries.some(
+	const windows: WindowStates | undefined = snapshot.entries.some(
 		(entry) => entry.phase === "started" && !entry.finished && !entry.gone && !entry.closed,
 	)
-		? await listWindows(tmux)
+		? await askWindowStates(tmux)
 		: undefined;
 	treeTransaction(root, (state) => {
 		reconcileFacts(state);
-		if (windows) reconcileWindows(state, snapshot, windows);
+		if (windows?.answered) reconcileWindows(state, snapshot, windows);
 	});
 }

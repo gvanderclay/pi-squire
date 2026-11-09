@@ -51,8 +51,6 @@ export type ResumeDeps = {
 	tmux: TmuxClient;
 	/** The `delegate` tool's result schema, which a resume's result extends. */
 	delegateSchema: TObject;
-	/** The refusal text for a session outside tmux. */
-	notInTmux: string;
 	startPolling(): void;
 	/** The window placement for this call; throws on an invalid setting. */
 	placement(): WindowPlacement;

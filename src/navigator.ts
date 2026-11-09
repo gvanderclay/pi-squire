@@ -149,39 +149,19 @@ async function verifiedWindow(env: Env, item: OpenDelegate): Promise<boolean> {
 	return verified;
 }
 
-/** The parent\'s own session name, or undefined when tmux cannot say. */
-async function ownSessionName(tmux: TmuxClient): Promise<string | undefined> {
-	try {
-		return (await tmux.ownSession())?.name;
-	} catch {
-		return undefined;
-	}
-}
-
-/** The most recently active client on the parent's session, or why there is none. */
-async function clientOf(tmux: TmuxClient): Promise<{ client: string } | { refusal: string }> {
-	const session = await ownSessionName(tmux);
-	if (session === undefined) return { refusal: "could not tell which tmux session this pane is in" };
-	try {
-		const client = await tmux.clientFor(session);
-		return client === undefined ? { refusal: `no tmux client is attached to session ${session}` } : { client };
-	} catch (err) {
-		return { refusal: `could not list tmux clients: ${(err as Error).message}` };
-	}
-}
-
 async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promise<void> {
 	env.actions.assertActive?.();
-	const found = await clientOf(env.tmux);
-	if ("refusal" in found) return ctx.ui.notify(`delegate: cannot switch: ${found.refusal}`, "warning");
+	let returnHint: string;
 	try {
-		env.actions.assertActive?.();
-		if (!(await verifiedWindow(env, item)))
-			return ctx.ui.notify(
-				"delegate: no verified open window for this delegation; window changed or unavailable",
-				"error",
-			);
-		await env.tmux.switchTo(found.client, item.window.id);
+		const found = await env.tmux.show({ windowId: item.window.id }, async () => {
+			env.actions.assertActive?.();
+			if (await verifiedWindow(env, item)) return true;
+			ctx.ui.notify("delegate: no verified open window for this delegation; window changed or unavailable", "error");
+			return false;
+		});
+		if ("text" in found) return ctx.ui.notify(`delegate: cannot switch: ${found.text}`, "warning");
+		if (!found.shown) return;
+		returnHint = found.returnHint;
 	} catch (err) {
 		return ctx.ui.notify(`delegate: could not switch: ${(err as Error).message}`, "error");
 	}
@@ -193,10 +173,7 @@ async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Pr
 			"warning",
 		);
 	}
-	ctx.ui.notify(
-		`delegate: switched to ${item.name} (${item.window.id}) · your tmux last-session key returns you`,
-		"info",
-	);
+	ctx.ui.notify(`delegate: switched to ${item.name} (${item.window.id}) · ${returnHint}`, "info");
 }
 
 async function close(env: Env, ctx: ExtensionContext, id: string): Promise<void> {
@@ -232,7 +209,7 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 				theme: theme as unknown as PanelTheme,
 				read: async (windowId: string): Promise<string> => {
 					if (!(await verifiedWindow(env, item))) throw new Error("no verified open window");
-					return env.tmux.capture(item.live?.locator.paneId ?? windowId);
+					return env.tmux.peek({ windowId, paneId: item.live?.locator.paneId });
 				},
 				done,
 				redraw: (): void => tui.requestRender(),
@@ -244,13 +221,14 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 }
 
 const noUi = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: this needs an interactive session", "error");
-const noTmux = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: could not ask tmux for its windows", "error");
+const noWindows = (env: Env, ctx: ExtensionContext): void =>
+	ctx.ui.notify(`delegate: ${env.tmux.windowListRefusal}`, "error");
 
 /** One action on one open delegate, as `/delegate-open` runs it. */
 async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMode): Promise<void> {
 	const items = await env.view.items();
 	env.actions.assertActive?.();
-	if (items === undefined) return noTmux(ctx);
+	if (items === undefined) return noWindows(env, ctx);
 	const item = items.find((candidate) => candidate.id === id);
 	if (item === undefined) {
 		if (env.results.find(id))

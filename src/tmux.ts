@@ -30,6 +30,9 @@ export function parseTmuxVersion(output: string): TmuxVersion {
 	return { text, major: Number(match[1]), minor: Number(match[2]) };
 }
 
+/** The refusal for a session that does not run in a tmux pane. */
+export const NOT_IN_TMUX = "this session is not inside tmux; start it in a tmux pane to open a delegate window";
+
 /** Refuse a tmux older than `MIN_TMUX`, naming the version found. */
 export async function requireTmuxVersion(tmux: { version(): Promise<TmuxVersion> }): Promise<void> {
 	const found = await tmux.version();
@@ -91,11 +94,54 @@ export type PaneListing = {
 	windows: TmuxWindow[];
 };
 
-export interface TmuxClient {
+/** Where a delegate window is: its tmux window id and, when known, the exact pane to read. */
+export type WindowTarget = { windowId: string; paneId?: string };
+
+/** Showing either switched, was canceled by verification, or could not find a viewing terminal. */
+export type ShowResult = { shown: true; returnHint: string } | { shown: false } | NoViewer;
+
+/**
+ * Why no terminal can show a window. `text` is the full reason, `brief` the
+ * short one, and `cause` the error when a lookup failed rather than found nothing.
+ * Delegate navigation displays the full reason; ancestor navigation preserves
+ * its short refusal for a missing client and propagates lookup errors.
+ */
+export type NoViewer = { text: string; brief: string; cause?: unknown };
+
+/**
+ * Adapter internals, also retained on the concrete real client and the fake
+ * for existing low-level tests. Production callers use TmuxClient's verbs.
+ */
+export type TmuxNavigation = {
 	/** Whether this process runs in a tmux pane. */
 	insideTmux(): boolean;
 	/** The tmux version, asked once. */
 	version(): Promise<TmuxVersion>;
+	/** The session the parent's pane is in; undefined when it cannot be told. */
+	ownSession(): Promise<OwnSession | undefined>;
+	/** The most recently active client attached to the session named `session`; undefined when none is. */
+	clientFor(session: string): Promise<string | undefined>;
+	/** Show the window to a client: `switch-client -c <client> -t @N`. */
+	switchTo(client: string, windowId: string): Promise<void>;
+	/** The window's or pane's visible text (`capture-pane -p`). */
+	capture(target: string): Promise<string>;
+};
+
+export interface TmuxClient {
+	/** Environment-only refusal, without asking tmux (forms and early tool admission). */
+	unavailable(): string | undefined;
+	/** Launch refusal, checking the environment before the cached minimum version. */
+	unavailable(checkVersion: true): Promise<string | undefined>;
+	/**
+	 * Find the viewing terminal, reverify the target, then switch. Keeping
+	 * verification after client lookup preserves the existing race checks and
+	 * refusal order. False cancels without switching; verification errors propagate.
+	 */
+	show(target: WindowTarget, verify: () => Promise<boolean>): Promise<ShowResult>;
+	/** Refusal text for a failed window listing. */
+	readonly windowListRefusal: string;
+	/** A delegate window's visible text: its pane when known, else the window's active pane. */
+	peek(target: WindowTarget): Promise<string>;
 	/**
 	 * Open a detached window and return its id (for example `@3`) and session.
 	 * `current` opens it in the parent's session; `companion` in
@@ -111,14 +157,60 @@ export interface TmuxClient {
 	listPanes(): Promise<PaneListing>;
 	/** Kill a window. */
 	kill(windowId: string): Promise<void>;
-	/** The session the parent's pane is in; undefined when it cannot be told. */
-	ownSession(): Promise<OwnSession | undefined>;
-	/** The most recently active client attached to the session named `session`; undefined when none is. */
-	clientFor(session: string): Promise<string | undefined>;
-	/** Show the window to a client: `switch-client -c <client> -t @N`. */
-	switchTo(client: string, windowId: string): Promise<void>;
-	/** The window's visible pane as text (`capture-pane -p`). */
-	capture(windowId: string): Promise<string>;
+}
+
+/** The short refusal when no client can be found. */
+const NO_CLIENT_HERE = "no tmux client attached to this session";
+
+/**
+ * The delegate-window verbs over tmux's own calls: the one place that turns
+ * session -> client -> `switch-client`, the version check and their refusals.
+ * Calls go through `tmux` at call time, so a test double's replaced method is used.
+ */
+export function navigationVerbs(
+	tmux: TmuxNavigation,
+): Pick<TmuxClient, "unavailable" | "show" | "peek" | "windowListRefusal"> {
+	function unavailable(): string | undefined;
+	function unavailable(checkVersion: true): Promise<string | undefined>;
+	function unavailable(checkVersion?: true): string | undefined | Promise<string | undefined> {
+		const refusal = tmux.insideTmux() ? undefined : NOT_IN_TMUX;
+		if (!checkVersion) return refusal;
+		return (async (): Promise<string | undefined> => {
+			if (refusal !== undefined) return refusal;
+			try {
+				await requireTmuxVersion(tmux);
+				return undefined;
+			} catch (err) {
+				return (err as Error).message;
+			}
+		})();
+	}
+	return {
+		unavailable,
+		windowListRefusal: "could not ask tmux for its windows",
+		async show(target, verify) {
+			let own: OwnSession | undefined;
+			try {
+				own = await tmux.ownSession();
+			} catch (cause) {
+				return { text: "could not tell which tmux session this pane is in", brief: NO_CLIENT_HERE, cause };
+			}
+			if (own === undefined)
+				return { text: "could not tell which tmux session this pane is in", brief: NO_CLIENT_HERE };
+			let client: string | undefined;
+			try {
+				client = await tmux.clientFor(own.name);
+			} catch (cause) {
+				return { text: `could not list tmux clients: ${(cause as Error).message}`, brief: NO_CLIENT_HERE, cause };
+			}
+			if (client === undefined)
+				return { text: `no tmux client is attached to session ${own.name}`, brief: NO_CLIENT_HERE };
+			if (!(await verify())) return { shown: false };
+			await tmux.switchTo(client, target.windowId);
+			return { shown: true, returnHint: "your tmux last-session key returns you" };
+		},
+		peek: (target) => tmux.capture(target.paneId ?? target.windowId),
+	};
 }
 
 /** Run one tmux command and return its stdout; never a shell. */
@@ -252,7 +344,7 @@ function openCurrent(run: Run, spec: WindowSpec, parent: Parent | undefined): Pr
 }
 
 /** The methods that reach a delegate's window from the user's terminal: clients, switch, capture. */
-function navigation(run: Run): Pick<TmuxClient, "ownSession" | "clientFor" | "switchTo" | "capture"> {
+function navigation(run: Run): Pick<TmuxNavigation, "ownSession" | "clientFor" | "switchTo" | "capture"> {
 	return {
 		async ownSession() {
 			const parent = await parentSession(run);
@@ -275,8 +367,8 @@ function navigation(run: Run): Pick<TmuxClient, "ownSession" | "clientFor" | "sw
 			await run(["switch-client", "-c", client, "-t", windowId]);
 		},
 
-		async capture(windowId) {
-			return run(["capture-pane", "-p", "-t", windowId]);
+		async capture(target) {
+			return run(["capture-pane", "-p", "-t", target]);
 		},
 	};
 }
@@ -340,12 +432,11 @@ async function listPanes(run: Run): Promise<PaneListing> {
  * `TMUX_PANE`, not whatever session a client happens to have attached, so it
  * works with several clients on one server.
  */
-export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClient {
+export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClient & TmuxNavigation {
 	const timeoutMs = options.timeoutMs ?? 10_000;
 	const run: Run = (args) => runTmux(args, timeoutMs);
 	let cachedVersion: Promise<TmuxVersion> | undefined;
-
-	return {
+	const calls: TmuxNavigation = {
 		insideTmux: () => (process.env.TMUX ?? "") !== "",
 
 		version() {
@@ -356,6 +447,13 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 			});
 			return cachedVersion;
 		},
+
+		...navigation(run),
+	};
+
+	return {
+		...calls,
+		...navigationVerbs(calls),
 
 		async openWindow(spec, placement, companion) {
 			let parent: Parent | undefined;
@@ -405,7 +503,5 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 		async kill(windowId) {
 			await run(["kill-window", "-t", windowId]);
 		},
-
-		...navigation(run),
 	};
 }

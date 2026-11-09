@@ -12,7 +12,6 @@ import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-session
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
-import { requireTmuxVersion } from "./tmux.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { WindowStates } from "./window-state.ts";
@@ -171,8 +170,8 @@ export async function settleModel(
 
 /** The call-wide prerequisites of a resume: inside tmux, a new enough tmux, a valid placement setting (read once). */
 export async function preflight(deps: ResumeDeps): Promise<WindowPlacement> {
-	if (!deps.tmux.insideTmux()) throw new Error(deps.notInTmux);
-	await requireTmuxVersion(deps.tmux);
+	const refusal = await deps.tmux.unavailable(true);
+	if (refusal !== undefined) throw new Error(refusal);
 	return deps.placement();
 }
 

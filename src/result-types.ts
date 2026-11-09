@@ -58,7 +58,7 @@ export function deriveState(record: Recorded, window: WindowState): DelegationSt
 	if (record.closed === true) return "closed";
 	if (record.result !== undefined) return "done";
 	if (record.gone === true) return "gone";
-	if (window === "open") return "running";
+	if (window === "running") return "running";
 	if (window === "gone") return "window-closed";
 	return "unknown";
 }

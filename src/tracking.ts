@@ -23,12 +23,13 @@ import {
 	type WorkspaceAttempt,
 } from "./results.ts";
 import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
-import type { TmuxClient, TmuxWindow } from "./tmux.ts";
+import type { TmuxClient } from "./tmux.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
 import { ago, autoExitLine, stateLine } from "./tracking-text.ts";
 import { type CloseResult, CloseSchema, closeTree } from "./tree-close.ts";
 import { accountingFor } from "./tree-view.ts";
 import type { ReadingError } from "./usage.ts";
+import { askWindowStates, type WindowStates } from "./window-state.ts";
 import { listWindows, ownWindow, windowState } from "./windows.ts";
 import { WorkspaceSchema } from "./workspace.ts";
 
@@ -144,11 +145,12 @@ type View = {
 /** The view of a delegation: its state and the fields the text and details share. */
 function view(
 	record: StartedRecorded,
-	windows: TmuxWindow[] | undefined,
+	windows: WindowStates,
 	ctx: ExtensionContext,
 	resumedAs: string | undefined,
 ): View {
-	const state = deriveState(record, windowState(windows, record));
+	const window = windows.look(record);
+	const state = deriveState(record, window.state);
 	const sessionPath = locateSession(record, ctx.sessionManager.getSessionDir());
 	let lastActive: Date | undefined;
 	if (state === "running" && sessionPath !== undefined) {
@@ -159,7 +161,7 @@ function view(
 		}
 	}
 	const snapshot = inspectWorkspace(record.workspace?.cwd, record.workspace?.git);
-	const windowSession = windows === undefined ? undefined : ownWindow(windows, record)?.session;
+	const windowSession = window.session;
 	return {
 		record,
 		state,
@@ -296,7 +298,7 @@ function statusTool(results: Results, tmux: TmuxClient, readingErrors: () => Rea
 			ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
 			const records = selectRecords(results, params.id);
-			const windows = await listWindows(tmux);
+			const windows = await askWindowStates(tmux);
 			const resumedAs = (id: string) => results.list().find((item) => isStarted(item) && item.resumedFrom === id)?.id;
 			const views = records.map((record) =>
 				isStarted(record) ? view(record, windows, ctx, resumedAs(record.id)) : record,

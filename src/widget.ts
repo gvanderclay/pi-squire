@@ -13,7 +13,7 @@ import { renderDelegateWidget } from "./widget-render.ts";
 import { WidgetSelection } from "./widget-selection.ts";
 import { DEFAULT_WIDGET_SETTINGS, type WidgetSettings, widgetSettings } from "./widget-settings.ts";
 import { titlePublisher } from "./widget-title.ts";
-import { listPanes } from "./windows.ts";
+import { askPaneStates, type PaneStates, UNASKED } from "./window-state.ts";
 
 export const DELEGATE_WIDGET_KEY = "squire-delegates";
 export const WIDGET_REFRESH_MS = 1000;
@@ -210,12 +210,11 @@ class Overview {
 					};
 				} catch {}
 			}
-			const listing =
-				settings.maxEntries > 0 && this.view.needsWindows(observed) ? await listPanes(this.tmux) : undefined;
-			const windows = listing?.windows;
+			const windows: PaneStates =
+				settings.maxEntries > 0 && this.view.needsWindows(observed) ? await askPaneStates(this.tmux) : UNASKED;
 			if (this.stopped || revision !== this.factsRevision) return;
 			const sessionDir: string = this.ctx.sessionManager.getSessionDir();
-			const current = await currentChildWindows(observed, listing, this.live);
+			const current = await currentChildWindows(observed, windows.listing, this.live);
 			await this.readBreadcrumb();
 			if (this.stopped || revision !== this.factsRevision) return;
 			const eligible: DelegateRow[] = this.view.read(observed, windows, sessionDir, { offset: 0, limit: 0 }, current);

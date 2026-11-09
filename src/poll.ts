@@ -4,19 +4,18 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import type { Results } from "./results.ts";
-import type { TmuxClient, TmuxWindow } from "./tmux.ts";
-import { listWindows, windowState } from "./windows.ts";
+import type { TmuxClient } from "./tmux.ts";
+import { askWindowStates, type WindowStates } from "./window-state.ts";
 
 /** The hook a tick emits so the provider claims waiting replies before windows are checked. */
 const SCAN = "message:scan";
 /** How often the parent checks its running delegations. */
 const POLL_MS = 5000;
 
-/** Record gone each running delegation whose window is missing or exited; a failed list declares nothing. */
-function declareGone(pi: ExtensionAPI, results: Results, windows: TmuxWindow[] | undefined, live: () => boolean): void {
-	if (windows === undefined) return;
+/** Record gone each running delegation whose window is missing or exited; a failed ask (`unknown`) declares nothing. */
+function declareGone(pi: ExtensionAPI, results: Results, windows: WindowStates, live: () => boolean): void {
 	for (const record of results.running()) {
-		if (windowState(windows, record) !== "gone" || !live()) continue;
+		if (windows.state(record) !== "gone" || !live()) continue;
 		// A reply may have landed while the windows before this one were checked.
 		pi.events.emit(SCAN, {});
 		results.recordGone(record.id);
@@ -31,7 +30,7 @@ async function sweep(pi: ExtensionAPI, results: Results, tmux: TmuxClient, live:
 		pi.events.emit(SCAN, scan);
 		// No message:* provider: a waiting reply cannot be ruled out, so nothing is declared gone.
 		if (scan.scanned === true) {
-			declareGone(pi, results, await listWindows(tmux), live); // one ask per tick
+			declareGone(pi, results, await askWindowStates(tmux), live); // one ask per tick
 		}
 	}
 }

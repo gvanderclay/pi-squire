@@ -11,7 +11,8 @@ import {
 import type { TmuxClient, TmuxWindow } from "./tmux.ts";
 import { verifyLiveWindow } from "./widget-ancestors.ts";
 import { LiveActivityReader, type LiveLocator } from "./widget-live.ts";
-import { listWindows, ownWindow } from "./windows.ts";
+import { findWindow, windowStates } from "./window-state.ts";
+import { listWindows } from "./windows.ts";
 
 export type OpenDelegate = {
 	id: string;
@@ -72,19 +73,17 @@ export class NavigatorView {
 		latest: boolean,
 		windows: TmuxWindow[] | undefined,
 	): Promise<OpenDelegate> {
-		const historical: TmuxWindow | undefined = windows ? ownWindow(windows, record) : undefined;
+		const historical: TmuxWindow | undefined = windows ? findWindow(windows, record) : undefined;
 		const live: LiveLocator | undefined =
 			latest && !record.closed ? await this.reader.locator(sessionIdOf(record)) : undefined;
 		if (live) this.current.add(record.id);
 		const window: TmuxWindow | undefined = this.current.has(record.id)
 			? await this.liveWindow(live, windows)
 			: historical;
-		let state: import("./results.ts").WindowState = "unknown";
-		if (windows) state = historical && !historical.exited ? "open" : "gone";
 		return {
 			id: record.id,
 			name: recordedName(record),
-			state: deriveState(record, state),
+			state: deriveState(record, windowStates(windows).state(record)),
 			record,
 			live,
 			navigable: !!window && !window.exited,

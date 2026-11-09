@@ -181,8 +181,7 @@ export type Results = {
 	checkStorage(write?: boolean): void;
 };
 
-/** What tmux reported for a delegation's window: listed, not listed, or not askable. */
-export type WindowState = "open" | "gone" | "unknown";
+export type { WindowState } from "./window-state.ts";
 
 /**
  * A delegation's state. `closed` is a recorded `delegation_close`; `gone` is

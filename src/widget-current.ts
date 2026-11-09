@@ -2,6 +2,7 @@
 import { isStarted, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
 import type { PaneListing } from "./tmux.ts";
 import type { LiveActivityReader } from "./widget-live.ts";
+import { windowStates } from "./window-state.ts";
 
 export async function currentChildWindows(
 	results: Results,
@@ -11,6 +12,7 @@ export async function currentChildWindows(
 	const found = new Map<string, { windowId: string; windowName: string }>();
 	if (!listing?.server || !listing.windows.length) return found;
 	const server = listing.server;
+	const windows = windowStates(listing.windows);
 	const latest = new Map<string, StartedRecorded>(
 		results
 			.list()
@@ -19,13 +21,7 @@ export async function currentChildWindows(
 	);
 	await Promise.all(
 		[...latest.values()].map(async (record): Promise<void> => {
-			if (
-				record.closed ||
-				listing.windows.some(
-					(window) => window.id === record.windowId && window.name === record.windowName && !window.exited,
-				)
-			)
-				return;
+			if (record.closed || windows.state(record) === "running") return;
 			const live = await reader.locator(sessionIdOf(record));
 			if (
 				!live ||

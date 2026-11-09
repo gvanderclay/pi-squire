@@ -6,7 +6,7 @@ import type { TmuxWindow } from "./tmux.ts";
 import type { Activity } from "./widget-activity.ts";
 import { WidgetTitleMirrors } from "./widget-title.ts";
 import { WidgetTitleFiles } from "./widget-title-file.ts";
-import { windowState } from "./windows.ts";
+import { type WindowState, type WindowStates, windowStates } from "./window-state.ts";
 
 export type DelegateRow = {
 	key: string;
@@ -37,6 +37,16 @@ type Metadata = {
 };
 type Located = { locator: string; path: string };
 type Entry = { record: StartedRecorded; row: DelegateRow };
+
+/** Callers may hand over a raw window listing; the match rule stays in `window-state.ts`. */
+function asStates(windows: WindowStates | readonly TmuxWindow[] | undefined): WindowStates {
+	return windows !== undefined && "look" in windows ? windows : windowStates(windows);
+}
+
+/** The row keeps its own word for a running window. */
+function rowWindow(state: WindowState): DelegateRow["window"] {
+	return state === "running" ? "open" : state;
+}
 
 function candidates(results: Results): StartedRecorded[] {
 	const sessions = new Map<string, StartedRecorded>();
@@ -82,20 +92,21 @@ export class DirectDelegateView {
 
 	read(
 		results: Results,
-		windows: TmuxWindow[] | undefined,
+		windows: WindowStates | readonly TmuxWindow[] | undefined,
 		sessionDir: string | undefined,
 		viewport: MetadataViewport = { offset: 0, limit: 3 },
 		currentWindows: ReadonlyMap<string, { windowId: string; windowName: string }> = new Map(),
 		visibleKeys?: ReadonlySet<string>,
 	): DelegateRow[] {
 		const running: Set<string> = new Set(results.running().map((record) => record.id));
+		const states: WindowStates = asStates(windows);
 		const entries: Entry[] = [];
 		for (const saved of candidates(results)) {
 			const current = currentWindows.get(saved.id);
 			const record: StartedRecorded = current ? { ...saved, ...current } : saved;
 			if (record.gone && !record.result && !current) continue;
 			// A verified exact live pane wins over list-windows pane_dead for another active pane.
-			const window = current ? "open" : windowState(windows, record);
+			const window = current ? "open" : rowWindow(states.state(record));
 			const working: boolean = running.has(record.id);
 			if (window === "gone" || (!working && ((!record.result && !current) || window !== "open"))) continue;
 			entries.push({ record, row: this.row(record, working, window) });

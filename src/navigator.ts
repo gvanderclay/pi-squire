@@ -1,9 +1,9 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { locationTerms, noVerifiedOpen } from "./location.ts";
 import { NavigatorView, type OpenDelegate } from "./navigator-view.ts";
 import { isStarted, type Results, recordedName } from "./results.ts";
 import { livePaneTarget, type TmuxClient, windowLocator } from "./tmux.ts";
-import { windowTerms } from "./tmux-locator.ts";
 import type { Tracking } from "./tracking.ts";
 
 /** What `/delegate-open` does with a verified window. */
@@ -157,8 +157,7 @@ async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Pr
 		const found = await env.tmux.show({ windowId: item.window.id, locator: windowLocator(item.window) }, async () => {
 			env.actions.assertActive?.();
 			if (await verifiedWindow(env, item)) return true;
-			const noun = windowTerms(item.record).noun;
-			ctx.ui.notify(`delegate: no verified open ${noun} for this delegation; ${noun} changed or unavailable`, "error");
+			ctx.ui.notify(`delegate: ${noVerifiedOpen(locationTerms(item.record).noun)}`, "error");
 			return false;
 		});
 		if ("text" in found) return ctx.ui.notify(`delegate: cannot switch: ${found.text}`, "warning");
@@ -210,7 +209,8 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 				item,
 				theme: theme as unknown as PanelTheme,
 				read: async (windowId: string): Promise<string> => {
-					if (!(await verifiedWindow(env, item))) throw new Error(`no verified open ${windowTerms(item.record).noun}`);
+					if (!(await verifiedWindow(env, item)))
+						throw new Error(noVerifiedOpen(locationTerms(item.record).noun, { changed: false }));
 					return env.tmux.peek({
 						windowId,
 						locator: windowLocator(item.window),
@@ -239,11 +239,8 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 	if (item === undefined) {
 		const record = env.results.find(id);
 		if (record) {
-			const noun = isStarted(record) ? windowTerms(record).noun : "window";
-			return ctx.ui.notify(
-				`delegate: no verified open ${noun} for this delegation; ${noun} changed or unavailable`,
-				"error",
-			);
+			const noun = isStarted(record) ? locationTerms(record).noun : "window";
+			return ctx.ui.notify(`delegate: ${noVerifiedOpen(noun)}`, "error");
 		}
 		const known = items.map((candidate) => candidate.id).join(", ") || "none";
 		return ctx.ui.notify(`delegate: no open delegate ${JSON.stringify(id)}; open: ${known}`, "error");

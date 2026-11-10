@@ -1,10 +1,11 @@
 // How `delegation_status` words a delegation's state, auto-exit and age.
+
+import { locationTerms } from "./location.ts";
 import type { DelegationState, StartedRecorded } from "./results.ts";
-import { windowTerms } from "./tmux-locator.ts";
 
 /** Records from before auto-exit existed kept their windows open, so they read off. */
 export function autoExitLine(record: StartedRecorded): string {
-	if (windowTerms(record).noun === "tab")
+	if (locationTerms(record).noun === "tab")
 		return record.autoExit === true
 			? "on — Pi exits after a normal completion; a clean exit closes its Herdr pane (errors retain it)"
 			: "off — Pi and its Herdr tab stay open after the result";
@@ -15,7 +16,7 @@ export function autoExitLine(record: StartedRecorded): string {
 
 /** The state, worded for the `state:` line. */
 export function stateLine(state: DelegationState, record: StartedRecorded): string {
-	const { noun, host } = windowTerms(record);
+	const { noun, host } = locationTerms(record);
 	switch (state) {
 		case "running":
 			return `running — the ${noun} is open and no result has arrived`;

@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { readIdentity } from "./identity.ts";
 import { type Mark, readMarks } from "./limits.ts";
+import { recordedLocation } from "./location.ts";
 import { createPoll } from "./poll.ts";
 import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
@@ -190,7 +191,7 @@ function viewText({ record, state, name, sessionPath, lastActive, snapshot, resu
 		...(record.forkedFrom === undefined ? [] : [`  forked from ${record.forkedFrom}`]),
 		...(resumedAs === undefined ? [] : [`  resumed as ${resumedAs}`]),
 		`  state: ${stateLine(state, record)}${seen}`,
-		`  ${windowTerms(record).noun}: ${windowPresentation(record).windowName} (${windowPresentation(record).windowId})${windowSession === undefined || windowSession === "" ? "" : ` in ${windowTerms(record).group} ${windowSession}`}`,
+		`  ${recordedLocation(record, windowSession)}`,
 		`  cwd: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
 		`  checkout now: ${checkout}`,

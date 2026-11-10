@@ -2,6 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { disabledProblem, THINKING_LEVELS } from "./agents.ts";
+import { openedIn } from "./location.ts";
 import { dirtyNotice } from "./render.ts";
 import { finishedModel, sessionInputTokens } from "./result-sessions.ts";
 import { deriveState, isStarted, type StartedRecorded } from "./results.ts";
@@ -104,7 +105,7 @@ function launchText(id: string, details: Forked, chosen: Awaited<ReturnType<Resu
 		workspace.mode === "managed"
 			? ` Branch ${workspace.createdBranch} starts at ${workspace.baseCommit}. ${dirtyNotice(workspace.sourceDirty)}`
 			: "";
-	return `Forked delegation ${id} as ${details.id} in ${details.location ?? `window ${details.windowName}`} in ${details.cwd}.${managed} The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote(chosen)}${details.notices.map((notice) => ` ${notice}`).join("")}`;
+	return `Forked delegation ${id} as ${details.id} in ${openedIn(details, { session: false })} in ${details.cwd}.${managed} The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote(chosen)}${details.notices.map((notice) => ` ${notice}`).join("")}`;
 }
 
 /** `location` words the text only; the structured result keeps the delegate schema. */

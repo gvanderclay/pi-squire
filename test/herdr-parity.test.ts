@@ -393,6 +393,22 @@ test("restored panes that do not report a session refuse unless Herdr proves onl
 		/restored after a restart and may still run/,
 	);
 	h.beforeProcessInfo = undefined;
+	// Empty, other-pane and partial answers are not proof of a lone shell.
+	for (const answer of [
+		(pane: string) => ({ pane_id: pane, shell_pid: 10, foreground_processes: [] }),
+		() => ({ pane_id: "w1:p99", shell_pid: 10, foreground_processes: [{ pid: 10 }] }),
+		(pane: string) => ({ pane_id: pane, foreground_processes: [{ pid: 10 }] }),
+		(pane: string) => ({ pane_id: pane, shell_pid: 0, foreground_processes: [{ pid: 0 }] }),
+		(pane: string) => ({ pane_id: pane, shell_pid: 10 }),
+		(pane: string) => ({ pane_id: pane, shell_pid: 10, foreground_processes: [{ pid: 10 }, "garbage"] }),
+	]) {
+		h.processInfo = answer;
+		await assert.rejects(
+			s.toolCall("delegation_resume", { id, task: "x" }),
+			/restored after a restart and may still run/,
+		);
+	}
+	h.processInfo = undefined;
 	assert.equal(creates(h).length, 1);
 	assert.equal(closes(h).length, 0);
 	h.foreground = [{ pid: 10 }];
@@ -403,6 +419,46 @@ test("restored panes that do not report a session refuse unless Herdr proves onl
 	const next = s.entries.findLast((entry) => (entry.data as { resumedFrom?: string }).resumedFrom === id)
 		?.data as StartedRecorded;
 	h.staged.push(dirname(herdrLocator(next.locator)!.launchFile));
+});
+
+test("a failed task mail after a Herdr resume opens closes the tab, or names it when the close cannot be confirmed", async () => {
+	const h = wire();
+	const { s } = instance(h);
+	await s.start();
+	const { id, locator } = await delegated(h, s);
+	sessionFile(id, s.context.cwd);
+	writeFileSync(`${locator.launchFile}.status`, JSON.stringify({ pid: 99, exit: 1 }));
+	let failSend = false;
+	s.pi.events.on("message:send", (data) => {
+		const payload = data as { envelope?: unknown; error?: unknown };
+		if (!failSend) return;
+		delete payload.envelope;
+		payload.error = "mailbox down";
+	});
+	failSend = true;
+	// The runner is still starting: the new pane's foreground is not provably ours, so close refuses.
+	h.processInfo = (pane) => ({
+		pane_id: pane,
+		shell_pid: 10,
+		foreground_processes: pane === "w1:p3" ? [{ pid: 4242, argv: ["zsh-startup-hook"] }] : [{ pid: 10 }],
+	});
+	await assert.rejects(
+		s.toolCall("delegation_resume", { id, task: "again" }),
+		/mailbox down.*tab scout-\S+ \(w1:t3\) in workspace w1 could not be closed and may still run Pi with no task.*herdr pane close w1:p3/,
+	);
+	assert.equal(h.panes.has("w1:p3"), true, "identity checks were not weakened to force the close");
+	h.processInfo = undefined;
+	failSend = false;
+	const second = await delegated(h, s);
+	sessionFile(second.id, s.context.cwd);
+	writeFileSync(`${second.locator.launchFile}.status`, JSON.stringify({ pid: 99, exit: 1 }));
+	failSend = true;
+	await assert.rejects(s.toolCall("delegation_resume", { id: second.id, task: "again" }), (error: Error) => {
+		assert.match(error.message, /mailbox down/);
+		assert.doesNotMatch(error.message, /could not be closed/);
+		return true;
+	});
+	assert.equal(h.panes.has("w1:p5"), false, "a confirmed close removes the taskless tab");
 });
 
 test("unknown Herdr evidence refuses resume before reservation, close or mail", async () => {

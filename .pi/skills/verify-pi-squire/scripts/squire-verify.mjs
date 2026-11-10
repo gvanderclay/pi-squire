@@ -36,7 +36,10 @@ const HELP = [
 	"                               Wait for a delegate result holding the nonce in the root session.",
 	"  windows --run <id>           List the run's tmux windows.",
 	"  capture --run <id> --name <n>  Save every window's pane text into the run's evidence folder.",
-	"  herdr --run <id> --args <a>  Herdr runs only: run 'herdr --session <run session> <a>' (space-split).",
+	"  herdr --run <id> --args <a>  Herdr runs only: one read/type probe (pane read|get|list|process-info|",
+	"                               send-text|send-keys, tab list|get, api snapshot, status server, agent",
+	"                               list) under this run's --session; no session, server or scope flags.",
+	"  self-test                    Check, without servers, that driver context is stripped and probes stay scoped.",
 	"  herdr-restart --run <id>     Herdr runs only: stop and restart the run's Herdr session (restores tabs).",
 	"  cleanup --run <id>           Stop/delete only this run's Herdr session (if any) and kill only its",
 	"                               tmux server. Evidence stays.",
@@ -136,10 +139,13 @@ function opencodeKey() {
 		: saved.key;
 	return key || undefined;
 }
+/** Run-owned values the helper sets itself after stripping the driver's context. */
+const RUN_KEYS = new Set(["PI_CODING_AGENT_DIR", "PI_SESSION_MAIL_ROOT", "PI_SKIP_VERSION_CHECK", "HERDR_CONFIG_PATH"]);
 function cleanEnv(p) {
 	const env = {};
-	for (const [k, v] of Object.entries(process.env))
-		if (!k.startsWith("PI_") && k !== "TMUX" && k !== "TMUX_PANE") env[k] = v;
+	// The driver's own Pi, tmux and Herdr routing must not reach the run; Herdr
+	// assigns each pane its own HERDR_* context.
+	for (const [k, v] of Object.entries(process.env)) if (!DRIVER_CONTEXT.test(k)) env[k] = v;
 	env.PI_CODING_AGENT_DIR = p.agent;
 	// Keep the run's mailboxes and Squire's prompt files inside the run. Only
 	// pi-session-mail's own root moves: redirecting XDG_STATE_HOME would also move
@@ -151,6 +157,21 @@ function cleanEnv(p) {
 	const opencode = opencodeKey();
 	if (opencode) env.OPENCODE_API_KEY = opencode;
 	return env;
+}
+const DRIVER_CONTEXT = /^(PI_|TMUX|HERDR)/;
+/**
+ * The only probes the generic `herdr` command passes through, always under this
+ * run's `--session`. Session lifecycle lives in herdr-restart and cleanup.
+ */
+const HERDR_PROBES = new Set(["pane read", "pane get", "pane list", "pane process-info", "pane send-text", "pane send-keys", "tab list", "tab get", "api snapshot", "status server", "agent list"]);
+const HERDR_SCOPE_FLAGS = /^--?(session|machine|remote|socket|config)(=|$)|^-[A-Za-z]*[smr]$/;
+/** Throws unless args are one allowed probe with no scope-changing flag. */
+function herdrProbe(args) {
+	const group = args.slice(0, 2).join(" ");
+	if (!HERDR_PROBES.has(group)) throw new Error("herdr --args allows only: " + [...HERDR_PROBES].join(", "));
+	const scoped = args.find((a) => HERDR_SCOPE_FLAGS.test(a));
+	if (scoped) throw new Error("herdr --args may not change scope with " + scoped);
+	return args;
 }
 function tmux(p, list, allowFail = false) {
 	const r = spawnSync("tmux", ["-L", p.socket, ...list], { encoding: "utf8", env: cleanEnv(p) });
@@ -468,8 +489,31 @@ else if (command === "windows") {
 } else if (command === "herdr") {
 	const p = requireRun(opts);
 	if (!isHerdr(p) || typeof opts.args !== "string") fail("a Herdr run and --args are required");
-	const r = herdr(p, opts.args.split(" ").filter(Boolean), true);
+	let args;
+	try {
+		args = herdrProbe(opts.args.split(" ").filter(Boolean));
+	} catch (error) {
+		fail(error.message);
+	}
+	const r = herdr(p, args, true);
 	done({ status: r.status, stdout: r.stdout, stderr: r.stderr });
+} else if (command === "self-test") {
+	// Deterministic, no servers: driver context is stripped and probes stay scoped.
+	const p = paths("self-test");
+	const leaked = [cleanEnv(p), herdrEnv(p)].flatMap((env) => Object.keys(env).filter((k) => DRIVER_CONTEXT.test(k) && !RUN_KEYS.has(k)));
+	const rejected = ["session stop default", "session delete default", "server stop", "pane close w1:p1", "pane read w1:p1 --session default", "pane read w1:p1 --session=default", "api snapshot --remote host", "tab list --machine m", "pane read w1:p1 -s default", "config reset-keys", "update"].filter((a) => {
+		try {
+			herdrProbe(a.split(" "));
+			return false;
+		} catch {
+			return true;
+		}
+	});
+	const accepted = ["pane read w1:p1 --source recent", "api snapshot", "pane send-keys w1:p2 Enter"].every((a) => herdrProbe(a.split(" ")));
+	const herdrConfig = herdrEnv(p).HERDR_CONFIG_PATH === p.herdrConfig;
+	const ok = leaked.length === 0 && rejected.length === 11 && accepted && herdrConfig;
+	console.log(JSON.stringify({ ok, leaked, rejected: rejected.length, accepted, herdrConfig }, null, 2));
+	process.exit(ok ? 0 : 1);
 } else if (command === "herdr-restart") {
 	const p = requireRun(opts);
 	if (!isHerdr(p)) fail("not a Herdr run");

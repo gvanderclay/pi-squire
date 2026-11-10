@@ -28,7 +28,9 @@ follows [Semantic Versioning](https://semver.org/).
   that actually hosts Pi, not the launch setting, and is withheld when both
   contexts are present without launcher evidence. Resumes now record the opened
   Herdr locator, close a Herdr tab through its terminal-fenced locator if task
-  mail fails, and word their start text in Herdr's tab terms. New
+  mail fails (when that close cannot be confirmed, the error names the tab and
+  the `herdr pane close` to run after checking it), and word their start text in
+  Herdr's tab terms. New
   `test/herdr-parity.test.ts` covers selection combinations, overrides, child
   environment, host telemetry, nested/fork/resume parity, restart refusal before
   side effects and unknown probes. Deliberate test changes: `test/herdr.test.ts`
@@ -72,6 +74,10 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Default change for tmux users whose environment also has a Herdr pane
+  context: with no `multiplexer` setting, launches used tmux and now refuse,
+  naming the setting. `"multiplexer": "tmux"` in `squire/settings.json`
+  restores tmux.
 - When Pi runs in neither tmux nor Herdr and no `multiplexer` is set, the
   refusal now names both multiplexers and the setting instead of only tmux. With
   `"multiplexer": "tmux"` the old "not inside tmux" wording is unchanged.

@@ -221,12 +221,20 @@ async function mailTask(deps: ResumeDeps, opened: OpenedWindow, sessionId: strin
 	try {
 		return deps.sendTask(sessionId, task);
 	} catch (err) {
+		if (!herdrLocator(opened.locator)) {
+			await deps.tmux.kill(opened.id).catch(() => {});
+			throw err;
+		}
 		// A Herdr tab closes only through its terminal-fenced locator, never a tmux kill by id.
-		const closing = herdrLocator(opened.locator)
-			? askToClose(deps.tmux).then((states) => states.close({ locator: opened.locator }))
-			: deps.tmux.kill(opened.id);
-		await closing.catch(() => {});
-		throw err;
+		// The runner may still be starting, so the identity checks can refuse; say so.
+		const closed = await askToClose(deps.tmux)
+			.then((states) => states.close({ locator: opened.locator }))
+			.catch(() => false);
+		if (closed) throw err;
+		throw new Error(
+			`${(err as Error).message ?? String(err)}; the resumed delegate's ${opened.location ?? `tab ${opened.id}`} could not be closed and may still run Pi with no task. Check it is the delegate, then close its pane yourself (herdr pane close ${herdrLocator(opened.locator)?.pane})`,
+			{ cause: err },
+		);
 	}
 }
 

@@ -42,6 +42,8 @@ export class HerdrWire {
 	ambiguousPane: string | undefined;
 	beforeSnapshot: (() => void) | undefined;
 	beforeProcessInfo: (() => void) | undefined;
+	/** Replace the whole process-info answer, for malformed or partial responses. */
+	processInfo: ((pane: string) => unknown) | undefined;
 	readonly client = createHerdrClient({
 		run: (session, args) => this.run(session, args),
 		context: () => (this.unavailable ? undefined : this.context),
@@ -89,6 +91,7 @@ export class HerdrWire {
 		if (args[0] === "pane" && args[1] === "get") return result({ pane: this.panes.get(args[2]) });
 		if (args[1] === "process-info") {
 			this.beforeProcessInfo?.();
+			if (this.processInfo) return result({ process_info: this.processInfo(args[3]) });
 			return result({ process_info: { pane_id: args[3], shell_pid: 10, foreground_processes: this.foreground } });
 		}
 		if (args[1] === "close") {

@@ -245,10 +245,16 @@ class HerdrClient implements TmuxClient {
 					const info = object(
 						result(await this.run(own.session, ["pane", "process-info", "--pane", target])).process_info,
 					);
+					// Positive proof only: an empty, partial or other pane's answer is not "just a shell".
+					const shell = info.shell_pid;
+					const processes = info.foreground_processes;
 					return (
-						Array.isArray(info.foreground_processes) &&
-						Number.isSafeInteger(info.shell_pid) &&
-						info.foreground_processes.every((p) => object(p).pid === info.shell_pid)
+						info.pane_id === target &&
+						Number.isSafeInteger(shell) &&
+						(shell as number) > 0 &&
+						Array.isArray(processes) &&
+						processes.length > 0 &&
+						processes.every((p) => object(p).pid === shell)
 					);
 				},
 				same: (locator: HerdrLocator, live: Pane): boolean => this.same(locator, live),

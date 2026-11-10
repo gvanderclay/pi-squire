@@ -454,8 +454,13 @@ set `resume_agents_on_restore = false` in the `[session]` table of Herdr's
 Herdr, not only delegates. Reloading or restarting Pi does not change any of this: records and
 their locators are durable, and the setting is read again at the next launch.
 
-tmux behaviour and its existing controls are unchanged, apart from the refusal
-wording when Pi runs in neither multiplexer.
+**Changed default for some tmux users.** Before this release pi-squire always
+used tmux when no `multiplexer` was set. If your Pi runs in tmux and its
+environment also has a Herdr pane context (for example Herdr started from a
+tmux pane, or tmux started inside a Herdr pane), launches without the setting
+now refuse instead of using tmux. Set `{ "multiplexer": "tmux" }` to keep tmux.
+Apart from that, and the refusal wording when Pi runs in neither multiplexer,
+tmux behaviour and its controls are unchanged.
 
 ## Where delegate windows open
 

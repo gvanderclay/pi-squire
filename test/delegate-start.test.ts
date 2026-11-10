@@ -11,6 +11,7 @@ import type { WindowPlacement } from "../src/window-placement.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 import { HerdrWire } from "./herdr-adapter-fixture.ts";
+import { MemoryHost } from "./memory-host.ts";
 
 beforeEach(() => {
 	resetRoot();
@@ -90,6 +91,16 @@ test("tmux launch/resume/fork keep mail, identity, hook, dispatch, open and reco
 		const locator = record.locator as { id: string };
 		host.windows.delete(locator.id);
 	});
+});
+
+test("memory host launch/resume/fork keep the same order as tmux, with no tmux model", async () => {
+	const host = new MemoryHost();
+	await orders(host, (record: StartedRecorded) => host.exit(record));
+	assert.deepEqual(
+		host.started.map((start) => start.argv.includes("--session")),
+		[false, true, false],
+		"only the resume reopens a session file",
+	);
 });
 
 test("Herdr launch/resume/fork keep mail, identity, hook, dispatch, open and record order", async () => {

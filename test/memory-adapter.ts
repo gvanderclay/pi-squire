@@ -1,88 +1,87 @@
-// Narrow in-memory conformance model: no tmux sessions, commands, names as
-// identity, placement policy or navigationVerbs copied from the real adapter.
-// FakeTmux remains a richer tmux feature-test fixture during migration.
-import { WindowOpenError, type WindowRecord } from "../src/tmux.ts";
+// Narrow in-memory conformance model over MemoryHost (test/memory-host.ts): no
+// tmux sessions, commands, names as identity, placement policy or
+// navigationVerbs copied from the real adapter. FakeTmux remains the richer
+// tmux feature-test fixture for tmux-specific tests.
+import { windowPresentation } from "../src/locators.ts";
+import type { WindowRecord } from "../src/tmux.ts";
 import type { AdapterContract, AdapterFixture } from "./adapter-contract.ts";
+import { MemoryHost, type MemoryVariant } from "./memory-host.ts";
 
-type Terminal = { running: boolean; screen: string };
-type MemoryLocator = { adapter: "memory"; key: number };
-type MemoryRecord = { locator: MemoryLocator };
-
-export async function memoryAdapter(): Promise<AdapterFixture> {
-	const terminals = new Map<number, Terminal>();
-	let next = 0;
-	let failedAsk = false;
-	let ambiguous = false;
-	let unconfirmed: MemoryRecord | undefined;
-	let unavailable = false;
-	let shown: number | undefined;
-	const key = (record: WindowRecord): number | undefined => {
-		const locator = record.locator as Partial<MemoryLocator> | undefined;
-		return locator?.adapter === "memory" && typeof locator.key === "number" ? locator.key : undefined;
-	};
-	const add = (): MemoryRecord => {
-		const locator: MemoryLocator = { adapter: "memory", key: ++next };
-		terminals.set(locator.key, { running: true, screen: "SQUIRE-ADAPTER-SCREEN" });
-		return { locator };
-	};
+function fixture(variant: MemoryVariant): AdapterFixture {
+	const host = new MemoryHost(variant);
+	const target = (record: WindowRecord) => ({ windowId: windowPresentation(record).windowId, locator: record.locator });
 	const adapter: AdapterContract = {
-		async open() {
-			const record = add();
-			if (ambiguous) {
-				ambiguous = false;
-				unconfirmed = record;
-				throw new WindowOpenError("create answer lost", "unknown");
-			}
-			return record;
+		async open(name) {
+			const opened = await host.openWindow({ name, cwd: process.cwd(), argv: ["program"], env: {} }, "current", "");
+			return { locator: opened.locator };
 		},
-		async state(record) {
-			const id = key(record);
-			if (failedAsk || id === undefined) return "unknown";
-			return terminals.get(id)?.running ? "running" : "gone";
-		},
-		async close(record) {
-			const id = key(record);
-			if (failedAsk || id === undefined) throw new Error("identity could not be verified");
-			return terminals.delete(id);
-		},
-		async show(record, verify) {
-			if (!(await verify())) return { shown: false };
-			shown = key(record);
-			return { shown: true, returnHint: "return to the parent terminal" };
-		},
-		async peek(record) {
-			const id = key(record);
-			if (id === undefined || !terminals.has(id)) throw new Error("terminal missing");
-			return terminals.get(id)!.screen;
-		},
-		unavailable: () => (unavailable ? "memory adapter unavailable" : undefined),
+		state: async (record) => (await host.states()).state(record),
+		close: async (record) => (await host.states(true)).close(record),
+		show: (record, verify) => host.show(target(record), verify),
+		peek: (record) => host.peek(target(record)),
+		unavailable: (checkVersion) => (checkVersion ? host.unavailable(true) : host.unavailable()),
 	};
+	const id = (record: WindowRecord): string => windowPresentation(record).windowId;
 	return {
 		adapter,
+		host,
+		...(variant === "pane-free" ? { viewer: false as const } : {}),
 		async exit(record) {
-			terminals.delete(key(record)!);
+			host.exit(record);
 		},
 		async replace(record) {
-			terminals.delete(key(record)!);
-			return add();
+			// Same address, different identity: a stale record must not close it.
+			const terminal = host.terminals.get(id(record));
+			if (terminal) terminal.name = "replacement";
+			return { locator: { ...(record.locator as object), name: "replacement" } };
 		},
 		failAsk(fail) {
-			failedAsk = fail;
+			host.failAsk = fail;
 		},
 		ambiguousOpen() {
-			ambiguous = true;
+			host.failOpen = { message: "create answer lost", certainty: "unknown" };
 		},
 		async ambiguousSurvives() {
-			return !!unconfirmed && terminals.has(unconfirmed.locator.key);
+			return host.unconfirmed !== undefined && host.terminals.has(host.unconfirmed);
 		},
 		setUnavailable(value) {
-			unavailable = value;
+			host.refusal = value ? "memory adapter unavailable" : undefined;
 		},
 		async isShown(record) {
-			return shown === key(record);
+			return host.shown !== undefined && host.shown === id(record);
 		},
 		async dispose() {
-			terminals.clear();
+			host.terminals.clear();
 		},
+		spec: (name) => ({ name, cwd: process.cwd(), argv: [process.execPath, "worker"], env: {} }),
+		openHost: (spec) => host.openWindow(spec, "current", "delegates"),
+		async started(opened) {
+			const start = host.started.find((entry) => entry.id === opened.id);
+			if (!start) throw new Error(`memory host did not start ${opened.id}`);
+			return { argv: start.argv, cwd: start.cwd, env: { ...start.env } };
+		},
+		failClose(fail) {
+			host.failClose = fail;
+		},
+		...(variant === "terminal"
+			? {
+					async noViewer() {
+						host.viewer = false;
+					},
+				}
+			: {
+					failConfigure(message: string) {
+						host.failConfigure = message;
+					},
+				}),
 	};
+}
+
+export async function memoryAdapter(): Promise<AdapterFixture> {
+	return fixture("terminal");
+}
+
+/** A host with no viewer and no pane that configures each start after open, like an API host. */
+export async function paneFreeMemoryAdapter(): Promise<AdapterFixture> {
+	return fixture("pane-free");
 }

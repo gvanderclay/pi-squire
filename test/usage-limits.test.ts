@@ -9,7 +9,17 @@ import { after, beforeEach, type TestContext, test } from "node:test";
 
 import type { ClaudeReading } from "../src/usage.ts";
 import { FakeUsage, win } from "./fake-usage.ts";
-import { agentDir, agentFile, cleanup, type RunFailure, resetRoot, root, session, writeAgent } from "./harness.ts";
+import {
+	agentDir,
+	agentFile,
+	cleanup,
+	memorySession,
+	type RunFailure,
+	resetRoot,
+	root,
+	session,
+	writeAgent,
+} from "./harness.ts";
 
 const FILE = join(agentDir, "pi-squire-limits.json");
 const START = Date.parse("2026-10-03T12:00:00.000Z");
@@ -42,7 +52,7 @@ async function fail(errorMessage: string, model = "paid", id = "delegation-1") {
 }
 
 /** A fresh parent session, as another Pi session on the machine. */
-const parent = () => session({ extraModels: EXTRA });
+const parent = () => memorySession({ extraModels: EXTRA });
 
 const marks = () =>
 	JSON.parse(readFileSync(FILE, "utf8")) as { clearsAt: number; hits: number; scope: string; source: string }[];
@@ -63,9 +73,9 @@ test("a delegate's usage limit blocks the next launch on the provider, naming th
 	);
 	await p.delegate("paid t");
 	assert.match(p.errors.join("\n"), /usage-limited/);
-	assert.deepEqual(p.tmux.opened, []);
+	assert.deepEqual(p.host.started, []);
 	await p.delegate("plain t"); // another provider is untouched
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 });
 
 test("the mark records its shape, delegation id and hit count", async (t) => {
@@ -90,7 +100,7 @@ test("a free model still launches after a provider-wide limit", async (t) => {
 	const p = parent();
 	await p.delegate("free t");
 	await p.delegate("zero t"); // free by registry cost
-	assert.equal(p.tmux.opened.length, 2);
+	assert.equal(p.host.started.length, 2);
 });
 
 test("a free model's own limit marks only that model", async (t) => {
@@ -108,7 +118,7 @@ test("a free model's own limit marks only that model", async (t) => {
 	await p.delegate("free t");
 	assert.match(p.errors.join("\n"), /model opencode-go\/space-free/);
 	await p.delegate("zero t");
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 });
 
 test("overloaded, unavailable and 5xx errors record no mark", async (t) => {
@@ -120,7 +130,7 @@ test("overloaded, unavailable and 5xx errors record no mark", async (t) => {
 	assert.deepEqual(marks(), []);
 	const p = parent();
 	await p.delegate("paid t");
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 });
 
 test("a stopped run records no mark", async (t) => {
@@ -159,10 +169,10 @@ test("the launch succeeds once the clock passes the clear time", async (t) => {
 	await fail("429: try again in 30 minutes");
 	const p = parent();
 	await p.delegate("paid t");
-	assert.deepEqual(p.tmux.opened, []);
+	assert.deepEqual(p.host.started, []);
 	tick(30 * 60_000 + 1);
 	await p.delegate("paid t");
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 });
 
 test("an explicit model is refused, not substituted", async (t) => {
@@ -176,7 +186,7 @@ test("an explicit model is refused, not substituted", async (t) => {
 		p.toolCall("delegate", { agent: "plain", task: "t", model: "opencode-go/paid" }),
 		/usage-limited/,
 	);
-	assert.deepEqual(p.tmux.opened, []);
+	assert.deepEqual(p.host.started, []);
 });
 
 test("a corrupt marks file does not break launching", async (t) => {
@@ -185,7 +195,7 @@ test("a corrupt marks file does not break launching", async (t) => {
 		writeFileSync(FILE, text);
 		const p = parent();
 		await p.delegate("paid t");
-		assert.equal(p.tmux.opened.length, 1, text);
+		assert.equal(p.host.started.length, 1, text);
 	}
 });
 
@@ -253,7 +263,7 @@ for (const missing of ["provider", "model"]) {
 		assert.deepEqual(marks(), []);
 		const p = parent();
 		await p.delegate("paid t");
-		assert.equal(p.tmux.opened.length, 1);
+		assert.equal(p.host.started.length, 1);
 	});
 }
 
@@ -263,7 +273,7 @@ test("a model free only by registry cost is marked alone", async (t) => {
 	assert.equal(marks()[0].scope, "opencode-go/zero");
 	const p = parent();
 	await p.delegate("paid t");
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 	await p.delegate("zero t");
 	assert.match(p.errors.join("\n"), /model opencode-go\/zero/);
 });
@@ -373,7 +383,7 @@ test("a marked model launches on the first fallback that is not marked, and says
 	const p = parent();
 	await p.start();
 	const result = await p.toolCall("delegate", { agent: "fb", task: "t" });
-	const argv = p.tmux.opened[0].argv;
+	const argv = p.host.started[0].argv;
 	assert.equal(argv[argv.indexOf("--model") + 1], "beta/other-model");
 	const text = result.content[0].text;
 	assert.match(
@@ -414,7 +424,7 @@ test("with every candidate marked or unusable the call is refused, one line each
 	writeAgent("fb", FB("opencode-go/space-free, alpha/deep-model"));
 	await fail("429: try again in 30 minutes");
 	await fail("429: try again in 30 minutes", "space-free", "d2");
-	const p = session({ extraModels: EXTRA, noCredentials: ["alpha/deep-model"] });
+	const p = memorySession({ extraModels: EXTRA, noCredentials: ["alpha/deep-model"] });
 	await p.start();
 	await p.toolCall("delegate", { agent: "fb", task: "t" }).then(
 		() => assert.fail("launched"),
@@ -431,16 +441,16 @@ test("with every candidate marked or unusable the call is refused, one line each
 			assert.match(lines[3], /^- alpha\/deep-model: no credentials/);
 		},
 	);
-	assert.deepEqual(p.tmux.opened, []);
+	assert.deepEqual(p.host.started, []);
 });
 
 test("a fallback without credentials is skipped for the next one", async (t) => {
 	clock(t);
 	writeAgent("fb", FB("alpha/deep-model, beta/other-model"));
 	await fail(GO_LIMIT);
-	const p = session({ extraModels: EXTRA, noCredentials: ["alpha/deep-model"] });
+	const p = memorySession({ extraModels: EXTRA, noCredentials: ["alpha/deep-model"] });
 	await p.delegate("fb t");
-	const argv = p.tmux.opened[0].argv;
+	const argv = p.host.started[0].argv;
 	assert.equal(argv[argv.indexOf("--model") + 1], "beta/other-model");
 	assert.match(p.notes.join("\n"), /alpha\/deep-model is unavailable \(no credentials/);
 });
@@ -456,7 +466,7 @@ test("an explicit model that is marked is refused even when the agent has fallba
 		/usage-limited.*Omit model to launch fb on beta\/other-model, or clear marks/s,
 	);
 	await p.delegate("fb --model opencode-go/paid t");
-	assert.deepEqual(p.tmux.opened, []);
+	assert.deepEqual(p.host.started, []);
 });
 
 // Moving to a fallback mid-run
@@ -471,7 +481,7 @@ test("the launch passes the agent's models after the one chosen, and none for an
 	await p.toolCall("delegate", { agent: "fb", task: "t", model: "beta/other-model" });
 	await p.toolCall("delegate", { agent: "paid", task: "t", model: "alpha/fast-model" });
 	assert.deepEqual(
-		p.tmux.opened.map((window) => window.env.PI_DELEGATE_FALLBACK),
+		p.host.started.map((window) => window.env.PI_DELEGATE_FALLBACK),
 		["beta/other-model", undefined, undefined],
 	);
 });
@@ -867,7 +877,7 @@ test("/delegate-clear completes all and the active scopes, including in a delega
 // --- Proactive OpenCode Go check (ticket 07), through the fake usage client.
 
 const RESET = START + 3 * 3_600_000;
-const withUsage = (usage = new FakeUsage()) => ({ usage, p: session({ extraModels: EXTRA, usage }) });
+const withUsage = (usage = new FakeUsage()) => ({ usage, p: memorySession({ extraModels: EXTRA, usage }) });
 const call = (p: ReturnType<typeof session>, agent: string) => p.toolCall("delegate", { agent, task: "t" });
 
 test("a Go window at 100% launches on the fallback and records a proactive mark", async (t) => {
@@ -952,7 +962,7 @@ test("a failed reading fails open, says so in the result and the notice, and sho
 	assert.ok(result.content[0].text.includes(line));
 	await p.delegate("paid t");
 	assert.ok(p.notes.at(-1)?.includes(line));
-	assert.equal(p.tmux.opened.length, 2);
+	assert.equal(p.host.started.length, 2);
 	const status = await p.toolCall("delegation_status", {});
 	assert.match(
 		status.content[0].text,
@@ -1015,7 +1025,7 @@ const CLAUDE_EXTRA = [
 const OAUTH = ["anthropic/claude-opus-4", "anthropic/claude-sonnet-4"];
 const claudeSession = (oauth = OAUTH) => {
 	const usage = new FakeUsage();
-	return { usage, p: session({ extraModels: CLAUDE_EXTRA, oauth, usage }) };
+	return { usage, p: memorySession({ extraModels: CLAUDE_EXTRA, oauth, usage }) };
 };
 const cache = (over: Partial<Extract<ClaudeReading, { ok: true }>> = {}): ClaudeReading => ({
 	ok: true,
@@ -1050,7 +1060,7 @@ test("a Claude window at 100% whose reset has passed is stale: the launch goes a
 	usage.claude = cache({ fiveHour: win("5h", 100, START - 1000) });
 	await p.start();
 	await call(p, "cl");
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 	assert.deepEqual(marks(), []);
 });
 
@@ -1067,7 +1077,7 @@ test("a scoped Opus week at 100% blocks only the Opus candidate", async (t) => {
 		["anthropic/claude-opus-4"],
 	);
 	await call(p, "sonnet");
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 });
 
 test("a non-OAuth anthropic candidate makes no cache read", async (t) => {
@@ -1112,7 +1122,7 @@ test("a refresh that throws never blocks a launch", async (t) => {
 	};
 	await p.start();
 	await call(p, "opus");
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 });
 
 test("a missing Claude cache fails open and shows as a reading error", async (t) => {
@@ -1163,7 +1173,7 @@ test("a reading whose window began after the mark clears it and launches on the 
 	assert.ok(result.content[0].text.includes(CLEARED));
 	assert.ok(!result.content[0].text.includes("Used fallback"));
 	assert.deepEqual(marks(), []);
-	assert.equal(p.tmux.opened.length, 1);
+	assert.equal(p.host.started.length, 1);
 });
 
 test("a window cycle that began before the mark leaves it and uses the fallback", async (t) => {

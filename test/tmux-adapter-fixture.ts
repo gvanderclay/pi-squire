@@ -2,7 +2,7 @@
 // Faults live at the CLI boundary; all non-faulted calls execute real tmux.
 // No user server is addressed, even by commands nested in the test program.
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTmuxClient, type WindowRecord, windowLocator, windowPresentation } from "../src/tmux.ts";
@@ -25,6 +25,9 @@ export async function tmuxAdapter(): Promise<AdapterFixture> {
 	const socket = join(dir, "tmux.sock");
 	const failedAsk = join(dir, "fail-ask");
 	const ambiguous = join(dir, "ambiguous");
+	const failedClose = join(dir, "fail-close");
+	const program = new URL("./fixtures/adapter-program.mjs", import.meta.url).pathname;
+	let reports = 0;
 	const saved = { PATH: process.env.PATH, TMUX: process.env.TMUX, TMUX_PANE: process.env.TMUX_PANE };
 	const run = (...args: string[]): string =>
 		execFileSync(real, ["-S", socket, ...args], {
@@ -80,6 +83,7 @@ export async function tmuxAdapter(): Promise<AdapterFixture> {
 			[
 				"#!/bin/sh",
 				`if [ -f ${quote(failedAsk)} ] && [ "$1" = list-windows ]; then exit 1; fi`,
+				`if [ -f ${quote(failedClose)} ] && [ "$1" = kill-window ]; then exit 1; fi`,
 				`if [ -f ${quote(ambiguous)} ] && [ "$1" = new-window ]; then`,
 				`  rm ${quote(ambiguous)}`,
 				`  ${command} > /dev/null || exit 1`,
@@ -102,7 +106,7 @@ export async function tmuxAdapter(): Promise<AdapterFixture> {
 						name,
 						cwd: dir,
 						env: {},
-						argv: [process.execPath, new URL("./fixtures/adapter-program.mjs", import.meta.url).pathname],
+						argv: [process.execPath, program],
 					},
 					"current",
 					"unused",
@@ -145,6 +149,30 @@ export async function tmuxAdapter(): Promise<AdapterFixture> {
 				return run("list-clients", "-F", "#{window_id}").split("\n").includes(id(record));
 			},
 			dispose,
+			host: client,
+			spec: (name) => ({
+				name,
+				cwd: dir,
+				env: {},
+				argv: [process.execPath, program, join(dir, `report-${++reports}.json`)],
+			}),
+			async openHost(spec) {
+				const opened = await client.openWindow(spec, "current", "unused");
+				await until(() => existsSync(spec.argv[2]));
+				return opened;
+			},
+			async started(_opened, spec) {
+				return JSON.parse(readFileSync(spec.argv[2], "utf8"));
+			},
+			failClose: (fail) => flag(failedClose, fail),
+			async noViewer() {
+				if (viewer && viewer.exitCode === null && viewer.signalCode === null) {
+					const stopped = new Promise<void>((resolve) => viewer!.once("exit", () => resolve()));
+					viewer.kill();
+					await stopped;
+				}
+				await until(() => run("list-clients", "-F", "#{client_name}") === "");
+			},
 		};
 	} catch (error) {
 		await dispose();

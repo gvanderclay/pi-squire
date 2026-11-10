@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-10
+
 ### Fixed
 
 - `delegation_status` now reports `canResume: true` for a Herdr direct child,
@@ -1380,7 +1382,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.20.2...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/gvanderclay/pi-squire/compare/v0.20.2...v0.21.0
 [0.20.2]: https://github.com/gvanderclay/pi-squire/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/gvanderclay/pi-squire/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/gvanderclay/pi-squire/compare/v0.19.1...v0.20.0

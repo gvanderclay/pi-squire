@@ -17,6 +17,7 @@ import {
 	writeProjectAgent,
 } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -307,7 +308,7 @@ test("unresolved nested directory trust canceled at root opens no unattended UI;
 test("removing a current parent grant blocks resume before an exited window can be killed", async () => {
 	const { coordinator } = await tree();
 	const worker = await launch(coordinator, "worker");
-	coordinator.tmux.exit(worker.record.windowId);
+	coordinator.tmux.exit(windowFields(worker.record).windowId);
 	writeAgent("coordinator", agentFile({ allow_nested_delegation: "[coordinator]" }));
 	await assert.rejects(
 		coordinator.toolCall("delegation_resume", { id: worker.record.id, task: "again" }),
@@ -331,7 +332,7 @@ test("allowed nested resume preserves original root/depth and uses the current c
 		file,
 		`${JSON.stringify({ type: "session", version: 3, id: worker.child.parent, timestamp: "", cwd: root })}\n`,
 	);
-	coordinator.tmux.windows.delete(worker.record.windowId);
+	coordinator.tmux.windows.delete(windowFields(worker.record).windowId);
 	settings(3);
 	writeAgent("worker", agentFile({ allow_nested_delegation: "[worker]", tools: "read", auto_exit: "false" }));
 	await coordinator.toolCall("delegation_resume", { id: worker.record.id, task: "again" });

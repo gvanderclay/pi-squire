@@ -12,6 +12,7 @@ import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-session
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
+import { windowPresentation } from "./tmux.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { WindowStates } from "./window-state.ts";
@@ -33,7 +34,7 @@ export function windowCheck(record: StartedRecorded, windows: WindowStates): voi
 	}
 	if (window === "running") {
 		throw new Error(
-			`delegation ${record.id}'s window ${record.windowName} (${record.windowId}) is still open; its Pi may still be running, so it is not resumed. Close it with delegation_close, or send it a message`,
+			`delegation ${record.id}'s window ${windowPresentation(record).windowName} (${windowPresentation(record).windowId}) is still open; its Pi may still be running, so it is not resumed. Close it with delegation_close, or send it a message`,
 		);
 	}
 }

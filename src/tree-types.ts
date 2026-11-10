@@ -1,17 +1,16 @@
 import type { Identity } from "./identity.ts";
 import type { Delegation } from "./results.ts";
+import type { WindowRecord } from "./tmux.ts";
 import type { Workspace } from "./workspace.ts";
 
 /** Shared structural/admission facts, never parent outcome-processing state. */
-export type TreeEntry = {
+export type TreeEntry = WindowRecord & {
 	id: string;
 	sessionId: string;
 	identity: Identity;
 	ownerPid: number;
 	phase: "reserved" | "dispatched" | "started" | "not-started";
 	requestId?: string;
-	windowId?: string;
-	windowName?: string;
 	cwd?: string;
 	sessionDir?: string;
 	workspace?: Workspace;
@@ -27,7 +26,8 @@ export type TreeEntry = {
 	createPending?: boolean;
 };
 export type TreeClose = { id: string; target: string; entries: string[] };
-export type TreeState = { version: 1; root: string; entries: TreeEntry[]; closes?: TreeClose[] };
+/** v2 fences released v1 writers before opaque routing identities are published. */
+export type TreeState = { version: 2; root: string; entries: TreeEntry[]; closes?: TreeClose[] };
 export type Reservation = { root: string; id: string };
 export type TreeIntent = Pick<TreeEntry, "id" | "sessionId" | "identity" | "resumedFrom" | "forkedFrom" | "sessionDir">;
 export type TreeCounts = { concurrent: number; lifetime: number };

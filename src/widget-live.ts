@@ -5,7 +5,7 @@ import { mkdir, open, opendir, rename, unlink, writeFile } from "node:fs/promise
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { matchesSessionOwner } from "./session-owner.ts";
-import type { PaneLocator } from "./tmux.ts";
+import { type LivePaneLocator, normalizeLiveLocator, runningLiveLocator, sameLiveLocator } from "./tmux.ts";
 import { processAlive } from "./tree-lock.ts";
 import { type Activity, activityText } from "./widget-activity.ts";
 
@@ -14,7 +14,7 @@ export const LIVE_MAX_BYTES = 8192;
 export const LIVE_MAX_GENERATIONS = 16;
 type Seed = { version: 1; sessionId: string; launchId: string };
 export type LiveLocator = {
-	locator: PaneLocator;
+	locator: LivePaneLocator;
 	generation: string;
 	ownerToken: string;
 	pid: number;
@@ -22,7 +22,7 @@ export type LiveLocator = {
 };
 type Snapshot = {
 	ownerToken?: string;
-	locator?: PaneLocator;
+	locator?: LivePaneLocator;
 	sessionFile?: string;
 	version: 1;
 	sessionId: string;
@@ -68,20 +68,8 @@ function validActivity(value: unknown): value is Activity | null {
 	);
 }
 
-function validLocator(value: PaneLocator | undefined): boolean {
-	if (value === undefined) return true;
-	return (
-		!!value &&
-		validString(value.socket) &&
-		Number.isSafeInteger(value.serverPid) &&
-		value.serverPid > 0 &&
-		validString(value.serverStarted) &&
-		/^%[0-9]+$/.test(value.paneId) &&
-		/^@[0-9]+$/.test(value.windowId) &&
-		typeof value.windowName === "string" &&
-		Buffer.byteLength(value.windowName) <= 512 &&
-		typeof value.exited === "boolean"
-	);
+function validLocator(value: unknown): boolean {
+	return value === undefined || normalizeLiveLocator(value) !== undefined;
 }
 
 function validSnapshot(value: Partial<Snapshot>, sessionId: string, generation: string): value is Snapshot {
@@ -160,15 +148,16 @@ export class LiveActivityReader {
 		try {
 			if (!existsSync(liveSessionDir(sessionId, this.agentDir))) return;
 			const value: Snapshot | undefined = await this.readSession(sessionId);
+			const locator = runningLiveLocator(value?.locator);
 			if (
 				!value?.locator ||
+				!locator ||
 				!value.ownerToken ||
-				value.locator.exited ||
 				!matchesSessionOwner(sessionId, value.pid, value.ownerToken)
 			)
 				return;
 			return {
-				locator: value.locator,
+				locator,
 				generation: value.generation,
 				ownerToken: value.ownerToken,
 				pid: value.pid,
@@ -224,7 +213,7 @@ export class LiveActivityPublisher {
 	private readonly temporary: string;
 	private readonly replace: typeof rename;
 	private activity: Activity | null = null;
-	private locator: PaneLocator | undefined;
+	private locator: LivePaneLocator | undefined;
 	private locatorKey: string | undefined;
 	private ownerToken: string | undefined;
 	private sessionFile: string | undefined;
@@ -246,11 +235,13 @@ export class LiveActivityPublisher {
 		this.replace = options.rename ?? rename;
 	}
 
-	publishLocator(locator: PaneLocator | undefined, ownerToken: string, sessionFile?: string): void {
-		const key: string = JSON.stringify([locator, ownerToken, sessionFile]);
-		if (this.stopped || key === this.locatorKey) return;
+	publishLocator(locator: LivePaneLocator | undefined, ownerToken: string, sessionFile?: string): void {
+		const key: string = JSON.stringify([ownerToken, sessionFile]);
+		const normalized = normalizeLiveLocator(locator);
+		const same = (!normalized && !this.locator) || sameLiveLocator(normalized, this.locator);
+		if (this.stopped || (key === this.locatorKey && same)) return;
 		this.locatorKey = key;
-		this.locator = locator ? { ...locator } : undefined;
+		this.locator = normalized;
 		this.ownerToken = ownerToken;
 		this.sessionFile = sessionFile;
 		this.publish(this.activity ?? undefined);

@@ -9,6 +9,7 @@ import { DELEGATE_WIDGET_KEY, WIDGET_REFRESH_MS } from "../src/widget.ts";
 import { LiveActivityPublisher, LiveActivityReader } from "../src/widget-live.ts";
 import { titleMirrorPath } from "../src/widget-title.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof session>;
 const sessions: Session[] = [];
@@ -163,7 +164,7 @@ test("finished-open rows keep refreshing file-backed renames, clears and window 
 	appendFileSync(path, `${JSON.stringify({ type: "session_info", name: "" })}\n`);
 	await tick();
 	assert.ok(!frame(s).includes("External picker rename"));
-	s.tmux.exit(record.windowId);
+	s.tmux.exit(windowFields(record).windowId);
 	await tick();
 	assert.equal(frame(s), "", "dead pane is not a completed-open row");
 });
@@ -196,7 +197,7 @@ test("resume keeps one stable session row, replaces the launch id, and reload re
 	await first.delegate("worker --label original inspect");
 	const record = starts(first)[0];
 	file(record, "Persistent native title");
-	first.tmux.exit(record.windowId);
+	first.tmux.exit(windowFields(record).windowId);
 	await first.toolCall("delegation_resume", { id: record.id, task: "continue" });
 	await settle();
 	const resumed = starts(first).at(-1)!;
@@ -249,7 +250,7 @@ test("unknown tmux listing is not absence or success; id/name mismatch fails clo
 	s.tmux.failList = undefined;
 	await tick();
 	assert.match(frame(s), /failed/);
-	s.tmux.windows.get(record.windowId)!.name = "foreign-window";
+	s.tmux.windows.get(windowFields(record).windowId)!.name = "foreign-window";
 	await tick();
 	assert.equal(frame(s), "");
 });
@@ -288,7 +289,7 @@ test("running window exit stays observation-only until the existing mail-first p
 	await s.delegate("worker --label vanished inspect");
 	await settle();
 	const record = starts(s)[0];
-	s.tmux.exit(record.windowId);
+	s.tmux.exit(windowFields(record).windowId);
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
 	await settle();
 	assert.equal(frame(s), "");
@@ -370,7 +371,7 @@ test("cap zero and terminal-only history stop overview tmux reads", async (t) =>
 	await s.delegate("worker --label gone inspect");
 	await settle();
 	const vanished = starts(s).at(-1)!;
-	s.tmux.exit(vanished.windowId);
+	s.tmux.exit(windowFields(vanished).windowId);
 	t.mock.timers.tick(5000);
 	await settle();
 	assert.ok(s.entries.some((entry) => entry.data.id === vanished.id && entry.data.gone));

@@ -1,3 +1,4 @@
+import { windowFields } from "./window-record.ts";
 // `cwd` launches a delegate in an existing directory: both entry points
 // resolve it to a real directory, keep the task bytes, leave existing
 // checkouts untouched, and decide project trust in the parent. These tests
@@ -97,7 +98,7 @@ type Data = Record<string, any>;
 
 const flags = (argv: readonly string[]): string[] => argv.filter((x) => x === "--approve" || x === "--no-approve");
 const startRecord = (s: ReturnType<typeof session>) =>
-	s.entries.find((item) => typeof item.data.windowId === "string")?.data as Data | undefined;
+	s.entries.find((item) => typeof windowFields(item.data).windowId === "string")?.data as Data | undefined;
 const call = (s: ReturnType<typeof session>, cwd: unknown, task = "inspect") =>
 	s.toolCall("delegate", { agent: "scout", task, cwd });
 
@@ -196,7 +197,7 @@ test("cwd resolves real paths and preserves existing checkout data", async (t) =
 		await call(s, join(base, "link"));
 		await call(s, detached);
 		const [linkedRecord, detachedRecord] = s.entries
-			.filter((item) => typeof item.data.windowId === "string")
+			.filter((item) => typeof windowFields(item.data).windowId === "string")
 			.map((item) => item.data as Data);
 		const head = git(main, "rev-parse", "HEAD");
 		assert.deepEqual(linkedRecord.workspace.git, {
@@ -277,7 +278,9 @@ test("inherited launches need no usable Git and keep the parent's cwd", async ()
 	const plain = join(base, "plain");
 	mkdirSync(plain);
 	await call(s, plain);
-	const records = s.entries.filter((item) => typeof item.data.windowId === "string").map((item) => item.data as Data);
+	const records = s.entries
+		.filter((item) => typeof windowFields(item.data).windowId === "string")
+		.map((item) => item.data as Data);
 	assert.deepEqual(
 		s.tmux.opened.map((item) => item.cwd),
 		[base, base, plain],
@@ -735,7 +738,9 @@ test("selected-directory facts reach the child prompt, results, status and resum
 	await call(s, main);
 	await call(s, inside);
 	await s.delegate("scout inherited");
-	const records = s.entries.filter((item) => typeof item.data.windowId === "string").map((item) => item.data as Data);
+	const records = s.entries
+		.filter((item) => typeof windowFields(item.data).windowId === "string")
+		.map((item) => item.data as Data);
 	const prompt = (index: number) => {
 		const argv = s.tmux.opened[index].argv;
 		return readFileSync(argv[argv.indexOf("--append-system-prompt") + 1], "utf8");
@@ -786,7 +791,7 @@ test("selected-directory facts reach the child prompt, results, status and resum
 // Workspace snapshots: the checkout when a result arrives, and fresh on each status
 
 const records = (s: ReturnType<typeof session>): Data[] =>
-	s.entries.filter((item) => typeof item.data.windowId === "string").map((item) => item.data as Data);
+	s.entries.filter((item) => typeof windowFields(item.data).windowId === "string").map((item) => item.data as Data);
 const statusOf = async (s: ReturnType<typeof session>) => {
 	const result = await s.toolCall("delegation_status", {});
 	return { text: result.content[0].text, items: (result.structuredContent as Data).delegations as Data[] };
@@ -1071,7 +1076,7 @@ test("inspection failure cannot lose duplicate or late replies or other status",
 	assert.ok(resultMessage.content.includes(resultMessage.details.workspaceSnapshot.reason), resultMessage.content);
 
 	// The late delegation's window goes, the poll records it gone, then its reply arrives while Git hangs there.
-	s.tmux.windows.delete(lateRecord.windowId);
+	s.tmux.windows.delete(windowFields(lateRecord).windowId);
 	t.mock.timers.tick(5000);
 	for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(s.sent.filter((x) => /closed without a result/.test(String(x.message.content))).length, 1);

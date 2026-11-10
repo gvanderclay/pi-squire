@@ -1,3 +1,4 @@
+import { windowFields } from "./window-record.ts";
 // The parent's poll: while a delegation runs, a tick asks the mailbox to claim
 // waiting replies (`message:scan`), then checks each window, and declares a
 // delegation closed without a result only when its window is gone and the
@@ -220,7 +221,7 @@ test("recorded session directory survives parent resume and gone late reply", as
 	mkdirSync(recordedDir, { recursive: true });
 	mkdirSync(laterDir, { recursive: true });
 	const first = await started(t, { sessionDir: recordedDir });
-	const d = first.entries.find((entry) => typeof entry.data.windowId === "string")?.data as {
+	const d = first.entries.find((entry) => typeof windowFields(entry.data).windowId === "string")?.data as {
 		id: string;
 		requestId: string;
 		windowId: string;
@@ -232,7 +233,7 @@ test("recorded session directory survives parent resume and gone late reply", as
 	// The parent resumes with another selected session directory.
 	await first.shutdown();
 	const s = session({ parent: first.parent, entries: structuredClone(first.entries), sessionDir: laterDir });
-	s.tmux.addWindow(d.windowId, d.windowName);
+	s.tmux.addWindow(windowFields(d).windowId, windowFields(d).windowName);
 	await s.start();
 	type Item = { id: string; state: string; sessionPath?: string };
 	const item = async (from: Session = s) =>

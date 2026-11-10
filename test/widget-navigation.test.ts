@@ -5,6 +5,7 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
 import { DELEGATE_WIDGET_KEY } from "../src/widget.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof session>;
 const active: Session[] = [];
@@ -49,10 +50,10 @@ test("compact viewport scrolls, Enter switches directly, Escape returns prompt i
 		assert.match(frame(s), /child1/);
 		assert.doesNotMatch(frame(s), /child4/);
 		assert.match(frame(s), /↑ 1 more delegate/);
-		const target = s.entries.filter((entry) => entry.data.windowName === "worker-child1").at(-1)!.data;
+		const target = s.entries.filter((entry) => windowFields(entry.data).windowName === "worker-child1").at(-1)!.data;
 		assert.equal(s.terminalKey("enter"), true);
 		await settle();
-		assert.deepEqual(s.tmux.switches, [{ client: "attached-client", windowId: target.windowId }]);
+		assert.deepEqual(s.tmux.switches, [{ client: "attached-client", windowId: windowFields(target).windowId }]);
 		assert.equal(s.customs.length, 0);
 		assert.match(frame(s), /↑↓ select · enter open · x close · esc prompt/);
 		assert.match(frame(s), /▸ .*child1/);
@@ -67,7 +68,7 @@ test("Enter refuses a row whose window disappeared without opening a panel", asy
 	const s = instance();
 	const child = await launch(s, "disappeared");
 	s.terminalKey("down");
-	s.tmux.exit(child.windowId);
+	s.tmux.exit(windowFields(child).windowId);
 	s.terminalKey("enter");
 	await settle();
 	assert.ok(s.errors.some((error) => error.includes("no verified open window")));
@@ -102,7 +103,7 @@ test("x always confirms finished and running delegates, cancellation retains foc
 		s.terminalKey("x");
 		await settle();
 		assert.equal(s.confirms.length, 2);
-		assert.deepEqual(s.tmux.killed, [child.windowId]);
+		assert.deepEqual(s.tmux.killed, [windowFields(child).windowId]);
 		assert.equal(frame(s), "");
 	}
 });
@@ -158,7 +159,7 @@ test("resume command uses existing eligibility and task flow", async () => {
 	const s = session({ mode: "tui", ui: { editor: ["continue locally"] } });
 	active.push(s);
 	const child = await launch(s, "resume");
-	s.tmux.exit(child.windowId);
+	s.tmux.exit(windowFields(child).windowId);
 	mkdirSync(sessionDir, { recursive: true });
 	writeFileSync(
 		join(sessionDir, `saved_${child.id}.jsonl`),

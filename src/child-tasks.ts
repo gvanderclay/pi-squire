@@ -9,8 +9,9 @@ import {
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { readState, writeState } from "./local-state.ts";
-import type { Recorded } from "./result-types.ts";
+import { isStarted, isV2Start, type Recorded } from "./result-types.ts";
 import type { MessageDetails } from "./results.ts";
+import { locatedRecord } from "./tmux.ts";
 
 export type ChildOutcome = {
 	key: string;
@@ -20,12 +21,39 @@ export type ChildOutcome = {
 	delivered?: boolean;
 };
 type State = { records: Recorded[]; outcomes: ChildOutcome[]; paused?: boolean };
+type StoredState = { version: 2; state: State };
+/** Released readers require top-level arrays; this wrapper makes their restore/save fail closed. */
+function childState(value: unknown): State | undefined {
+	if (value === undefined) return undefined;
+	if (!value || typeof value !== "object") throw new Error("invalid child task record");
+	let state = value as Partial<State>;
+	const versioned = "version" in value || "state" in value;
+	if (versioned) {
+		const wire = value as Partial<StoredState>;
+		if (
+			wire.version !== 2 ||
+			!wire.state ||
+			typeof wire.state !== "object" ||
+			"records" in value ||
+			"outcomes" in value
+		)
+			throw new Error("unsupported or malformed child task record version; reload a compatible Squire");
+		state = wire.state;
+	}
+	if (!Array.isArray(state.records) || !Array.isArray(state.outcomes))
+		throw new Error("invalid child task record: expected records and outcomes arrays");
+	if (state.paused !== undefined && typeof state.paused !== "boolean") throw new Error("invalid root stop state");
+	if (
+		versioned &&
+		state.records.some((record) => !record || typeof record !== "object" || (isStarted(record) && !isV2Start(record)))
+	)
+		throw new Error("invalid v2 child task record; restoration blocked");
+	return state as State;
+}
 export function readChildRecords(session: string): Recorded[] {
 	const path = join(getAgentDir(), "squire", "child-tasks", `${encodeURIComponent(session)}.json`);
-	const state = readState<State>(path);
-	if (state !== undefined && (!state || !Array.isArray(state.records) || !Array.isArray(state.outcomes)))
-		throw new Error(`invalid child task record for ${session}`);
-	return state?.records ?? [];
+	const state = childState(readState<unknown>(path));
+	return (state?.records ?? []).map((record) => (isStarted(record) ? locatedRecord(record) : record));
 }
 export class ChildTasks {
 	path: string | undefined;
@@ -50,13 +78,10 @@ export class ChildTasks {
 		this.unreadable = false;
 		this.restoreFailure = undefined;
 		try {
-			const state = readState<State>(this.path);
-			if (state !== undefined && (!state || !Array.isArray(state.records) || !Array.isArray(state.outcomes)))
-				throw new Error("invalid child task record: expected records and outcomes arrays");
-			if (state?.paused !== undefined && typeof state.paused !== "boolean") throw new Error("invalid root stop state");
+			const state = childState(readState<unknown>(this.path));
 			this.paused = state?.paused === true;
 			this.outcomes = state?.outcomes ?? [];
-			return state?.records ?? [];
+			return (state?.records ?? []).map((record) => (isStarted(record) ? locatedRecord(record) : record));
 		} catch (error) {
 			this.failed = true;
 			this.unreadable = true;
@@ -70,7 +95,10 @@ export class ChildTasks {
 				throw new Error(`child task restoration failed: ${this.restoreFailure}; repair storage and reopen`);
 			if (this.unreadable) throw new Error("child tasks were unreadable; repair storage and reload before continuing");
 			if (!this.path) throw new Error("child task state has not been restored");
-			writeState(this.path, { records, outcomes: this.outcomes, paused: this.paused } satisfies State);
+			writeState(this.path, {
+				version: 2,
+				state: { records, outcomes: this.outcomes, paused: this.paused },
+			} satisfies StoredState);
 			this.failed = false;
 		} catch (error) {
 			this.failed = true;

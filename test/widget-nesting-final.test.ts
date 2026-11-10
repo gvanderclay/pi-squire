@@ -12,6 +12,7 @@ import { placementProject } from "../src/window-placement.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { mailSession, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -93,9 +94,9 @@ test("widget closes the subtree and resume command inherits original placement a
 	await until(() => /working\.\.\./.test(frame(owner)));
 	owner.terminalKey("down");
 	owner.terminalKey("x");
-	await until(() => tmux.killed.includes(c.windowId));
+	await until(() => tmux.killed.includes(windowFields(c).windowId));
 	await until(() => owner.confirms.length === 1 && !frame(owner).includes("cross-project"));
-	assert.deepEqual(tmux.killed, [w.windowId, c.windowId]);
+	assert.deepEqual(tmux.killed, [windowFields(w).windowId, windowFields(c).windowId]);
 	assert.match(owner.confirms[0].message, /and its delegates\? Worktrees and branches stay/);
 	assert.equal(local(owner, c.id).closed, true);
 	assert.equal(local(coordinator, w.id).closed, undefined, "ancestor never writes foreign semantic records");
@@ -150,11 +151,11 @@ test("widget switches a renamed branch while grandchild resume remains direct-pa
 	owner.terminalKey("down");
 	owner.terminalKey("enter");
 	await until(() => tmux.switches.length === 1);
-	assert.equal(tmux.switches[0].windowId, c.windowId);
+	assert.equal(tmux.switches[0].windowId, windowFields(c).windowId);
 	assert.equal(owner.customs.length, 0);
 	await owner.command("delegate-resume", `${w.id} retry`);
 	assert.ok(owner.errors.some((text) => text.includes("only direct parent")));
-	assert.equal(tmux.windows.has(sibling.windowId), true);
+	assert.equal(tmux.windows.has(windowFields(sibling).windowId), true);
 	assert.equal(local(coordinator, w.id).closed, undefined);
 });
 
@@ -162,14 +163,14 @@ test("widget subtree close reports partial errors and explicit tool retry preser
 	const { owner, coordinator, c, w, tmux } = await tree({ ui: { confirm: [true, true] } });
 	const kill = tmux.kill.bind(tmux);
 	tmux.kill = async (id) => {
-		if (id === w.windowId) throw new Error("injected worker kill refusal");
+		if (id === windowFields(w).windowId) throw new Error("injected worker kill refusal");
 		await kill(id);
 	};
 	await until(() => frame(owner).includes("branch"));
 	owner.terminalKey("down");
 	owner.terminalKey("x");
 	await until(() => owner.errors.some((error) => error.includes("injected worker kill refusal")));
-	assert.deepEqual(tmux.killed, [c.windowId]);
+	assert.deepEqual(tmux.killed, [windowFields(c).windowId]);
 	assert.ok(owner.errors.some((error) => /Partial close of/.test(error) && error.includes(w.id)));
 	assert.ok(owner.errors.some((error) => error.includes("injected worker kill refusal")));
 	assert.equal(readTree(owner.parent).entries.find((entry) => entry.id === c.id)?.closed, true);
@@ -178,7 +179,11 @@ test("widget subtree close reports partial errors and explicit tool retry preser
 	assert.equal(local(coordinator, w.id).closed, undefined);
 	tmux.kill = kill;
 	await owner.toolCall("delegation_close", { id: c.id });
-	assert.deepEqual(tmux.killed, [c.windowId, w.windowId], "confirmed successes are not killed twice");
+	assert.deepEqual(
+		tmux.killed,
+		[windowFields(c).windowId, windowFields(w).windowId],
+		"confirmed successes are not killed twice",
+	);
 	assert.equal(readTree(owner.parent).closes?.length, 0);
 	assert.equal(local(coordinator, w.id).closed, undefined);
 	await coordinator.fire("context", { messages: [] });

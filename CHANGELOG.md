@@ -6,6 +6,48 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- New delegate launch records, shared tree entries, and live-window telemetry store
+  adapter-owned opaque locators instead of tmux-specific identity fields. Released
+  `windowId`/`windowName` records remain readable for status, close, and resume;
+  public tool results and messages keep their existing window fields and wording.
+  Internal persistence-schema assertions and behavioural test window projections
+  migrate deliberately to the new shape (including numeric tmux-id placeholders
+  in internal fixtures); frozen released-format fixtures cover compatibility. Malformed or foreign-adapter locators cannot downgrade to legacy
+  identity and are refused without closing or resuming a window.
+  Schema assertions migrate in `test/delegate.test.ts`, `test/tools.test.ts`,
+  `test/new-delegate.test.ts`, `test/tree-reconciliation.test.ts`,
+  `test/widget-live.test.ts`, `test/widget-current.test.ts`, and
+  `test/widget-data.test.ts`; subtree-close and reattachment fixtures use valid
+  numeric tmux IDs. `test/opaque-locators.test.ts` covers frozen released data,
+  mixed-format status/close/resume, and fail-closed restoration.
+- Shared tree registries now migrate atomically from version 1 to version 2 on the
+  first successful locked write. New readers still accept released version-1
+  data; released processes reject version 2 before publishing stale routing,
+  persisting close fences, or confirming a close. Reload those processes to
+  restore their tree controls. A failed or interrupted migration leaves the
+  complete version-1 file untouched; downgrade writes are refused.
+  `test/tree-version-barrier.test.ts` executes frozen v0.20.2 registry/close
+  implementations to reproduce the old false-refund bug and verify the barrier,
+  shared-lock interleavings, atomic replacement/crash safety, retained concurrency
+  charges, and byte-for-byte unchanged files after incompatible writes.
+- Parent child-task stores now write a version-2 wrapper, and new opaque launch
+  journal entries use the internal `delegate-start-v2` namespace. New readers
+  accept legacy arrays and both start generations; malformed explicit v2 data
+  cannot fall back to legacy. Released readers reject the wrapper and ignore new
+  starts, so a same-parent downgrade cannot poll opaque launches as gone or poison
+  facts later imported into shared accounting—even after a crash between journal
+  append and local start save. Launch, resume and fork establish the local wrapper
+  before side effects; public `delegate` messages/results and hooks are unchanged.
+  `test/local-version-barrier.test.ts` executes the released restore/poll/save
+  paths with a delayed, unclaimed child and checks mixed histories, copied-fork
+  authority and ordering. Internal payload reads in `test/result-view.test.ts`,
+  `test/subtree-close.test.ts`, `test/subtree-close-owner.test.ts` and
+  `test/tree-restore-review.test.ts` use a wire projection without weakening their
+  behaviour assertions; exact start-type assertions migrate in the existing
+  delegate/tool schema tests.
+
 ## [0.20.2] - 2026-11-04
 
 ### Removed

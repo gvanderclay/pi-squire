@@ -3,12 +3,15 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readChildRecords } from "./child-tasks.ts";
 import { type Identity, maxDepth, readIdentity } from "./identity.ts";
+import { isV2Start, START_TYPE } from "./result-types.ts";
 import { isStarted, type Recorded, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { sessionIsOwned } from "./session-owner.ts";
+import { locatedRecord, recordLocator } from "./tmux.ts";
 import { descendants, readTree, type TreeEntry } from "./tree-registry.ts";
 import { assertRootPlacement } from "./window-placement.ts";
 
 export function recordedIdentity(record: StartedRecorded): Identity | undefined {
+	if (!recordLocator(record)) throw new Error(`invalid or unsupported window locator for delegation ${record.id}`);
 	const durable: Identity | undefined = readIdentity(sessionIdOf(record));
 	if (
 		durable &&
@@ -130,8 +133,7 @@ export function visibleRecordFacts(
 			records.set(entry.id, {
 				...record,
 				identity: entry.identity,
-				windowId: entry.windowId ?? record.windowId,
-				windowName: entry.windowName ?? record.windowName,
+				locator: recordLocator(entry) ?? recordLocator(record),
 			});
 		} else if (!records.has(entry.id)) records.set(entry.id, { ...record, identity: entry.identity });
 	}
@@ -190,7 +192,7 @@ export function restoredStarts(ctx: ExtensionContext): StartedRecorded[] {
 	const root: string = readIdentity(session)?.root ?? session;
 	return readTree(root)
 		.entries.filter((entry) => entry.identity.parent === session && entry.phase === "started")
-		.flatMap((entry) => (entry.launch && entry.requestId && entry.windowId ? [entry.launch] : []));
+		.flatMap((entry) => (entry.launch && entry.requestId && recordLocator(entry) ? [entry.launch] : []));
 }
 function registryView(entry: TreeEntry): StartedRecorded {
 	return {
@@ -202,8 +204,7 @@ function registryView(entry: TreeEntry): StartedRecorded {
 		autoExit: entry.identity.autoExit,
 		model: "unknown",
 		thinking: "unknown",
-		windowId: entry.windowId ?? "not-recorded",
-		windowName: entry.windowName ?? "not-recorded",
+		...(recordLocator(entry) ? { locator: recordLocator(entry) } : {}),
 		requestId: entry.requestId ?? "not-recorded",
 		cwd: entry.cwd,
 		sessionDir: entry.sessionDir,
@@ -250,10 +251,13 @@ export function accountingFor(record: StartedRecorded): string | undefined {
 	return entry.phase;
 }
 export function historicalRecord(id: string, ctx: ExtensionContext): StartedRecorded | undefined {
+	let found: StartedRecorded | undefined;
 	for (const entry of ctx.sessionManager.getEntries())
-		if (entry.type === "custom" && entry.customType === "delegate") {
+		if (entry.type === "custom" && ["delegate", START_TYPE].includes(entry.customType)) {
 			const value = entry.data as StartedRecorded | undefined;
-			if (value?.id === id && typeof value.requestId === "string") return value;
+			if (entry.customType === START_TYPE && !isV2Start(value))
+				throw new Error("invalid v2 delegate start; historical lookup refused");
+			if (!found && value?.id === id && typeof value.requestId === "string") found = locatedRecord(value);
 		}
-	return undefined;
+	return found;
 }

@@ -23,7 +23,7 @@ import {
 	type WorkspaceAttempt,
 } from "./results.ts";
 import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
-import type { TmuxClient } from "./tmux.ts";
+import { type TmuxClient, windowPresentation } from "./tmux.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
 import { ago, autoExitLine, stateLine } from "./tracking-text.ts";
 import { type CloseResult, CloseSchema, closeTree } from "./tree-close.ts";
@@ -187,7 +187,7 @@ function viewText({ record, state, name, sessionPath, lastActive, snapshot, resu
 		...(record.forkedFrom === undefined ? [] : [`  forked from ${record.forkedFrom}`]),
 		...(resumedAs === undefined ? [] : [`  resumed as ${resumedAs}`]),
 		`  state: ${stateLine(state, record)}${seen}`,
-		`  window: ${record.windowName} (${record.windowId})${windowSession === undefined || windowSession === "" ? "" : ` in session ${windowSession}`}`,
+		`  window: ${windowPresentation(record).windowName} (${windowPresentation(record).windowId})${windowSession === undefined || windowSession === "" ? "" : ` in session ${windowSession}`}`,
 		`  cwd: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
 		`  checkout now: ${checkout}`,
@@ -227,8 +227,8 @@ function viewDetails({
 		autoExit: record.autoExit === true,
 		...(record.resumedFrom === undefined ? {} : { resumedFrom: record.resumedFrom }),
 		...(record.forkedFrom === undefined ? {} : { forkedFrom: record.forkedFrom }),
-		windowId: record.windowId,
-		windowName: record.windowName,
+		windowId: windowPresentation(record).windowId,
+		windowName: windowPresentation(record).windowName,
 		...(windowSession === undefined || windowSession === "" ? {} : { windowSession }),
 		...(record.cwd === undefined ? {} : { cwd: record.cwd }),
 		...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),

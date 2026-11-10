@@ -27,6 +27,7 @@ import {
 } from "./harness.ts";
 import { envelopes, mailSession, scan } from "./mail-harness.ts";
 import { TreeProcess } from "./tree-process-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 type Server = { windows: TmuxWindow[]; companions: string[]; parentSession: string };
@@ -308,14 +309,14 @@ test("nested opens and direct-parent resume retain marked alternatives without a
 	assert.equal(w.windowSession, "same-delegates-3");
 	assert.equal(w.identity?.rootPlacement, "same-delegates", "save preference, not selected alternative");
 	header(w);
-	tmux.exit(w.windowId);
+	tmux.exit(windowFields(w).windowId);
 	await assert.rejects(owner.toolCall("delegation_resume", { id: w.id, task: "not owner" }), /only direct parent/);
 	await owner.shutdown();
 	const resumed = await child.toolCall("delegation_resume", { id: w.id, task: "continue" });
 	assert.equal((resumed.details as { windowSession: string }).windowSession, "same-delegates-3");
 	assert.equal(tmux.windows.get("@101")?.name, "user-numbered");
 	assert.equal(tmux.detachOnDestroy.has("same-delegates-2"), false);
-	assert.deepEqual(tmux.killed, [w.windowId]);
+	assert.deepEqual(tmux.killed, [windowFields(w).windowId]);
 });
 
 test("call-time current vs companion selection is independent of persisted original-root project", async () => {
@@ -333,7 +334,7 @@ test("call-time current vs companion selection is independent of persisted origi
 	off();
 	assert.equal(w.windowSession, "A-delegates", "mode is read once before hook changes");
 	header(w);
-	tmux.exit(w.windowId);
+	tmux.exit(windowFields(w).windowId);
 	await child.toolCall("delegation_resume", { id: w.id, task: "current now" });
 	assert.equal(tmux.opened.at(-1)!.session, "coordinator-pane");
 	assert.equal(readIdentity(w.id)?.rootPlacement, "A-delegates");
@@ -347,7 +348,7 @@ test("root same-id reopen resumes a legacy companion before the coordinator laun
 	const { owner, child, c: record, tmux } = await coordinator(a, b);
 	header(record);
 	await child.shutdown();
-	tmux.exit(record.windowId);
+	tmux.exit(windowFields(record).windowId);
 	await owner.shutdown();
 	settings();
 	tmux.parentSession = "unrelated-root-reopen-pane";
@@ -400,7 +401,7 @@ test("conflicting or corrupt saved placement refuses resume before kill/mail/res
 	const { owner, child, tmux } = await coordinator(a, b);
 	const w = await launch(child, "worker", { cwd: c });
 	header(w);
-	tmux.exit(w.windowId);
+	tmux.exit(windowFields(w).windowId);
 	const own = readIdentity(w.id)!;
 	const sent = envelopes(child.parent, "sent").length;
 	for (const changed of ["other-delegate-session", null]) {
@@ -442,7 +443,7 @@ test("legacy identity-less delegation cannot resume after update, before any tru
 	const original = await instance();
 	const record = await launch(original, "worker");
 	header({ ...record, cwd: target });
-	original.tmux.exit(record.windowId);
+	original.tmux.exit(windowFields(record).windowId);
 	await original.shutdown();
 	const legacy = structuredClone(original.entries);
 	for (const entry of legacy) delete (entry.data as Record<string, unknown>).identity;
@@ -565,7 +566,7 @@ for (const exit of ["shutdown", "crash"]) {
 		const restored = await next.command<ProcessSnapshot>("boot", {
 			...boot,
 			server: {
-				windows: opened.windows.map((window) => ({ ...window, exited: window.id === worker.windowId })),
+				windows: opened.windows.map((window) => ({ ...window, exited: window.id === windowFields(worker).windowId })),
 				companions: opened.companions,
 				parentSession: "different-reopen-pane",
 			},
@@ -585,7 +586,7 @@ for (const exit of ["shutdown", "crash"]) {
 		assert.equal(identity.parent, coordinatorRecord.id);
 		assert.equal(identity.depth, 2);
 		assert.deepEqual(identity.chain, ["coordinator", "worker"]);
-		assert.deepEqual(resumed.killed, [worker.windowId]);
+		assert.deepEqual(resumed.killed, [windowFields(worker).windowId]);
 		assert.deepEqual(resumed.selects, [], "offline trust was already decided, not bypassed");
 		assert.ok(resumed.opened[0].argv.includes("--approve"));
 		assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 2, lifetime: 3 });

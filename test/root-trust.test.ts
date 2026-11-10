@@ -18,6 +18,7 @@ import {
 	writeAgent,
 } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -342,7 +343,7 @@ test("managed unrelated-source approval is keyed to source and resume trust is r
 		join(sessionDir, `worker_${record.id}.jsonl`),
 		`${JSON.stringify({ type: "session", version: 3, id: record.id, cwd: record.cwd, timestamp: "" })}\n`,
 	);
-	child.tmux.windows.delete(record.windowId);
+	child.tmux.windows.delete(windowFields(record).windowId);
 	await child.toolCall("delegation_resume", { id: record.id, task: "again" });
 	assert.equal(parent.selects.length, 2);
 	assert.deepEqual(flags(child), ["--no-approve"]);

@@ -1,5 +1,21 @@
 import type { Delegation, DelegationState, WindowState } from "./results.ts";
+import { validWindowLocator } from "./tmux.ts";
 import type { WorktreePlan } from "./worktree.ts";
+
+/** Internal opaque-start journal namespace; released transcript readers ignore it. */
+export const START_TYPE = "delegate-start-v2";
+/** Minimum v2 start shape; ownership is separately validated at restore/action time. */
+export function isV2Start(value: unknown): value is StartedRecorded {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Partial<StartedRecorded> & { kind?: unknown };
+	return (
+		[record.id, record.agent, record.model, record.thinking, record.requestId].every(
+			(field) => typeof field === "string",
+		) &&
+		record.kind !== "workspace-attempt" &&
+		validWindowLocator(record.locator)
+	);
+}
 
 /** One started delegation as it stands: what was recorded at its start, plus what came after. */
 export type StartedRecorded = Delegation & { result?: import("./results.ts").Result; closed?: boolean; gone?: boolean };

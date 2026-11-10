@@ -19,11 +19,13 @@ import {
 	isStarted,
 	type Recorded,
 	recordedName,
+	START_TYPE,
 	type StartedRecorded,
 	type WorkspaceAttempt,
 } from "./result-types.ts";
 import { ResultsPresentation } from "./results-presentation.ts";
 import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
+import { locatedRecord, type WindowRecord, windowPresentation } from "./tmux.ts";
 import type { Workspace } from "./workspace.ts";
 
 export { findSession, finishedModel, sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
@@ -38,7 +40,7 @@ export const STATUS_KEY = "delegate";
 const INBOUND = "message:inbound";
 
 /** One delegation, as recorded and rebuilt on resume. It holds no task text. */
-export type Delegation = {
+export type Delegation = WindowRecord & {
 	/** Read-only registry projection with no authoritative launch/result record. Never local tracking. */
 	accountingOnly?: boolean;
 	/** Durable launch identity; older single-level records may lack it. */
@@ -51,8 +53,6 @@ export type Delegation = {
 	thinking: string;
 	/** The delegate's session and window name; absent in records from before labels, where it was `<agent>-<8 id characters>`. */
 	name?: string;
-	windowId: string;
-	windowName: string;
 	requestId: string;
 	/** Whether the delegate closes its own window after a normal completion; absent in records from before auto-exit. */
 	autoExit?: boolean;
@@ -304,8 +304,8 @@ export function createResults(
 
 	function recordStart(delegation: Delegation, context: ExtensionContext): void {
 		ctx = context;
-		pi.appendEntry(CUSTOM_TYPE, delegation);
-		const record: StartedRecorded = { ...delegation };
+		const record: StartedRecorded = locatedRecord(delegation);
+		pi.appendEntry(START_TYPE, { ...record });
 		byId.set(record.id, record);
 		byRequest.set(record.requestId, record);
 		save();
@@ -374,10 +374,10 @@ export function createResults(
 			...(record.cwd === undefined ? {} : { cwd: record.cwd }),
 			...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
 			...(record.workspace === undefined ? {} : { workspace: record.workspace }),
-			windowName: record.windowName,
+			windowName: windowPresentation(record).windowName,
 		};
 		const content = [
-			`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`}${record.forkedFrom === undefined ? "" : ` (forked from ${record.forkedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+			`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`}${record.forkedFrom === undefined ? "" : ` (forked from ${record.forkedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${windowPresentation(record).windowName} is gone and no reply arrived.`,
 			`Working directory: ${cwdLine(record.cwd)}`,
 			...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
 			`Delegate session: ${session ?? sessionIdOf(record)}`,

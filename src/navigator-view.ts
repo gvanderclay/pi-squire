@@ -8,7 +8,14 @@ import {
 	type StartedRecorded,
 	sessionIdOf,
 } from "./results.ts";
-import type { TmuxClient, TmuxWindow } from "./tmux.ts";
+import {
+	sameLiveLocator,
+	sameWindowLocator,
+	type TmuxClient,
+	type TmuxWindow,
+	windowLocator,
+	windowPresentation,
+} from "./tmux.ts";
 import { verifyLiveWindow } from "./widget-ancestors.ts";
 import { LiveActivityReader, type LiveLocator } from "./widget-live.ts";
 import { askWindowStates, type WindowRecord, type WindowStates } from "./window-state.ts";
@@ -30,9 +37,20 @@ function openItem(item: OpenDelegate): boolean {
 	);
 }
 
+function sameLive(a: LiveLocator | undefined, b: LiveLocator | undefined): boolean {
+	if (!a || !b) return a === b;
+	return (
+		a.generation === b.generation &&
+		a.ownerToken === b.ownerToken &&
+		a.pid === b.pid &&
+		a.sessionFile === b.sessionFile &&
+		sameLiveLocator(a.locator, b.locator)
+	);
+}
 function sameTarget(a: OpenDelegate, b: OpenDelegate): boolean {
 	return (
-		a.window.id === b.window.id && a.window.name === b.window.name && JSON.stringify(a.live) === JSON.stringify(b.live)
+		sameWindowLocator({ locator: windowLocator(a.window) }, { locator: windowLocator(b.window) }) &&
+		sameLive(a.live, b.live)
 	);
 }
 
@@ -40,7 +58,12 @@ function sameTarget(a: OpenDelegate, b: OpenDelegate): boolean {
 function runningWindow(windows: WindowStates, record: StartedRecorded): TmuxWindow | undefined {
 	const look = windows.look(record);
 	return look.state === "running"
-		? { id: record.windowId, name: record.windowName, session: look.session ?? "", exited: false }
+		? {
+				id: windowPresentation(record).windowId,
+				name: windowPresentation(record).windowName,
+				session: look.session ?? "",
+				exited: false,
+			}
 		: undefined;
 }
 
@@ -90,7 +113,12 @@ export class NavigatorView {
 			record,
 			live,
 			navigable: window !== undefined,
-			window: window ?? { id: record.windowId, name: record.windowName, exited: true, session: "" },
+			window: window ?? {
+				id: windowPresentation(record).windowId,
+				name: windowPresentation(record).windowName,
+				exited: true,
+				session: "",
+			},
 		};
 	}
 
@@ -98,10 +126,15 @@ export class NavigatorView {
 		if (!live || !windows.answered) return undefined;
 		const pane = await verifyLiveWindow(this.tmux, live).catch(() => undefined);
 		if (!pane) return undefined;
-		const own: WindowRecord = { windowId: pane.windowId, windowName: pane.windowName };
+		const own: WindowRecord = pane;
 		// Exact Pi pane, not a different active pane's pane_dead: a listed window counts as running.
 		return windows.listed(own)
-			? { id: pane.windowId, name: pane.windowName, session: windows.look(own).session ?? "", exited: false }
+			? {
+					id: windowPresentation(pane).windowId,
+					name: windowPresentation(pane).windowName,
+					session: windows.look(own).session ?? "",
+					exited: false,
+				}
 			: undefined;
 	}
 
@@ -114,6 +147,6 @@ export class NavigatorView {
 		if (!current.navigable || !sameTarget(item, current)) return false;
 		if (!current.live) return true;
 		const final: LiveLocator | undefined = await this.reader.locator(sessionIdOf(record));
-		return JSON.stringify(final) === JSON.stringify(current.live);
+		return sameLive(final, current.live);
 	}
 }

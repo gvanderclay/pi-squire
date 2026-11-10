@@ -1,3 +1,4 @@
+import { windowFields } from "./window-record.ts";
 // The resume picker offers exactly the delegations `resume` would accept: the
 // call-wide prerequisites (tmux, placement) once, then per record every
 // check that changes nothing. The picker never kills a window or asks for trust.
@@ -44,8 +45,8 @@ async function exited(options: Parameters<typeof session>[0] = {}, agent: Record
 	await s.delegate("scout --label one work");
 	const entry = s.entries.at(-1)?.data as { id: string; windowId: string };
 	writeSession(entry.id, root);
-	s.tmux.windows.delete(entry.windowId);
-	return { s, id: entry.id, windowId: entry.windowId };
+	s.tmux.windows.delete(windowFields(entry).windowId);
+	return { s, id: entry.id, windowId: windowFields(entry).windowId };
 }
 
 /** What the picker offered, as the option list of its select. */
@@ -72,7 +73,7 @@ test("an exited window is offered and left for the resume to kill", async () => 
 
 test("a window still running its program, a removed agent, a missing session file and a missing directory are not offered", async () => {
 	const open = await exited();
-	open.s.tmux.addWindow(open.windowId, "scout-one");
+	open.s.tmux.addWindow(windowFields(open).windowId, "scout-one");
 	assert.deepEqual(await offered(open.s), []);
 
 	const noAgent = await exited();

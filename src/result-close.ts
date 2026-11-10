@@ -5,6 +5,7 @@ import { resumeDetails } from "./result-message.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
 import { recordedName, type StartedRecorded } from "./result-types.ts";
 import type { MessageDetails } from "./results.ts";
+import { windowPresentation } from "./tmux.ts";
 
 /** A missing/canceled task, never a fabricated result envelope. */
 export function closeOutcome(record: StartedRecorded, ctx: ExtensionContext | undefined): ChildOutcome {
@@ -19,7 +20,7 @@ export function closeOutcome(record: StartedRecorded, ctx: ExtensionContext | un
 		id: record.id,
 		...resumeDetails(record),
 		requestId: record.requestId,
-		windowName: record.windowName,
+		windowName: windowPresentation(record).windowName,
 		...(finished ? { finishedModel: finished } : {}),
 		...(session ? { sessionPath: session } : {}),
 		cwd: record.cwd,

@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { NavigatorView, type OpenDelegate } from "./navigator-view.ts";
 import { isStarted, type Results, recordedName } from "./results.ts";
-import type { TmuxClient } from "./tmux.ts";
+import { livePaneTarget, type TmuxClient } from "./tmux.ts";
 import type { Tracking } from "./tracking.ts";
 
 /** What `/delegate-open` does with a verified window. */
@@ -209,7 +209,7 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 				theme: theme as unknown as PanelTheme,
 				read: async (windowId: string): Promise<string> => {
 					if (!(await verifiedWindow(env, item))) throw new Error("no verified open window");
-					return env.tmux.peek({ windowId, paneId: item.live?.locator.paneId });
+					return env.tmux.peek({ windowId, paneId: item.live ? livePaneTarget(item.live.locator) : undefined });
 				},
 				done,
 				redraw: (): void => tui.requestRender(),

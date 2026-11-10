@@ -7,7 +7,15 @@ import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Recorded } from "./result-types.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import { readTaskState, taskStatePath } from "./task-store.ts";
-import type { TmuxClient } from "./tmux.ts";
+import {
+	locatedRecord,
+	recordLocator,
+	sameWindowLocator,
+	type TmuxClient,
+	validWindowLocator,
+	type WindowLocator,
+	windowLocator,
+} from "./tmux.ts";
 import { checkResumeFence, fenced } from "./tree-fence.ts";
 import { processAlive, withTreeLock } from "./tree-lock.ts";
 import { treeCaps } from "./tree-settings.ts";
@@ -21,10 +29,15 @@ export function treePath(root: string): string {
 	return join(getAgentDir(), "squire", "trees", `${encodeURIComponent(root)}.json`);
 }
 function load(root: string): TreeState {
-	const saved: TreeState | undefined = readState<TreeState>(treePath(root));
-	const state: TreeState = saved === undefined ? { version: 1, root, entries: [] } : saved;
-	if (state?.version !== 1 || state.root !== root || !Array.isArray(state.entries))
+	const saved = readState<Omit<TreeState, "version"> & { version: number }>(treePath(root));
+	if (saved !== undefined && (!saved || saved.root !== root || !Array.isArray(saved.entries)))
 		throw new Error(`invalid tree registry for ${root}; admission blocked`);
+	if (saved !== undefined && ![1, 2].includes(saved.version))
+		throw new Error(`unsupported tree registry version ${String(saved.version)} for ${root}; admission blocked`);
+	// Released v0.20.2 load() rejects version !== 1 before its writer callback.
+	// Reads project v1 in memory only. The first successful transaction publishes
+	// v2 and opaque identities together, under the SAME lock/path old writers use.
+	const state: TreeState = { ...(saved ?? { root, entries: [] }), version: 2 };
 	const ids: Set<string> = new Set();
 	for (const entry of state.entries) {
 		if (
@@ -40,9 +53,11 @@ function load(root: string): TreeState {
 		)
 			throw new Error(`invalid entry in tree registry for ${root}; admission blocked`);
 		validateFields(entry);
+		if (entry.launch) entry.launch = locatedRecord(entry.launch);
 		ids.add(entry.id);
 	}
 	validateCloses(state, ids);
+	normalizeEntries(state);
 	return state;
 }
 
@@ -68,6 +83,8 @@ function validateCloses(state: TreeState, ids: Set<string>): void {
 }
 
 function validateFields(entry: TreeEntry): void {
+	if ("locator" in entry && !validWindowLocator(entry.locator))
+		throw new Error(`invalid or unsupported locator in tree entry ${entry.id}; admission blocked`);
 	const own = entry.identity;
 	assertRootPlacement(own.rootPlacement);
 	if (
@@ -86,11 +103,17 @@ function validateFields(entry: TreeEntry): void {
 		if (entry[key] !== undefined && typeof entry[key] !== "string")
 			throw new Error(`invalid ${key} in tree entry ${entry.id}`);
 }
+/** Partial pre-create entries may have no locator; positive identities are canonicalized by the adapter. */
+function normalizeEntries(state: TreeState): void {
+	state.entries = state.entries.map((entry) => (recordLocator(entry) ? locatedRecord(entry) : entry));
+}
 /** Shared close/launch boundary. Callback is synchronous; never await tmux/UI. */
 export function treeTransaction<T>(root: string, work: (state: TreeState) => T): T {
 	return withTreeLock(`${treePath(root)}.lock`, () => {
 		const state: TreeState = load(root);
 		const result: T = work(state);
+		if (state.version !== 2) throw new Error("tree registry downgrade refused; no changes were written");
+		normalizeEntries(state);
 		writeState(treePath(root), state);
 		return result;
 	});
@@ -173,10 +196,7 @@ export function reserveTree(intent: TreeIntent): Reservation {
 	});
 }
 
-export function bindTree(
-	token: Reservation,
-	facts: Partial<Pick<TreeEntry, "requestId" | "windowName" | "cwd" | "workspace">>,
-): void {
+export function bindTree(token: Reservation, facts: Partial<Pick<TreeEntry, "requestId" | "cwd" | "workspace">>): void {
 	treeTransaction(token.root, (state) => Object.assign(entryFor(state, token), facts));
 }
 export function dispatchTree(token: Reservation): void {
@@ -188,11 +208,12 @@ export function dispatchTree(token: Reservation): void {
 		entry.createPending = true;
 	});
 }
-export function openedTree(token: Reservation, windowId: string): void {
+export function openedTree(token: Reservation, locator: WindowLocator): void {
+	if (!validWindowLocator(locator)) throw new Error("invalid or unsupported delegate window locator");
 	treeTransaction(token.root, (state) => {
 		const entry: TreeEntry = entryFor(state, token);
 		entry.phase = "started";
-		entry.windowId = windowId;
+		entry.locator = locator;
 		entry.createPending = false;
 	});
 }
@@ -212,8 +233,7 @@ export function claimTree(root: string, session: string, window: { id: string; n
 		if (!entry) return;
 		entry.phase = "started";
 		if (window) {
-			entry.windowId = window.id;
-			entry.windowName = window.name;
+			entry.locator = windowLocator(window);
 			entry.createPending = false;
 		}
 	});
@@ -231,7 +251,7 @@ export function failedTree(token: Reservation, notOpened = false): void {
 
 function applyRecord(entry: TreeEntry, record: Recorded): void {
 	if (!isStarted(record)) return;
-	entry.launch = { ...record };
+	entry.launch = locatedRecord(record);
 	// Do not store semantic results or child processing facts in this index.
 	delete (entry.launch as Partial<typeof record>).result;
 	delete (entry.launch as Partial<typeof record>).gone;
@@ -240,9 +260,8 @@ function applyRecord(entry: TreeEntry, record: Recorded): void {
 	entry.createPending = false;
 	// A same-id manual reopen can positively locate a newer window. Historical
 	// parent facts must not overwrite that current locator at the next admission.
-	if (!entry.windowId || (!entry.closed && (!entry.gone || !sessionIsOwned(entry.sessionId)))) {
-		entry.windowId = record.windowId;
-		entry.windowName = record.windowName;
+	if (!recordLocator(entry) || (!entry.closed && (!entry.gone || !sessionIsOwned(entry.sessionId)))) {
+		entry.locator = recordLocator(record);
 	}
 	entry.requestId = record.requestId;
 	entry.cwd = record.cwd;
@@ -331,9 +350,9 @@ function reconcileFacts(state: TreeState): void {
 }
 function reconcileWindows(state: TreeState, snapshot: TreeState, windows: WindowStates): void {
 	for (const previous of snapshot.entries) {
-		if (previous.phase !== "started" || !previous.windowId) continue;
+		if (previous.phase !== "started" || !recordLocator(previous)) continue;
 		const entry: TreeEntry | undefined = state.entries.find((item) => item.id === previous.id);
-		if (!entry || entry.windowId !== previous.windowId || entry.windowName !== previous.windowName) continue;
+		if (!entry || !sameWindowLocator(entry, previous)) continue;
 		if (windows.state(entry) === "gone") entry.gone = true;
 	}
 }

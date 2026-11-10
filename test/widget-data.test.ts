@@ -6,6 +6,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { Results, StartedRecorded } from "../src/results.ts";
 import { ResultsPresentation } from "../src/results-presentation.ts";
+import { windowLocator } from "../src/tmux.ts";
 import { DirectDelegateView } from "../src/widget-data.ts";
 import { renderDelegateWidget, type WidgetTheme, widgetName, widgetText } from "../src/widget-render.ts";
 import { widgetSettings } from "../src/widget-settings.ts";
@@ -18,6 +19,7 @@ import {
 } from "../src/widget-title.ts";
 import { WidgetTitleFiles } from "../src/widget-title-file.ts";
 import { agentDir, cleanup, resetRoot, root } from "./harness.ts";
+import { windowFields } from "./window-record.ts";
 
 beforeEach(resetRoot);
 after(cleanup);
@@ -33,15 +35,17 @@ function transcript(name?: string, id = "session"): string {
 	if (name !== undefined) entries.push({ type: "session_info", name });
 	return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 }
+const windowIds = new Map<string, string>();
 function record(id: string, values: Partial<StartedRecorded> = {}): StartedRecorded {
+	const windowId = windowIds.get(id) ?? `@${windowIds.size + 1}`;
+	windowIds.set(id, windowId);
 	return {
 		id,
 		name: `worker-${id}`,
 		agent: "worker",
 		model: "provider/model-name",
 		thinking: "low",
-		windowId: `@${id}`,
-		windowName: `worker-${id}`,
+		locator: windowLocator({ id: windowId, name: `worker-${id}` }),
 		requestId: `request-${id}`,
 		...values,
 	};
@@ -146,7 +150,12 @@ test("direct adapter is read-only, deduplicates resumes by stable id, excludes a
 	];
 	const source = results(records);
 	const before = JSON.stringify(records);
-	const windows = records.map((r) => ({ id: r.windowId, name: r.windowName, exited: false, session: "work" }));
+	const windows = records.map((r) => ({
+		id: windowFields(r).windowId,
+		name: windowFields(r).windowName,
+		exited: false,
+		session: "work",
+	}));
 	const view = new DirectDelegateView();
 	const rows = view.read(source, windows, undefined);
 	assert.deepEqual(
@@ -205,7 +214,12 @@ test("metadata work is capped after full eligibility/order, with an offset seam 
 		record(String(index), index >= 12 ? { result: outcome(index === 15 ? "failed" : "done") } : {}),
 	);
 	const source = results(records);
-	const windows = records.map((r) => ({ id: r.windowId, name: r.windowName, exited: false, session: "work" }));
+	const windows = records.map((r) => ({
+		id: windowFields(r).windowId,
+		name: windowFields(r).windowName,
+		exited: false,
+		session: "work",
+	}));
 	const located: string[] = [];
 	const read: string[] = [];
 	const mirrored: string[] = [];

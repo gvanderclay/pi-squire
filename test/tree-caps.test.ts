@@ -18,6 +18,7 @@ import {
 	writeAgent,
 } from "./harness.ts";
 import { envelopes, mailSession, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const sessions: Session[] = [];
@@ -79,7 +80,9 @@ test("slow startup window lookup does not precede task ownership restoration", a
 	const parent = instance();
 	const record = await launch(parent);
 	(parent.tmux as TmuxClient).currentWindow = () =>
-		new Promise((resolve) => setImmediate(() => resolve({ id: record.windowId, name: record.windowName })));
+		new Promise((resolve) =>
+			setImmediate(() => resolve({ id: windowFields(record).windowId, name: windowFields(record).windowName })),
+		);
 	const worker = instance({ parent: record.id, tmux: parent.tmux });
 	await worker.start();
 	scan(worker);
@@ -98,7 +101,7 @@ test("a finished open worker releases concurrency while its parent is shut down,
 	await parent.shutdown();
 	await worker.run();
 	assert.equal(worker.shutdowns(), 0);
-	assert.equal(parent.tmux.windows.has(record.windowId), true);
+	assert.equal(parent.tmux.windows.has(windowFields(record).windowId), true);
 	assert.deepEqual(counts(parent), { concurrent: 0, lifetime: 1 });
 	assert.equal(envelopes(parent.parent, "new").filter((reply) => reply.in_reply_to.length).length, 1);
 	const reopened = instance({ parent: parent.parent, tmux: parent.tmux });
@@ -186,7 +189,7 @@ test("resume cap refusal precedes exited-window kill; each successful resume spe
 		join(sessionDir, `date_${record.id}.jsonl`),
 		`${JSON.stringify({ type: "session", id: record.id, cwd: root })}\n`,
 	);
-	s.tmux.exit(record.windowId);
+	s.tmux.exit(windowFields(record).windowId);
 	await assert.rejects(
 		s.toolCall("delegation_resume", { id: record.id, task: "again" }),
 		/maxDelegatesPerRoot.*count 1, limit 1/,
@@ -210,7 +213,7 @@ test("unknown resume open and send/kill failure remain charged, not pre-start re
 			join(sessionDir, `date_${record.id}.jsonl`),
 			`${JSON.stringify({ type: "session", id: record.id, cwd: root })}\n`,
 		);
-		s.tmux.windows.delete(record.windowId);
+		s.tmux.windows.delete(windowFields(record).windowId);
 		if (failure === "unknown-open") {
 			s.tmux.failOpen = "uncertain";
 			s.tmux.failOpenCertainty = "unknown";

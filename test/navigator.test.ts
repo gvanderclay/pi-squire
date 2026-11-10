@@ -1,3 +1,4 @@
+import { windowFields } from "./window-record.ts";
 // Command navigation uses verified windows and the caller's attached tmux client.
 
 import assert from "node:assert/strict";
@@ -93,7 +94,7 @@ test("the client is the most recently active one attached to the parent's sessio
 test("with no client attached switch refuses with a notice and peek still works", async () => {
 	const s = await started();
 	const one = await launch(s, "one");
-	s.tmux.screens.set(one.windowId, "hello from the pane");
+	s.tmux.screens.set(windowFields(one).windowId, "hello from the pane");
 	await s.command("delegate-open", one.id);
 	assert.deepEqual(s.tmux.switches, []);
 	assert.equal(s.warnings.length, 1);
@@ -121,7 +122,7 @@ test("peek captures the pane in an overlay, r refreshes it and enter switches to
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.attachClient("c1", 1);
-	s.tmux.screens.set(one.windowId, "first screen");
+	s.tmux.screens.set(windowFields(one).windowId, "first screen");
 	// The pane changes between the capture and the refresh.
 	const capture = s.tmux.capture.bind(s.tmux);
 	s.tmux.capture = async (id: string) => {
@@ -135,9 +136,9 @@ test("peek captures the pane in an overlay, r refreshes it and enter switches to
 	assert.match(peek.frames[1], /Peek: scout-one/);
 	assert.match(peek.frames[1], /first screen/);
 	assert.match(peek.frames[2], /second screen/);
-	assert.deepEqual(s.tmux.captures, [one.windowId, one.windowId]);
+	assert.deepEqual(s.tmux.captures, [windowFields(one).windowId, windowFields(one).windowId]);
 	assert.deepEqual(peek.result, { action: "switch" });
-	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: one.windowId }]);
+	assert.deepEqual(s.tmux.switches, [{ client: "c1", windowId: windowFields(one).windowId }]);
 	assert.deepEqual(s.customOptions[0], {
 		overlay: true,
 		overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" },
@@ -191,17 +192,17 @@ test("/delegate-open switches by default and with --switch, in either session", 
 	assert.equal(s.tmux.switches.length, 1);
 	await s.command("delegate-open", `${here.id} --switch`);
 	assert.equal(s.tmux.switches.length, 2);
-	s.tmux.moveWindow(here.windowId, companion);
+	s.tmux.moveWindow(windowFields(here).windowId, companion);
 	await s.command("delegate-open", here.id);
 	assert.equal(s.tmux.switches.length, 3);
-	assert.deepEqual(s.tmux.switches.at(-1), { client: "c1", windowId: here.windowId });
+	assert.deepEqual(s.tmux.switches.at(-1), { client: "c1", windowId: windowFields(here).windowId });
 });
 
 test("/delegate-open --peek shows the pane and enter escalates to a switch", async () => {
 	const s = await started();
 	const one = await launch(s, "one");
 	s.tmux.attachClient("c1", 1);
-	s.tmux.screens.set(one.windowId, "pane text");
+	s.tmux.screens.set(windowFields(one).windowId, "pane text");
 	const script = keyScript(["x", "enter"]);
 	s.queueCustom(script);
 	await s.command("delegate-open", `${one.id} --peek`);

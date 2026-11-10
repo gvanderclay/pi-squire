@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { writeIdentity } from "../src/identity.ts";
+import { paneLocator } from "../src/tmux.ts";
 import type { LiveLocator } from "../src/widget-live.ts";
 import { agentDir, cleanup } from "./harness.ts";
 import { TreeProcess } from "./tree-process-harness.ts";
@@ -97,10 +98,10 @@ test("real private tmux: attached-client root switch, exact pane/server scope, r
 			() => child.command<LiveLocator | null>("locator", { target: "real-root" }),
 			(v) => !!v,
 		);
-		assert.equal(live!.locator.windowId, rootWindow);
-		assert.equal(live!.locator.paneId, rootPane);
-		assert.equal(live!.locator.socket, run("display-message", "-p", "-t", rootPane, "#{socket_path}"));
-		assert.ok(live!.locator.serverPid > 0);
+		assert.equal(paneLocator(live!.locator)!.windowId, rootWindow);
+		assert.equal(paneLocator(live!.locator)!.paneId, rootPane);
+		assert.equal(paneLocator(live!.locator)!.socket, run("display-message", "-p", "-t", rootPane, "#{socket_path}"));
+		assert.ok(paneLocator(live!.locator)!.serverPid > 0);
 		attached = spawn(
 			"python3",
 			[
@@ -137,7 +138,7 @@ test("real private tmux: attached-client root switch, exact pane/server scope, r
 		run("switch-client", "-c", client, "-t", childWindow);
 		run("rename-window", "-t", rootWindow, "root-renamed");
 		assert.notEqual(
-			(await child.command<LiveLocator>("locator", { target: "real-root" })).locator.windowName,
+			paneLocator((await child.command<LiveLocator>("locator", { target: "real-root" })).locator)!.windowName,
 			"root-renamed",
 		);
 		run("move-window", "-s", rootWindow, "-t", "moved-root:2");
@@ -159,7 +160,10 @@ test("real private tmux: attached-client root switch, exact pane/server scope, r
 		run("break-pane", "-d", "-s", rootPane, "-t", "moved-root:3");
 		const newWindow = run("display-message", "-p", "-t", rootPane, "#{window_id}");
 		assert.notEqual(newWindow, rootWindow);
-		assert.equal((await child.command<LiveLocator>("locator", { target: "real-root" })).locator.windowId, rootWindow);
+		assert.equal(
+			paneLocator((await child.command<LiveLocator>("locator", { target: "real-root" })).locator)!.windowId,
+			rootWindow,
+		);
 		await child.command("switch", { target: "real-root" });
 		assert.equal(run("display-message", "-p", "-c", client, "#{window_id}"), newWindow);
 		const commands = readFileSync(log, "utf8").trim().split("\n");

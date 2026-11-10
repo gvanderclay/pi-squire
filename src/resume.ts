@@ -23,7 +23,7 @@ import {
 	settleModel,
 	windowCheck,
 } from "./resume-checks.ts";
-import type { OpenedWindow, TmuxClient } from "./tmux.ts";
+import { type OpenedWindow, type TmuxClient, windowLocator, windowPresentation } from "./tmux.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
 import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
 import { recordedIdentity } from "./tree-view.ts";
@@ -161,7 +161,7 @@ async function ensureExited(record: StartedRecorded, tmux: TmuxClient): Promise<
 		await windows.close(record);
 	} catch (err) {
 		throw new Error(
-			`could not kill the exited window ${record.windowName} (${record.windowId}): ${(err as Error).message}`,
+			`could not kill the exited window ${windowPresentation(record).windowName} (${windowPresentation(record).windowId}): ${(err as Error).message}`,
 		);
 	}
 }
@@ -275,8 +275,7 @@ async function startResume(
 			model: start.model,
 			thinking: start.thinking,
 			name,
-			windowId,
-			windowName: name,
+			locator: windowLocator({ id: windowId, name }),
 			requestId,
 			autoExit: start.autoExit,
 			cwd: workspace.cwd,

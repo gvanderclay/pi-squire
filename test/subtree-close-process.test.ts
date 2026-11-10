@@ -38,7 +38,7 @@ async function start(a: TreeProcess, id: string, parent = "root"): Promise<void>
 	const token = await a.command("reserve", { root: "root", intent: intent(id, parent) });
 	await a.command("bind", { root: "root", token, windowId: id, requestId: `task-${id}` });
 	await a.command("dispatch", { root: "root", token });
-	await a.command("open", { root: "root", token, windowId: `@${id}` });
+	await a.command("open", { root: "root", token, windowId: id === "c" ? "@101" : "@102" });
 }
 
 test("separate-process close fences a reserved target's OWN dispatch and root close-all admission", async () => {
@@ -84,7 +84,7 @@ test("dispatched unknown create remains charged/fenced after closer restart; lat
 		const token = await a.command("reserve", { root: "root", intent: intent("w", "c") });
 		await a.command("bind", { root: "root", token, windowId: "w", requestId: "task-w" });
 		await a.command("dispatch", { root: "root", token });
-		const first = await b.command<Closed>("close", { root: "root", id: "c", windows: [window("@c", "c")] });
+		const first = await b.command<Closed>("close", { root: "root", id: "c", windows: [window("@101", "c")] });
 		assert.equal(first.details.complete, false);
 		assert.equal(first.details.members.find((m) => m.id === "w")?.outcome, "pending");
 		assert.deepEqual(treeCounts(await b.command<TreeState>("read", { root: "root" })), { concurrent: 1, lifetime: 2 });
@@ -98,10 +98,10 @@ test("dispatched unknown create remains charged/fenced after closer restart; lat
 		try {
 			const stillUnknown = await restarted.command<Closed>("close", { root: "root", id: "c", windows: [] });
 			assert.equal(stillUnknown.details.complete, false, "absent server listing is not proof a dispatch cannot create");
-			await a.command("open", { root: "root", token, windowId: "@w" });
-			const final = await restarted.command<Closed>("close", { root: "root", id: "c", windows: [window("@w", "w")] });
+			await a.command("open", { root: "root", token, windowId: "@102" });
+			const final = await restarted.command<Closed>("close", { root: "root", id: "c", windows: [window("@102", "w")] });
 			assert.equal(final.details.complete, true);
-			assert.deepEqual(final.killed, ["@w"]);
+			assert.deepEqual(final.killed, ["@102"]);
 			assert.deepEqual(treeCounts(await restarted.command<TreeState>("read", { root: "root" })), {
 				concurrent: 0,
 				lifetime: 2,
@@ -131,15 +131,15 @@ test("IPC barrier holds close after fencing while another process completes an a
 			root: "root",
 			id: "c",
 			gated: true,
-			windows: [window("@c", "c"), window("@w", "w")],
+			windows: [window("@101", "c"), window("@102", "w")],
 		});
 		await gated;
 		await assert.rejects(a.command("reserve", { root: "root", intent: intent("late", "c") }), /closing/);
-		await a.command("open", { root: "root", token, windowId: "@w" });
+		await a.command("open", { root: "root", token, windowId: "@102" });
 		await b.command("release-close", { root: "root" });
 		const result = await closing;
 		assert.equal(result.details.complete, true);
-		assert.deepEqual(result.killed, ["@w", "@c"]);
+		assert.deepEqual(result.killed, ["@102", "@101"]);
 	});
 });
 
@@ -168,7 +168,7 @@ test("completed close fence supersedes only on valid new resume; failed reservat
 	await isolated(async (a, b) => {
 		await start(a, "c");
 		await start(a, "w", "c");
-		await b.command("close", { root: "root", id: "c", windows: [window("@c", "c"), window("@w", "w")] });
+		await b.command("close", { root: "root", id: "c", windows: [window("@101", "c"), window("@102", "w")] });
 		const resume = { ...intent("again"), sessionId: "c", resumedFrom: "c" };
 		const token = await a.command("reserve", { root: "root", intent: resume });
 		await a.command("fail", { root: "root", token });
@@ -176,7 +176,7 @@ test("completed close fence supersedes only on valid new resume; failed reservat
 		const good = await a.command("reserve", { root: "root", intent: { ...resume, id: "success" } });
 		await a.command("bind", { root: "root", token: good, windowId: "c-again" });
 		await a.command("dispatch", { root: "root", token: good });
-		await a.command("open", { root: "root", token: good, windowId: "@again" });
+		await a.command("open", { root: "root", token: good, windowId: "@103" });
 		await a.command("reserve", { root: "root", intent: intent("new-worker", "c") });
 		await assert.rejects(a.command("reserve", { root: "root", intent: { ...resume, id: "obsolete" } }), /obsolete/);
 		const state = await b.command<TreeState>("read", { root: "root" });

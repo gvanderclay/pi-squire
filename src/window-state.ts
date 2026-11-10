@@ -1,9 +1,17 @@
-// A delegation's window state: the one place that matches a delegation record
-// to a window tmux lists, and closes it. Callers ask once per multiplexer read and
-// look up as many records as they need; they never match ids or names or read
+// A delegation's window state: adapter matching and close over a shared observation.
+// Callers ask once per multiplexer read and look up as many records as they need;
+// they never match ids or names or read
 // whether a window's program exited themselves.
-import type { StartedRecorded } from "./results.ts";
-import type { PaneListing, TmuxClient, TmuxWindow } from "./tmux.ts";
+import {
+	matchWindow,
+	type PaneListing,
+	recordLocator,
+	type TmuxClient,
+	type TmuxWindow,
+	type WindowRecord,
+} from "./tmux.ts";
+
+export type { WindowRecord } from "./tmux.ts";
 
 /**
  * What one ask says about a delegation's window: its program runs, the window
@@ -11,9 +19,6 @@ import type { PaneListing, TmuxClient, TmuxWindow } from "./tmux.ts";
  * `unknown` is never treated as gone.
  */
 export type WindowState = "running" | "gone" | "unknown";
-
-/** The fields of a record that locate its window; a record missing either has no window to find. */
-export type WindowRecord = Partial<Pick<StartedRecorded, "windowId" | "windowName">>;
 
 /** A record's window as one ask saw it. `session` is the tmux session the matching window is listed in, exited or not. */
 export type WindowLook = { state: WindowState; session?: string };
@@ -42,15 +47,15 @@ export type ClosableStates = WindowStates & {
 /** One `list-panes` ask: the window states, plus the pane listing a caller verifying a live pane reads. */
 export type PaneStates = WindowStates & { readonly listing: PaneListing | undefined };
 
-/** The window a record owns: both its recorded id and its recorded name, since tmux ids restart with every server. */
+/** Ask the adapter whether this observation contains the record's exact identity. */
 function findWindow(windows: readonly TmuxWindow[], record: WindowRecord): TmuxWindow | undefined {
-	return windows.find((window) => window.id === record.windowId && window.name === record.windowName);
+	return matchWindow(windows, record);
 }
 
 /** States from one window listing; `undefined` (a failed or skipped ask) makes every record `unknown`. */
 export function windowStates(windows: readonly TmuxWindow[] | undefined): WindowStates {
 	const look = (record: WindowRecord): WindowLook => {
-		if (windows === undefined) return { state: "unknown" };
+		if (windows === undefined || !recordLocator(record)) return { state: "unknown" };
 		const own: TmuxWindow | undefined = findWindow(windows, record);
 		if (own === undefined) return { state: "gone" };
 		// A window whose program exited counts as gone.
@@ -70,6 +75,7 @@ function closableStates(tmux: TmuxClient, windows: readonly TmuxWindow[] | undef
 		...windowStates(windows),
 		async close(record: WindowRecord): Promise<boolean> {
 			if (windows === undefined) throw new Error("could not ask tmux which windows are open, so none was closed");
+			if (!recordLocator(record)) throw new Error("invalid or unsupported delegate window locator; close refused");
 			const own: TmuxWindow | undefined = findWindow(windows, record);
 			if (own === undefined) return false;
 			await tmux.kill(own.id);

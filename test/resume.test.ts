@@ -1,3 +1,4 @@
+import { windowFields } from "./window-record.ts";
 // Resuming an exited delegate: `delegation_resume` and `/delegate-resume`. The
 // session file is a hand-written header (and assistant message); tmux and the
 // mailbox are the harness's fakes.
@@ -85,9 +86,17 @@ async function exitedDelegate(
 	const cwd = options.cwd ?? root;
 	const file = join(sessionDir, `20261026T000000_${entry.id}.jsonl`);
 	writeSession(file, entry.id, cwd, options.model);
-	if (options.window === "exited") s.tmux.exit(entry.windowId);
-	else if (options.window !== "open") s.tmux.windows.delete(entry.windowId);
-	return { s, id: entry.id, name: entry.windowName, windowId: entry.windowId, requestId: entry.requestId, file, cwd };
+	if (options.window === "exited") s.tmux.exit(windowFields(entry).windowId);
+	else if (options.window !== "open") s.tmux.windows.delete(windowFields(entry).windowId);
+	return {
+		s,
+		id: entry.id,
+		name: windowFields(entry).windowName,
+		windowId: windowFields(entry).windowId,
+		requestId: entry.requestId,
+		file,
+		cwd,
+	};
 }
 
 const resume = (s: Session, params: Record<string, unknown>): Promise<ToolResult> =>
@@ -197,7 +206,7 @@ test("resume ignores old fields and keeps recorded auto-exit unless the call ove
 		assert.equal(window.env.PI_DELEGATE_AUTO_EXIT, expected ? "1" : "0");
 		assert.ok(!window.argv.includes("-e") && !window.argv.includes("--extension"), window.argv.join(" "));
 		assert.deepEqual(d.s.warnings, []);
-		d.s.tmux.windows.delete(window.windowId);
+		d.s.tmux.windows.delete(windowFields(window).windowId);
 		// The next resume continues the same Pi session and can override either boolean.
 		const nextId = (result.structuredContent as { id: string }).id;
 		const overridden = await resume(d.s, { id: nextId, task: "once more", auto_exit: !expected });
@@ -232,7 +241,7 @@ test("the new record has its own id, the old session id, and resumedFrom; mail g
 	assert.equal(record.resumedFrom, d.id);
 	assert.equal(record.sessionId, d.id);
 	assert.equal(record.name, d.name);
-	assert.equal(record.windowName, d.name);
+	assert.equal(windowFields(record).windowName, d.name);
 	assert.equal(d.s.sendCalls.at(-1)?.to, d.id);
 	assert.equal(d.s.sendCalls.at(-1)?.body, "now the second part");
 	assert.notEqual(record.requestId, d.requestId);
@@ -249,7 +258,7 @@ test("the resume mails the task only after its window opened, and a failed send 
 	assert.match(error, /could not send the task to .*mailbox: refused/);
 	assert.deepEqual(openAtSend, [2], "the resumed window was open when the task was sent");
 	const [, window] = d.s.tmux.opened;
-	assert.ok(d.s.tmux.killed.includes(window.windowId), "the window with no task is killed");
+	assert.ok(d.s.tmux.killed.includes(windowFields(window).windowId), "the window with no task is killed");
 	assert.equal(starts(d.s).length, 1, "no resumed delegation is recorded");
 });
 
@@ -298,7 +307,7 @@ test("a late reply to the old request settles the old record only, also after a 
 	const [, record] = starts(d.s) as { id: string; requestId: string; windowId: string; windowName: string }[];
 	await d.s.shutdown();
 	const restored = session({ parent: d.s.parent, entries: structuredClone(d.s.entries) as Entry[] });
-	restored.tmux.addWindow(record.windowId, record.windowName);
+	restored.tmux.addWindow(windowFields(record).windowId, windowFields(record).windowName);
 	await restored.start();
 	restored.events.emit("message:inbound", reply(restored, d.id, d.requestId, "late"));
 	assert.equal(resultMessages(restored).length, 1);
@@ -488,7 +497,7 @@ test("a refused second resume cannot release the first call's guard for a third 
 test("an exited window of the delegate is killed first; a window that only shares its name is ignored", async () => {
 	const exited = await exitedDelegate({ window: "exited" });
 	await resume(exited.s, { id: exited.id, task: "again" });
-	assert.deepEqual(exited.s.tmux.killed, [exited.windowId]);
+	assert.deepEqual(exited.s.tmux.killed, [windowFields(exited).windowId]);
 
 	const foreign = await exitedDelegate();
 	foreign.s.tmux.addWindow("@99", foreign.name);

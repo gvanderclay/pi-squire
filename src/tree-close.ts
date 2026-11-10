@@ -2,7 +2,7 @@
 // separately imports confirmed closes into its own semantic processing inbox.
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
-import type { TmuxClient } from "./tmux.ts";
+import { recordLocator, sameWindowLocator, type TmuxClient, windowPresentation } from "./tmux.ts";
 import { below } from "./tree-fence.ts";
 import { descendants, readTree, treeTransaction } from "./tree-registry.ts";
 import type { TreeClose, TreeEntry, TreeState } from "./tree-types.ts";
@@ -90,8 +90,7 @@ function member(entry: TreeEntry, outcome: CloseMember["outcome"], error?: strin
 	return {
 		id: entry.id,
 		sessionId: entry.sessionId,
-		...(entry.windowId ? { windowId: entry.windowId } : {}),
-		...(entry.windowName ? { windowName: entry.windowName } : {}),
+		...(recordLocator(entry) ? windowPresentation(entry) : {}),
 		outcome,
 		closed: !["pending", "error"].includes(outcome),
 		killed: outcome === "killed",
@@ -99,7 +98,7 @@ function member(entry: TreeEntry, outcome: CloseMember["outcome"], error?: strin
 	};
 }
 function sameLocator(a: TreeEntry, b: TreeEntry): boolean {
-	return a.windowId === b.windowId && a.windowName === b.windowName && !b.createPending;
+	return sameWindowLocator(a, b) && !b.createPending;
 }
 /** Publish only positive window/no-start facts; never invent a task result. */
 function confirm(root: string, close: TreeClose, previous: TreeEntry): boolean {
@@ -131,7 +130,7 @@ async function closeMember(
 ): Promise<CloseMember> {
 	if (entry.phase === "not-started") return member(entry, "not-started");
 	if (entry.closed) return member(entry, "already-closed");
-	if (entry.createPending || entry.phase === "dispatched" || !entry.windowId || !entry.windowName)
+	if (entry.createPending || entry.phase === "dispatched" || !recordLocator(entry))
 		return member(
 			entry,
 			"pending",

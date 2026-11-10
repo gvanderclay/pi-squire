@@ -6,6 +6,7 @@ import { NO_ANSWER, TOOK_OVER, UNSEEN } from "../src/task-settlement.ts";
 import { taskStatePath } from "../src/task-store.ts";
 import { agentFile, cleanup, root, type SessionOptions, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, request, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 const active: ReturnType<typeof mailSession>[] = [];
 function instance(options: SessionOptions = {}): ReturnType<typeof mailSession> {
@@ -425,7 +426,7 @@ test("squire resume restores the old owed task alongside its new request through
 	scan(child);
 	await child.run("aborted");
 	await child.shutdown();
-	parent.tmux.windows.delete(first.windowId as string);
+	parent.tmux.windows.delete(windowFields(first).windowId as string);
 	mkdirSync(sessionDir, { recursive: true });
 	writeFileSync(
 		join(sessionDir, `session_${childId}.jsonl`),

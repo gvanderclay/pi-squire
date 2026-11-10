@@ -1,3 +1,4 @@
+import { windowFields } from "./window-record.ts";
 // Where delegate windows open: the shared root-project companion
 // by default, the parent's own session with `windowPlacement: "current"`. The
 // tmux is the harness's fake, which models sessions; the real client is
@@ -39,7 +40,7 @@ test("by default the delegate is the first window of a new companion session, wi
 	assert.equal(window.session, companion);
 	assert.equal(window.placement, "companion");
 	assert.deepEqual(s.tmux.commands, [`new-session ${companion}`]);
-	assert.deepEqual([...s.tmux.sessions], [[companion, [window.windowId]]]);
+	assert.deepEqual([...s.tmux.sessions], [[companion, [windowFields(window).windowId]]]);
 	assert.equal(s.tmux.detachOnDestroy.get(companion), "off");
 	assert.equal(s.tmux.sessions.has("work"), false, "nothing is recorded in the parent's session");
 	assert.equal(s.tmux.detachOnDestroy.has("work"), false, "the user's own session keeps its options");
@@ -96,7 +97,7 @@ test("the companion suffix is read at launch but a resume keeps its saved prefer
 	setSettings({ companionSuffix: "other" });
 	await call(d.s, "new");
 	assert.equal(d.s.tmux.opened.at(-1)?.session, `${basename(root)}-other`);
-	d.s.tmux.exit(d.windowId);
+	d.s.tmux.exit(windowFields(d).windowId);
 	const result = await d.s.toolCall("delegation_resume", { id: d.id, task: "more" });
 	assert.equal((result.structuredContent as { windowSession: string }).windowSession, original);
 });
@@ -235,13 +236,13 @@ async function exitedDelegate(options: { move?: string } = {}) {
 	mkdirSync(sessionDir, { recursive: true });
 	const header = { type: "session", version: 3, id: entry.id, timestamp: "2026-10-26T00:00:00.000Z", cwd: root };
 	writeFileSync(join(sessionDir, `20261026T000000_${entry.id}.jsonl`), `${JSON.stringify(header)}\n`);
-	if (options.move !== undefined) s.tmux.moveWindow(entry.windowId, options.move);
-	return { s, id: entry.id, windowId: entry.windowId };
+	if (options.move !== undefined) s.tmux.moveWindow(windowFields(entry).windowId, options.move);
+	return { s, id: entry.id, windowId: windowFields(entry).windowId };
 }
 
 test("tmux older than 3.2 refuses a resume with its version, and kills nothing", async () => {
 	const d = await exitedDelegate();
-	d.s.tmux.exit(d.windowId);
+	d.s.tmux.exit(windowFields(d).windowId);
 	d.s.tmux.versionText = "tmux 3.0a";
 	await assert.rejects(
 		d.s.toolCall("delegation_resume", { id: d.id, task: "more" }),
@@ -253,7 +254,7 @@ test("tmux older than 3.2 refuses a resume with its version, and kills nothing",
 
 test("/delegate-resume on tmux older than 3.2 reports the version and mails nothing", async () => {
 	const d = await exitedDelegate();
-	d.s.tmux.exit(d.windowId);
+	d.s.tmux.exit(windowFields(d).windowId);
 	d.s.tmux.versionText = "tmux 3.1c";
 	const sends = d.s.sendCalls.length;
 	await d.s.command("delegate-resume", `${d.id} more`);
@@ -288,7 +289,7 @@ test("a launch keeps the placement it read first when the settings change before
 
 test("a resume keeps the placement it read first when the settings change before its window opens", async () => {
 	const d = await exitedDelegate();
-	d.s.tmux.exit(d.windowId);
+	d.s.tmux.exit(windowFields(d).windowId);
 	d.s.events.on("session:launch", () => setSettings({ windowPlacement: "bad" }));
 	const result = await d.s.toolCall("delegation_resume", { id: d.id, task: "more" });
 	assert.equal((result.structuredContent as { windowSession?: string }).windowSession, companion);
@@ -329,17 +330,17 @@ test("a window moved to another session is still matched by status and closed by
 	const d = await exitedDelegate({ move: "elsewhere" });
 	const status = (await d.s.toolCall("delegation_status", { id: d.id })).content[0].text;
 	assert.match(status, /state: running/);
-	assert.ok(status.includes(`window: scout-first (${d.windowId}) in session elsewhere`), status);
+	assert.ok(status.includes(`window: scout-first (${windowFields(d).windowId}) in session elsewhere`), status);
 	const result = await d.s.toolCall("delegation_close", { id: d.id });
 	assert.match(result.content[0].text, /killed scout-first/);
-	assert.deepEqual(d.s.tmux.killed, [d.windowId]);
+	assert.deepEqual(d.s.tmux.killed, [windowFields(d).windowId]);
 });
 
 test("a window moved to another session is still resumable once its program exited", async () => {
 	const d = await exitedDelegate({ move: "elsewhere" });
-	d.s.tmux.exit(d.windowId);
+	d.s.tmux.exit(windowFields(d).windowId);
 	const result = await d.s.toolCall("delegation_resume", { id: d.id, task: "more" });
-	assert.deepEqual(d.s.tmux.killed, [d.windowId], "the exited window is killed wherever it is");
+	assert.deepEqual(d.s.tmux.killed, [windowFields(d).windowId], "the exited window is killed wherever it is");
 	const details = result.structuredContent as { windowSession?: string };
 	assert.equal(details.windowSession, companion, "the resumed window follows the setting");
 	assert.match(result.content[0].text, new RegExp(`in window scout-first in session ${companion}\\.`));

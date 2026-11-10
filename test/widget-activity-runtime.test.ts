@@ -3,10 +3,12 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
+import { paneLocator } from "../src/tmux.ts";
 import { DELEGATE_WIDGET_KEY } from "../src/widget.ts";
 import { LIVE_LAUNCH_ENV, LiveActivityReader, liveSessionDir } from "../src/widget-live.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof session>;
 const sessions: Session[] = [];
@@ -106,7 +108,10 @@ test("locator publishes once per session generation and idle ticks spawn no pane
 	await tool(s);
 	await live("locator-once", "launch", "reading…");
 	await s.fire("session_start", { reason: "reload" });
-	await until(async () => (await reader.locator("locator-once"))?.locator.windowId === "@8", "fresh session locator");
+	await until(
+		async () => paneLocator((await reader.locator("locator-once"))?.locator)?.windowId === "@8",
+		"fresh session locator",
+	);
 	const replacement = await reader.locator("locator-once");
 	assert.notEqual(replacement?.generation, initial?.generation);
 	assert.equal(inspect.mock.callCount(), calls + 1);
@@ -200,7 +205,7 @@ test("real resume preserves stable id but refreshes launch correlation; old laun
 		join(sessionDir, `today_${first.id}.jsonl`),
 		`${JSON.stringify({ type: "session", version: 3, id: first.id, cwd: root })}\n`,
 	);
-	parent.tmux.exit(first.windowId);
+	parent.tmux.exit(windowFields(first).windowId);
 	await parent.toolCall("delegation_resume", { id: first.id, task: "continue" });
 	const resumed = parent.entries.filter((e) => typeof e.data.requestId === "string").at(-1)!.data as Delegation;
 	assert.notEqual(resumed.id, first.id);

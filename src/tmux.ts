@@ -18,6 +18,29 @@ export type TmuxWindow = { id: string; session: string; name: string; exited: bo
 /** A window just opened: its id and the name of the session it is in, when known. */
 export type OpenedWindow = { id: string; session: string | undefined };
 
+export {
+	currentLiveWindow,
+	type LivePaneLocator,
+	liveLocator,
+	livePaneTarget,
+	locatedRecord,
+	matchWindow,
+	normalizeLiveLocator,
+	paneLocator,
+	recordLocator,
+	runningLiveLocator,
+	sameLiveLocator,
+	sameVerifiedWindow,
+	sameWindowLocator,
+	type VerifiedLiveWindow,
+	validWindowLocator,
+	verifyPaneWindow,
+	type WindowLocator,
+	type WindowRecord,
+	windowLocator,
+	windowPresentation,
+} from "./tmux-locator.ts";
+
 export const MIN_TMUX = { major: 3, minor: 2 } as const;
 
 export type TmuxVersion = { text: string; major: number; minor: number };

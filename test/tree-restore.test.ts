@@ -9,6 +9,7 @@ import { readTree, reconcileTree, treeCounts, treeTransaction } from "../src/tre
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -83,7 +84,7 @@ test("registry views are subtree scoped and never inject grandchildren's raw rep
 	assert.equal((await status(owner)).find((row) => row.id === w.id)!.status, "done");
 	tmux.attachClient("client", 1);
 	await owner.command("delegate-open", `${w.id} --switch`);
-	assert.equal(tmux.switches.at(-1)?.windowId, w.windowId);
+	assert.equal(tmux.switches.at(-1)?.windowId, windowFields(w).windowId);
 	await coordinator.command("delegate-open", `${other.id} --peek`);
 	assert.equal(tmux.captures.length, 0);
 	const before = tmux.killed.length;
@@ -116,7 +117,7 @@ test("offline worker and coordinator replies restore same-id barriers and only d
 test("manual same-id coordinator reopen revives concurrency, not lifetime or parentage", async () => {
 	const { owner, coordinator, worker, c, tmux } = await tree();
 	await coordinator.shutdown();
-	tmux.windows.delete(c.windowId);
+	tmux.windows.delete(windowFields(c).windowId);
 	await reconcileTree(owner.parent, tmux);
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 1, lifetime: 2 });
 	treeTransaction(owner.parent, (state) => {
@@ -129,7 +130,7 @@ test("manual same-id coordinator reopen revives concurrency, not lifetime or par
 			phase: "not-started",
 		});
 	});
-	const current = "@manual";
+	const current = "@703";
 	tmux.addWindow(current, "manually-reopened");
 	const manualTmux = Object.assign(new FakeTmux(), {
 		currentWindow: async () => ({ id: current, name: "manually-reopened" }),
@@ -139,7 +140,7 @@ test("manual same-id coordinator reopen revives concurrency, not lifetime or par
 	await reopened.start();
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 2, lifetime: 2 });
 	await reconcileTree(owner.parent, tmux);
-	assert.equal(readTree(owner.parent).entries.find((entry) => entry.id === c.id)!.windowId, current);
+	assert.equal(windowFields(readTree(owner.parent).entries.find((entry) => entry.id === c.id)!).windowId, current);
 	assert.equal((await status(owner)).find((row) => row.id === c.id)!.accounting, "reattached");
 	await worker.run();
 	scan(reopened);
@@ -221,7 +222,7 @@ test("root pending outcomes survive queued-display loss without presenting its f
 test("direct-parent resume restores coordinator children and offline replies before the new follow-up can settle", async () => {
 	const { owner, coordinator, worker, c, tmux } = await tree();
 	await coordinator.shutdown();
-	tmux.exit(c.windowId);
+	tmux.exit(windowFields(c).windowId);
 	mkdirSync(sessionDir, { recursive: true });
 	writeFileSync(
 		join(sessionDir, `saved_${c.id}.jsonl`),
@@ -247,7 +248,7 @@ test("direct-parent resume restores coordinator children and offline replies bef
 });
 test("lowered depth and a live manually-opened child refuse resume before reservation or window kill", async () => {
 	const { owner, coordinator, worker, w, tmux } = await tree();
-	tmux.exit(w.windowId);
+	tmux.exit(windowFields(w).windowId);
 	await assert.rejects(coordinator.toolCall("delegation_resume", { id: w.id, task: "again" }), /already open/);
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 2, lifetime: 2 });
 	assert.equal(tmux.killed.length, 0);

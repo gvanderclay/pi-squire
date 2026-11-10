@@ -9,6 +9,8 @@ export type LivePaneLocator = object;
 export type LiveNavigation = {
 	observeLivePane?(): Promise<LivePaneLocator | undefined>;
 	verifyLivePane?(locator: LivePaneLocator): Promise<VerifiedLiveWindow | undefined>;
+	/** Before resume side effects: reject when another live Pi may host the session, or that is unknown. */
+	guardSession?(record: WindowRecord, session: { path: string; id: string }, launch: TmuxClient): Promise<void>;
 };
 /** Legacy fields are read only when no locator property is present. */
 export type WindowRecord = { locator?: WindowLocator; windowId?: string; windowName?: string };

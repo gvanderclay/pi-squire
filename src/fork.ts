@@ -104,7 +104,13 @@ function launchText(id: string, details: Forked, chosen: Awaited<ReturnType<Resu
 		workspace.mode === "managed"
 			? ` Branch ${workspace.createdBranch} starts at ${workspace.baseCommit}. ${dirtyNotice(workspace.sourceDirty)}`
 			: "";
-	return `Forked delegation ${id} as ${details.id} in window ${details.windowName} in ${details.cwd}.${managed} The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote(chosen)}${details.notices.map((notice) => ` ${notice}`).join("")}`;
+	return `Forked delegation ${id} as ${details.id} in ${details.location ?? `window ${details.windowName}`} in ${details.cwd}.${managed} The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote(chosen)}${details.notices.map((notice) => ` ${notice}`).join("")}`;
+}
+
+/** `location` words the text only; the structured result keeps the delegate schema. */
+function withoutLocation(details: Forked): Omit<Forked, "location"> {
+	const { location: _location, ...rest } = details;
+	return rest;
 }
 
 const modelParameter = Type.Optional(
@@ -178,7 +184,7 @@ export function forkTool(deps: ForkDeps): ToolDef {
 			);
 			const line = launchText(record.id, details, chosen);
 			ctx.ui.notify(`delegate: ${line}`, "info");
-			return toolResult(line, { outcome: "started", ...details, forkedFrom: record.id });
+			return toolResult(line, { outcome: "started", ...withoutLocation(details), forkedFrom: record.id });
 		},
 	};
 }

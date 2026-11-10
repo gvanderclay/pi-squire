@@ -10,12 +10,13 @@ import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-
 import { type TObject, Type } from "typebox";
 
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
+import { herdrLocator } from "./herdr-locator.ts";
 import { type Identity, readIdentity } from "./identity.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
 	assertNoOwner,
-	assertResumeBackend,
+	guardSession,
 	inFlight,
 	passes,
 	preflight,
@@ -29,7 +30,7 @@ import { type ToolDef, toolResult } from "./tracking.ts";
 import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
 import { recordedIdentity } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
-import { askWindowStates } from "./window-state.ts";
+import { askToClose, askWindowStates } from "./window-state.ts";
 import type { Workspace } from "./workspace.ts";
 
 /** What a resume asks for; the fields after `task` are optional overrides. */
@@ -91,6 +92,8 @@ export type ResumeDeps = {
 		toolCallId: string | undefined;
 		ctx: ExtensionContext;
 		placement: WindowPlacement;
+		/** The backend preflight froze for this call. */
+		launchClient: TmuxClient;
 		identity: Identity;
 		sessionId: string;
 	}): Promise<OpenedWindow>;
@@ -115,6 +118,8 @@ export type Resumed = {
 	workspace: Workspace;
 	/** The sentence naming a fallback model, or "". */
 	fallbackNote: string;
+	/** The adapter's own wording for where it opened (a Herdr tab); absent keeps the tmux wording. */
+	location?: string;
 };
 
 /** The started records, in the order recorded. */
@@ -212,11 +217,15 @@ async function planResume(
  * second task. The reopened session's provider still delivers mail that
  * arrives after it starts. A failed send kills the window, which has no task.
  */
-async function mailTask(deps: ResumeDeps, windowId: string, sessionId: string, task: string): Promise<string> {
+async function mailTask(deps: ResumeDeps, opened: OpenedWindow, sessionId: string, task: string): Promise<string> {
 	try {
 		return deps.sendTask(sessionId, task);
 	} catch (err) {
-		await deps.tmux.kill(windowId).catch(() => {});
+		// A Herdr tab closes only through its terminal-fenced locator, never a tmux kill by id.
+		const closing = herdrLocator(opened.locator)
+			? askToClose(deps.tmux).then((states) => states.close({ locator: opened.locator }))
+			: deps.tmux.kill(opened.id);
+		await closing.catch(() => {});
 		throw err;
 	}
 }
@@ -241,16 +250,17 @@ async function startResume(
 		task: string;
 		toolCallId: string | undefined;
 		placement: WindowPlacement;
+		launchClient: TmuxClient;
 		reservation: Reservation;
 	},
 	ctx: ExtensionContext,
 ): Promise<Resumed> {
-	const { record, session, plan, task, toolCallId, placement } = input;
-	const { start, chosen, workspace } = plan;
+	const { record, session, plan, task, toolCallId, placement, launchClient } = input;
+	const { start, workspace } = plan;
 	const id = input.reservation.id;
 	const sessionId = sessionIdOf(record);
 	const name = recordedName(record);
-	const { id: windowId, session: windowSession } = await deps.open({
+	const opened = await deps.open({
 		id,
 		name,
 		identity: record.identity,
@@ -264,8 +274,10 @@ async function startResume(
 		toolCallId,
 		ctx,
 		placement,
+		launchClient,
 	});
-	const requestId = await mailTask(deps, windowId, sessionId, task);
+	const windowId = opened.id;
+	const requestId = await mailTask(deps, opened, sessionId, task);
 	publishResumeRequest(input.reservation, requestId, windowId, ctx);
 	deps.results.recordStart(
 		{
@@ -276,7 +288,7 @@ async function startResume(
 			model: start.model,
 			thinking: start.thinking,
 			name,
-			locator: windowLocator({ id: windowId, name }),
+			locator: opened.locator ?? windowLocator({ id: windowId, name }),
 			requestId,
 			autoExit: start.autoExit,
 			cwd: workspace.cwd,
@@ -288,21 +300,36 @@ async function startResume(
 		ctx,
 	);
 	deps.startPolling();
+	return resumedResult({ id, resumedFrom: record.id, name, plan, sessionDir: session.dir, opened });
+}
+
+/** What the command and the tool report about a started resume. */
+function resumedResult(input: {
+	id: string;
+	resumedFrom: string;
+	name: string;
+	plan: Plan;
+	sessionDir: string;
+	opened: OpenedWindow;
+}): Resumed {
+	const { start, chosen, workspace } = input.plan;
+	const { opened } = input;
 	return {
-		id,
-		resumedFrom: record.id,
+		id: input.id,
+		resumedFrom: input.resumedFrom,
 		agent: start.agent.name,
 		model: start.model,
 		skipped: chosen.skipped.map(({ model, reason }) => ({ model, reason })),
 		notices: chosen.notices,
 		thinking: start.thinking,
 		autoExit: start.autoExit,
-		windowId,
-		windowName: name,
-		...(windowSession === undefined ? {} : { windowSession }),
+		windowId: opened.id,
+		windowName: input.name,
+		...(opened.session === undefined ? {} : { windowSession: opened.session }),
 		cwd: workspace.cwd,
-		sessionDir: session.dir,
+		sessionDir: input.sessionDir,
 		workspace,
+		...(opened.location === undefined ? {} : { location: opened.location }),
 		fallbackNote:
 			chosen.skipped.length === 0
 				? ""
@@ -324,14 +351,14 @@ async function resume(
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 ): Promise<Resumed> {
-	const placement = await preflight(deps); // read once, before the exited window is killed or anything is mailed
+	const { placement, client } = await preflight(deps); // read once, before the exited window is killed or anything is mailed
 	if (request.task.trim() === "") throw new Error("a task is required");
 	deps.authorize?.(request.id, ctx);
 	const found = newestStarted(deps.results, request.id);
 	const record = { ...found, identity: requiredIdentity(found) };
 	deps.admit?.(record.agent, ctx);
 	assertNoOwner(record);
-	assertResumeBackend(record);
+	await guardSession(deps, record, client, ctx);
 	deps.results.checkStorage(true);
 	const reservation = await deps.reserve(record, randomUUID(), ctx);
 	let acquired = false;
@@ -343,7 +370,16 @@ async function resume(
 		const plan = await planResume(deps, { record, agent, session, request }, ctx, signal);
 		return await startResume(
 			deps,
-			{ record, session, plan, task: request.task, toolCallId: request.toolCallId, placement, reservation },
+			{
+				record,
+				session,
+				plan,
+				task: request.task,
+				toolCallId: request.toolCallId,
+				placement,
+				launchClient: client,
+				reservation,
+			},
 			ctx,
 		);
 	} catch (error) {
@@ -365,14 +401,19 @@ async function resume(
  * prerequisites are checked once and refuse as `resume` does.
  */
 async function eligible(deps: ResumeDeps, ctx: ExtensionContext): Promise<StartedRecorded[]> {
-	await preflight(deps);
+	const { client } = await preflight(deps);
 	const windows = await askWindowStates(deps.tmux);
 	if (!windows.answered) return [];
 	const ids = new Set(resumableIds(deps.results));
 	const models = new Map<string, boolean>();
 	const found: StartedRecorded[] = [];
 	for (const record of startedRecords(deps.results)) {
-		if (ids.has(record.id) && (await passes(deps, record, windows, ctx, models))) found.push(record);
+		if (!ids.has(record.id) || !(await passes(deps, record, windows, ctx, models))) continue;
+		const guarded = await guardSession(deps, record, client, ctx).then(
+			() => true,
+			() => false,
+		);
+		if (guarded) found.push(record);
 	}
 	return found.reverse();
 }
@@ -380,9 +421,13 @@ async function eligible(deps: ResumeDeps, ctx: ExtensionContext): Promise<Starte
 /** The session a window opened in, for the start text. */
 const inSession = (session: string | undefined): string => (session === undefined ? "" : ` in session ${session}`);
 
+/** Where a resume opened: the adapter's wording, else the tmux window and session. */
+const where = (resumed: Resumed): string =>
+	resumed.location ?? `window ${resumed.windowName}${inSession(resumed.windowSession)}`;
+
 /** The one line the command and the tool tell the user. */
 export function startedLine(resumed: Resumed): string {
-	return `delegate: resumed ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} in window ${resumed.windowName}${inSession(resumed.windowSession)}${resumed.fallbackNote === "" ? "" : `. ${resumed.fallbackNote}`}${resumed.notices.map((line) => `. ${line}`).join("")}`;
+	return `delegate: resumed ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} in ${where(resumed)}${resumed.fallbackNote === "" ? "" : `. ${resumed.fallbackNote}`}${resumed.notices.map((line) => `. ${line}`).join("")}`;
 }
 
 /** The `delegation_resume` tool. */
@@ -412,10 +457,10 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 			ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
 			const resumed = await resume(deps, { ...requestFrom(params), toolCallId }, ctx, signal);
-			const { fallbackNote, ...details } = resumed;
+			const { fallbackNote, location: _location, ...details } = resumed;
 			ctx.ui.notify(startedLine(resumed), "info");
 			return toolResult(
-				`Resumed delegation ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} (${resumed.model}, thinking ${resumed.thinking}) in window ${resumed.windowName}${inSession(resumed.windowSession)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote === "" ? "" : ` ${fallbackNote}`}${resumed.notices.map((line) => ` ${line}`).join("")}`,
+				`Resumed delegation ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} (${resumed.model}, thinking ${resumed.thinking}) in ${where(resumed)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote === "" ? "" : ` ${fallbackNote}`}${resumed.notices.map((line) => ` ${line}`).join("")}`,
 				{ outcome: "started", ...details },
 			);
 		},

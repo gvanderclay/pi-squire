@@ -1,6 +1,6 @@
 # pi-squire
 
-Starts a delegate Pi session in a background tmux window (or an opt-in Herdr tab) and shows you its result.
+Starts a delegate Pi session in a background tmux window or Herdr tab and shows you its result.
 
 You give a task to a named agent with the `/delegate` command, or the model does
 it with the `delegate` tool. The delegate works in its own tmux window and
@@ -19,8 +19,8 @@ You need:
   first version with `new-session -e`. Windows are placed
   relative to the pane's session (see [Where delegate windows
   open](#where-delegate-windows-open)), so a client attached elsewhere does
-  not matter. Alternatively, use the [opt-in Herdr preview](#opt-in-herdr-support)
-  below instead of tmux.
+  not matter. Alternatively, run Pi in a [Herdr](#herdr-support) pane:
+  pi-squire detects which one it is in.
 - A provider of the four `message:*` hooks, including `message:reply`;
   [pi-session-mail](https://github.com/gvanderclay/pi-session-mail) **0.6.0 or
   later** supplies them. Without a provider there is no way to send the task or get an
@@ -346,24 +346,51 @@ to the old tree. Current allowlists, depth, caps and
 directory/source trust still apply to resume, including its picker. A live
 same-id Squire owner and obsolete local/shared resume chains are refused.
 
-## Opt-in Herdr support
+## Herdr support
 
-tmux remains the default. To try Herdr, run Pi inside a Herdr pane and set
-`multiplexer` in `<agent dir>/squire/settings.json` (not Pi's own settings):
+pi-squire works the same in [Herdr](https://herdr.dev) as in tmux: delegate,
+status, close, resume, fork, nested delegates, the widget and
+`/delegate-open`. It targets Herdr 0.9.5, protocol 22, on macOS/Linux with a
+POSIX-compatible interactive shell (`sh -c` launch; tested with zsh).
+
+### Choosing tmux or Herdr
+
+With no setting, each launch looks at the session's environment:
+
+| Pi runs inside | pi-squire uses |
+| --- | --- |
+| tmux only (`TMUX` set) | tmux |
+| a Herdr pane only (`HERDR_ENV=1` and its pane context) | Herdr |
+| both, for example Herdr started from a tmux pane | refuses, naming the setting |
+| neither | refuses, naming both |
+
+To choose, set `multiplexer` in `<agent dir>/squire/settings.json` (not Pi's
+own settings):
 
 ```json
 { "multiplexer": "herdr" }
 ```
 
-The setting is read at every launch; `"tmux"` forces tmux, and removing it
-restores the tmux default. An invalid value, missing Herdr pane context,
-unavailable server, or incompatible API refuses the launch with no fallback.
-This preview targets Herdr 0.9.5, protocol 22, on macOS/Linux with a POSIX-compatible
-interactive shell (`sh -c` launch; tested with zsh).
+`"tmux"` or `"herdr"` wins over detection in every case. It is read at every
+launch, resume and fork, and the choice is frozen before anything is created or
+mailed. If the chosen multiplexer is unusable (not inside it, server down,
+incompatible API), the launch refuses; pi-squire never falls back to the other.
+An invalid value refuses and names the file. A delegate records the backend that
+opened it in `PI_DELEGATE_MULTIPLEXER`, so its own delegates use the same one
+when no setting is present, even if its environment shows both. Existing
+delegations keep using the multiplexer they started in, whatever the setting
+says now.
 
-Each delegate opens as a named, unfocused **tab in its direct parent's Herdr
-workspace**, including nested delegates and worktree launches. `windowPlacement`
-and `companionSuffix` affect only tmux placement. The tab runs in the selected
+### Tabs
+
+Each delegate opens as a named, unfocused **tab in the workspace the root Pi
+started in**: nested delegates are flat tabs next to their parents, never
+splits, and worktree launches are the same. `windowPlacement` and
+`companionSuffix` affect only tmux placement. If you move a Pi's pane to
+another workspace after it started, its launches refuse and name both
+workspaces, since Herdr's pane context no longer says where to open; move it
+back, or start Pi in the workspace you want. A moved delegate pane reads as
+`unknown` (never gone) and is not closed. The tab runs in the selected
 working directory with the parent's environment and `session:launch` additions;
 parent/user-supplied `TMUX*` and `HERDR*` routing values are excluded, while
 Herdr's newly assigned child context is preserved. Large arguments/environment
@@ -397,8 +424,38 @@ parent breadcrumb switches to its verified live parent, including a root Pi.
 Switch confirmations name the originating tab in Herdr's tab bar so you can
 return without assuming any configured keybinding.
 
-Preview limitations: Herdr resume is not available yet. Automatic backend
-detection is not enabled. tmux behaviour and its existing controls are unchanged.
+### Resume, fork and Herdr restarts
+
+`delegation_resume`, `/delegate-resume` and `delegation_fork` open a new tab.
+A resume first closes its own exited, retained pane (exact terminal only), then
+mails the task once the new tab is open.
+
+Herdr restores tabs after a restart, keeping their pane and tab ids but with new
+terminals, and relaunches Pi there with `pi --session <file>`. pi-squire treats
+those as different terminals:
+
+- delegations from before the restart show as gone; their results still come
+  only through mail;
+- restored tabs are never adopted, focused, read or closed by pi-squire;
+- before any reservation, close or mail, resume asks Herdr whether a tab already
+  runs the delegate's session file. If one does, it refuses and names the tab,
+  for example `Herdr tab scout-ab12 (w1:t2) already runs delegation session …`.
+  A restored tab that reports no session must show only its shell, or resume
+  refuses too. If Herdr cannot be asked, resume refuses rather than risk two Pis
+  writing one session. A delegation recorded in Herdr can only be resumed from
+  Pi inside the same Herdr session. Quit or close the restored tab yourself, then
+  resume again.
+
+pi-squire's own session-owner check still refuses a session another Pi with
+pi-squire has open. Herdr relaunches Pi panes whose session its Pi integration
+reported. To stop it relaunching agents (delegates included) after a restart,
+set `resume_agents_on_restore = false` in the `[session]` table of Herdr's
+`config.toml` (see `herdr --default-config`); this applies to every agent in
+Herdr, not only delegates. Reloading or restarting Pi does not change any of this: records and
+their locators are durable, and the setting is read again at the next launch.
+
+tmux behaviour and its existing controls are unchanged, apart from the refusal
+wording when Pi runs in neither multiplexer.
 
 ## Where delegate windows open
 
@@ -1151,6 +1208,8 @@ server's environment plus `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`
 - `PI_DELEGATE_CHAIN`: comma-separated agent names, root downward, including
   the child last, e.g. `coordinator,worker`; names label requests, session ids route them;
 - `PI_DELEGATE_AUTO_EXIT`: `1` or `0`;
+- `PI_DELEGATE_MULTIPLEXER`: `tmux` or `herdr`, the backend that opened it
+  (see [Choosing tmux or Herdr](#choosing-tmux-or-herdr));
 - `PI_DELEGATE_FALLBACK`: remaining model candidates, when any.
 
 It always gets `PI_UNATTENDED=1`.
@@ -2049,14 +2108,15 @@ Other extensions may rely on:
   `<agent dir>/agents/<name>.md` and, in a trusted project,
   `<cwd>/.pi/agents/<name>.md`;
 - the `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`, `toolBundles`,
-  `windowPlacement`, `companionSuffix`, `worktreeRoot`, `delegateWidgetPlacement` and
+  `multiplexer`, `windowPlacement`, `companionSuffix`, `worktreeRoot`, `delegateWidgetPlacement` and
   `delegateWidgetMaxEntries` settings in
   `<agent dir>/squire/settings.json`;
 - the optional `<agent dir>/squire/delegation_prompt.md` file and the
   `squire_parent_delegation` system-prompt section;
 - the child environment variables `PI_DELEGATE_PARENT`, `PI_DELEGATE_ROOT`,
   `PI_DELEGATE_DEPTH`, `PI_DELEGATE_AGENT`, `PI_DELEGATE_CHAIN`,
-  `PI_DELEGATE_AUTO_EXIT`, `PI_DELEGATE_FALLBACK` and `PI_UNATTENDED=1`.
+  `PI_DELEGATE_AUTO_EXIT`, `PI_DELEGATE_MULTIPLEXER`, `PI_DELEGATE_FALLBACK` and
+  `PI_UNATTENDED=1`.
 
 A `message:*` provider must:
 

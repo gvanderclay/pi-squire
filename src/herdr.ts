@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type HerdrLocator, type HerdrPaneLocator, herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
+import { assertSessionFree, type HostTab, snapshotTabs } from "./herdr-restore.ts";
 import {
 	type OpenedWindow,
 	type ShowResult,
@@ -22,7 +23,8 @@ type Pane = {
 	tab_id: string;
 	workspace_id: string;
 	terminal_id: string;
-	agent_session?: { value?: string };
+	agent?: string | null;
+	agent_session?: { value?: string } | null;
 };
 export type HerdrRun = (session: string, args: string[]) => Promise<string>;
 export type HerdrContext = { session: string; workspace: string; pane: string; socket: string };
@@ -186,7 +188,11 @@ class HerdrClient implements TmuxClient {
 			if (status.socket !== own.socket || status.session !== own.session)
 				return "Herdr session/socket identity changed; launch refused";
 			const parent = pane(result(await this.run(own.session, ["pane", "get", own.pane])).pane);
-			if (parent.workspace_id !== own.workspace) return "Herdr parent pane changed workspace; launch refused";
+			// Delegates open flat in the workspace this Pi started in (its root's,
+			// for a nested delegate). A pane moved since then has stale HERDR_*
+			// context, so refuse rather than guess which workspace is meant.
+			if (parent.workspace_id !== own.workspace)
+				return `this Pi's Herdr pane ${own.pane} moved from workspace ${own.workspace} to ${parent.workspace_id} since it started; delegates open only in the workspace Pi started in, so launch refused. Move the pane back, or start Pi in the workspace you want`;
 			return undefined;
 		} catch (error) {
 			return `could not ask Herdr for the parent pane/server: ${String(error)}; no tmux fallback was attempted`;
@@ -207,6 +213,9 @@ class HerdrClient implements TmuxClient {
 		);
 	}
 	async snapshot(own: HerdrContext): Promise<Pane[]> {
+		return (await this.inventory(own)).panes;
+	}
+	async inventory(own: HerdrContext): Promise<{ panes: Pane[]; tabs: HostTab[] }> {
 		const server = object(JSON.parse(await this.run(own.session, ["status", "server", "--json"])));
 		if (
 			server.running !== true ||
@@ -221,7 +230,32 @@ class HerdrClient implements TmuxClient {
 		if (!Array.isArray(snap.panes) || snap.protocol !== 22) throw new Error("invalid Herdr pane snapshot");
 		const panes = snap.panes.map(pane);
 		if (new Set(panes.map((p) => p.pane_id)).size !== panes.length) throw new Error("ambiguous Herdr pane snapshot");
-		return panes;
+		return { panes, tabs: snapshotTabs(snap.tabs) };
+	}
+	/** Refuse a resume when a Herdr tab already runs the session, or that is unknown; read-only. */
+	guardSession(record: WindowRecord, session: { path: string; id: string }): Promise<void> {
+		const own = this.caller();
+		return assertSessionFree(
+			{
+				own,
+				inventory: (): Promise<{ panes: Pane[]; tabs: HostTab[] }> =>
+					own ? this.inventory(own) : Promise.reject(new Error("no Herdr context")),
+				shellOnly: async (target: string): Promise<boolean> => {
+					if (!own) return false;
+					const info = object(
+						result(await this.run(own.session, ["pane", "process-info", "--pane", target])).process_info,
+					);
+					return (
+						Array.isArray(info.foreground_processes) &&
+						Number.isSafeInteger(info.shell_pid) &&
+						info.foreground_processes.every((p) => object(p).pid === info.shell_pid)
+					);
+				},
+				same: (locator: HerdrLocator, live: Pane): boolean => this.same(locator, live),
+			},
+			record,
+			session,
+		);
 	}
 	async states(): Promise<ClosableStates> {
 		const own = this.caller();
@@ -234,6 +268,11 @@ class HerdrClient implements TmuxClient {
 		const locate = (record: WindowRecord): HerdrLocator | undefined => {
 			const locator = herdrLocator(record.locator);
 			return locator && own && locator.session === own.session && locator.socket === own.socket ? locator : undefined;
+		};
+		/** A terminal Herdr now reports under other ids (pane move): still alive, never gone. */
+		const moved = (record: WindowRecord): boolean => {
+			const locator = locate(record);
+			return !!locator && !!panes?.some((p) => p.terminal_id === locator.terminal && !this.same(locator, p));
 		};
 		const listed = (record: WindowRecord): boolean => {
 			const locator = locate(record) ?? herdrPaneLocator(record.locator);
@@ -248,7 +287,7 @@ class HerdrClient implements TmuxClient {
 		const look = (record: WindowRecord): WindowLook => {
 			const locator = locate(record);
 			if (!locator || !panes) return { state: "unknown" };
-			if (!listed(record)) return { state: "gone" };
+			if (!listed(record)) return { state: moved(record) ? "unknown" : "gone" };
 			try {
 				return { state: launchStatus(locator)?.exit === undefined ? "running" : "gone", session: locator.workspace };
 			} catch {
@@ -263,6 +302,10 @@ class HerdrClient implements TmuxClient {
 			close: async (record: WindowRecord): Promise<boolean> => {
 				const locator = locate(record);
 				if (!locator || !panes || !own) throw new Error("could not verify Herdr terminal identity; no pane was closed");
+				if (moved(record))
+					throw new Error(
+						"Herdr reports this delegate's terminal under another pane or tab (moved); no pane was closed",
+					);
 				if (!listed(record)) return false;
 				// Fresh observation immediately before close. Herdr has no atomic
 				// compare-and-close API (ticket01 research); close only the owned pane,

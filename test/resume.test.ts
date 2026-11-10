@@ -262,6 +262,52 @@ test("the resume mails the task only after its window opened, and a failed send 
 	assert.equal(starts(d.s).length, 1, "no resumed delegation is recorded");
 });
 
+test("a failed send whose window cannot be closed keeps the mail error and names the window to close", async () => {
+	const d = await exitedDelegate();
+	d.s.events.on("message:send", (data) => {
+		(data as { error?: string }).error = "mailbox: refused";
+	});
+	d.s.tmux.kill = () => Promise.reject(new Error("tmux kill-window failed"));
+	const error = await resumeError(d.s, { id: d.id, task: "now the second part" });
+	const [, window] = d.s.tmux.opened;
+	const windowId = windowFields(window).windowId;
+	assert.match(error, /could not send the task to .*mailbox: refused; /, "the mail error comes first and is kept");
+	assert.ok(
+		error.includes(
+			`the delegate's tmux window ${windowId} in session ${window.session} could not be closed (tmux kill-window failed) and may still run Pi with no task`,
+		),
+		error,
+	);
+	assert.ok(error.includes(`close it yourself (tmux kill-window -t ${windowId})`), error);
+	assert.ok(d.s.tmux.windows.has(windowId), "the refused close left the window");
+	assert.equal(starts(d.s).length, 1, "no resumed delegation is recorded");
+});
+
+test("a failed send whose window already went reports only the mail error", async () => {
+	const d = await exitedDelegate();
+	d.s.events.on("message:send", (data) => {
+		(data as { error?: string }).error = "mailbox: refused";
+	});
+	d.s.tmux.kill = async (windowId) => {
+		d.s.tmux.windows.delete(windowId);
+		throw new Error("tmux kill-window failed");
+	};
+	const error = await resumeError(d.s, { id: d.id, task: "now the second part" });
+	assert.match(error, /could not send the task to .*mailbox: refused$/);
+	assert.doesNotMatch(error, /could not be closed/);
+});
+
+test("a failed send whose close and recheck both fail still names the window", async () => {
+	const d = await exitedDelegate();
+	d.s.events.on("message:send", (data) => {
+		(data as { error?: string }).error = "mailbox: refused";
+		d.s.tmux.failList = "server gone";
+	});
+	d.s.tmux.kill = () => Promise.reject(new Error("tmux kill-window failed"));
+	const error = await resumeError(d.s, { id: d.id, task: "now the second part" });
+	assert.match(error, /mailbox: refused; the delegate's tmux window @\d+ .*could not be closed/);
+});
+
 test("a resumed delegation the poll had not yet seen go is never reported closed without a result", async (t: TestContext) => {
 	t.mock.timers.enable({ apis: ["setInterval"] });
 	// The window is gone but no tick has run, so the old record is still counted as running.

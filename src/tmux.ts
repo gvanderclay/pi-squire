@@ -9,7 +9,7 @@ export { WindowOpenError } from "./host.ts";
 
 import type { WindowLocator } from "./tmux-locator.ts";
 import { liveLocator, paneLocator, tmuxLocator, tmuxLocators, verifyTmuxPaneWindow } from "./tmux-locator.ts";
-import { tmuxPaneStates, tmuxStates } from "./tmux-state.ts";
+import { closeTasklessWindow, tmuxPaneStates, tmuxStates } from "./tmux-state.ts";
 
 /** One window as tmux lists it. */
 export type TmuxWindow = { id: string; session: string; name: string; exited: boolean; locator?: WindowLocator };
@@ -454,7 +454,7 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 		...navigationVerbs(calls),
 		id: "tmux",
 		taskMailTiming: (kind) => (kind === "resume" ? "after-open" : "before-open"),
-		closeTaskless: (opened) => client.kill(opened.id).catch(() => {}),
+		closeTaskless: (opened) => closeTasklessWindow(client, opened),
 		ownsLocator: ownsTmuxLocator,
 		usesWindowPlacement: true,
 		requiresSessionGuard: tmuxLocators.requiresSessionGuard,

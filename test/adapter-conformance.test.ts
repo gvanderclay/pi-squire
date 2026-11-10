@@ -12,11 +12,6 @@ adapterConformance("memory", memoryAdapter);
 adapterConformance("memory pane-free", paneFreeMemoryAdapter);
 adapterConformance("Herdr wire", herdrAdapter);
 adapterConformance("real tmux", tmuxAdapter, noTmux ? "tmux is not installed" : false, {
-	// src/tmux.ts closeTaskless is `client.kill(opened.id).catch(() => {})`: a
-	// refused kill-window is swallowed, so a failed resume mail reports only the
-	// mail error while a taskless window may remain. Reported, not fixed here.
-	"closeTaskless reports a refused close instead of swallowing it":
-		"tmux closeTaskless swallows a refused kill-window (src/tmux.ts)",
 	// tmux parses an argument whose last character is ';' as a command
 	// separator: src/tmux.ts new-window drops it from an argv element, and an
 	// -e value ending in ';' makes new-window fail. Reported, not fixed here.

@@ -1,4 +1,5 @@
 // Actual separate-process06 owners and released provider; no models/live sessions.
+
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import { test } from "node:test";
 import type { Identity } from "../src/identity.ts";
 import type { Delegation } from "../src/results.ts";
 import type { CloseResult } from "../src/tree-close.ts";
+import { childState } from "./child-state.ts";
 import { TreeProcess } from "./tree-process-harness.ts";
 
 test("ancestor closes worker while its real coordinator owner is dead; same-id replacement processes cancellation first", async () => {
@@ -105,12 +107,12 @@ test("ancestor closes worker while its real coordinator owner is dead; same-id r
 		});
 		assert.equal(closed.details.complete, true);
 		assert.equal(
-			JSON.parse(readFileSync(join(dir, "squire", "child-tasks", "c.json"), "utf8")).records[0].closed,
+			childState(JSON.parse(readFileSync(join(dir, "squire", "child-tasks", "c.json"), "utf8"))).records[0].closed,
 			undefined,
 		);
 		replacement = new TreeProcess(dir, "./fixtures/session-owner.ts");
 		await replacement.command("boot", { session: "c" });
-		const before = JSON.parse(readFileSync(join(dir, "squire", "child-tasks", "c.json"), "utf8"));
+		const before = childState(JSON.parse(readFileSync(join(dir, "squire", "child-tasks", "c.json"), "utf8")));
 		assert.equal(before.records[0].closed, true);
 		assert.equal(before.records[0].result, undefined);
 		assert.equal(before.outcomes.length, 1);
@@ -118,7 +120,7 @@ test("ancestor closes worker while its real coordinator owner is dead; same-id r
 		assert.equal(correlatedFinals(task.envelope.id).length, 0, "restoration alone cannot settle the task");
 		await replacement.command("run");
 		await root.command("scan"); // The receiver may claim new/ into cur/ before the assertion.
-		const after = JSON.parse(readFileSync(join(dir, "squire", "child-tasks", "c.json"), "utf8"));
+		const after = childState(JSON.parse(readFileSync(join(dir, "squire", "child-tasks", "c.json"), "utf8")));
 		assert.equal(after.outcomes.length, 0, "non-stopped processing run acknowledges cancellation");
 		const replies = correlatedFinals(task.envelope.id);
 		assert.equal(replies.length, 1, "exactly one correlated coordinator final survives receiver claim");

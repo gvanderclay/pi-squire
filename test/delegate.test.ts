@@ -491,7 +491,7 @@ test("the delegation is recorded with no task text, and the parent gets a notice
 	const id = s.entries[0].data.id as string;
 	assert.deepEqual(s.entries, [
 		{
-			customType: "delegate",
+			customType: "delegate-start-v2",
 			data: {
 				id,
 				identity: {

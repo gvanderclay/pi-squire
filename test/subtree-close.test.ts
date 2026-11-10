@@ -8,6 +8,7 @@ import { readIdentity } from "../src/identity.ts";
 import type { Delegation, StartedRecorded } from "../src/results.ts";
 import type { CloseDetails } from "../src/tree-close.ts";
 import { readTree, reconcileTree, treeCounts, treePath } from "../src/tree-registry.ts";
+import { childState } from "./child-state.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
@@ -145,7 +146,9 @@ test("real worker reply mid-close wins semantic state; a genuine late reply stil
 	await lateWorker.run();
 	scan(coordinator);
 	assert.equal(record(coordinator, later.id).result?.status, "done");
-	const saved = JSON.parse(readFileSync(join(agentDir, "squire", "child-tasks", `${coordinator.parent}.json`), "utf8"));
+	const saved = childState(
+		JSON.parse(readFileSync(join(agentDir, "squire", "child-tasks", `${coordinator.parent}.json`), "utf8")),
+	);
 	assert.ok(!saved.outcomes.some((outcome: { key: string }) => outcome.key === `closed:${later.id}`));
 });
 
@@ -182,9 +185,9 @@ test("UI cancellation wakes a stopped root, but stopped prior outcomes stay held
 	await nextTurn();
 	assert.equal(again.sent.length, 0, "explicit stop holds prior replay on reopen");
 	const path = join(agentDir, "squire", "child-tasks", `${owner.parent}.json`);
-	assert.equal(JSON.parse(readFileSync(path, "utf8")).outcomes.length, 1);
+	assert.equal(childState(JSON.parse(readFileSync(path, "utf8"))).outcomes.length, 1);
 	await again.run();
-	assert.equal(JSON.parse(readFileSync(path, "utf8")).outcomes.length, 0);
+	assert.equal(childState(JSON.parse(readFileSync(path, "utf8"))).outcomes.length, 0);
 });
 
 test("same-id reattached coordinator closes CURRENT verified locator, not historical parent window", async () => {

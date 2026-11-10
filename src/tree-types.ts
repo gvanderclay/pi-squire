@@ -26,7 +26,8 @@ export type TreeEntry = WindowRecord & {
 	createPending?: boolean;
 };
 export type TreeClose = { id: string; target: string; entries: string[] };
-export type TreeState = { version: 1; root: string; entries: TreeEntry[]; closes?: TreeClose[] };
+/** v2 fences released v1 writers before opaque routing identities are published. */
+export type TreeState = { version: 2; root: string; entries: TreeEntry[]; closes?: TreeClose[] };
 export type Reservation = { root: string; id: string };
 export type TreeIntent = Pick<TreeEntry, "id" | "sessionId" | "identity" | "resumedFrom" | "forkedFrom" | "sessionDir">;
 export type TreeCounts = { concurrent: number; lifetime: number };

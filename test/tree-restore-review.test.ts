@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
 import { requestRootTrust, trustEndpointPath } from "../src/trust-wire.ts";
+import { childState } from "./child-state.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
@@ -111,7 +112,7 @@ test("a failed transcript enumeration keeps local obligations and a sticky compl
 	assert.equal(envelopes(owner.parent, "new").filter((mail) => mail.in_reply_to.length).length, 0);
 	await assert.rejects(reopened.toolCall("delegate", { agent: "worker", task: "new" }), /restoration failed/);
 	assert.ok(
-		JSON.parse(readFileSync(join(agentDir, "squire", "child-tasks", `${c.id}.json`), "utf8")).records.some(
+		childState(JSON.parse(readFileSync(join(agentDir, "squire", "child-tasks", `${c.id}.json`), "utf8"))).records.some(
 			(record: Delegation) => record.id === w.id,
 		),
 	);
@@ -295,7 +296,8 @@ test("a fresh live result after a root abort still steers and starts a turn", as
 	const result = owner.sent.filter((item) => item.message.customType === "delegate").at(-1)!;
 	assert.deepEqual(result.options, { triggerTurn: true, deliverAs: "steer" });
 	assert.equal(
-		JSON.parse(readFileSync(join(agentDir, "squire", "child-tasks", `${owner.parent}.json`), "utf8")).paused,
+		childState(JSON.parse(readFileSync(join(agentDir, "squire", "child-tasks", `${owner.parent}.json`), "utf8")))
+			.paused,
 		false,
 	);
 });
@@ -315,7 +317,8 @@ test("a fresh live gone outcome after a root abort keeps its original wake deliv
 		"preserve pre06 root gone contract; coordinators use steer",
 	);
 	assert.equal(
-		JSON.parse(readFileSync(join(agentDir, "squire", "child-tasks", `${owner.parent}.json`), "utf8")).paused,
+		childState(JSON.parse(readFileSync(join(agentDir, "squire", "child-tasks", `${owner.parent}.json`), "utf8")))
+			.paused,
 		false,
 	);
 });

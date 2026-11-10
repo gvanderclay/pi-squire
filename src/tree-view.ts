@@ -3,6 +3,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readChildRecords } from "./child-tasks.ts";
 import { type Identity, maxDepth, readIdentity } from "./identity.ts";
+import { isV2Start, START_TYPE } from "./result-types.ts";
 import { isStarted, type Recorded, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import { locatedRecord, recordLocator } from "./tmux.ts";
@@ -250,10 +251,13 @@ export function accountingFor(record: StartedRecorded): string | undefined {
 	return entry.phase;
 }
 export function historicalRecord(id: string, ctx: ExtensionContext): StartedRecorded | undefined {
+	let found: StartedRecorded | undefined;
 	for (const entry of ctx.sessionManager.getEntries())
-		if (entry.type === "custom" && entry.customType === "delegate") {
+		if (entry.type === "custom" && ["delegate", START_TYPE].includes(entry.customType)) {
 			const value = entry.data as StartedRecorded | undefined;
-			if (value?.id === id && typeof value.requestId === "string") return locatedRecord(value);
+			if (entry.customType === START_TYPE && !isV2Start(value))
+				throw new Error("invalid v2 delegate start; historical lookup refused");
+			if (!found && value?.id === id && typeof value.requestId === "string") found = locatedRecord(value);
 		}
-	return undefined;
+	return found;
 }

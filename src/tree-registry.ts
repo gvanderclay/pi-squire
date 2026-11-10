@@ -29,10 +29,15 @@ export function treePath(root: string): string {
 	return join(getAgentDir(), "squire", "trees", `${encodeURIComponent(root)}.json`);
 }
 function load(root: string): TreeState {
-	const saved: TreeState | undefined = readState<TreeState>(treePath(root));
-	const state: TreeState = saved === undefined ? { version: 1, root, entries: [] } : saved;
-	if (state?.version !== 1 || state.root !== root || !Array.isArray(state.entries))
+	const saved = readState<Omit<TreeState, "version"> & { version: number }>(treePath(root));
+	if (saved !== undefined && (!saved || saved.root !== root || !Array.isArray(saved.entries)))
 		throw new Error(`invalid tree registry for ${root}; admission blocked`);
+	if (saved !== undefined && ![1, 2].includes(saved.version))
+		throw new Error(`unsupported tree registry version ${String(saved.version)} for ${root}; admission blocked`);
+	// Released v0.20.2 load() rejects version !== 1 before its writer callback.
+	// Reads project v1 in memory only. The first successful transaction publishes
+	// v2 and opaque identities together, under the SAME lock/path old writers use.
+	const state: TreeState = { ...(saved ?? { root, entries: [] }), version: 2 };
 	const ids: Set<string> = new Set();
 	for (const entry of state.entries) {
 		if (
@@ -107,6 +112,7 @@ export function treeTransaction<T>(root: string, work: (state: TreeState) => T):
 	return withTreeLock(`${treePath(root)}.lock`, () => {
 		const state: TreeState = load(root);
 		const result: T = work(state);
+		if (state.version !== 2) throw new Error("tree registry downgrade refused; no changes were written");
 		normalizeEntries(state);
 		writeState(treePath(root), state);
 		return result;

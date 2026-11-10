@@ -1,0 +1,346 @@
+// Frozen executable v0.20.2 (c27b082d19662bdca37f5d4fb02e94b3037ed4ac) src/results.ts.
+// Type annotations stripped; only import paths relocated. See README.md.
+// The delegation records and the result message. A delegation is recorded in
+// the parent session when it starts, and again when it is closed; when the
+// provider claims a reply that answers a recorded task, this listener takes
+// the message over, shows the parent one delegate result and records the
+// result. Local records own result processing; the shared tree registry owns
+// cross-process admission accounting.
+
+import { ChildTasks } from "./child-tasks.mjs";
+
+import { cwdLine, modelLabel, renderMessage, workspaceLine } from "../../../src/render.ts";
+import { closeOutcome } from "../../../src/result-close.ts";
+import { resultDetails, resultText, resumeDetails } from "../../../src/result-message.ts";
+import { restoreRecords } from "./result-restore.mjs";
+import { finishedModel, locateSession, sessionIdOf } from "../../../src/result-sessions.ts";
+import { isStarted, recordedName } from "../../../src/result-types.ts";
+import { ResultsPresentation } from "../../../src/results-presentation.ts";
+import { inspectWorkspace } from "../../../src/snapshot.ts";
+
+export { findSession, finishedModel, sessionHeaderCwd, sessionIdOf } from "../../../src/result-sessions.ts";
+
+export { isStarted, locateSession };
+
+/** The session entry type both delegation records and results use. */
+export const CUSTOM_TYPE = "delegate";
+/** The footer entry that counts delegations whose result has not arrived. */
+export const STATUS_KEY = "delegate";
+/** The `pi.events` channel a provider emits claimed envelopes on. */
+const INBOUND = "message:inbound";
+
+/** One delegation, as recorded and rebuilt on resume. It holds no task text. */
+
+/**
+ * An envelope on the `message:inbound` payload. `delegate` declares its own
+ * copy of the provider's shape; the provider's README owns the contract.
+ */
+
+/** A reply's request copy from the parent's `sent/`. */
+
+/** A result, appended to the session so it is shown once and survives a resume. */
+
+/** What both delegate messages carry for their view, beside the text the model reads. */
+
+/** The task as the result quotes it: its text and copy path, or why there is none. */
+
+/** The details of a delegate message; the renderer draws from these. */
+
+/** The provider's payload on `message:inbound`. */
+
+/** What tmux reported for a delegation's window: listed, not listed, or not askable. */
+
+/**
+ * A delegation's state. `closed` is a recorded `delegation_close`; `gone` is
+ * closed without a result (the poll found the window missing); `window-closed`
+ * is a window tmux no longer lists, seen when asked directly.
+ */
+
+export { delegateName, deriveState, recordedName } from "../../../src/result-types.ts";
+
+export function createResults(
+	pi,
+	processesChildren = () => false,
+	publish = () => {},
+	active = () => true,
+	closedChildren = () => [],
+) {
+	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
+	/** Every recorded delegation by its id, in the order recorded. */
+	const byId = new Map();
+	const tasks = new ChildTasks();
+	const save = () => {
+		try {
+			tasks.save([...byId.values()]);
+		} catch (error) {
+			tasks.failed = true;
+			ctx?.ui.notify(
+				`delegate: could not persist child tasks: ${String(error)}; keep this session open, repair storage and run again. Completion is blocked.`,
+				"error",
+			);
+			throw error;
+		}
+		try {
+			if (ctx) publish(ctx, [...byId.values()]);
+		} catch (error) {
+			ctx?.ui.notify(
+				`delegate: could not publish shared accounting: ${String(error)}. Local child facts are saved; the next admission reconciles them before checking caps.`,
+				"warning",
+			);
+		}
+	};
+	let replay;
+	/** Started records by their request's envelope id, for matching replies; attempts never match a reply. */
+	const byRequest = new Map();
+	/** Reply envelope ids a result message has already been sent for. */
+	const shown = new Set();
+	/** The latest session context, for the footer and the session directory. */
+	let ctx;
+	const presentation = new ResultsPresentation();
+
+	/**
+	 * A delegation still going: no result, no recorded close, and not resumed.
+	 * A resumed one's process is gone (resuming proved it), so the poll must not
+	 * report it closed without a result; a late reply to it is still delivered.
+	 */
+	const running = () => {
+		const records = [...byId.values()];
+		const resumed = new Set(records.flatMap((record) => (isStarted(record) ? (record.resumedFrom ?? []) : [])));
+		return records.filter(
+			(record) =>
+				isStarted(record) &&
+				record.result === undefined &&
+				record.closed !== true &&
+				record.gone !== true &&
+				!resumed.has(record.id),
+		);
+	};
+
+	/** The started record for `id`, if it is one. */
+	const startedById = (id) => {
+		const record = typeof id === "string" ? byId.get(id) : undefined;
+		return record !== undefined && isStarted(record) ? record : undefined;
+	};
+
+	/** The footer counts the running delegations, and hides itself at zero. */
+	function updateFooter() {
+		presentation.update(ctx, running().length);
+	}
+
+	/** Rebuild the records from the session's entries, so a resume still recognises replies. */
+	function restore(context) {
+		if (replay) clearImmediate(replay);
+		ctx = context;
+		byId.clear();
+		byRequest.clear();
+		shown.clear();
+		for (const record of restoreRecords(context, tasks)) {
+			byId.set(record.id, record);
+			if (isStarted(record)) {
+				byRequest.set(record.requestId, record);
+				if (record.result) shown.add(record.result.replyId);
+			}
+		}
+		if (tasks.storageProblem())
+			context.ui.notify(
+				`delegate: could not restore child tasks: ${tasks.storageProblem()}; task completion is blocked.`,
+				"error",
+			);
+		syncCloses(false);
+		updateFooter();
+		// Mail is already claimed; replay only outcomes not processed by a
+		// settled coordinator run. No live worker is recreated.
+		if (!tasks.failed && tasks.outcomes.length) {
+			const session = context.sessionManager.getSessionId();
+			replay = setImmediate(() => {
+				replay = undefined;
+				if (!active() || ctx?.sessionManager.getSessionId() !== session) return;
+				tasks.replay(pi, processesChildren());
+				save();
+			});
+		}
+	}
+
+	function recordStart(delegation, context) {
+		ctx = context;
+		pi.appendEntry(CUSTOM_TYPE, delegation);
+		const record = { ...delegation };
+		byId.set(record.id, record);
+		byRequest.set(record.requestId, record);
+		save();
+		updateFooter();
+	}
+
+	function recordAttempt(attempt, context) {
+		ctx = context;
+		pi.appendEntry(CUSTOM_TYPE, attempt);
+		byId.set(attempt.id, { ...attempt });
+		save();
+	}
+
+	function recordClose(id, wake = true) {
+		const record = startedById(id);
+		if (record === undefined || record.closed === true) return;
+		record.closed = true;
+		const outcome = record.result || record.gone ? undefined : closeOutcome(record, ctx);
+		if (outcome) {
+			tasks.outcomes.push(outcome);
+			if (wake) tasks.paused = false;
+		}
+		save(); // Close and its processing obligation persist together, before transcript/display effects.
+		pi.appendEntry(CUSTOM_TYPE, { id, closed: true });
+		if (outcome && wake) {
+			pi.sendMessage(
+				{ customType: CUSTOM_TYPE, content: outcome.content, details: outcome.details, display: true },
+				{ triggerTurn: true, deliverAs: processesChildren() ? "steer" : "followUp" },
+			);
+			tasks.delivered(outcome.key);
+			save();
+		}
+		updateFooter();
+	}
+
+	function syncCloses(wake = true) {
+		if (!ctx || !active() || tasks.failed) return;
+		try {
+			for (const id of closedChildren(ctx)) recordClose(id, wake);
+		} catch (error) {
+			ctx.ui.notify(
+				`delegate: confirmed close import unavailable: ${String(error)}; pending children remain unresolved.`,
+				"warning",
+			);
+		}
+	}
+
+	function recordGone(id) {
+		const record = startedById(id);
+		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true)
+			return false;
+		const session = locateSession(record, ctx?.sessionManager.getSessionDir());
+		const finished = finishedModel(session);
+		pi.appendEntry(CUSTOM_TYPE, { id, gone: true, ...(session === undefined ? {} : { sessionPath: session }) });
+		record.gone = true;
+		const details = {
+			kind: "gone",
+			name: recordedName(record),
+			agent: record.agent,
+			model: record.model,
+			...(finished === undefined ? {} : { finishedModel: finished }),
+			id: record.id,
+			...resumeDetails(record),
+			requestId: record.requestId,
+			...(session === undefined ? {} : { sessionPath: session }),
+			...(record.cwd === undefined ? {} : { cwd: record.cwd }),
+			...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
+			...(record.workspace === undefined ? {} : { workspace: record.workspace }),
+			windowName: record.windowName,
+		};
+		const content = [
+			`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`}${record.forkedFrom === undefined ? "" : ` (forked from ${record.forkedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${record.windowName} is gone and no reply arrived.`,
+			`Working directory: ${cwdLine(record.cwd)}`,
+			...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
+			`Delegate session: ${session ?? sessionIdOf(record)}`,
+			"A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
+		].join("\n");
+		tasks.paused = false; // A fresh outcome is new work, not replay of the stopped turn.
+		tasks.outcomes.push({ key: `gone:${record.id}`, content, details });
+		save();
+		pi.sendMessage(
+			{ customType: CUSTOM_TYPE, details, content, display: true },
+			{ triggerTurn: true, deliverAs: processesChildren() ? "steer" : "followUp" },
+		);
+		tasks.delivered(`gone:${record.id}`);
+		save();
+		updateFooter();
+		return true;
+	}
+
+	function takeReply(payload) {
+		if (payload?.handled === true) return;
+		const reply = payload?.envelope;
+		if (reply === undefined || !Array.isArray(reply.in_reply_to) || reply.in_reply_to.length === 0) return;
+		// Only the delegate's own reply counts: `from` must be the delegation's session id.
+		const matches = reply.in_reply_to
+			.map((id) => byRequest.get(id))
+			.filter((record) => record !== undefined && sessionIdOf(record) === reply.from);
+		if (matches.length === 0) return;
+		payload.handled = true;
+		// Transport retries have fresh envelope ids. Correlate on every task id,
+		// not just the envelope, and never present an already answered task again.
+		const pending = matches.filter((record) => record.result === undefined);
+		if (shown.has(reply.id) || pending.length === 0) return;
+		const delegation = pending.at(-1);
+		shown.add(reply.id);
+		const session = locateSession(delegation, ctx?.sessionManager.getSessionDir());
+		const finished = finishedModel(session);
+		// After the claim above, so a slow or failing inspection cannot let the provider or a duplicate deliver it too.
+		const snapshot = inspectWorkspace(delegation.workspace?.cwd, delegation.workspace?.git);
+		const details = resultDetails(delegation, recordedName(delegation), payload, session, finished, snapshot);
+		const result = {
+			status: reply.status,
+			replyId: reply.id,
+			envelopePath: payload.path,
+			...(session === undefined ? {} : { sessionPath: session }),
+			...(finished === undefined ? {} : { finishedModel: finished }),
+			workspaceSnapshot: snapshot,
+		};
+		for (const record of pending) {
+			pi.appendEntry(CUSTOM_TYPE, { id: record.id, result });
+			record.result = result;
+		}
+		const content = resultText(details);
+		const answered = new Set(pending.map((record) => record.id));
+		tasks.outcomes = tasks.outcomes.filter(
+			(outcome) => outcome.details.kind !== "gone" || !answered.has(outcome.details.id),
+		);
+		tasks.paused = false; // Only old replay is held by a root stop, not a new live result.
+		tasks.outcomes.push({ key: reply.id, content, details });
+		save();
+		// Persist first, then steer. A crash before injection is recovered from
+		// the processing inbox, not from the provider's already-claimed mail.
+		pi.sendMessage(
+			{ customType: CUSTOM_TYPE, content, details, display: true },
+			{ triggerTurn: true, deliverAs: "steer" },
+		);
+		tasks.delivered(reply.id);
+		save();
+		updateFooter();
+	}
+
+	pi.on("context", () => syncCloses());
+	pi.on("agent_before_settle", () => syncCloses());
+	pi.on("agent_settled", () => syncCloses());
+	tasks.register(
+		pi,
+		() => [...byId.values()],
+		() => ctx,
+		processesChildren,
+	);
+
+	pi.on("session_shutdown", () => {
+		if (replay) clearImmediate(replay);
+		replay = undefined;
+		ctx = undefined;
+	});
+	pi.events.on(INBOUND, (data) => takeReply(data));
+
+	return {
+		subscribe: presentation.subscribe,
+		setCountVisible: presentation.setCountVisible,
+		restore,
+		recordStart,
+		recordAttempt,
+		recordClose,
+		syncCloses,
+		running,
+		recordGone,
+		list: () => [...byId.values()],
+		find: (id) => byId.get(id),
+		completionReady: () => !tasks.failed && running().length === 0 && tasks.outcomes.length === 0,
+		checkStorage: (write = false) => {
+			const problem = tasks.storageProblem();
+			if (problem) throw new Error(problem);
+			if (write) save();
+		},
+	};
+}

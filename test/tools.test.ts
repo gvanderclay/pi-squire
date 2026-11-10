@@ -366,7 +366,7 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 	assert.equal(s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--model") + 1], "alpha/fast-model");
 	assert.equal(s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--thinking") + 1], "low");
 	assert.deepEqual(s.entries[0], {
-		customType: "delegate",
+		customType: "delegate-start-v2",
 		data: {
 			id,
 			identity: {

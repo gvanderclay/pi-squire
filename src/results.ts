@@ -19,6 +19,7 @@ import {
 	isStarted,
 	type Recorded,
 	recordedName,
+	START_TYPE,
 	type StartedRecorded,
 	type WorkspaceAttempt,
 } from "./result-types.ts";
@@ -304,7 +305,7 @@ export function createResults(
 	function recordStart(delegation: Delegation, context: ExtensionContext): void {
 		ctx = context;
 		const record: StartedRecorded = locatedRecord(delegation);
-		pi.appendEntry(CUSTOM_TYPE, { ...record });
+		pi.appendEntry(START_TYPE, { ...record });
 		byId.set(record.id, record);
 		byRequest.set(record.requestId, record);
 		save();

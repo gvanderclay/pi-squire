@@ -2,7 +2,7 @@
 // Any incomplete authoritative read latches a failure until a fresh restore.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildTasks } from "./child-tasks.ts";
-import { isStarted, type Recorded, type WorkspaceAttempt } from "./result-types.ts";
+import { isStarted, isV2Start, type Recorded, START_TYPE, type WorkspaceAttempt } from "./result-types.ts";
 import type { Delegation, Result } from "./results.ts";
 import { locatedRecord } from "./tmux.ts";
 import { belongsTo, restoredStarts } from "./tree-view.ts";
@@ -51,10 +51,14 @@ function accept(record: Recorded, ctx: ExtensionContext, tasks: ChildTasks, loca
 }
 function transcript(ctx: ExtensionContext, tasks: ChildTasks, byId: Map<string, Recorded>): void {
 	for (const entry of ctx.sessionManager.getEntries()) {
-		if (entry.type !== "custom" || entry.customType !== "delegate") continue;
+		if (entry.type !== "custom" || !["delegate", START_TYPE].includes(entry.customType)) continue;
 		const data = entry.data as
 			| Partial<Delegation & { kind: string; result: Result; closed: boolean; gone: boolean }>
 			| undefined;
+		if (entry.customType === START_TYPE && !isV2Start(data)) {
+			tasks.blockRestore(new Error("invalid v2 delegate start; restoration blocked"));
+			continue;
+		}
 		if (!data || typeof data.id !== "string") continue;
 		if (data.kind === "workspace-attempt" || typeof data.requestId === "string") {
 			restoreStart(data as Recorded, ctx, tasks, byId);

@@ -8,6 +8,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
+import { childState } from "./child-state.ts";
 
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 
@@ -220,7 +221,7 @@ test("recovery replays saved legacy result text without rewriting it or filling 
 	deliver(s, "done", "The saved answer.", "The original task.");
 	const path = join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`);
 	await s.shutdown();
-	const state = JSON.parse(readFileSync(path, "utf8")) as {
+	const state = childState(JSON.parse(readFileSync(path, "utf8"))) as {
 		outcomes: { content: string; delivered?: boolean; details: Record<string, unknown> }[];
 	};
 	const outcome = state.outcomes[0];

@@ -141,7 +141,7 @@ async function navigationStates(
 ): Promise<import("./window-state.ts").PaneStates> {
 	const snapshots = await Promise.all(adapters.map((adapter) => adapter.paneStates?.()));
 	const states = await observeHosts(adapters, owner);
-	return { ...states, listing: snapshots.find((snapshot) => snapshot?.listing !== undefined)?.listing };
+	return { ...states, livePanes: snapshots.find((snapshot) => snapshot?.livePanes !== undefined)?.livePanes };
 }
 
 /** Startup recovery is a positive observation, not a launch fallback. */

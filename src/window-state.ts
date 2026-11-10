@@ -1,6 +1,6 @@
 // A shared observation and close protocol; hosts own how they obtain it.
 import type { DelegateHost } from "./host.ts";
-import type { PaneListing } from "./tmux.ts";
+import type { LivePaneLocator } from "./locators.ts";
 import { windowStates } from "./tmux-state.ts";
 
 export type { WindowRecord } from "./locators.ts";
@@ -39,11 +39,22 @@ export type ClosableStates = WindowStates & {
 	close(record: WindowRecord): Promise<boolean>;
 };
 
-/** One `list-panes` ask: the window states, plus the pane listing a caller verifying a live pane reads. */
-export type PaneStates = WindowStates & { readonly listing: PaneListing | undefined };
+/** One host snapshot that places a live pane in its current window without another ask. */
+export type LivePanes = {
+	/** Whether this snapshot lists the record's own window with its program running. */
+	running(record: WindowRecord): boolean;
+	/** The running window this snapshot lists the live pane in, when this host owns the pane. */
+	windowOf(live: LivePaneLocator): WindowRecord | undefined;
+};
+
+/**
+ * One pane ask: the window states, plus the live panes it can place.
+ * `livePanes` is absent when the ask failed, it listed nothing to place, or the host has no live pane.
+ */
+export type PaneStates = WindowStates & { readonly livePanes: LivePanes | undefined };
 
 /** Every record unknown: nothing was asked. */
-export const UNASKED: PaneStates = { ...windowStates(undefined), listing: undefined };
+export const UNASKED: PaneStates = { ...windowStates(undefined), livePanes: undefined };
 export function askWindowStates(host: DelegateHost): Promise<ClosableStates> {
 	return host.states();
 }
@@ -51,5 +62,5 @@ export function askToClose(host: DelegateHost): Promise<ClosableStates> {
 	return host.states(true);
 }
 export async function askPaneStates(host: DelegateHost): Promise<PaneStates> {
-	return host.paneStates ? host.paneStates() : { ...(await host.states()), listing: undefined };
+	return host.paneStates ? host.paneStates() : { ...(await host.states()), livePanes: undefined };
 }

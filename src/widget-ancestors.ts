@@ -1,15 +1,9 @@
 // Read-only exact-session ancestry and live navigation. No adoption or resume.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { sameLiveTarget, verifyLiveWindow } from "./current-window.ts";
 import type { DelegateHost } from "./host.ts";
 import { type Identity, readIdentity } from "./identity.ts";
-import {
-	sameLiveLocator,
-	sameVerifiedWindow,
-	type VerifiedLiveWindow,
-	verifyPaneWindow,
-	windowFacts,
-	windowPresentation,
-} from "./locators.ts";
+import { sameVerifiedWindow, windowFacts, windowPresentation } from "./locators.ts";
 import { locateSession, recordedName } from "./results.ts";
 import { matchesSessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { readTreeDisplay, type TreeEntry } from "./tree-registry.ts";
@@ -107,15 +101,6 @@ export class BreadcrumbView {
 	}
 }
 
-function sameTarget(a: LiveLocator, b: LiveLocator): boolean {
-	return a.generation === b.generation && a.ownerToken === b.ownerToken && sameLiveLocator(a.locator, b.locator);
-}
-
-/** Positive own-server + exact target-pane + id/name listing, not a launch snapshot. */
-export async function verifyLiveWindow(tmux: DelegateHost, live: LiveLocator): Promise<VerifiedLiveWindow | undefined> {
-	return verifyPaneWindow(tmux, live.locator);
-}
-
 export async function switchAncestor(
 	ctx: ExtensionContext,
 	sessionId: string,
@@ -134,7 +119,7 @@ export async function switchAncestor(
 		const current: LiveLocator | undefined = await reader.locator(sessionId);
 		assertActive();
 		const verified = current ? await verifyLiveWindow(tmux, current) : undefined;
-		if (!current || !sameTarget(live, current) || !verified || !sameVerifiedWindow(pane, verified))
+		if (!current || !sameLiveTarget(live, current) || !verified || !sameVerifiedWindow(pane, verified))
 			throw new Error("ancestor window changed or is unavailable");
 		assertActive();
 		if (!ancestorSessions(ctx).some((ancestor) => ancestor.sessionId === sessionId))

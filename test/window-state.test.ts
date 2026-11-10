@@ -17,7 +17,7 @@ test("a window matches on both id and name, and an exited program counts as gone
 test("no listing, or nothing asked, is unknown and never gone", () => {
 	assert.deepEqual(windowStates(undefined).look(record), { state: "unknown" });
 	assert.equal(UNASKED.state(record), "unknown");
-	assert.equal(UNASKED.listing, undefined);
+	assert.equal(UNASKED.livePanes, undefined);
 });
 
 test("one ask serves every record, and a failed ask is unknown", async () => {
@@ -38,18 +38,19 @@ test("one ask serves every record, and a failed ask is unknown", async () => {
 	assert.equal(tmux.listCalls, 2);
 });
 
-test("a pane ask gives states from its window listing and keeps the listing", async () => {
+test("a pane ask gives states from its window listing and keeps its live panes", async () => {
 	const tmux = new FakeTmux();
 	tmux.addWindow("@1", "worker-ab12", "work");
 	const panes = await askPaneStates(tmux);
 	assert.equal(tmux.paneListCalls, 1);
 	assert.equal(tmux.listCalls, 0);
 	assert.equal(panes.state(record), "running");
-	assert.ok(panes.listing);
+	assert.ok(panes.livePanes);
+	assert.equal(panes.livePanes.running(record), true);
 	tmux.failList = "no server";
 	const failed = await askPaneStates(tmux);
 	assert.equal(failed.state(record), "unknown");
-	assert.equal(failed.listing, undefined);
+	assert.equal(failed.livePanes, undefined);
 });
 
 test("listed distinguishes an exited window from an absent or unknown one without another ask", async () => {

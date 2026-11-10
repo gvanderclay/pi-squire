@@ -1,9 +1,10 @@
 // One tmux observation answers many records; low-level listing and kill stay here.
 
-import { matchWindow, recordLocator, type TmuxClient, type TmuxWindow } from "./tmux.ts";
-import { tmuxLocator } from "./tmux-locator.ts";
+import { matchWindow, type PaneListing, recordLocator, type TmuxClient, type TmuxWindow } from "./tmux.ts";
+import { currentLiveWindow, type LivePaneLocator, tmuxLocator } from "./tmux-locator.ts";
 import type {
 	ClosableStates,
+	LivePanes,
 	PaneStates,
 	WindowLook,
 	WindowRecord,
@@ -55,5 +56,15 @@ export async function tmuxStates(tmux: TmuxClient, strict = false): Promise<Clos
 }
 export async function tmuxPaneStates(tmux: TmuxClient): Promise<PaneStates> {
 	const listing = await tmux.listPanes().catch(() => undefined);
-	return { ...windowStates(listing?.windows), listing };
+	const states = windowStates(listing?.windows);
+	return { ...states, livePanes: listing ? livePanes(listing, states) : undefined };
+}
+
+/** Panes on one positively identified server with windows; anything else places nothing. */
+function livePanes(listing: PaneListing, states: WindowStates): LivePanes | undefined {
+	if (!listing.server || !listing.windows.length) return undefined;
+	return {
+		running: (record: WindowRecord): boolean => states.state(record) === "running",
+		windowOf: (live: LivePaneLocator): WindowRecord | undefined => currentLiveWindow(listing, live),
+	};
 }

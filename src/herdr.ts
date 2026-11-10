@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { type HerdrLocator, type HerdrPaneLocator, herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
 import { assertSessionFree, type HostTab, snapshotTabs } from "./herdr-restore.ts";
 import {
+	type DelegateHost,
 	type OpenedWindow,
 	type ShowResult,
-	type TmuxClient,
 	WindowOpenError,
 	type WindowRecord,
 	type WindowSpec,
@@ -188,8 +188,14 @@ function verifyForeground(info: Json, locator: HerdrLocator): void {
 }
 
 type HerdrOptions = { run?: HerdrRun; context?: () => HerdrContext | undefined; timeoutMs?: number };
-class HerdrClient implements TmuxClient {
+class HerdrClient implements DelegateHost {
+	readonly id = "herdr";
+	ownsLocator(value: unknown): boolean {
+		return !!herdrLocator(value) || !!herdrPaneLocator(value);
+	}
 	readonly windowNoun = "tab";
+	readonly usesWindowPlacement = false;
+	readonly requiresSessionGuard = true;
 	readonly windowListRefusal = "could not ask Herdr for its delegate tabs";
 	readonly refusal =
 		"this session is not inside a Herdr pane (needs HERDR_ENV=1, HERDR_WORKSPACE_ID, HERDR_PANE_ID and HERDR_SOCKET_PATH); start Pi in Herdr to open a delegate tab (multiplexer: herdr)";
@@ -487,17 +493,8 @@ class HerdrClient implements TmuxClient {
 		if (!locator) throw new Error("no verified open tab for this delegation; tab changed or unavailable");
 		return this.run(locator, ["pane", "read", locator.pane, "--source", "recent"]);
 	}
-	async listWindows(): Promise<never> {
-		throw new Error("Herdr windows must be observed through terminal-fenced states");
-	}
-	async listPanes(): Promise<never> {
-		throw new Error("Herdr live panes must be observed through terminal-fenced navigation");
-	}
-	async kill(): Promise<never> {
-		throw new Error("Herdr close requires a terminal-fenced locator");
-	}
 }
 
-export function createHerdrClient(options: HerdrOptions = {}): TmuxClient {
+export function createHerdrClient(options: HerdrOptions = {}): DelegateHost {
 	return new HerdrClient(options);
 }

@@ -8,10 +8,10 @@ import { isStarted, type Recorded } from "./result-types.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import { readTaskState, taskStatePath } from "./task-store.ts";
 import {
+	type DelegateHost,
 	locatedRecord,
 	recordLocator,
 	sameWindowLocator,
-	type TmuxClient,
 	validWindowLocator,
 	type WindowLocator,
 	windowLocator,
@@ -357,7 +357,7 @@ function reconcileWindows(state: TreeState, snapshot: TreeState, windows: Window
 	}
 }
 /** Snapshot before tmux: a newly started child cannot be judged by an old list. */
-export async function reconcileTree(root: string, tmux: TmuxClient): Promise<void> {
+export async function reconcileTree(root: string, tmux: DelegateHost): Promise<void> {
 	const snapshot: TreeState = readTree(root);
 	const windows: WindowStates | undefined = snapshot.entries.some(
 		(entry) => entry.phase === "started" && !entry.finished && !entry.gone && !entry.closed,

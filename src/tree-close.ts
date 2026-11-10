@@ -2,7 +2,7 @@
 // separately imports confirmed closes into its own semantic processing inbox.
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
-import { recordLocator, sameWindowLocator, type TmuxClient, windowPresentation } from "./tmux.ts";
+import { type DelegateHost, recordLocator, sameWindowLocator, windowPresentation } from "./tmux.ts";
 import { below } from "./tree-fence.ts";
 import { descendants, readTree, treeTransaction } from "./tree-registry.ts";
 import type { TreeClose, TreeEntry, TreeState } from "./tree-types.ts";
@@ -125,7 +125,7 @@ async function closeMember(
 	root: string,
 	close: TreeClose,
 	entry: TreeEntry,
-	tmux: TmuxClient,
+	tmux: DelegateHost,
 	assertActive: () => void,
 ): Promise<CloseMember> {
 	if (entry.phase === "not-started") return member(entry, "not-started");
@@ -164,7 +164,7 @@ export type CloseOptions = {
 	root: string;
 	actor: string;
 	id?: string;
-	tmux: TmuxClient;
+	tmux: DelegateHost;
 	assertActive(): void;
 };
 /** Narrow shared control entry point; no UI/mail/foreign semantic writes. */

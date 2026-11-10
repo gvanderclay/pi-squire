@@ -5,9 +5,9 @@ import { type Identity, readIdentity } from "./identity.ts";
 import { locateSession, recordedName } from "./results.ts";
 import { matchesSessionOwner, sessionIsOwned } from "./session-owner.ts";
 import {
+	type DelegateHost,
 	sameLiveLocator,
 	sameVerifiedWindow,
-	type TmuxClient,
 	type VerifiedLiveWindow,
 	verifyPaneWindow,
 	windowPresentation,
@@ -112,14 +112,14 @@ function sameTarget(a: LiveLocator, b: LiveLocator): boolean {
 }
 
 /** Positive own-server + exact target-pane + id/name listing, not a launch snapshot. */
-export async function verifyLiveWindow(tmux: TmuxClient, live: LiveLocator): Promise<VerifiedLiveWindow | undefined> {
+export async function verifyLiveWindow(tmux: DelegateHost, live: LiveLocator): Promise<VerifiedLiveWindow | undefined> {
 	return verifyPaneWindow(tmux, live.locator);
 }
 
 export async function switchAncestor(
 	ctx: ExtensionContext,
 	sessionId: string,
-	tmux: TmuxClient,
+	tmux: DelegateHost,
 	assertActive: () => void,
 	reader: LiveActivityReader = new LiveActivityReader(),
 ): Promise<void> {

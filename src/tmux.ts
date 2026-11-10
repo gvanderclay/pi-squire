@@ -1,27 +1,18 @@
 // The tmux operations `delegate` needs, behind an interface so tests can use a
 // fake. This client talks to tmux with `execFile` and no shell.
 import { execFile } from "node:child_process";
-import type { LiveNavigation, WindowLocator } from "./tmux-locator.ts";
-import type { WindowPlacement } from "./window-placement.ts";
-import type { ClosableStates } from "./window-state.ts";
+import type { DelegateHost, OpenedWindow, WindowSpec } from "./host.ts";
+import { WindowOpenError } from "./host.ts";
 
-/** One window to open: its name, working directory, command and environment. */
-export type WindowSpec = {
-	name: string;
-	cwd: string;
-	argv: readonly string[];
-	env: Readonly<Record<string, string>>;
-};
+export type { DelegateHost, NoViewer, OpenedWindow, ShowResult, WindowSpec, WindowTarget } from "./host.ts";
+export { WindowOpenError } from "./host.ts";
 
-/** One window as tmux lists it: its id, its session's name, its name, and whether the program in its pane has exited. */
+import type { WindowLocator } from "./tmux-locator.ts";
+import { liveLocator, paneLocator, validWindowLocator, verifyTmuxPaneWindow } from "./tmux-locator.ts";
+import { tmuxPaneStates, tmuxStates } from "./tmux-state.ts";
+
+/** One window as tmux lists it. */
 export type TmuxWindow = { id: string; session: string; name: string; exited: boolean; locator?: WindowLocator };
-
-export type OpenedWindow = {
-	id: string;
-	session: string | undefined;
-	locator?: WindowLocator;
-	location?: string;
-};
 
 export {
 	currentLiveWindow,
@@ -88,20 +79,6 @@ function candidateNumber(base: string, name: string): number {
 	return name === base ? 1 : Number(name.slice(base.length + 1));
 }
 
-/**
- * Why a window could not be opened, and whether one may exist anyway:
- * `not-opened` only when nothing was dispatched to tmux that could create it.
- * Anything else, a timeout or a malformed answer included, is `unknown`.
- */
-export class WindowOpenError extends Error {
-	certainty: "not-opened" | "unknown";
-	constructor(message: string, certainty: "not-opened" | "unknown") {
-		super(message);
-		this.name = "WindowOpenError";
-		this.certainty = certainty;
-	}
-}
-
 export type OwnSession = { id: string; name: string };
 
 /** A positively inspected pane on one server incarnation; names are not routing identity. */
@@ -121,20 +98,6 @@ export type PaneListing = {
 	windows: TmuxWindow[];
 };
 
-/** Where a delegate window is: its tmux window id and, when known, the exact pane to read. */
-export type WindowTarget = { windowId: string; paneId?: string; locator?: WindowLocator };
-
-/** Showing either switched, was canceled by verification, or could not find a viewing terminal. */
-export type ShowResult = { shown: true; returnHint: string } | { shown: false } | NoViewer;
-
-/**
- * Why no terminal can show a window. `text` is the full reason, `brief` the
- * short one, and `cause` the error when a lookup failed rather than found nothing.
- * Delegate navigation displays the full reason; ancestor navigation preserves
- * its short refusal for a missing client and propagates lookup errors.
- */
-export type NoViewer = { text: string; brief: string; cause?: unknown };
-
 /**
  * Adapter internals, also retained on the concrete real client and the fake
  * for existing low-level tests. Production callers use TmuxClient's verbs.
@@ -152,30 +115,28 @@ export type TmuxNavigation = {
 	capture(target: string): Promise<string>;
 };
 
-export interface TmuxClient extends LiveNavigation {
-	readonly windowNoun?: "tab";
-	/** Mixed-backend observations route each durable locator to its owning adapter. */
-	states?(strict?: boolean): Promise<ClosableStates>;
-	/** Freeze the call-time launch choice before mail or workspace side effects. */
-	forLaunch?(): TmuxClient;
-	/** Environment-only refusal, without asking tmux (forms and early tool admission). */
-	unavailable(): string | undefined;
-	/** Launch refusal, checking the environment before the cached minimum version. */
-	unavailable(checkVersion: true): Promise<string | undefined>;
-	/** Find the viewer, then reverify before switching. False cancels; errors propagate. */
-	show(target: WindowTarget, verify: () => Promise<boolean>): Promise<ShowResult>;
-	readonly windowListRefusal: string;
-	/** A delegate window's visible text: its pane when known, else the window's active pane. */
-	peek(target: WindowTarget): Promise<string>;
-	/** Open detached in the parent (current) or root-project managed companion. */
-	openWindow(spec: WindowSpec, placement: WindowPlacement, companion: string): Promise<OpenedWindow>;
-	/** This process's pane window, for recovering an ambiguous launch at child startup. */
-	currentWindow?(): Promise<{ id: string; name: string } | undefined>;
-	/** Inspect exactly a pane on this client's server; omitted pane means this process's TMUX_PANE. */
-	inspectPane?(paneId?: string): Promise<PaneLocator | undefined>;
+/** Concrete tmux protocol, not the delegate-host seam. */
+export interface TmuxClient extends DelegateHost {
+	inspectPane(paneId?: string): Promise<PaneLocator | undefined>;
 	listWindows(): Promise<TmuxWindow[]>;
 	listPanes(): Promise<PaneListing>;
 	kill(windowId: string): Promise<void>;
+}
+
+async function observeTmuxPane(client: TmuxClient): Promise<object | undefined> {
+	const pane = await client.inspectPane();
+	return pane ? liveLocator(pane) : undefined;
+}
+
+export function ownsTmuxLocator(value: unknown): boolean {
+	return (
+		(!!value &&
+			typeof value === "object" &&
+			"adapter" in value &&
+			value.adapter === "tmux" &&
+			validWindowLocator(value)) ||
+		!!paneLocator(value)
+	);
 }
 
 const NO_CLIENT_HERE = "no tmux client attached to this session";
@@ -450,6 +411,19 @@ async function listPanes(run: Run): Promise<PaneListing> {
  * `TMUX_PANE`, not whatever session a client happens to have attached, so it
  * works with several clients on one server.
  */
+async function listedWindows(run: Run): Promise<TmuxWindow[]> {
+	// The window name goes last: it is the one field that could hold a tab.
+	const format = "#{window_id}\t#{pane_dead}\t#{session_name}\t#{window_name}";
+	const out = await run(["list-windows", "-a", "-F", format]);
+	return out
+		.split("\n")
+		.filter((line) => line.trim() !== "")
+		.map((line) => {
+			const [id, dead, session, ...name] = line.split("\t");
+			return { id, session, name: name.join("\t"), exited: dead === "1" };
+		});
+}
+
 export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClient & TmuxNavigation {
 	const timeoutMs = options.timeoutMs ?? 10_000;
 	const run: Run = (args) => runTmux(args, timeoutMs);
@@ -469,9 +443,17 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 		...navigation(run),
 	};
 
-	return {
+	const client: TmuxClient & TmuxNavigation = {
 		...calls,
 		...navigationVerbs(calls),
+		id: "tmux",
+		ownsLocator: ownsTmuxLocator,
+		usesWindowPlacement: true,
+		requiresSessionGuard: false,
+		states: (strict) => tmuxStates(client, strict),
+		paneStates: () => tmuxPaneStates(client),
+		observeLivePane: () => observeTmuxPane(client),
+		verifyLivePane: (value) => verifyTmuxPaneWindow(client, value),
 
 		async openWindow(spec, placement, companion) {
 			let parent: Parent | undefined;
@@ -505,21 +487,11 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 			return { id, name: name.join("\t") };
 		},
 
-		async listWindows() {
-			// The window name goes last: it is the one field that could hold a tab.
-			const format = "#{window_id}\t#{pane_dead}\t#{session_name}\t#{window_name}";
-			const out = await run(["list-windows", "-a", "-F", format]);
-			return out
-				.split("\n")
-				.filter((line) => line.trim() !== "")
-				.map((line) => {
-					const [id, dead, session, ...name] = line.split("\t");
-					return { id, session, name: name.join("\t"), exited: dead === "1" };
-				});
-		},
+		listWindows: () => listedWindows(run),
 
 		async kill(windowId) {
 			await run(["kill-window", "-t", windowId]);
 		},
 	};
+	return client;
 }

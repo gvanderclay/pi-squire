@@ -13,7 +13,7 @@ import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-session
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
-import { type TmuxClient, windowPresentation } from "./tmux.ts";
+import { type DelegateHost, windowPresentation } from "./tmux.ts";
 import { windowTerms } from "./tmux-locator.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
@@ -179,22 +179,22 @@ export async function settleModel(
  * (frozen like a launch's), that backend usable, and a valid placement setting
  * (tmux only; a Herdr tab always opens in the parent's workspace).
  */
-export async function preflight(deps: ResumeDeps): Promise<{ placement: WindowPlacement; client: TmuxClient }> {
+export async function preflight(deps: ResumeDeps): Promise<{ placement: WindowPlacement; client: DelegateHost }> {
 	const client = deps.tmux.forLaunch?.() ?? deps.tmux;
 	const refusal = await client.unavailable(true);
 	if (refusal !== undefined) throw new Error(refusal);
-	return { placement: client.windowNoun === "tab" ? "current" : deps.placement(), client };
+	return { placement: client.usesWindowPlacement ? deps.placement() : "current", client };
 }
 
 /** Before any side effect: no other live Pi (such as a Herdr-restored tab) may already host the session. */
 export async function guardSession(
 	deps: ResumeDeps,
 	record: StartedRecorded,
-	client: TmuxClient,
+	client: DelegateHost,
 	ctx: ExtensionContext,
 ): Promise<void> {
 	// tmux-only resumes keep their order of checks; Herdr involvement needs the session file now.
-	if (!herdrLocator(record.locator) && client.windowNoun !== "tab") return;
+	if (!herdrLocator(record.locator) && !client.requiresSessionGuard) return;
 	const session = sessionFor(record, ctx);
 	await deps.tmux.guardSession?.(record, { path: session.path, id: sessionIdOf(record) }, client);
 }

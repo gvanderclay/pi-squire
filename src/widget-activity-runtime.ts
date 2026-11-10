@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesSessionOwner } from "./session-owner.ts";
-import type { TmuxClient } from "./tmux.ts";
+import type { DelegateHost } from "./tmux.ts";
 import { ActivityCollector } from "./widget-activity.ts";
 import { LIVE_LAUNCH_ENV, LiveActivityPublisher, liveLaunch } from "./widget-live.ts";
 
@@ -8,13 +8,11 @@ async function observeLocator(
 	publisher: LiveActivityPublisher,
 	id: string,
 	token: string,
-	tmux: TmuxClient,
+	tmux: DelegateHost,
 	ctx: ExtensionContext,
 ): Promise<void> {
 	try {
-		const locator = await (tmux.observeLivePane ? tmux.observeLivePane() : tmux.inspectPane?.())?.catch(
-			() => undefined,
-		);
+		const locator = await tmux.observeLivePane?.()?.catch(() => undefined);
 		if (matchesSessionOwner(id, process.pid, token))
 			publisher.publishLocator(locator, token, ctx.sessionManager.getSessionFile());
 	} catch {
@@ -26,7 +24,7 @@ async function observeLocator(
 export function registerActivityRuntime(
 	pi: ExtensionAPI,
 	canPublish: () => boolean,
-	tmux?: TmuxClient,
+	tmux?: DelegateHost,
 	ownerToken?: string,
 ): () => void {
 	const seed: string | undefined = process.env[LIVE_LAUNCH_ENV];

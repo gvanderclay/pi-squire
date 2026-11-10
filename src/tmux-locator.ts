@@ -1,5 +1,6 @@
 // The tmux adapter owns durable locator encoding, validation and comparison.
 import { herdrLocator, herdrPaneLocator, sameHerdrLocator, sameHerdrPane } from "./herdr-locator.ts";
+import type { DelegateHost } from "./host.ts";
 import type { PaneListing, PaneLocator, TmuxClient, TmuxWindow } from "./tmux.ts";
 
 /** Adapter-owned durable values. Callers may store them, never inspect their shape. */
@@ -10,7 +11,7 @@ export type LiveNavigation = {
 	observeLivePane?(): Promise<LivePaneLocator | undefined>;
 	verifyLivePane?(locator: LivePaneLocator): Promise<VerifiedLiveWindow | undefined>;
 	/** Before resume side effects: reject when another live Pi may host the session, or that is unknown. */
-	guardSession?(record: WindowRecord, session: { path: string; id: string }, launch: TmuxClient): Promise<void>;
+	guardSession?(record: WindowRecord, session: { path: string; id: string }, launch: DelegateHost): Promise<void>;
 };
 /** Legacy fields are read only when no locator property is present. */
 export type WindowRecord = { locator?: WindowLocator; windowId?: string; windowName?: string };
@@ -171,11 +172,10 @@ export function sameVerifiedWindow(a: VerifiedLiveWindow, b: VerifiedLiveWindow)
 	);
 }
 /** Same-server, exact-pane, then id/name listing; preserves the existing three asks. */
-export async function verifyPaneWindow(
+export async function verifyTmuxPaneWindow(
 	tmux: TmuxClient,
 	value: LivePaneLocator,
 ): Promise<VerifiedLiveWindow | undefined> {
-	if (herdrPaneLocator(value)) return tmux.verifyLivePane?.(value);
 	const locator = paneLocator(value);
 	if (!locator) return undefined;
 	const sameServer = (pane: PaneLocator): boolean =>
@@ -189,6 +189,12 @@ export async function verifyPaneWindow(
 	const record = { locator: windowLocator({ id: pane.windowId, name: pane.windowName }) };
 	const windows = await tmux.listWindows().catch(() => undefined);
 	return windows && matchWindow(windows, record) ? { ...record, paneTarget: pane.paneId } : undefined;
+}
+export async function verifyPaneWindow(
+	host: DelegateHost,
+	value: LivePaneLocator,
+): Promise<VerifiedLiveWindow | undefined> {
+	return host.verifyLivePane?.(value);
 }
 export function livePaneTarget(value: LivePaneLocator): string | undefined {
 	return herdrPaneLocator(value)?.pane ?? paneLocator(value)?.paneId;

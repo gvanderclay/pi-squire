@@ -26,7 +26,7 @@ import {
 	settleModel,
 	windowCheck,
 } from "./resume-checks.ts";
-import { type OpenedWindow, type TmuxClient, windowLocator, windowPresentation } from "./tmux.ts";
+import { type DelegateHost, type OpenedWindow, windowLocator, windowPresentation } from "./tmux.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
 import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
 import { recordedIdentity } from "./tree-view.ts";
@@ -51,7 +51,7 @@ type Skipped = { model: string; why: string; reason: string };
 /** What a resume reads from the launch path in `index.ts`. */
 export type ResumeDeps = {
 	results: Results;
-	tmux: TmuxClient;
+	tmux: DelegateHost;
 	/** The `delegate` tool's result schema, which a resume's result extends. */
 	delegateSchema: TObject;
 	startPolling(): void;
@@ -94,7 +94,7 @@ export type ResumeDeps = {
 		ctx: ExtensionContext;
 		placement: WindowPlacement;
 		/** The backend preflight froze for this call. */
-		launchClient: TmuxClient;
+		launchClient: DelegateHost;
 		identity: Identity;
 		sessionId: string;
 	}): Promise<OpenedWindow>;
@@ -161,7 +161,7 @@ function newestStarted(results: Results, id: string): StartedRecorded {
 }
 
 /** Steps 3 and 4, then the idempotent close of an exited window; `windowCheck` is the part the picker shares. */
-async function ensureExited(record: StartedRecorded, tmux: TmuxClient): Promise<void> {
+async function ensureExited(record: StartedRecorded, tmux: DelegateHost): Promise<void> {
 	const windows = await askWindowStates(tmux);
 	windowCheck(record, windows);
 	try {
@@ -223,7 +223,8 @@ async function mailTask(deps: ResumeDeps, opened: OpenedWindow, sessionId: strin
 		return deps.sendTask(sessionId, task);
 	} catch (err) {
 		if (!herdrLocator(opened.locator)) {
-			await deps.tmux.kill(opened.id).catch(() => {});
+			// Legacy tmux rollback; moved behind the owning adapter in ticket 05.
+			await (deps.tmux as import("./tmux.ts").TmuxClient).kill(opened.id).catch(() => {});
 			throw err;
 		}
 		// A Herdr tab closes only through its terminal-fenced locator, never a tmux kill by id.
@@ -259,7 +260,7 @@ async function startResume(
 		task: string;
 		toolCallId: string | undefined;
 		placement: WindowPlacement;
-		launchClient: TmuxClient;
+		launchClient: DelegateHost;
 		reservation: Reservation;
 	},
 	ctx: ExtensionContext,

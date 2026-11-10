@@ -10,9 +10,9 @@ import {
 	sessionIdOf,
 } from "./results.ts";
 import {
+	type DelegateHost,
 	sameLiveLocator,
 	sameWindowLocator,
-	type TmuxClient,
 	type TmuxWindow,
 	windowLocator,
 	windowPresentation,
@@ -74,14 +74,14 @@ function runningWindow(windows: WindowStates, record: StartedRecorded): TmuxWind
 /** Current evidence supersedes historical navigation, but never mutates a saved launch/result. */
 export class NavigatorView {
 	private readonly results: Results;
-	private readonly tmux: TmuxClient;
+	private readonly tmux: DelegateHost;
 	private readonly reader: Pick<LiveActivityReader, "locator">;
 	// A disappearing/replaced runtime cannot fall back, except a terminal-fenced Herdr shell after a recorded exit.
 	private readonly current: Set<string> = new Set();
 
 	constructor(
 		results: Results,
-		tmux: TmuxClient,
+		tmux: DelegateHost,
 		reader: Pick<LiveActivityReader, "locator"> = new LiveActivityReader(),
 	) {
 		this.results = results;

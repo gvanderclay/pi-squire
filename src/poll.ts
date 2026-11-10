@@ -4,7 +4,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import type { Results } from "./results.ts";
-import type { TmuxClient } from "./tmux.ts";
+import type { DelegateHost } from "./tmux.ts";
 import { askWindowStates, type WindowStates } from "./window-state.ts";
 
 /** The hook a tick emits so the provider claims waiting replies before windows are checked. */
@@ -23,7 +23,7 @@ function declareGone(pi: ExtensionAPI, results: Results, windows: WindowStates, 
 }
 
 /** One sweep: claim waiting replies, declare gone every delegation whose window is missing or exited with still no result. */
-async function sweep(pi: ExtensionAPI, results: Results, tmux: TmuxClient, live: () => boolean): Promise<void> {
+async function sweep(pi: ExtensionAPI, results: Results, tmux: DelegateHost, live: () => boolean): Promise<void> {
 	if (results.running().length > 0) {
 		results.syncCloses();
 		const scan: { scanned?: boolean } = {};
@@ -39,7 +39,7 @@ async function sweep(pi: ExtensionAPI, results: Results, tmux: TmuxClient, live:
 export function createPoll(
 	pi: ExtensionAPI,
 	results: Results,
-	tmux: TmuxClient,
+	tmux: DelegateHost,
 ): { start(): void; stop(): void; arm(): void } {
 	/** The poll timer; set only while a delegation is running. */
 	let poll: ReturnType<typeof setInterval> | undefined;

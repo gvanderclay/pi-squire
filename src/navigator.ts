@@ -3,7 +3,7 @@ import { type Component, isKeyRelease, matchesKey, truncateToWidth } from "@eare
 import { locationTerms, noVerifiedOpen } from "./location.ts";
 import { NavigatorView, type OpenDelegate } from "./navigator-view.ts";
 import { isStarted, type Results, recordedName } from "./results.ts";
-import { livePaneTarget, type TmuxClient, windowLocator } from "./tmux.ts";
+import { type DelegateHost, livePaneTarget, windowLocator } from "./tmux.ts";
 import type { Tracking } from "./tracking.ts";
 
 /** What `/delegate-open` does with a verified window. */
@@ -137,7 +137,7 @@ export type NavigatorActions = {
 };
 type Env = {
 	results: Results;
-	tmux: TmuxClient;
+	tmux: DelegateHost;
 	tracking: Pick<Tracking, "close">;
 	actions: Partial<NavigatorActions>;
 	view: NavigatorView;
@@ -253,7 +253,7 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 /** The command and compact-widget actions over the same verified navigation view. */
 export function createNavigator(
 	results: Results,
-	tmux: TmuxClient,
+	tmux: DelegateHost,
 	tracking: Pick<Tracking, "close">,
 	actions: Partial<NavigatorActions> = {},
 ): Navigator {

@@ -117,12 +117,12 @@ export async function herdrAdapter(): Promise<AdapterFixture> {
 			show: (record, verify) => {
 				const own = herdrLocator(record.locator);
 				if (!own) throw new Error("invalid Herdr record");
-				return wire.client.show({ windowId: own.tab, paneId: own.pane }, verify);
+				return wire.client.show({ windowId: own.tab, paneId: own.pane, locator: own }, verify);
 			},
 			peek: (record) => {
 				const own = herdrLocator(record.locator);
 				if (!own) throw new Error("invalid Herdr record");
-				return wire.client.peek({ windowId: own.tab, paneId: own.pane });
+				return wire.client.peek({ windowId: own.tab, paneId: own.pane, locator: own });
 			},
 			unavailable: wire.client.unavailable.bind(wire.client),
 		},

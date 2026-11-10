@@ -115,5 +115,5 @@ export async function askPaneStates(tmux: TmuxClient): Promise<PaneStates> {
 	} catch {
 		listing = undefined;
 	}
-	return { ...windowStates(listing?.windows), listing };
+	return { ...(tmux.states ? await askWindowStates(tmux) : windowStates(listing?.windows)), listing };
 }

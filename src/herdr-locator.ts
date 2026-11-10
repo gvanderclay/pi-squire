@@ -12,6 +12,28 @@ export type HerdrLocator = {
 	name: string;
 	launchFile: string;
 };
+/** Disposable own-pane evidence, including a root Pi that has no Squire launch file. */
+export type HerdrPaneLocator = Omit<HerdrLocator, "kind" | "launchFile"> & { kind: "pane" };
+export function herdrPaneLocator(value: unknown): HerdrPaneLocator | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const own = value as Partial<HerdrPaneLocator>;
+	return own.adapter === "herdr" &&
+		own.version === 1 &&
+		own.kind === "pane" &&
+		[own.session, own.socket, own.workspace, own.tab, own.pane, own.terminal, own.name].every(bounded)
+		? (own as HerdrPaneLocator)
+		: undefined;
+}
+export function sameHerdrPane(a: HerdrPaneLocator | HerdrLocator, b: HerdrPaneLocator | HerdrLocator): boolean {
+	return (
+		a.session === b.session &&
+		a.socket === b.socket &&
+		a.workspace === b.workspace &&
+		a.tab === b.tab &&
+		a.pane === b.pane &&
+		a.terminal === b.terminal
+	);
+}
 const bounded = (value: unknown): value is string =>
 	typeof value === "string" && value.length > 0 && Buffer.byteLength(value) <= 4096;
 export function herdrLocator(value: unknown): HerdrLocator | undefined {

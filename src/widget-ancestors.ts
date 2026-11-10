@@ -1,5 +1,6 @@
 // Read-only exact-session ancestry and live navigation. No adoption or resume.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { herdrPaneLocator } from "./herdr-locator.ts";
 import { type Identity, readIdentity } from "./identity.ts";
 import { locateSession, recordedName } from "./results.ts";
 import { matchesSessionOwner, sessionIsOwned } from "./session-owner.ts";
@@ -129,7 +130,7 @@ export async function switchAncestor(
 	const pane = live ? await verifyLiveWindow(tmux, live) : undefined;
 	if (!live || !pane) throw new Error("no verified live window for this ancestor");
 	assertActive();
-	const shown = await tmux.show({ windowId: windowPresentation(pane).windowId }, async () => {
+	const shown = await tmux.show({ windowId: windowPresentation(pane).windowId, locator: pane.locator }, async () => {
 		const current: LiveLocator | undefined = await reader.locator(sessionId);
 		assertActive();
 		const verified = current ? await verifyLiveWindow(tmux, current) : undefined;
@@ -144,5 +145,7 @@ export async function switchAncestor(
 	});
 	if ("text" in shown) throw shown.cause ?? new Error(shown.brief);
 	assertActive();
-	ctx.ui.notify(`delegate: switched to ancestor ${sessionId} (${windowPresentation(pane).windowId})`, "info");
+	if (!shown.shown) return;
+	const hint = herdrPaneLocator(pane.locator) ? ` · ${shown.returnHint}` : "";
+	ctx.ui.notify(`delegate: switched to ancestor ${sessionId} (${windowPresentation(pane).windowId})${hint}`, "info");
 }

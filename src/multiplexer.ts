@@ -4,8 +4,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createHerdrClient } from "./herdr.ts";
-import { herdrLocator } from "./herdr-locator.ts";
+import { herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
 import { createTmuxClient, type TmuxClient, type WindowRecord, type WindowSpec, type WindowTarget } from "./tmux.ts";
+import { validWindowLocator } from "./tmux-locator.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import { askToClose, askWindowStates, type ClosableStates, windowStates } from "./window-state.ts";
 
@@ -45,6 +46,12 @@ export function createMultiplexer(
 	agentDir = getAgentDir,
 ): TmuxClient {
 	const selected = (): TmuxClient => (multiplexerSetting(agentDir()) === "herdr" ? herdr : tmux);
+	const navigation = (target: WindowTarget): TmuxClient => {
+		if (herdrLocator(target.locator) || herdrPaneLocator(target.locator)) return herdr;
+		if ((target.locator && !validWindowLocator(target.locator)) || !/^@[0-9]+$/.test(target.windowId))
+			throw new Error("no verified delegate navigation locator; target changed or unavailable");
+		return tmux;
+	};
 	function unavailable(): string | undefined;
 	function unavailable(check: true): Promise<string | undefined>;
 	function unavailable(check?: true): string | undefined | Promise<string | undefined> {
@@ -60,29 +67,22 @@ export function createMultiplexer(
 		listWindows: () => tmux.listWindows(),
 		listPanes: () => tmux.listPanes(),
 		inspectPane: (pane?: string) => tmux.inspectPane?.(pane) ?? Promise.resolve(undefined),
+		observeLivePane: () => selected().observeLivePane?.() ?? selected().inspectPane?.() ?? Promise.resolve(undefined),
+		verifyLivePane: (locator: object) => herdr.verifyLivePane?.(locator) ?? Promise.resolve(undefined),
 		kill: (id: string) => tmux.kill(id),
 		get windowListRefusal(): string {
 			return selected().windowListRefusal;
 		},
-		show: (target: WindowTarget, verify: () => Promise<boolean>) => {
-			if (!/^@[0-9]+$/.test(target.windowId))
-				return Promise.resolve({
-					text: "Herdr tab navigation is not available yet; use Herdr's tab bar",
-					brief: "Herdr navigation unavailable",
-				});
-			return tmux.show(target, verify);
-		},
-		peek: (target: WindowTarget) => {
-			if (!/^@[0-9]+$/.test(target.windowId)) return Promise.reject(new Error("Herdr peek is not available yet"));
-			return tmux.peek(target);
-		},
+		show: (target: WindowTarget, verify: () => Promise<boolean>) => navigation(target).show(target, verify),
+		peek: (target: WindowTarget) => navigation(target).peek(target),
 		forLaunch: selected,
 		unavailable,
 		async states(strict = false): Promise<ClosableStates> {
 			// Each backend fails independently: an unavailable Herdr cannot fabricate
 			// disappearance of a tmux record, or vice versa.
 			const [t, h] = await Promise.all([observe(tmux, strict), observe(herdr, strict)]);
-			const forRecord = (record: WindowRecord) => (herdrLocator(record.locator) ? h : t);
+			const forRecord = (record: WindowRecord) =>
+				herdrLocator(record.locator) || herdrPaneLocator(record.locator) ? h : t;
 			return {
 				answered: t.answered || h.answered,
 				look: (record: WindowRecord) => forRecord(record).look(record),

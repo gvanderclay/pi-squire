@@ -1,10 +1,15 @@
 // The tmux adapter owns durable locator encoding, validation and comparison.
-import { herdrLocator, sameHerdrLocator } from "./herdr-locator.ts";
+import { herdrLocator, herdrPaneLocator, sameHerdrLocator, sameHerdrPane } from "./herdr-locator.ts";
 import type { PaneListing, PaneLocator, TmuxClient, TmuxWindow } from "./tmux.ts";
 
 /** Adapter-owned durable values. Callers may store them, never inspect their shape. */
 export type WindowLocator = object;
 export type LivePaneLocator = object;
+/** Optional adapter-owned observation and terminal verification for disposable telemetry. */
+export type LiveNavigation = {
+	observeLivePane?(): Promise<LivePaneLocator | undefined>;
+	verifyLivePane?(locator: LivePaneLocator): Promise<VerifiedLiveWindow | undefined>;
+};
 /** Legacy fields are read only when no locator property is present. */
 export type WindowRecord = { locator?: WindowLocator; windowId?: string; windowName?: string };
 type TmuxLocator = { adapter: "tmux"; version: 1; kind: "window"; id: string; name: string };
@@ -27,7 +32,12 @@ export function validWindowLocator(value: unknown): value is WindowLocator {
 	);
 }
 /** Mint only after a positive adapter observation or create response. */
-export function windowLocator(window: { id: string; name: string }): WindowLocator {
+export function windowLocator(window: { id: string; name: string; locator?: WindowLocator }): WindowLocator {
+	if (window.locator) {
+		if (!validWindowLocator(window.locator) && !herdrPaneLocator(window.locator))
+			throw new Error("invalid navigation locator");
+		return window.locator;
+	}
 	const locator: TmuxLocator = { adapter: "tmux", version: 1, kind: "window", id: window.id, name: window.name };
 	if (!validWindowLocator(locator)) throw new Error("invalid tmux window locator");
 	return locator;
@@ -54,7 +64,7 @@ export function windowTerms(record: WindowRecord): { noun: string; host: string;
 }
 /** Public display/result fields are presentation only, never routing authority. */
 export function windowPresentation(record: WindowRecord): { windowId: string; windowName: string } {
-	const herdr = herdrLocator(recordLocator(record));
+	const herdr = herdrLocator(recordLocator(record)) ?? herdrPaneLocator(record.locator);
 	if (herdr) return { windowId: herdr.tab, windowName: herdr.name };
 	const own = recordLocator(record) as TmuxLocator | undefined;
 	return { windowId: own?.id ?? "not-recorded", windowName: own?.name ?? "not-recorded" };
@@ -106,14 +116,21 @@ export function paneLocator(value: unknown): PaneLocator | undefined {
 }
 /** Accept released telemetry on read, but always publish an adapter envelope. */
 export function normalizeLiveLocator(value: unknown): LivePaneLocator | undefined {
+	const herdr = herdrPaneLocator(value);
+	if (herdr) return { ...herdr };
 	const pane = paneLocator(value);
 	return pane ? liveLocator(pane) : undefined;
 }
 export function runningLiveLocator(value: unknown): LivePaneLocator | undefined {
+	const herdr = herdrPaneLocator(value);
+	if (herdr) return { ...herdr };
 	const pane = paneLocator(value);
 	return pane && !pane.exited ? liveLocator(pane) : undefined;
 }
 export function sameLiveLocator(a: unknown, b: unknown): boolean {
+	const h = herdrPaneLocator(a),
+		other = herdrPaneLocator(b);
+	if (h || other) return !!h && !!other && sameHerdrPane(h, other);
 	const left = paneLocator(a);
 	const right = paneLocator(b);
 	return (
@@ -146,13 +163,17 @@ export function currentLiveWindow(listing: PaneListing, value: LivePaneLocator):
 }
 export type VerifiedLiveWindow = WindowRecord & { paneTarget: string };
 export function sameVerifiedWindow(a: VerifiedLiveWindow, b: VerifiedLiveWindow): boolean {
-	return sameWindowLocator(a, b) && a.paneTarget === b.paneTarget;
+	return (
+		(herdrPaneLocator(a.locator) ? sameLiveLocator(a.locator, b.locator) : sameWindowLocator(a, b)) &&
+		a.paneTarget === b.paneTarget
+	);
 }
 /** Same-server, exact-pane, then id/name listing; preserves the existing three asks. */
 export async function verifyPaneWindow(
 	tmux: TmuxClient,
 	value: LivePaneLocator,
 ): Promise<VerifiedLiveWindow | undefined> {
+	if (herdrPaneLocator(value)) return tmux.verifyLivePane?.(value);
 	const locator = paneLocator(value);
 	if (!locator) return undefined;
 	const sameServer = (pane: PaneLocator): boolean =>
@@ -168,5 +189,5 @@ export async function verifyPaneWindow(
 	return windows && matchWindow(windows, record) ? { ...record, paneTarget: pane.paneId } : undefined;
 }
 export function livePaneTarget(value: LivePaneLocator): string | undefined {
-	return paneLocator(value)?.paneId;
+	return herdrPaneLocator(value)?.pane ?? paneLocator(value)?.paneId;
 }

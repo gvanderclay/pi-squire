@@ -23,6 +23,14 @@ follows [Semantic Versioning](https://semver.org/).
   mixed-history and safety tests in `test/herdr.test.ts`. No existing
   behavioural assertions or public hook contracts are changed.
 
+### Fixed
+
+- Refuse historical Herdr delegation resume before reserving a successor or
+  cleaning up the retained pane, even after switching `multiplexer` to tmux.
+  The resume picker keeps excluding Herdr records. The new historical-switch
+  regression in `test/herdr.test.ts` preserves the pane and shared accounting;
+  existing tmux refusal ordering is unchanged.
+
 ### Changed
 
 - Adapter validation now runs one executable delegate-window contract against a

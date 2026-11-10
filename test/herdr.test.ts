@@ -9,7 +9,7 @@ import { createMultiplexer, multiplexerSetting } from "../src/multiplexer.ts";
 import { readTree } from "../src/tree-registry.ts";
 import { askPaneStates, askToClose, askWindowStates } from "../src/window-state.ts";
 import { FakeTmux } from "./fake-tmux.ts";
-import { agentDir, agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, session, sessionDir, writeAgent } from "./harness.ts";
 import { HerdrWire } from "./herdr-adapter-fixture.ts";
 
 const wires: HerdrWire[] = [];
@@ -249,6 +249,43 @@ test("Herdr resume is refused before closing a retained tab", async () => {
 		h.calls.some((call) => call.args[1] === "close"),
 		false,
 	);
+});
+
+test("historical Herdr resume refuses before reservation or close after switching to tmux", async () => {
+	const h = wire();
+	const tmux = new FakeTmux();
+	setSettings({ multiplexer: "herdr" });
+	const s = session({ tmux, multiplexer: createMultiplexer(tmux, h.client, () => agentDir) });
+	await s.start();
+	const result = await s.toolCall("delegate", { agent: "scout", task: "look" });
+	const id = (result.details as { id: string }).id;
+	const entry = readTree(s.parent).entries.find((candidate) => candidate.id === id);
+	assert.ok(entry);
+	const own = herdrLocator(entry.locator);
+	assert.ok(own);
+	h.staged.push(dirname(own.launchFile));
+	writeFileSync(`${own.launchFile}.status`, JSON.stringify({ pid: 99, exit: 0 }));
+	assert.equal((await askWindowStates(h.client)).state(entry), "gone");
+	mkdirSync(sessionDir, { recursive: true });
+	writeFileSync(
+		join(sessionDir, `20261026T000000_${id}.jsonl`),
+		`${JSON.stringify({ type: "session", version: 3, id, timestamp: "2026-10-26T00:00:00.000Z", cwd: s.context.cwd })}\n`,
+	);
+	setSettings({ multiplexer: "tmux" });
+	const before = readTree(s.parent);
+	const sent = s.sendCalls.length;
+	await assert.rejects(
+		s.toolCall("delegation_resume", { id, task: "again" }),
+		/Herdr delegation resume is not available/,
+	);
+	const selections = s.selects.length;
+	await s.command("delegate-resume", "");
+	assert.equal(s.selects.length, selections, "the picker still excludes an otherwise resumable Herdr record");
+	assert.equal(h.calls.filter((call) => call.args[1] === "close").length, 0);
+	assert.equal(h.panes.has(own.pane), true, "the exited delegate's retained pane stays untouched");
+	assert.deepEqual(readTree(s.parent), before, "no resume reservation or reconciliation was published");
+	assert.equal(s.sendCalls.length, sent);
+	assert.equal(tmux.opened.length, 0);
 });
 
 test("mixed histories route by durable locator even after setting changes and backend failure", async () => {

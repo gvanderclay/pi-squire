@@ -1,3 +1,5 @@
+import { windowLocator } from "../src/tmux.ts";
+import { windowFields } from "./window-record.ts";
 // `delegate` starts a delegate Pi session: `/delegate <agent> [--model <id>]
 // [--thinking <level>] <task>` sends the task over `message:send`, opens a
 // background tmux window running the parent's own Pi, and records the
@@ -458,7 +460,7 @@ test("inherited command and tool pin cwd trust and session storage", async (t) =
 						: (await s.delegate("scout inspect"), undefined);
 				delete process.env.PI_CODING_AGENT_SESSION_DIR;
 				const { argv } = s.tmux.opened[0];
-				const d = s.entries.find((item) => typeof item.data.windowId === "string")?.data;
+				const d = s.entries.find((item) => typeof windowFields(item.data).windowId === "string")?.data;
 				assert.ok(d, "a successful start record");
 				assert.equal(s.tmux.opened[0].cwd, parentCwd);
 				assert.deepEqual(
@@ -505,8 +507,7 @@ test("the delegation is recorded with no task text, and the parent gets a notice
 				model: "alpha/fast-model",
 				thinking: "low",
 				name: `scout-${id.slice(0, 8)}`,
-				windowId: s.tmux.opened[0].windowId,
-				windowName: `scout-${id.slice(0, 8)}`,
+				locator: windowLocator({ id: s.tmux.opened[0].windowId, name: `scout-${id.slice(0, 8)}` }),
 				requestId: (s.sendCalls[0].envelope as { id: string }).id,
 				autoExit: true,
 				cwd: root,

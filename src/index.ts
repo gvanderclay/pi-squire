@@ -80,7 +80,7 @@ import { createResume, type ResumeRequest, resumableIds, startedLine } from "./r
 import { pickResume } from "./resume-picker.ts";
 import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
-import { createTmuxClient, type OpenedWindow, type TmuxClient, WindowOpenError } from "./tmux.ts";
+import { createTmuxClient, type OpenedWindow, type TmuxClient, WindowOpenError, windowLocator } from "./tmux.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import {
@@ -1022,7 +1022,7 @@ export default function delegate(
 			Object.defineProperty(payload, key, { writable: false, configurable: false });
 		pi.events.emit(LAUNCH, payload);
 		const token: Reservation = { root: own.root, id };
-		bindTree(token, { windowName: name, cwd, workspace });
+		bindTree(token, { cwd, workspace });
 		dispatchTree(token);
 		let opened: OpenedWindow;
 		try {
@@ -1045,7 +1045,7 @@ export default function delegate(
 		}
 		onWindowOpened?.();
 		try {
-			openedTree(token, opened.id);
+			openedTree(token, windowLocator({ id: opened.id, name }));
 		} catch (error) {
 			ctx.ui.notify(
 				`delegate: window ${opened.id} opened, but shared accounting publication failed: ${String(error)}. Local tracking continues; the reservation remains charged until accounting reconciles.`,
@@ -1101,8 +1101,7 @@ export default function delegate(
 				model: start.model,
 				thinking: start.thinking,
 				name,
-				windowId,
-				windowName: name,
+				locator: windowLocator({ id: windowId, name }),
 				requestId,
 				autoExit: start.autoExit,
 				cwd,

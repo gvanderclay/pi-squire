@@ -1,3 +1,4 @@
+import { windowFields } from "./window-record.ts";
 // The new-delegate form, `/delegate` and `/delegate-resume` with no arguments,
 // and the resume picker. The settings screen is driven as a component, key by
 // key; the flows around it use the harness's scripted `ctx.ui`.
@@ -228,7 +229,7 @@ function wire(s: ReturnType<typeof session>, index: number) {
 	const argv = [...window.argv];
 	for (const flag of ["--session-id", "--name", "--append-system-prompt"]) argv[argv.indexOf(flag) + 1] = "<varies>";
 	const record = { ...s.entries[index].data } as Record<string, unknown>;
-	for (const key of ["id", "name", "windowId", "windowName", "requestId"]) delete record[key];
+	for (const key of ["id", "name", "locator", "requestId"]) delete record[key];
 	const env = { ...window.env };
 	const live = JSON.parse(env.PI_SQUIRE_LIVE_LAUNCH);
 	assert.equal(live.sessionId, s.entries[index].data.id);
@@ -377,7 +378,7 @@ async function picker(ui: UiAnswers) {
 		const entry = s.entries.at(-1)?.data as { id: string; windowId: string };
 		ids[label] = entry.id;
 		if (label !== "nofile") writeSession(entry.id, root);
-		if (label !== "running") s.tmux.windows.delete(entry.windowId);
+		if (label !== "running") s.tmux.windows.delete(windowFields(entry).windowId);
 	}
 	return { s, ids };
 }

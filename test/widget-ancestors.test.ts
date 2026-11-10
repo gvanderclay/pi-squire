@@ -18,6 +18,7 @@ import { WidgetSelection } from "../src/widget-selection.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, session, sessionDir, writeAgent } from "./harness.ts";
 import { mailSession, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -139,7 +140,7 @@ test("collapsed counts follow open stable sessions through failure, resume, clos
 	await until(() => /direct.*\+2/.test(frame(root)), frame(root));
 	assert.doesNotMatch(frame(root), /failed|grand/);
 	await leaf.shutdown();
-	root.tmux.exit(w.windowId);
+	root.tmux.exit(windowFields(w).windowId);
 	mkdirSync(sessionDir, { recursive: true });
 	writeFileSync(
 		join(sessionDir, `saved_${w.id}.jsonl`),
@@ -192,7 +193,7 @@ test("corrupt descendant owner facts cannot freeze fresh ancestor titles or dire
 	await direct.start();
 	scan(direct);
 	const w = await launch(direct, "leaf", "gone");
-	root.tmux.exit(w.windowId);
+	root.tmux.exit(windowFields(w).windowId);
 	t.mock.timers.tick(5000);
 	await until(() => direct.entries.some((entry) => entry.data.id === w.id && entry.data.gone === true));
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
@@ -286,7 +287,7 @@ test("reopened gone direct child can be inspected at current window without rewr
 		agent: "coord",
 		model: "m",
 		thinking: "off",
-		windowId: "@old",
+		windowId: "@701",
 		windowName: "old",
 		requestId: "req",
 		gone: true,
@@ -295,14 +296,14 @@ test("reopened gone direct child can be inspected at current window without rewr
 	const view = new DirectDelegateView();
 	const rows = view.read(
 		results,
-		[{ id: "@new", name: "new", session: "moved", exited: false }],
+		[{ id: "@702", name: "new", session: "moved", exited: false }],
 		undefined,
 		{ offset: 0, limit: 0 },
-		new Map([["old", { windowId: "@new", windowName: "new" }]]),
+		new Map([["old", { windowId: "@702", windowName: "new" }]]),
 	);
 	assert.equal(rows[0].state, "missing");
 	assert.equal(rows[0].running, false);
-	assert.equal(record.windowId, "@old");
+	assert.equal(windowFields(record).windowId, "@701");
 	assert.equal(record.gone, true);
 });
 
@@ -480,18 +481,18 @@ test("tree expands at every depth, switches and closes nested rows, and collapse
 	assert.match(frame(root), /▸ .*deep/);
 	root.terminalKey("enter");
 	await until(() => root.tmux.switches.length === 1);
-	assert.equal(root.tmux.switches[0].windowId, deep.windowId);
+	assert.equal(root.tmux.switches[0].windowId, windowFields(deep).windowId);
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	root.terminalKey("x");
 	await until(() => root.confirms.length === 1);
 	assert.equal(root.tmux.killed.length, 0);
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	root.terminalKey("x");
-	await until(() => root.tmux.killed.includes(deep.windowId));
+	await until(() => root.tmux.killed.includes(windowFields(deep).windowId));
 	t.mock.timers.tick(WIDGET_REFRESH_MS);
 	await until(() => !frame(root).includes("deep"));
-	assert.equal(root.tmux.windows.has(sibling.windowId), true);
-	assert.equal(root.tmux.windows.has(c.windowId), true);
+	assert.equal(root.tmux.windows.has(windowFields(sibling).windowId), true);
+	assert.equal(root.tmux.windows.has(windowFields(c).windowId), true);
 	root.terminalKey("escape");
 	assert.doesNotMatch(frame(root), /nested|sibling|▸/);
 	assert.match(frame(root), /branch.*\+2/);

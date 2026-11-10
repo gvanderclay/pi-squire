@@ -6,6 +6,23 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- New delegate launch records, shared tree entries, and live-window telemetry store
+  adapter-owned opaque locators instead of tmux-specific identity fields. Released
+  `windowId`/`windowName` records remain readable for status, close, and resume;
+  public tool results and messages keep their existing window fields and wording.
+  Internal persistence-schema assertions and behavioural test window projections
+  migrate deliberately to the new shape (including numeric tmux-id placeholders
+  in internal fixtures); frozen released-format fixtures cover compatibility. Malformed or foreign-adapter locators cannot downgrade to legacy
+  identity and are refused without closing or resuming a window.
+  Schema assertions migrate in `test/delegate.test.ts`, `test/tools.test.ts`,
+  `test/new-delegate.test.ts`, `test/tree-reconciliation.test.ts`,
+  `test/widget-live.test.ts`, `test/widget-current.test.ts`, and
+  `test/widget-data.test.ts`; subtree-close and reattachment fixtures use valid
+  numeric tmux IDs. `test/opaque-locators.test.ts` covers frozen released data,
+  mixed-format status/close/resume, and fail-closed restoration.
+
 ## [0.20.2] - 2026-11-04
 
 ### Removed

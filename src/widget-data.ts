@@ -95,7 +95,7 @@ export class DirectDelegateView {
 		windows: WindowStates | readonly TmuxWindow[] | undefined,
 		sessionDir: string | undefined,
 		viewport: MetadataViewport = { offset: 0, limit: 3 },
-		currentWindows: ReadonlyMap<string, { windowId: string; windowName: string }> = new Map(),
+		currentWindows: ReadonlyMap<string, import("./tmux.ts").WindowRecord> = new Map(),
 		visibleKeys?: ReadonlySet<string>,
 	): DelegateRow[] {
 		const running: Set<string> = new Set(results.running().map((record) => record.id));

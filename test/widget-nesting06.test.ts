@@ -7,6 +7,7 @@ import { DELEGATE_WIDGET_KEY, WIDGET_REFRESH_MS } from "../src/widget.ts";
 import { titleMirrorPath } from "../src/widget-title.ts";
 import { agentDir, agentFile, cleanup, resetRoot, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -86,7 +87,7 @@ test("nested status views never broaden direct widget rows, completion barrier o
 	// Keep a new descendant running after the root's only direct task is done.
 	const later = await launch(coordinator, "worker", "later-descendant");
 	await coordinator.shutdown();
-	owner.tmux.exit(later.windowId);
+	owner.tmux.exit(windowFields(later).windowId);
 	const scans = owner.scan.calls;
 	t.mock.timers.tick(5000);
 	await settle();

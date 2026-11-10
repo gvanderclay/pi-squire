@@ -9,8 +9,9 @@ import {
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { readState, writeState } from "./local-state.ts";
-import type { Recorded } from "./result-types.ts";
+import { isStarted, type Recorded } from "./result-types.ts";
 import type { MessageDetails } from "./results.ts";
+import { locatedRecord } from "./tmux.ts";
 
 export type ChildOutcome = {
 	key: string;
@@ -25,7 +26,7 @@ export function readChildRecords(session: string): Recorded[] {
 	const state = readState<State>(path);
 	if (state !== undefined && (!state || !Array.isArray(state.records) || !Array.isArray(state.outcomes)))
 		throw new Error(`invalid child task record for ${session}`);
-	return state?.records ?? [];
+	return (state?.records ?? []).map((record) => (isStarted(record) ? locatedRecord(record) : record));
 }
 export class ChildTasks {
 	path: string | undefined;
@@ -56,7 +57,7 @@ export class ChildTasks {
 			if (state?.paused !== undefined && typeof state.paused !== "boolean") throw new Error("invalid root stop state");
 			this.paused = state?.paused === true;
 			this.outcomes = state?.outcomes ?? [];
-			return state?.records ?? [];
+			return (state?.records ?? []).map((record) => (isStarted(record) ? locatedRecord(record) : record));
 		} catch (error) {
 			this.failed = true;
 			this.unreadable = true;

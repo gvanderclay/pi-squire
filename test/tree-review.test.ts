@@ -19,6 +19,7 @@ import {
 	writeAgent,
 } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 type Role = "root" | "coordinator";
@@ -161,7 +162,7 @@ for (const role of ["root", "coordinator"] as const) {
 		const path = treePath(owner.parent),
 			saved = readFileSync(path, "utf8");
 		writeFileSync(path, "null");
-		parent.tmux.windows.delete(record.windowId);
+		parent.tmux.windows.delete(windowFields(record).windowId);
 		await tick(t);
 		assert.equal(local(parent, record).gone, true);
 		const messages = parent.sent.filter(({ message }) => details(message).kind === "gone");
@@ -200,8 +201,8 @@ for (const role of ["root", "coordinator"] as const) {
 			return window;
 		};
 		const record = await launch(parent);
-		assert.equal(local(parent, record).windowId, record.windowId);
-		assert.equal(parent.tmux.windows.has(record.windowId), true);
+		assert.equal(windowFields(local(parent, record)).windowId, windowFields(record).windowId);
+		assert.equal(parent.tmux.windows.has(windowFields(record).windowId), true);
 		assert.ok(parent.warnings.some((text) => /window .* opened, but shared accounting publication failed/.test(text)));
 		if (role === "coordinator") {
 			await parent.run();
@@ -233,7 +234,7 @@ test("successful resume retains local tracking and request correlation when open
 		join(sessionDir, `date_${record.id}.jsonl`),
 		`${JSON.stringify({ type: "session", id: record.id, cwd: root })}\n`,
 	);
-	parent.tmux.windows.delete(record.windowId);
+	parent.tmux.windows.delete(windowFields(record).windowId);
 	const open = parent.tmux.openWindow.bind(parent.tmux);
 	parent.tmux.openWindow = async (...args) => {
 		const window = await open(...args);
@@ -247,7 +248,7 @@ test("successful resume retains local tracking and request correlation when open
 	assert.ok(latest.requestId);
 	assert.equal(latest.resumedFrom, record.id);
 	assert.equal(latest.sessionId, record.id);
-	assert.equal(parent.tmux.windows.has(latest.windowId), true);
+	assert.equal(parent.tmux.windows.has(windowFields(latest).windowId), true);
 	assert.ok(parent.warnings.some((text) => /shared request publication failed/.test(text)));
 	assert.equal(
 		parent.errors.some((text) => /reservation remains charged/.test(text)),

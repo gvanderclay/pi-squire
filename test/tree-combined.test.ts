@@ -18,6 +18,7 @@ import {
 	writeAgent,
 } from "./harness.ts";
 import { envelopes, mailSession, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -92,7 +93,7 @@ test("routed trust, launch hook arguments and shared cap accounting compose on l
 	scan(coordinator);
 	assert.deepEqual(treeCounts(readTree(owner.parent)), { concurrent: 1, lifetime: 2 });
 	header(record, target("combined-resume"));
-	owner.tmux.exit(record.windowId);
+	owner.tmux.exit(windowFields(record).windowId);
 	await worker.shutdown();
 	await coordinator.toolCall("delegation_resume", { id: record.id, task: "continue" });
 	assert.equal(owner.selects.length, 2);

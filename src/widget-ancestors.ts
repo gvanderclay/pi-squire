@@ -3,12 +3,18 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Identity, readIdentity } from "./identity.ts";
 import { locateSession, recordedName } from "./results.ts";
 import { matchesSessionOwner, sessionIsOwned } from "./session-owner.ts";
-import type { PaneLocator, TmuxClient } from "./tmux.ts";
+import {
+	sameLiveLocator,
+	sameVerifiedWindow,
+	type TmuxClient,
+	type VerifiedLiveWindow,
+	verifyPaneWindow,
+	windowPresentation,
+} from "./tmux.ts";
 import { readTreeDisplay, type TreeEntry } from "./tree-registry.ts";
 import { LiveActivityReader, type LiveLocator } from "./widget-live.ts";
 import { WidgetTitleMirrors } from "./widget-title.ts";
 import { WidgetTitleFiles } from "./widget-title-file.ts";
-import { askWindowStates } from "./window-state.ts";
 
 export type WidgetIdentity = { identity: string; agent?: string };
 export type Breadcrumb = {
@@ -100,25 +106,13 @@ export class BreadcrumbView {
 	}
 }
 
-function sameServer(a: PaneLocator, b: PaneLocator): boolean {
-	return a.socket === b.socket && a.serverPid === b.serverPid && a.serverStarted === b.serverStarted;
-}
 function sameTarget(a: LiveLocator, b: LiveLocator): boolean {
-	return (
-		a.generation === b.generation &&
-		a.ownerToken === b.ownerToken &&
-		JSON.stringify(a.locator) === JSON.stringify(b.locator)
-	);
+	return a.generation === b.generation && a.ownerToken === b.ownerToken && sameLiveLocator(a.locator, b.locator);
 }
 
 /** Positive own-server + exact target-pane + id/name listing, not a launch snapshot. */
-export async function verifyLiveWindow(tmux: TmuxClient, live: LiveLocator): Promise<PaneLocator | undefined> {
-	const own: PaneLocator | undefined = await tmux.inspectPane?.();
-	if (!own || !sameServer(own, live.locator)) return undefined;
-	const pane: PaneLocator | undefined = await tmux.inspectPane?.(live.locator.paneId);
-	if (!pane || pane.exited || !sameServer(pane, live.locator)) return undefined;
-	const windows = await askWindowStates(tmux);
-	return windows.listed({ windowId: pane.windowId, windowName: pane.windowName }) ? pane : undefined;
+export async function verifyLiveWindow(tmux: TmuxClient, live: LiveLocator): Promise<VerifiedLiveWindow | undefined> {
+	return verifyPaneWindow(tmux, live.locator);
 }
 
 export async function switchAncestor(
@@ -135,11 +129,11 @@ export async function switchAncestor(
 	const pane = live ? await verifyLiveWindow(tmux, live) : undefined;
 	if (!live || !pane) throw new Error("no verified live window for this ancestor");
 	assertActive();
-	const shown = await tmux.show({ windowId: pane.windowId }, async () => {
+	const shown = await tmux.show({ windowId: windowPresentation(pane).windowId }, async () => {
 		const current: LiveLocator | undefined = await reader.locator(sessionId);
 		assertActive();
 		const verified = current ? await verifyLiveWindow(tmux, current) : undefined;
-		if (!current || !sameTarget(live, current) || !verified || JSON.stringify(pane) !== JSON.stringify(verified))
+		if (!current || !sameTarget(live, current) || !verified || !sameVerifiedWindow(pane, verified))
 			throw new Error("ancestor window changed or is unavailable");
 		assertActive();
 		if (!ancestorSessions(ctx).some((ancestor) => ancestor.sessionId === sessionId))
@@ -150,5 +144,5 @@ export async function switchAncestor(
 	});
 	if ("text" in shown) throw shown.cause ?? new Error(shown.brief);
 	assertActive();
-	ctx.ui.notify(`delegate: switched to ancestor ${sessionId} (${pane.windowId})`, "info");
+	ctx.ui.notify(`delegate: switched to ancestor ${sessionId} (${windowPresentation(pane).windowId})`, "info");
 }

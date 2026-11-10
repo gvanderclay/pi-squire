@@ -72,7 +72,7 @@ test("ancestor closes worker while its real coordinator owner is dead; same-id r
 			id: "w",
 			identity: workerIdentity,
 			requestId: "task-w",
-			windowId: "@w",
+			windowId: "@102",
 			windowName: "w",
 			agent: "worker",
 			model: "alpha/fast-model",
@@ -95,13 +95,13 @@ test("ancestor closes worker while its real coordinator owner is dead; same-id r
 			});
 			await tree.command("bind", { root: "root", token, windowId: id, requestId: request });
 			await tree.command("dispatch", { root: "root", token });
-			await tree.command("open", { root: "root", token, windowId: `@${id}` });
+			await tree.command("open", { root: "root", token, windowId: id === "c" ? "@101" : "@102" });
 		}
 		const closed = await tree.command<CloseResult>("close", {
 			root: "root",
 			actor: "root",
 			id: "w",
-			windows: [{ id: "@w", name: "w", exited: false, session: "shared" }],
+			windows: [{ id: "@102", name: "w", exited: false, session: "shared" }],
 		});
 		assert.equal(closed.details.complete, true);
 		assert.equal(

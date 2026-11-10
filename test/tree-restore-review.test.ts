@@ -9,6 +9,7 @@ import { requestRootTrust, trustEndpointPath } from "../src/trust-wire.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -303,7 +304,7 @@ test("a fresh live gone outcome after a root abort keeps its original wake deliv
 	const { owner } = await tree();
 	const record = await launch(owner, "worker");
 	await owner.run("aborted");
-	owner.tmux.windows.delete(record.windowId);
+	owner.tmux.windows.delete(windowFields(record).windowId);
 	t.mock.timers.tick(5000);
 	for (let i = 0; i < 3; i++) await nextTurn();
 	const gone = owner.sent.find((item) => String(item.message.content).includes("closed without a result"))!;

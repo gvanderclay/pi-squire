@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { join } from "node:path";
 import { test } from "node:test";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
+import { windowFields } from "./window-record.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: fixture assertions narrow runtime record fields.
 type Data = Record<string, any>;
@@ -101,7 +102,7 @@ test("managed worktree starts at source HEAD, omits dirt and records created fac
 	assert.equal(git(destination, "symbolic-ref", "--short", "HEAD"), "feature/topic");
 	assert.equal(existsSync(join(destination, "dirty.txt")), false);
 	assert.deepEqual(readFileSync(indexPath), index);
-	const record = s.entries.find((entry) => entry.data.windowId)?.data as Data | undefined;
+	const record = s.entries.find((entry) => windowFields(entry.data).windowId)?.data as Data | undefined;
 	assert.ok(record);
 	assert.equal(record.workspace.mode, "managed");
 	assert.equal(record.workspace.createdBranch, "feature/topic");

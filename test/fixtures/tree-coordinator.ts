@@ -2,6 +2,7 @@
 // provider mailbox or real tmux server is opened by this fixture.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { windowLocator } from "../../src/tmux.ts";
 import { beginTreeClose, closeTree } from "../../src/tree-close.ts";
 import { withTreeLock } from "../../src/tree-lock.ts";
 import {
@@ -36,6 +37,7 @@ type Command = {
 	failKill?: string;
 	gated?: boolean;
 };
+const windowNames = new Map<string, string>();
 const wait = new Int32Array(new SharedArrayBuffer(4));
 let releaseClose: (() => void) | undefined;
 process.on("message", (command: Command) => {
@@ -86,13 +88,14 @@ async function execute(command: Command): Promise<unknown> {
 			dispatchTree(token);
 			return true;
 		case "bind":
-			bindTree(token, { requestId: command.requestId, windowName: command.windowId });
+			bindTree(token, { requestId: command.requestId });
+			if (command.windowId) windowNames.set(token.id, command.windowId);
 			return true;
 		case "claim":
 			claimTree(command.root, command.intent!.sessionId, { id: command.windowId!, name: command.requestId! });
 			return true;
 		case "open":
-			openedTree(token, command.windowId!);
+			openedTree(token, windowLocator({ id: command.windowId!, name: windowNames.get(token.id) ?? token.id }));
 			return true;
 		case "finish":
 			finishTree(command.root, command.intent!.sessionId, [command.requestId!]);

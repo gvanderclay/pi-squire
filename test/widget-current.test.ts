@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Results, StartedRecorded } from "../src/results.ts";
+import { windowLocator } from "../src/tmux.ts";
 import { registerDelegateWidget } from "../src/widget.ts";
 import { currentChildWindows } from "../src/widget-current.ts";
 import { LiveActivityReader } from "../src/widget-live.ts";
@@ -60,7 +61,7 @@ test("only missing recorded windows read locators and resolve stable panes from 
 	const reader = new LiveActivityReader();
 	const scope = { ...tmux.scope };
 	const locate = t.mock.method(reader, "locator", async () => ({
-		locator: { ...scope, paneId: "%7", windowId: "@old", windowName: "old", exited: false },
+		locator: { ...scope, paneId: "%7", windowId: "@70", windowName: "old", exited: false },
 		generation: "g",
 		ownerToken: "owner",
 		pid: process.pid,
@@ -70,11 +71,11 @@ test("only missing recorded windows read locators and resolve stable panes from 
 	assert.equal(locate.mock.callCount(), 0);
 	tmux.windows.delete("@1");
 	let found = await currentChildWindows(results([record]), await tmux.listPanes(), reader);
-	assert.deepEqual(found.get(record.id), { windowId: "@8", windowName: "renamed" });
+	assert.deepEqual(found.get(record.id), { locator: windowLocator({ id: "@8", name: "renamed" }) });
 	tmux.addWindow("@9", "broken-out");
 	tmux.panes.set("%7", { windowId: "@9" });
 	found = await currentChildWindows(results([record]), await tmux.listPanes(), reader);
-	assert.deepEqual(found.get(record.id), { windowId: "@9", windowName: "broken-out" });
+	assert.deepEqual(found.get(record.id), { locator: windowLocator({ id: "@9", name: "broken-out" }) });
 	tmux.scope = { ...tmux.scope, serverStarted: "new-server" };
 	assert.equal((await currentChildWindows(results([record]), await tmux.listPanes(), reader)).size, 0);
 	assert.equal(inspect.mock.callCount(), 0);

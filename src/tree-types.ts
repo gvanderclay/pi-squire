@@ -1,17 +1,16 @@
 import type { Identity } from "./identity.ts";
 import type { Delegation } from "./results.ts";
+import type { WindowRecord } from "./tmux.ts";
 import type { Workspace } from "./workspace.ts";
 
 /** Shared structural/admission facts, never parent outcome-processing state. */
-export type TreeEntry = {
+export type TreeEntry = WindowRecord & {
 	id: string;
 	sessionId: string;
 	identity: Identity;
 	ownerPid: number;
 	phase: "reserved" | "dispatched" | "started" | "not-started";
 	requestId?: string;
-	windowId?: string;
-	windowName?: string;
 	cwd?: string;
 	sessionDir?: string;
 	workspace?: Workspace;

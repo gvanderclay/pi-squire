@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { windowLocator } from "../src/tmux.ts";
 import { placementProject } from "../src/window-placement.ts";
 
 import {
@@ -381,8 +382,7 @@ test("a call starts the delegation with the agent's defaults and returns its id,
 			model: "alpha/fast-model",
 			thinking: "low",
 			name: `scout-${id.slice(0, 8)}`,
-			windowId: s.tmux.opened[0].windowId,
-			windowName: `scout-${id.slice(0, 8)}`,
+			locator: windowLocator({ id: s.tmux.opened[0].windowId, name: `scout-${id.slice(0, 8)}` }),
 			requestId: (s.sendCalls[0].envelope as { id: string }).id,
 			autoExit: true,
 			cwd: root,

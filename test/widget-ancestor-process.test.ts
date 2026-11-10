@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { writeIdentity } from "../src/identity.ts";
+import { paneLocator } from "../src/tmux.ts";
 import type { LiveLocator } from "../src/widget-live.ts";
 import { liveSessionDir } from "../src/widget-live.ts";
 import { agentDir, cleanup, resetRoot } from "./harness.ts";
@@ -67,7 +68,7 @@ test("actual processes: startup pane locator follows names/moves at navigation t
 	const childServer = { ...server(), ownPane: "%2" };
 	await child.command("boot", { session: "leaf", server: childServer });
 	const initial = await locator(child, "root");
-	assert.equal(initial.locator.windowId, "@1");
+	assert.equal(paneLocator(initial.locator)!.windowId, "@1");
 	assert.equal(initial.sessionFile, undefined, "unflushed root does not need a transcript");
 	await root.command("start-tool");
 	assert.equal(await child.command("activity", { target: "root", launch: "invented" }), null);
@@ -76,7 +77,10 @@ test("actual processes: startup pane locator follows names/moves at navigation t
 	const renamed = server("@1", "renamed");
 	await child.command("server", { server: { ...renamed, ownPane: "%2" } });
 	await child.command("switch", { target: "root" });
-	assert.equal((await locator(child, "root")).locator.windowName, initial.locator.windowName);
+	assert.equal(
+		paneLocator((await locator(child, "root")).locator)!.windowName,
+		paneLocator(initial.locator)!.windowName,
+	);
 	await root.command("server", { server: renamed });
 	await child.command("fail-list", { text: "unknown listing" });
 	await assert.rejects(child.command("switch", { target: "root" }), /verified live window/);
@@ -106,7 +110,7 @@ test("actual processes: startup pane locator follows names/moves at navigation t
 	const moved = server("@8", "moved", "new-current-session");
 	await child.command("server", { server: { ...moved, ownPane: "%2" } });
 	await child.command("switch", { target: "root" });
-	assert.equal((await locator(child, "root")).locator.windowId, initial.locator.windowId);
+	assert.equal(paneLocator((await locator(child, "root")).locator)!.windowId, paneLocator(initial.locator)!.windowId);
 	await root.command("server", { server: moved });
 	await child.command("server", {
 		server: { ...moved, ownPane: "%2", scope: { socket: "other", serverPid: 1, serverStarted: "1" } },
@@ -139,13 +143,13 @@ test("actual processes: duplicate owner cannot publish, SIGKILL root/reopen chan
 	const replacement = processFixture();
 	await replacement.command("boot", { session: "root", server: server("@3", "reopened") });
 	const next = await locator(replacement, "root", (v) => v.generation !== old.generation);
-	assert.equal(next.locator.windowId, "@3");
+	assert.equal(paneLocator(next.locator)!.windowId, "@3");
 	await duplicate.command("shutdown");
 	assert.equal((await locator(replacement, "root")).generation, next.generation);
 	await replacement.command("shutdown");
 	const orderly = processFixture();
 	await orderly.command("boot", { session: "root", server: server("@4", "orderly") });
-	assert.equal((await locator(orderly, "root")).locator.windowId, "@4");
+	assert.equal(paneLocator((await locator(orderly, "root")).locator)!.windowId, "@4");
 });
 
 test("actual processes: exact-id coordinator reattachment stays separate from gone history and corrupt owner/metadata is unavailable", async () => {

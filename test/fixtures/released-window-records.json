@@ -1,0 +1,56 @@
+{
+	"started": {
+		"id": "released-child",
+		"identity": {
+			"parent": "released-parent",
+			"root": "released-parent",
+			"rootPlacement": "project-delegate-session",
+			"depth": 1,
+			"agent": "scout",
+			"chain": ["scout"],
+			"autoExit": false
+		},
+		"agent": "scout",
+		"model": "alpha/fast-model",
+		"thinking": "low",
+		"name": "scout-released",
+		"windowId": "@71",
+		"windowName": "scout-released",
+		"requestId": "released-request",
+		"autoExit": false
+	},
+	"tree": {
+		"version": 1,
+		"root": "released-parent",
+		"entries": [
+			{
+				"id": "released-child",
+				"sessionId": "released-child",
+				"identity": {
+					"parent": "released-parent",
+					"root": "released-parent",
+					"rootPlacement": "project-delegate-session",
+					"depth": 1,
+					"agent": "scout",
+					"chain": ["scout"],
+					"autoExit": false
+				},
+				"ownerPid": 1,
+				"phase": "started",
+				"requestId": "released-request",
+				"windowId": "@71",
+				"windowName": "scout-released",
+				"createPending": false
+			}
+		]
+	},
+	"pane": {
+		"socket": "/released/tmux",
+		"serverPid": 71,
+		"serverStarted": "123",
+		"paneId": "%71",
+		"windowId": "@71",
+		"windowName": "scout-released",
+		"exited": false
+	}
+}

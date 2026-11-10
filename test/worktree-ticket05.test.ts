@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
+import { windowFields } from "./window-record.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: harness records are runtime schemas checked by the harness.
 type Data = Record<string, any>;
@@ -65,7 +66,9 @@ const call = (s: ReturnType<typeof session>, worktree: string) =>
 	s.toolCall("delegate", { agent: "scout", task: `inspect ${worktree}`, worktree });
 
 function startRecords(s: ReturnType<typeof session>): Data[] {
-	return s.entries.filter((entry) => typeof entry.data.windowId === "string").map((entry) => entry.data as Data);
+	return s.entries
+		.filter((entry) => typeof windowFields(entry.data).windowId === "string")
+		.map((entry) => entry.data as Data);
 }
 
 const windowCwds = (s: ReturnType<typeof session>): string[] => s.tmux.opened.map((window) => window.cwd);

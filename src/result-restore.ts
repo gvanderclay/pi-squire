@@ -4,6 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildTasks } from "./child-tasks.ts";
 import { isStarted, type Recorded, type WorkspaceAttempt } from "./result-types.ts";
 import type { Delegation, Result } from "./results.ts";
+import { locatedRecord } from "./tmux.ts";
 import { belongsTo, restoredStarts } from "./tree-view.ts";
 
 export function restoreRecords(ctx: ExtensionContext, tasks: ChildTasks): Recorded[] {
@@ -65,7 +66,14 @@ function transcript(ctx: ExtensionContext, tasks: ChildTasks, byId: Map<string, 
 function restoreStart(record: Recorded, ctx: ExtensionContext, tasks: ChildTasks, byId: Map<string, Recorded>): void {
 	const existing: Recorded | undefined = byId.get(record.id);
 	if (!isStarted(record) && existing && isStarted(existing)) return;
-	if (accept(record, ctx, tasks, false)) byId.set(record.id, { ...record });
+	if (accept(record, ctx, tasks, false)) {
+		try {
+			byId.set(record.id, isStarted(record) ? locatedRecord(record) : { ...record });
+		} catch (error) {
+			tasks.blockRestore(error);
+			byId.set(record.id, { ...record });
+		}
+	}
 }
 function applyTerminal(
 	record: Recorded | undefined,

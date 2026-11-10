@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { windowLocator } from "../src/tmux.ts";
 import {
 	bindTree,
 	claimTree,
@@ -73,22 +74,22 @@ test("fast worker finalization cannot be undone by later successful-open publica
 	dispatchTree(token);
 	finishTree("root", "fast", ["task"]);
 	finishTree("root", "fast", ["task"]);
-	openedTree(token, "@9");
+	openedTree(token, windowLocator({ id: "@9", name: "fast" }));
 	assert.deepEqual(treeCounts(readTree("root")), { concurrent: 0, lifetime: 1 });
 });
 
 test("reconciliation never judges a newly opened window using a stale listing", async () => {
 	const first = reserveTree(intent("first"));
-	bindTree(first, { windowName: "first" });
+	bindTree(first, {});
 	dispatchTree(first);
-	openedTree(first, "@1");
+	openedTree(first, windowLocator({ id: "@1", name: "first" }));
 	const tmux = new FakeTmux();
 	tmux.addWindow("@1", "first");
 	tmux.listWindows = async () => {
 		const second = reserveTree(intent("second"));
-		bindTree(second, { windowName: "second" });
+		bindTree(second, {});
 		dispatchTree(second);
-		openedTree(second, "@2");
+		openedTree(second, windowLocator({ id: "@2", name: "second" }));
 		return [{ id: "@1", name: "first", exited: false, session: "work" }];
 	};
 	await reconcileTree("root", tmux);
@@ -98,7 +99,7 @@ test("reconciliation never judges a newly opened window using a stale listing", 
 test("resume send/bind crash gap recovers from a unique frozen worker request", async () => {
 	const token = reserveTree(intent("worker"));
 	dispatchTree(token);
-	openedTree(token, "@9");
+	openedTree(token, windowLocator({ id: "@9", name: "worker" }));
 	mkdirSync(join(agentDir, "squire", "task-replies"), { recursive: true });
 	writeFileSync(
 		join(agentDir, "squire", "task-replies", "worker.json"),
@@ -117,7 +118,7 @@ test("resume send/bind crash gap recovers from a unique frozen worker request", 
 test("tree index resolves ancestry and shared closing fence covers both reserve and dispatch", () => {
 	const coordinator = reserveTree(intent("coordinator"));
 	dispatchTree(coordinator);
-	openedTree(coordinator, "@1");
+	openedTree(coordinator, windowLocator({ id: "@1", name: "coordinator" }));
 	const worker = reserveTree(intent("worker", "coordinator", 2));
 	reserveTree(intent("other"));
 	assert.deepEqual(

@@ -8,6 +8,7 @@ import { SessionOwner } from "../src/session-owner.ts";
 import { LIVE_LAUNCH_ENV, LiveActivityReader, liveSessionDir } from "../src/widget-live.ts";
 import { agentDir, agentFile, cleanup, resetRoot, writeAgent } from "./harness.ts";
 import { mailSession, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -170,7 +171,10 @@ test("failed staged processing still clears live activity before shutdown and pr
 	await assert.rejects(owner.toolCall("delegation_status", {}), /input processing failed/);
 	await owner.shutdown();
 	await until(async () => (await files(id)).length === 0, "failed owner must still run activity shutdown");
-	assert.ok(owner.tmux.windows.has(direct.windowId), "process-owner cleanup is not explicit task/window cancellation");
+	assert.ok(
+		owner.tmux.windows.has(windowFields(direct).windowId),
+		"process-owner cleanup is not explicit task/window cancellation",
+	);
 	const replacement = instance(id, "reopened-launch", { entries: owner.entries, tmux: owner.tmux });
 	await replacement.start();
 	await tool(replacement, "replacement-write", "write");

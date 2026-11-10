@@ -6,6 +6,7 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { mailSession, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -73,7 +74,7 @@ test("resume trust canceled at root opens no unattended UI", async () => {
 		join(sessionDir, `worker_${record.id}.jsonl`),
 		`${JSON.stringify({ type: "session", version: 3, id: record.id, cwd, timestamp: "" })}\n`,
 	);
-	session.tmux.windows.delete(record.windowId);
+	session.tmux.windows.delete(windowFields(record).windowId);
 	await assert.rejects(
 		session.toolCall("delegation_resume", { id: record.id, task: "again" }),
 		/trust question.*cancelled/,

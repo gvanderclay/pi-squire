@@ -7,6 +7,7 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import type { Delegation } from "../src/results.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, request, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -164,7 +165,11 @@ test("corrupt facts refuse root and nested resumes before killing an exited wind
 		corrupt(owner);
 		const reopened = instance(owner.parent);
 		reopened.entries.push(...owner.entries);
-		reopened.tmux.windows.set(record.windowId, { name: record.windowName, exited: true, session: "test" });
+		reopened.tmux.windows.set(windowFields(record).windowId, {
+			name: windowFields(record).windowName,
+			exited: true,
+			session: "test",
+		});
 		await reopened.start();
 		const mailed = envelopes(owner.parent, "sent").length;
 		await assert.rejects(
@@ -181,7 +186,7 @@ test("corrupt facts refuse root and nested resumes before killing an exited wind
 
 test("a new preflight write failure refuses resume before killing its exited window", async () => {
 	const { owner, record } = await resumeFixture(false);
-	owner.tmux.exit(record.windowId);
+	owner.tmux.exit(windowFields(record).windowId);
 	// The normal fact file's parent directory becomes inaccessible as a directory.
 	const file = stateFile(owner);
 	const temporary = `${file}.${process.pid}.tmp`;

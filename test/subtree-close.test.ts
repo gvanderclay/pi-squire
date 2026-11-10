@@ -11,6 +11,7 @@ import { readTree, reconcileTree, treeCounts, treePath } from "../src/tree-regis
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, sessionDir, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
+import { windowFields } from "./window-record.ts";
 
 type Session = ReturnType<typeof mailSession>;
 const active: Session[] = [];
@@ -65,17 +66,17 @@ test("ancestor close captures subtree only, never siblings, user windows or shar
 	const foreign = instance({ tmux });
 	await foreign.start();
 	const other = await launch(foreign, "coordinator");
-	tmux.moveWindow(c.windowId, "shared-companion");
-	tmux.moveWindow(w.windowId, "shared-companion");
-	tmux.moveWindow(other.windowId, "shared-companion");
+	tmux.moveWindow(windowFields(c).windowId, "shared-companion");
+	tmux.moveWindow(windowFields(w).windowId, "shared-companion");
+	tmux.moveWindow(windowFields(other).windowId, "shared-companion");
 	tmux.addWindow("@user", "vim", "shared-companion");
 	await assert.rejects(coordinator.toolCall("delegation_close", { id: sibling.id }), /descendant tree/);
 	await assert.rejects(foreign.toolCall("delegation_close", { id: w.id }), /descendant tree/);
 	const result = await close(owner, c.id);
 	assert.equal(result.complete, true);
-	assert.deepEqual(tmux.killed, [w.windowId, c.windowId], "deepest first");
-	assert.equal(tmux.windows.has(sibling.windowId), true);
-	assert.equal(tmux.windows.has(other.windowId), true);
+	assert.deepEqual(tmux.killed, [windowFields(w).windowId, windowFields(c).windowId], "deepest first");
+	assert.equal(tmux.windows.has(windowFields(sibling).windowId), true);
+	assert.equal(tmux.windows.has(windowFields(other).windowId), true);
 	assert.equal(tmux.windows.has("@user"), true);
 	assert.equal(record(owner, c.id).closed, true);
 	assert.equal(record(coordinator, w.id).closed, undefined, "ancestor does not write foreign semantic records");
@@ -189,26 +190,26 @@ test("UI cancellation wakes a stopped root, but stopped prior outcomes stay held
 test("same-id reattached coordinator closes CURRENT verified locator, not historical parent window", async () => {
 	const { owner, coordinator, c, w, tmux } = await tree();
 	await coordinator.shutdown();
-	tmux.windows.delete(c.windowId);
+	tmux.windows.delete(windowFields(c).windowId);
 	await reconcileTree(owner.parent, tmux);
-	tmux.addWindow(c.windowId, "unrelated-recycled");
-	tmux.addWindow("@new", "manual");
-	const current = Object.assign(new FakeTmux(), { currentWindow: async () => ({ id: "@new", name: "manual" }) });
+	tmux.addWindow(windowFields(c).windowId, "unrelated-recycled");
+	tmux.addWindow("@702", "manual");
+	const current = Object.assign(new FakeTmux(), { currentWindow: async () => ({ id: "@702", name: "manual" }) });
 	current.listWindows = () => tmux.listWindows();
 	const reopened = instance({ parent: c.id, tmux: current });
 	await reopened.start();
-	assert.equal(readTree(owner.parent).entries.find((entry) => entry.id === c.id)?.windowId, "@new");
+	assert.equal(windowFields(readTree(owner.parent).entries.find((entry) => entry.id === c.id)!).windowId, "@702");
 	const result = await close(owner, c.id);
 	assert.equal(result.complete, true);
-	assert.deepEqual(tmux.killed, [w.windowId, "@new"]);
-	assert.equal(tmux.windows.has(c.windowId), true);
+	assert.deepEqual(tmux.killed, [windowFields(w).windowId, "@702"]);
+	assert.equal(tmux.windows.has(windowFields(c).windowId), true);
 });
 
 test("partial kill errors persist successes, fence descendants, and explicit retry converges", async () => {
 	const { owner, coordinator, c, w, tmux } = await tree();
 	const kill = tmux.kill.bind(tmux);
 	tmux.kill = async (id) => {
-		if (id === w.windowId) throw new Error("injected worker failure");
+		if (id === windowFields(w).windowId) throw new Error("injected worker failure");
 		await kill(id);
 	};
 	const result = await owner.toolCall("delegation_close", { id: c.id });
@@ -217,7 +218,7 @@ test("partial kill errors persist successes, fence descendants, and explicit ret
 	assert.equal(details.closed, false);
 	assert.equal(details.members.find((m) => m.id === c.id)?.closed, true);
 	assert.equal(details.members.find((m) => m.id === w.id)?.outcome, "error");
-	assert.ok(tmux.windows.has(w.windowId));
+	assert.ok(tmux.windows.has(windowFields(w).windowId));
 	await assert.rejects(coordinator.toolCall("delegate", { agent: "worker", task: "escape" }), /closing/);
 	tmux.kill = kill;
 	const retry = await close(owner, c.id);
@@ -271,7 +272,7 @@ test("missing original placement identity refuses resume; unknown ids are not cl
 					agent: "worker",
 					model: "alpha/fast-model",
 					thinking: "medium",
-					windowId: "@old",
+					windowId: "@701",
 					windowName: "old",
 				},
 			},
@@ -302,7 +303,7 @@ test("close after kill publication error reports actual side effect, never false
 	assert.equal(details.killed, true);
 	assert.match(details.members[0].error!, /was killed.*publication failed/);
 	writeFileSync(treePath(owner.parent), saved);
-	assert.ok(!tmux.windows.has(w.windowId));
+	assert.ok(!tmux.windows.has(windowFields(w).windowId));
 });
 
 test("ordinary owner shutdown does not cascade; close retains actual managed worktree files and branch", async () => {

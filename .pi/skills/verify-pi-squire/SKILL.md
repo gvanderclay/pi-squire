@@ -1,6 +1,6 @@
 ---
 name: verify-pi-squire
-description: Drives a real Pi with this checkout's pi-squire and pi-session-mail in a private tmux server, on a cheap model, to prove delegate, result, auto-exit, status, close and resume behavior the way a user sees it. Use when a change to src/ needs proof beyond the unit tests, or to reproduce a delegation bug.
+description: Drives a real Pi with this checkout's pi-squire and pi-session-mail in a private tmux server, or a private named Herdr session hosted by one, on a cheap model, to prove delegate, result, auto-exit, status, close, resume, fork and Herdr restart behavior the way a user sees it. Use when a change to src/ needs proof beyond the unit tests, or to reproduce a delegation bug.
 ---
 
 # Verify pi-squire
@@ -40,7 +40,8 @@ Every command prints one JSON object. `"ok": false` means it failed, with the re
 
    Ready means the root's footer shows `deepseek-v4.1-flash • low`, which appears once the TUI has its model. Launch waits up to 60 s and saves the pane to `evidence/launch-pane.txt`.
 
-4. Delegate windows open in a second tmux session on the same socket, chosen by Squire's [window placement](../../../README.md#where-delegate-windows-open). In the runs that proved this skill it was `work-delegate-session`; read the real name from the `delegate` command's output or `windows`.
+4. With `--herdr` (and optionally `--herdr-integration`), launch instead starts a private named Herdr session `squire-verify-<id>` with its own `herdr.toml` (`HERDR_CONFIG_PATH`), inside a `host` window of the run's tmux server, and runs the root Pi in pane `w1:p1`. No `multiplexer` setting is written, so it also proves auto-detection. `type`, `delegate`, `capture`, `windows` and `cleanup` then act on Herdr; `herdr` and `herdr-restart` exist only for these runs. See [features/herdr.md](features/herdr.md). It never addresses Herdr's `default` session or your config.
+5. Delegate windows (tmux runs) open in a second tmux session on the same socket, chosen by Squire's [window placement](../../../README.md#where-delegate-windows-open). In the runs that proved this skill it was `work-delegate-session`; read the real name from the `delegate` command's output or `windows`.
 
 Teardown is [Cleanup](#cleanup).
 
@@ -108,7 +109,7 @@ Proof standards for this repository:
 node .pi/skills/verify-pi-squire/scripts/squire-verify.mjs cleanup --run <id>
 ```
 
-It runs `tmux -L squire-verify-<id> kill-server`: only this run's server, which holds the root and every delegate it started. It never kills by process name and never touches the user's own tmux server. The JSON lists the evidence files still present; check it is non-empty.
+For a Herdr run it first runs `herdr session stop` and `herdr session delete` for `squire-verify-<id>` only. It runs `tmux -L squire-verify-<id> kill-server`: only this run's server, which holds the root and every delegate it started. It never kills by process name and never touches the user's own tmux server. The JSON lists the evidence files still present; check it is non-empty.
 
 Leave the run folder in place. It is under `.scratch/`, which Git ignores. Pi writes an empty `agent/auth.json` there, and the permission rules forbid deleting files named `auth.json`, so do not try to remove the folder.
 

@@ -38,7 +38,9 @@ follows [Semantic Versioning](https://semver.org/).
   `test/herdr-navigation.test.ts` models its Herdr-hosted Pi without a tmux
   context, since both contexts no longer publish own-pane telemetry; and
   `test/delegate.test.ts`'s exact child environment adds
-  `PI_DELEGATE_MULTIPLEXER: "tmux"`.
+  `PI_DELEGATE_MULTIPLEXER: "tmux"`. The `verify-pi-squire` skill gains
+  `launch --herdr` runs in a private named Herdr session, with
+  `herdr-restart` and a Herdr feature recipe.
 
 - Herdr widget Enter and `/delegate-open` now focus a delegate's tab only after
   re-verifying its exact terminal; `--peek` reads recent rows without focusing.

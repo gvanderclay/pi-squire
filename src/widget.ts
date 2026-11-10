@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { DelegateHost } from "./host.ts";
 import { isStarted, type Recorded, type Results, type StartedRecorded } from "./results.ts";
-import type { DelegateHost } from "./tmux.ts";
 import { readTreeDisplay } from "./tree-registry.ts";
 import { visibleRecordFacts } from "./tree-view.ts";
 import { joinActivities } from "./widget-activity-join.ts";

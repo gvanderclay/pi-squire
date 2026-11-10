@@ -4,17 +4,23 @@ import { execFile } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type HerdrLocator, type HerdrPaneLocator, herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
+import {
+	type HerdrLocator,
+	type HerdrPaneLocator,
+	herdrLocator,
+	herdrLocators,
+	herdrPaneLocator,
+} from "./herdr-locator.ts";
 import { assertSessionFree, type HostTab, snapshotTabs } from "./herdr-restore.ts";
 import {
 	type DelegateHost,
 	type OpenedWindow,
 	type ShowResult,
 	WindowOpenError,
-	type WindowRecord,
 	type WindowSpec,
 	type WindowTarget,
-} from "./tmux.ts";
+} from "./host.ts";
+import type { WindowRecord } from "./locators.ts";
 import type { ClosableStates, WindowLook } from "./window-state.ts";
 
 type Json = Record<string, unknown>;
@@ -195,7 +201,7 @@ class HerdrClient implements DelegateHost {
 	}
 	readonly windowNoun = "tab";
 	readonly usesWindowPlacement = false;
-	readonly requiresSessionGuard = true;
+	readonly requiresSessionGuard = herdrLocators.requiresSessionGuard;
 	readonly windowListRefusal = "could not ask Herdr for its delegate tabs";
 	readonly refusal =
 		"this session is not inside a Herdr pane (needs HERDR_ENV=1, HERDR_WORKSPACE_ID, HERDR_PANE_ID and HERDR_SOCKET_PATH); start Pi in Herdr to open a delegate tab (multiplexer: herdr)";
@@ -445,6 +451,15 @@ class HerdrClient implements DelegateHost {
 		} catch (error) {
 			throw new WindowOpenError(String(error), "unknown");
 		}
+	}
+	async closeTaskless(opened: OpenedWindow): Promise<void> {
+		const closed = await this.states()
+			.then((states) => states.close({ locator: opened.locator }))
+			.catch(() => false);
+		if (closed) return;
+		throw new Error(
+			`the resumed delegate's ${opened.location ?? `tab ${opened.id}`} could not be closed and may still run Pi with no task. Check it is the delegate, then close its pane yourself (herdr pane close ${herdrLocator(opened.locator)?.pane})`,
+		);
 	}
 	async observeLivePane(): Promise<HerdrPaneLocator | undefined> {
 		const own = this.caller();

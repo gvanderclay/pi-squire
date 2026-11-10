@@ -8,13 +8,12 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
-import { herdrLocator } from "./herdr-locator.ts";
+import type { DelegateHost } from "./host.ts";
+import { windowFacts, windowPresentation, windowTerms } from "./locators.ts";
 import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-sessions.ts";
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
-import { type DelegateHost, windowPresentation } from "./tmux.ts";
-import { windowTerms } from "./tmux-locator.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { WindowStates } from "./window-state.ts";
@@ -177,7 +176,7 @@ export async function settleModel(
 /**
  * The call-wide prerequisites of a resume, read once: the backend it opens in
  * (frozen like a launch's), that backend usable, and a valid placement setting
- * (tmux only; a Herdr tab always opens in the parent's workspace).
+ * (only for hosts that use window placement).
  */
 export async function preflight(deps: ResumeDeps): Promise<{ placement: WindowPlacement; client: DelegateHost }> {
 	const client = deps.tmux.forLaunch?.() ?? deps.tmux;
@@ -186,15 +185,15 @@ export async function preflight(deps: ResumeDeps): Promise<{ placement: WindowPl
 	return { placement: client.usesWindowPlacement ? deps.placement() : "current", client };
 }
 
-/** Before any side effect: no other live Pi (such as a Herdr-restored tab) may already host the session. */
+/** Before any side effect: no other live Pi (including a host-restored session) may already host the session. */
 export async function guardSession(
 	deps: ResumeDeps,
 	record: StartedRecorded,
 	client: DelegateHost,
 	ctx: ExtensionContext,
 ): Promise<void> {
-	// tmux-only resumes keep their order of checks; Herdr involvement needs the session file now.
-	if (!herdrLocator(record.locator) && !client.requiresSessionGuard) return;
+	// Hosts without a restore guard keep their order of checks; guarded hosts need the file now.
+	if (!windowFacts(record).requiresSessionGuard && !client.requiresSessionGuard) return;
 	const session = sessionFor(record, ctx);
 	await deps.tmux.guardSession?.(record, { path: session.path, id: sessionIdOf(record) }, client);
 }

@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { DelegateHost } from "./host.ts";
 import { matchesSessionOwner } from "./session-owner.ts";
-import type { DelegateHost } from "./tmux.ts";
 import { ActivityCollector } from "./widget-activity.ts";
 import { LIVE_LAUNCH_ENV, LiveActivityPublisher, liveLaunch } from "./widget-live.ts";
 

@@ -325,6 +325,23 @@ test("Herdr resume closes only its own exited pane, opens a new tab, then mails 
 	assert.equal(s.selects.length, picked, "the picker offers nothing while the resumed tab runs");
 });
 
+test("status canResume identifies Herdr direct children as controllable by their parent", async () => {
+	const h = wire();
+	const { s } = instance(h);
+	await s.start();
+	const { id, locator } = await delegated(h, s);
+	sessionFile(id, s.context.cwd);
+	writeFileSync(`${locator.launchFile}.status`, JSON.stringify({ pid: 99, exit: 1 }));
+	const status = await s.toolCall("delegation_status", { id });
+	const details = status.structuredContent as { delegations: { id: string; canResume: boolean }[] };
+	assert.equal(details.delegations.find((record) => record.id === id)?.canResume, true);
+	const resumed = await s.toolCall("delegation_resume", { id, task: "again" });
+	assert.match(resumed.content[0].text, /in tab scout-/);
+	const next = s.entries.findLast((entry) => (entry.data as { resumedFrom?: string }).resumedFrom === id)
+		?.data as StartedRecorded;
+	h.staged.push(dirname(herdrLocator(next.locator)!.launchFile));
+});
+
 test("after a Herdr restart the old delegation is gone and resume refuses, naming the restored tab, before side effects", async () => {
 	const h = wire();
 	const { s, tmux } = instance(h);

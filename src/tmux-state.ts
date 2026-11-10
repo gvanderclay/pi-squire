@@ -1,6 +1,7 @@
 // One tmux observation answers many records; low-level listing and kill stay here.
-import { herdrLocator } from "./herdr-locator.ts";
+
 import { matchWindow, recordLocator, type TmuxClient, type TmuxWindow } from "./tmux.ts";
+import { tmuxLocator } from "./tmux-locator.ts";
 import type {
 	ClosableStates,
 	PaneStates,
@@ -18,7 +19,7 @@ function findWindow(windows: readonly TmuxWindow[], record: WindowRecord): TmuxW
 /** States from one window listing; `undefined` (a failed or skipped ask) makes every record `unknown`. */
 export function windowStates(windows: readonly TmuxWindow[] | undefined): WindowStates {
 	const look = (record: WindowRecord): WindowLook => {
-		if (windows === undefined || !recordLocator(record) || herdrLocator(record.locator)) return { state: "unknown" };
+		if (windows === undefined || !tmuxLocator(recordLocator(record))) return { state: "unknown" };
 		const own: TmuxWindow | undefined = findWindow(windows, record);
 		if (own === undefined) return { state: "gone" };
 		// A window whose program exited counts as gone.
@@ -38,7 +39,7 @@ function closableStates(tmux: TmuxClient, windows: readonly TmuxWindow[] | undef
 		...windowStates(windows),
 		async close(record: WindowRecord): Promise<boolean> {
 			if (windows === undefined) throw new Error("could not ask tmux which windows are open, so none was closed");
-			if (!recordLocator(record) || herdrLocator(record.locator))
+			if (!tmuxLocator(recordLocator(record)))
 				throw new Error("invalid or unsupported delegate window locator; close refused");
 			const own: TmuxWindow | undefined = findWindow(windows, record);
 			if (own === undefined) return false;

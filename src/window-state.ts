@@ -3,10 +3,10 @@ import type { DelegateHost } from "./host.ts";
 import type { PaneListing } from "./tmux.ts";
 import { windowStates } from "./tmux-state.ts";
 
-export type { WindowRecord } from "./tmux-locator.ts";
+export type { WindowRecord } from "./locators.ts";
 export { windowStates } from "./tmux-state.ts";
 
-import type { WindowRecord } from "./tmux-locator.ts";
+import type { WindowRecord } from "./locators.ts";
 
 /**
  * What one ask says about a delegation's window: its program runs, the window

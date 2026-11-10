@@ -2,11 +2,11 @@
 // group it sits in (session or workspace) and the phrase the started, resume,
 // fork, status and navigation text use. The public fields windowId, windowName
 // and windowSession stay as they are; this module only words them.
-import { type WindowRecord, windowPresentation, windowTerms } from "./tmux-locator.ts";
+import { type WindowRecord, windowPresentation, windowTerms } from "./locators.ts";
 
 /** The fields a start or resume result carries about where the window opened. */
 export type OpenedWhere = {
-	/** The adapter's own wording for where it opened (a Herdr tab); absent keeps the tmux wording. */
+	/** The adapter's own wording for where it opened; absent keeps the legacy window wording. */
 	location?: string;
 	windowName: string;
 	windowSession?: string;

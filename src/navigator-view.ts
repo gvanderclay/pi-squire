@@ -1,5 +1,8 @@
 // Read-only navigation projection. Never supplies locators to close or task accounting.
-import { herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
+
+import type { DelegateHost } from "./host.ts";
+import type { WindowLocator } from "./locators.ts";
+import { sameLiveLocator, sameNavigationWindow, windowFacts, windowLocator, windowPresentation } from "./locators.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -9,23 +12,19 @@ import {
 	type StartedRecorded,
 	sessionIdOf,
 } from "./results.ts";
-import {
-	type DelegateHost,
-	sameLiveLocator,
-	sameWindowLocator,
-	type TmuxWindow,
-	windowLocator,
-	windowPresentation,
-} from "./tmux.ts";
+
 import { verifyLiveWindow } from "./widget-ancestors.ts";
 import { LiveActivityReader, type LiveLocator } from "./widget-live.ts";
 import { askWindowStates, type WindowRecord, type WindowStates } from "./window-state.ts";
+
+/** Navigation projection, not a host inventory or lifecycle authority. */
+type NavigationWindow = { id: string; name: string; session: string; exited: boolean; locator?: WindowLocator };
 
 export type OpenDelegate = {
 	id: string;
 	name: string;
 	state: DelegationState;
-	window: TmuxWindow;
+	window: NavigationWindow;
 	navigable: boolean;
 	live?: LiveLocator;
 	record: StartedRecorded;
@@ -50,17 +49,15 @@ function sameLive(a: LiveLocator | undefined, b: LiveLocator | undefined): boole
 }
 function sameTarget(a: OpenDelegate, b: OpenDelegate): boolean {
 	return (
-		(herdrPaneLocator(a.window.locator) || herdrPaneLocator(b.window.locator)
-			? sameLiveLocator(a.window.locator, b.window.locator)
-			: sameWindowLocator({ locator: windowLocator(a.window) }, { locator: windowLocator(b.window) })) &&
+		sameNavigationWindow({ locator: windowLocator(a.window) }, { locator: windowLocator(b.window) }) &&
 		sameLive(a.live, b.live)
 	);
 }
 
 /** The record's own window when its program runs, as the navigator switches to it. */
-function runningWindow(windows: WindowStates, record: StartedRecorded): TmuxWindow | undefined {
+function runningWindow(windows: WindowStates, record: StartedRecorded): NavigationWindow | undefined {
 	const look = windows.look(record);
-	return look.state === "running" || (herdrLocator(record.locator) && windows.listed(record))
+	return look.state === "running" || (windowFacts(record).retainedAfterExit && windows.listed(record))
 		? {
 				id: windowPresentation(record).windowId,
 				name: windowPresentation(record).windowName,
@@ -76,7 +73,7 @@ export class NavigatorView {
 	private readonly results: Results;
 	private readonly tmux: DelegateHost;
 	private readonly reader: Pick<LiveActivityReader, "locator">;
-	// A disappearing/replaced runtime cannot fall back, except a terminal-fenced Herdr shell after a recorded exit.
+	// A disappearing/replaced runtime cannot fall back, except a host-retained resource after a recorded exit.
 	private readonly current: Set<string> = new Set();
 
 	constructor(
@@ -103,13 +100,13 @@ export class NavigatorView {
 	}
 
 	private async item(record: StartedRecorded, latest: boolean, windows: WindowStates): Promise<OpenDelegate> {
-		const historical: TmuxWindow | undefined = runningWindow(windows, record);
+		const historical: NavigationWindow | undefined = runningWindow(windows, record);
 		const live: LiveLocator | undefined =
 			latest && !record.closed ? await this.reader.locator(sessionIdOf(record)) : undefined;
 		if (live) this.current.add(record.id);
-		const window: TmuxWindow | undefined = this.current.has(record.id)
+		const window: NavigationWindow | undefined = this.current.has(record.id)
 			? ((await this.liveWindow(live, windows)) ??
-				(!live && herdrLocator(record.locator) && windows.state(record) === "gone" ? historical : undefined))
+				(!live && windowFacts(record).retainedAfterExit && windows.state(record) === "gone" ? historical : undefined))
 			: historical;
 		return {
 			id: record.id,
@@ -127,7 +124,10 @@ export class NavigatorView {
 		};
 	}
 
-	private async liveWindow(live: LiveLocator | undefined, windows: WindowStates): Promise<TmuxWindow | undefined> {
+	private async liveWindow(
+		live: LiveLocator | undefined,
+		windows: WindowStates,
+	): Promise<NavigationWindow | undefined> {
 		if (!live || !windows.answered) return undefined;
 		const pane = await verifyLiveWindow(this.tmux, live).catch(() => undefined);
 		if (!pane) return undefined;

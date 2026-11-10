@@ -37,6 +37,9 @@ import type { WindowPlacement } from "../src/window-placement.ts";
 export class FakeTmux implements TmuxClient, TmuxNavigation {
 	private readonly verbs = navigationVerbs(this);
 	readonly id = "tmux";
+	closeTaskless(opened: OpenedWindow): Promise<void> {
+		return this.kill(opened.id).catch(() => {});
+	}
 	ownsLocator = ownsTmuxLocator;
 	readonly usesWindowPlacement = true;
 	readonly requiresSessionGuard = false;

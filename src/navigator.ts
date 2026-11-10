@@ -1,9 +1,10 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import type { DelegateHost } from "./host.ts";
 import { locationTerms, noVerifiedOpen } from "./location.ts";
+import { livePaneTarget, windowLocator } from "./locators.ts";
 import { NavigatorView, type OpenDelegate } from "./navigator-view.ts";
 import { isStarted, type Results, recordedName } from "./results.ts";
-import { type DelegateHost, livePaneTarget, windowLocator } from "./tmux.ts";
 import type { Tracking } from "./tracking.ts";
 
 /** What `/delegate-open` does with a verified window. */

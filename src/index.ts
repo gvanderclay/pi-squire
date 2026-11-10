@@ -91,9 +91,11 @@ import {
 	USAGE,
 } from "./delegate-request.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
+import { type DelegateHost, type OpenedWindow, WindowOpenError } from "./host.ts";
 import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { clearMarks, readMarks } from "./limits.ts";
 import { openedIn } from "./location.ts";
+import { windowLocator } from "./locators.ts";
 import { agentModels, chooseModel, fallbackNote, modelIds, type Skipped } from "./model-choice.ts";
 import { createMultiplexer, MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
@@ -104,7 +106,6 @@ import { createResume, resumableIds, startedLine } from "./resume.ts";
 import { pickResume } from "./resume-picker.ts";
 import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
-import { type DelegateHost, type OpenedWindow, WindowOpenError, windowLocator } from "./tmux.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import {

@@ -1,14 +1,14 @@
 // The tmux operations `delegate` needs, behind an interface so tests can use a
 // fake. This client talks to tmux with `execFile` and no shell.
 import { execFile } from "node:child_process";
-import type { DelegateHost, OpenedWindow, WindowSpec } from "./host.ts";
+import type { DelegateHost, OpenedWindow, WindowSpec, WindowTarget } from "./host.ts";
 import { WindowOpenError } from "./host.ts";
 
 export type { DelegateHost, NoViewer, OpenedWindow, ShowResult, WindowSpec, WindowTarget } from "./host.ts";
 export { WindowOpenError } from "./host.ts";
 
 import type { WindowLocator } from "./tmux-locator.ts";
-import { liveLocator, paneLocator, validWindowLocator, verifyTmuxPaneWindow } from "./tmux-locator.ts";
+import { liveLocator, paneLocator, tmuxLocator, tmuxLocators, verifyTmuxPaneWindow } from "./tmux-locator.ts";
 import { tmuxPaneStates, tmuxStates } from "./tmux-state.ts";
 
 /** One window as tmux lists it. */
@@ -128,15 +128,9 @@ async function observeTmuxPane(client: TmuxClient): Promise<object | undefined> 
 	return pane ? liveLocator(pane) : undefined;
 }
 
-export function ownsTmuxLocator(value: unknown): boolean {
-	return (
-		(!!value &&
-			typeof value === "object" &&
-			"adapter" in value &&
-			value.adapter === "tmux" &&
-			validWindowLocator(value)) ||
-		!!paneLocator(value)
-	);
+export function ownsTmuxLocator(value: unknown, target?: WindowTarget): boolean {
+	if (target) return tmuxLocator(value) && /^@[0-9]+$/.test(target.windowId);
+	return tmuxLocator(value) || !!paneLocator(value);
 }
 
 const NO_CLIENT_HERE = "no tmux client attached to this session";
@@ -406,11 +400,6 @@ async function listPanes(run: Run): Promise<PaneListing> {
 	return { server, panes, windows: [...windows.values()] };
 }
 
-/**
- * The real client. A window is opened relative to the session of the pane in
- * `TMUX_PANE`, not whatever session a client happens to have attached, so it
- * works with several clients on one server.
- */
 async function listedWindows(run: Run): Promise<TmuxWindow[]> {
 	// The window name goes last: it is the one field that could hold a tab.
 	const format = "#{window_id}\t#{pane_dead}\t#{session_name}\t#{window_name}";
@@ -424,6 +413,11 @@ async function listedWindows(run: Run): Promise<TmuxWindow[]> {
 		});
 }
 
+/**
+ * The real client. A window is opened relative to the session of the pane in
+ * `TMUX_PANE`, not whatever session a client happens to have attached, so it
+ * works with several clients on one server.
+ */
 export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClient & TmuxNavigation {
 	const timeoutMs = options.timeoutMs ?? 10_000;
 	const run: Run = (args) => runTmux(args, timeoutMs);
@@ -447,9 +441,10 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 		...calls,
 		...navigationVerbs(calls),
 		id: "tmux",
+		closeTaskless: (opened) => client.kill(opened.id).catch(() => {}),
 		ownsLocator: ownsTmuxLocator,
 		usesWindowPlacement: true,
-		requiresSessionGuard: false,
+		requiresSessionGuard: tmuxLocators.requiresSessionGuard,
 		states: (strict) => tmuxStates(client, strict),
 		paneStates: () => tmuxPaneStates(client),
 		observeLivePane: () => observeTmuxPane(client),

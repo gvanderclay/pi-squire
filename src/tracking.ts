@@ -6,9 +6,11 @@
 import { statSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { DelegateHost } from "./host.ts";
 import { readIdentity } from "./identity.ts";
 import { type Mark, readMarks } from "./limits.ts";
 import { recordedLocation } from "./location.ts";
+import { windowPresentation } from "./locators.ts";
 import { createPoll } from "./poll.ts";
 import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
@@ -24,8 +26,6 @@ import {
 	type WorkspaceAttempt,
 } from "./results.ts";
 import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
-import { type DelegateHost, windowPresentation } from "./tmux.ts";
-import { windowTerms } from "./tmux-locator.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
 import { ago, autoExitLine, stateLine } from "./tracking-text.ts";
 import { type CloseResult, CloseSchema, closeTree } from "./tree-close.ts";
@@ -172,9 +172,7 @@ function view(
 		snapshot,
 		resumedAs,
 		windowSession,
-		canResume:
-			windowTerms(record).noun !== "tab" &&
-			(record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId(),
+		canResume: (record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId(),
 	};
 }
 

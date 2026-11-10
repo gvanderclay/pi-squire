@@ -5,10 +5,10 @@
 // their durable locator names, independent of today's choice.
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createHerdrClient } from "./herdr.ts";
-import type { DelegateHost, WindowSpec } from "./host.ts";
+import type { DelegateHost, OpenedWindow, WindowSpec, WindowTarget } from "./host.ts";
+import { recordLocator, type WindowRecord } from "./locators.ts";
 import { type Multiplexer, multiplexerSetting, squireSettingsFile as settingsFile } from "./settings.ts";
-import { createTmuxClient, type WindowRecord, type WindowTarget } from "./tmux.ts";
-import { recordLocator } from "./tmux-locator.ts";
+import { createTmuxClient } from "./tmux.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import { type ClosableStates, windowStates } from "./window-state.ts";
 
@@ -80,7 +80,8 @@ export function createHostRouter(
 		// Released navigation callers can still supply only a tmux window id.
 		const locator = target.locator ?? recordLocator({ windowId: target.windowId, windowName: "" });
 		const found = owner(locator);
-		if (!found) throw new Error("no verified delegate navigation locator; target changed or unavailable");
+		if (!found?.ownsLocator(locator, target))
+			throw new Error("no verified delegate navigation locator; target changed or unavailable");
 		return found;
 	};
 	function unavailable(): string | undefined;
@@ -106,20 +107,17 @@ export function createHostRouter(
 		get requiresSessionGuard(): boolean {
 			return selected().requiresSessionGuard;
 		},
-		ownsLocator: (value: unknown) => !!value && typeof value === "object" && owner(value) !== undefined,
+		ownsLocator: (value: unknown, target?: WindowTarget) =>
+			!!value && typeof value === "object" && owner(value)?.ownsLocator(value, target) === true,
 		forLaunch: selected,
 		unavailable,
 		openWindow: (spec: WindowSpec, placement: WindowPlacement, companion: string) =>
 			selected().openWindow(spec, placement, companion),
+		closeTaskless: (opened: OpenedWindow) =>
+			navigation({ windowId: opened.id, locator: opened.locator }).closeTaskless(opened),
 		observeLivePane: () => host()?.observeLivePane?.() ?? Promise.resolve(undefined),
 		verifyLivePane: (value: object) => owner(value)?.verifyLivePane?.(value) ?? Promise.resolve(undefined),
-		paneStates: async () => {
-			// The optional terminal snapshot is used only for live navigation, never routing/close.
-			const own = host();
-			const pane = await own?.paneStates?.();
-			const states = await observeHosts(adapters, owner);
-			return { ...states, listing: pane?.listing };
-		},
+		paneStates: () => navigationStates(adapters, owner),
 		get windowListRefusal(): string {
 			try {
 				return selected().windowListRefusal;
@@ -132,8 +130,30 @@ export function createHostRouter(
 		states: (strict?: boolean) => observeHosts(adapters, owner, strict),
 		guardSession: (record: WindowRecord, session: { path: string; id: string }, launch: DelegateHost) =>
 			guardHosts(owner, record, session, launch),
-		currentWindow: () => host()?.currentWindow?.() ?? Promise.resolve(undefined),
+		currentWindow: () => recoverWindow(adapters, host()),
 	};
+}
+
+/** Keep the released tmux navigation snapshot available even when this Pi is on another host. */
+async function navigationStates(
+	adapters: readonly DelegateHost[],
+	owner: (locator: object | undefined) => DelegateHost | undefined,
+): Promise<import("./window-state.ts").PaneStates> {
+	const snapshots = await Promise.all(adapters.map((adapter) => adapter.paneStates?.()));
+	const states = await observeHosts(adapters, owner);
+	return { ...states, listing: snapshots.find((snapshot) => snapshot?.listing !== undefined)?.listing };
+}
+
+/** Startup recovery is a positive observation, not a launch fallback. */
+async function recoverWindow(
+	adapters: readonly DelegateHost[],
+	host: DelegateHost | undefined,
+): Promise<{ id: string; name: string } | undefined> {
+	if (host) return host.currentWindow?.();
+	// Released roots without unambiguous host evidence still asked the sole
+	// recovery-capable adapter. Do not adopt when several adapters can recover.
+	const capable = adapters.filter((adapter) => adapter.currentWindow !== undefined);
+	return capable.length === 1 ? capable[0].currentWindow?.() : undefined;
 }
 
 async function guardHosts(
@@ -188,10 +208,10 @@ export function createMultiplexer(
 	const host = (): DelegateHost | undefined => {
 		const launcher = inherited();
 		const found = present();
-		if (launcher === "tmux" || launcher === "herdr") return found.find((adapter) => adapter.id === launcher);
+		if (adapters.some((adapter) => adapter.id === launcher)) return found.find((adapter) => adapter.id === launcher);
 		return found.length === 1 ? found[0] : undefined;
 	};
-	const router = createHostRouter(
+	return createHostRouter(
 		adapters,
 		() =>
 			chooseMultiplexer({
@@ -203,6 +223,4 @@ export function createMultiplexer(
 		host,
 		tmux.windowListRefusal,
 	);
-	// Compatibility only for resume's legacy rollback, removed in ticket 05.
-	return Object.assign(router, { kill: (id: string) => tmux.kill(id) });
 }

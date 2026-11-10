@@ -2,9 +2,8 @@
 // declares gone those whose window is gone. It runs only while a delegation is
 // running.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
+import type { DelegateHost } from "./host.ts";
 import type { Results } from "./results.ts";
-import type { DelegateHost } from "./tmux.ts";
 import { askWindowStates, type WindowStates } from "./window-state.ts";
 
 /** The hook a tick emits so the provider claims waiting replies before windows are checked. */

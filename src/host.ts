@@ -1,5 +1,5 @@
 // The verbs shared by delegate hosts. Concrete adapters own terminal protocols.
-import type { LiveNavigation, WindowLocator } from "./tmux-locator.ts";
+import type { LiveNavigation, WindowLocator } from "./locators.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { ClosableStates, PaneStates } from "./window-state.ts";
 
@@ -20,7 +20,7 @@ export type OpenedWindow = {
 
 /**
  * Why a window could not be opened, and whether one may exist anyway:
- * `not-opened` only when nothing was dispatched to tmux that could create it.
+ * `not-opened` only when nothing was dispatched that could create it.
  * Anything else, a timeout or a malformed answer included, is `unknown`.
  */
 export class WindowOpenError extends Error {
@@ -32,7 +32,7 @@ export class WindowOpenError extends Error {
 	}
 }
 
-/** Where a delegate window is: its tmux window id and, when known, the exact pane to read. */
+/** A navigation target. Public ids are presentation; a locator is routing authority. */
 export type WindowTarget = { windowId: string; paneId?: string; locator?: WindowLocator };
 
 /** Showing either switched, was canceled by verification, or could not find a viewing terminal. */
@@ -49,8 +49,8 @@ export type NoViewer = { text: string; brief: string; cause?: unknown };
 export interface DelegateHost extends LiveNavigation {
 	/** Setting/inheritance key; never inferred from a presentation noun. */
 	readonly id: string;
-	/** Accept only navigation/durable locators this host can route safely. */
-	ownsLocator(value: unknown): boolean;
+	/** Accept owned identity; with a navigation target, also validate its adapter-specific routing fields. */
+	ownsLocator(value: unknown, target?: WindowTarget): boolean;
 	readonly windowNoun?: string;
 	/** Whether launch uses the caller's tmux placement policy. */
 	readonly usesWindowPlacement: boolean;
@@ -66,6 +66,8 @@ export interface DelegateHost extends LiveNavigation {
 	readonly windowListRefusal: string;
 	peek(target: WindowTarget): Promise<string>;
 	openWindow(spec: WindowSpec, placement: WindowPlacement, companion: string): Promise<OpenedWindow>;
+	/** Roll back an opened resume with no task; any refusal includes the host-specific recovery wording. */
+	closeTaskless(opened: OpenedWindow): Promise<void>;
 	/** Optional positively observed startup recovery; absence never adopts by name. */
 	currentWindow?(): Promise<{ id: string; name: string } | undefined>;
 }

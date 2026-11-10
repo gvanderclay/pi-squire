@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `delegation_status` now reports `canResume: true` for a Herdr direct child,
+  just as for a tmux direct child. The field describes parent control authority,
+  not full call-time eligibility; the resume picker already checks eligibility
+  independently, and Herdr resume already works. A new
+  `test/herdr-parity.test.ts` case checks the status field and a successful resume;
+  no existing assertions changed.
+- If task mail fails after resume, rollback now routes through the opened
+  locator's owning host instead of treating every non-Herdr host as tmux.
+  Existing tmux rollback and Herdr identity fences/recovery text are preserved.
+  New `test/host-router.test.ts` cases exercise a third, pane-free host and a
+  refused rollback. Persisted locator formats are unchanged; unknown tags still
+  fail closed in durable readers.
+
+
 ### Added
 
 - Herdr parity and auto-detection. With no `multiplexer` setting, pi-squire

@@ -4,8 +4,8 @@ import { existsSync } from "node:fs";
 import { mkdir, open, opendir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { type LivePaneLocator, normalizeLiveLocator, runningLiveLocator, sameLiveLocator } from "./locators.ts";
 import { matchesSessionOwner } from "./session-owner.ts";
-import { type LivePaneLocator, normalizeLiveLocator, runningLiveLocator, sameLiveLocator } from "./tmux.ts";
 import { processAlive } from "./tree-lock.ts";
 import { type Activity, activityText } from "./widget-activity.ts";
 

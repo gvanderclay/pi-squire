@@ -10,9 +10,10 @@ import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-
 import { type TObject, Type } from "typebox";
 
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
-import { herdrLocator } from "./herdr-locator.ts";
+import type { DelegateHost, OpenedWindow } from "./host.ts";
 import { type Identity, readIdentity } from "./identity.ts";
 import { openedIn } from "./location.ts";
+import { windowLocator, windowPresentation } from "./locators.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
@@ -26,12 +27,11 @@ import {
 	settleModel,
 	windowCheck,
 } from "./resume-checks.ts";
-import { type DelegateHost, type OpenedWindow, windowLocator, windowPresentation } from "./tmux.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
 import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
 import { recordedIdentity } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
-import { askToClose, askWindowStates } from "./window-state.ts";
+import { askWindowStates } from "./window-state.ts";
 import type { Workspace } from "./workspace.ts";
 
 /** What a resume asks for; the fields after `task` are optional overrides. */
@@ -119,7 +119,7 @@ export type Resumed = {
 	workspace: Workspace;
 	/** The sentence naming a fallback model, or "". */
 	fallbackNote: string;
-	/** The adapter's own wording for where it opened (a Herdr tab); absent keeps the tmux wording. */
+	/** The adapter's own wording for where it opened; absent keeps the legacy window wording. */
 	location?: string;
 };
 
@@ -218,25 +218,24 @@ async function planResume(
  * second task. The reopened session's provider still delivers mail that
  * arrives after it starts. A failed send kills the window, which has no task.
  */
-async function mailTask(deps: ResumeDeps, opened: OpenedWindow, sessionId: string, task: string): Promise<string> {
+export async function mailTask(
+	deps: Pick<ResumeDeps, "tmux" | "sendTask">,
+	opened: OpenedWindow,
+	sessionId: string,
+	task: string,
+): Promise<string> {
 	try {
 		return deps.sendTask(sessionId, task);
 	} catch (err) {
-		if (!herdrLocator(opened.locator)) {
-			// Legacy tmux rollback; moved behind the owning adapter in ticket 05.
-			await (deps.tmux as import("./tmux.ts").TmuxClient).kill(opened.id).catch(() => {});
-			throw err;
+		try {
+			await deps.tmux.closeTaskless(opened);
+		} catch (closeError) {
+			throw new Error(
+				`${(err as Error).message ?? String(err)}; ${(closeError as Error).message ?? String(closeError)}`,
+				{ cause: err },
+			);
 		}
-		// A Herdr tab closes only through its terminal-fenced locator, never a tmux kill by id.
-		// The runner may still be starting, so the identity checks can refuse; say so.
-		const closed = await askToClose(deps.tmux)
-			.then((states) => states.close({ locator: opened.locator }))
-			.catch(() => false);
-		if (closed) throw err;
-		throw new Error(
-			`${(err as Error).message ?? String(err)}; the resumed delegate's ${opened.location ?? `tab ${opened.id}`} could not be closed and may still run Pi with no task. Check it is the delegate, then close its pane yourself (herdr pane close ${herdrLocator(opened.locator)?.pane})`,
-			{ cause: err },
-		);
+		throw err;
 	}
 }
 
@@ -367,7 +366,7 @@ async function resume(
 	const found = newestStarted(deps.results, request.id);
 	const record = { ...found, identity: requiredIdentity(found) };
 	deps.admit?.(record.agent, ctx);
-	// Herdr evidence first, so a restored tab is named; the owner check still refuses any other live writer.
+	// Host evidence first, so a restored resource is named; the owner check still refuses any other live writer.
 	await guardSession(deps, record, client, ctx);
 	assertNoOwner(record);
 	deps.results.checkStorage(true);

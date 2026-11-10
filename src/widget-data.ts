@@ -1,6 +1,6 @@
 // Read-only direct-child adapter. Results remains the task/result authority.
 // Rows are keyed by native session id, never by a mutable title or launch id.
-import { herdrLocator } from "./herdr-locator.ts";
+import { windowFacts } from "./locators.ts";
 import { isStarted, locateSession, type Results, recordedName, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import type { Activity } from "./widget-activity.ts";
@@ -81,7 +81,7 @@ export class DirectDelegateView {
 
 	needsWindows(results: Results): boolean {
 		return candidates(results).some((record) => {
-			if (!record.gone || record.result || herdrLocator(record.locator)) return true;
+			if (!record.gone || record.result || windowFacts(record).retainedAfterExit) return true;
 			try {
 				return sessionIsOwned(sessionIdOf(record));
 			} catch {
@@ -95,7 +95,7 @@ export class DirectDelegateView {
 		windows: WindowStates,
 		sessionDir: string | undefined,
 		viewport: MetadataViewport = { offset: 0, limit: 3 },
-		currentWindows: ReadonlyMap<string, import("./tmux.ts").WindowRecord> = new Map(),
+		currentWindows: ReadonlyMap<string, import("./locators.ts").WindowRecord> = new Map(),
 		visibleKeys?: ReadonlySet<string>,
 	): DelegateRow[] {
 		const running: Set<string> = new Set(results.running().map((record) => record.id));
@@ -103,7 +103,7 @@ export class DirectDelegateView {
 		for (const saved of candidates(results)) {
 			const current = currentWindows.get(saved.id);
 			const record: StartedRecorded = current ? { ...saved, ...current } : saved;
-			const retained = !!herdrLocator(record.locator) && windows.listed(record);
+			const retained = !!windowFacts(record).retainedAfterExit && windows.listed(record);
 			if (!retained && record.gone && !record.result && !current) continue;
 			// A verified exact live pane wins over list-windows pane_dead for another active pane.
 			const window: WindowState = current ? "running" : windows.state(record);

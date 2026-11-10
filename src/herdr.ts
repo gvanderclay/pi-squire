@@ -26,8 +26,15 @@ type Pane = {
 	agent?: string | null;
 	agent_session?: { value?: string } | null;
 };
-export type HerdrRun = (session: string, args: string[]) => Promise<string>;
-export type HerdrContext = { session: string; workspace: string; pane: string; socket: string };
+/**
+ * Which Herdr server a call reaches. `session` null is Herdr's default
+ * session: its panes have no HERDR_SESSION and `status server --json` reports
+ * `"session": null` (verified on Herdr 0.9.5). Herdr has no name for it to pass
+ * as `--session`, so it is reached through its socket path instead.
+ */
+export type HerdrRoute = { session: string | null; socket: string };
+export type HerdrRun = (route: HerdrRoute, args: string[]) => Promise<string>;
+export type HerdrContext = HerdrRoute & { workspace: string; pane: string };
 
 function object(value: unknown): Json {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid Herdr response");
@@ -48,17 +55,36 @@ export function childEnvironment(env: Readonly<Record<string, string | undefined
 }
 function context(): HerdrContext | undefined {
 	const { HERDR_ENV, HERDR_SESSION, HERDR_WORKSPACE_ID, HERDR_PANE_ID, HERDR_SOCKET_PATH } = process.env;
-	return HERDR_ENV === "1" && HERDR_SESSION && HERDR_WORKSPACE_ID && HERDR_PANE_ID && HERDR_SOCKET_PATH
-		? { session: HERDR_SESSION, workspace: HERDR_WORKSPACE_ID, pane: HERDR_PANE_ID, socket: HERDR_SOCKET_PATH }
+	// A pane of Herdr's default session has no (or an empty) HERDR_SESSION.
+	return HERDR_ENV === "1" && HERDR_WORKSPACE_ID && HERDR_PANE_ID && HERDR_SOCKET_PATH
+		? { session: HERDR_SESSION || null, workspace: HERDR_WORKSPACE_ID, pane: HERDR_PANE_ID, socket: HERDR_SOCKET_PATH }
 		: undefined;
 }
+/**
+ * The herdr argv and environment that reach exactly this route. A named
+ * session keeps `--session <name>`. The default session has no name, so the
+ * call omits `--session`, drops HERDR_SESSION (Herdr honours it, and rejects an
+ * empty one) and pins HERDR_SOCKET_PATH, which Herdr 0.9.5 uses as the server
+ * socket when no session is named; `status server --json` then reports that
+ * socket with `"session": null`, which every identity check compares.
+ */
+export function herdrInvocation(
+	route: HerdrRoute,
+	args: string[],
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): { argv: string[]; env: Record<string, string | undefined> } {
+	if (route.session !== null) return { argv: ["--session", route.session, ...args], env: { ...env } };
+	const { HERDR_SESSION: _named, ...rest } = env;
+	return { argv: args, env: { ...rest, HERDR_SOCKET_PATH: route.socket } };
+}
 function runHerdr(timeout: number): HerdrRun {
-	return (session: string, args: string[]) =>
+	return (route: HerdrRoute, args: string[]) =>
 		new Promise((resolve, reject) => {
+			const call = herdrInvocation(route, args);
 			execFile(
 				"herdr",
-				["--session", session, ...args],
-				{ encoding: "utf8", timeout, maxBuffer: 8 * 1024 * 1024 },
+				call.argv,
+				{ encoding: "utf8", timeout, maxBuffer: 8 * 1024 * 1024, env: call.env },
 				(error, out, err) => {
 					if (error) {
 						reject(
@@ -166,7 +192,7 @@ class HerdrClient implements TmuxClient {
 	readonly windowNoun = "tab";
 	readonly windowListRefusal = "could not ask Herdr for its delegate tabs";
 	readonly refusal =
-		"this session is not inside a Herdr pane; start Pi in Herdr to open a delegate tab (multiplexer: herdr)";
+		"this session is not inside a Herdr pane (needs HERDR_ENV=1, HERDR_WORKSPACE_ID, HERDR_PANE_ID and HERDR_SOCKET_PATH); start Pi in Herdr to open a delegate tab (multiplexer: herdr)";
 	readonly run: HerdrRun;
 	readonly caller: () => HerdrContext | undefined;
 	constructor(options: HerdrOptions) {
@@ -177,7 +203,7 @@ class HerdrClient implements TmuxClient {
 		const own = this.caller();
 		if (!own) return this.refusal;
 		try {
-			const status = object(JSON.parse(await this.run(own.session, ["status", "server", "--json"])));
+			const status = object(JSON.parse(await this.run(own, ["status", "server", "--json"])));
 			if (
 				status.running !== true ||
 				status.compatible !== true ||
@@ -187,7 +213,7 @@ class HerdrClient implements TmuxClient {
 				return "Herdr delegation needs a running, compatible protocol 22 server (verified with Herdr 0.9.5); no tmux fallback was attempted";
 			if (status.socket !== own.socket || status.session !== own.session)
 				return "Herdr session/socket identity changed; launch refused";
-			const parent = pane(result(await this.run(own.session, ["pane", "get", own.pane])).pane);
+			const parent = pane(result(await this.run(own, ["pane", "get", own.pane])).pane);
 			// Delegates open flat in the workspace this Pi started in (its root's,
 			// for a nested delegate). A pane moved since then has stale HERDR_*
 			// context, so refuse rather than guess which workspace is meant.
@@ -216,7 +242,7 @@ class HerdrClient implements TmuxClient {
 		return (await this.inventory(own)).panes;
 	}
 	async inventory(own: HerdrContext): Promise<{ panes: Pane[]; tabs: HostTab[] }> {
-		const server = object(JSON.parse(await this.run(own.session, ["status", "server", "--json"])));
+		const server = object(JSON.parse(await this.run(own, ["status", "server", "--json"])));
 		if (
 			server.running !== true ||
 			server.socket !== own.socket ||
@@ -226,7 +252,7 @@ class HerdrClient implements TmuxClient {
 			server.protocol !== 22
 		)
 			throw new Error("Herdr server identity unavailable");
-		const snap = object(result(await this.run(own.session, ["api", "snapshot"])).snapshot);
+		const snap = object(result(await this.run(own, ["api", "snapshot"])).snapshot);
 		if (!Array.isArray(snap.panes) || snap.protocol !== 22) throw new Error("invalid Herdr pane snapshot");
 		const panes = snap.panes.map(pane);
 		if (new Set(panes.map((p) => p.pane_id)).size !== panes.length) throw new Error("ambiguous Herdr pane snapshot");
@@ -242,9 +268,7 @@ class HerdrClient implements TmuxClient {
 					own ? this.inventory(own) : Promise.reject(new Error("no Herdr context")),
 				shellOnly: async (target: string): Promise<boolean> => {
 					if (!own) return false;
-					const info = object(
-						result(await this.run(own.session, ["pane", "process-info", "--pane", target])).process_info,
-					);
+					const info = object(result(await this.run(own, ["pane", "process-info", "--pane", target])).process_info);
 					// Positive proof only: an empty, partial or other pane's answer is not "just a shell".
 					const shell = info.shell_pid;
 					const processes = info.foreground_processes;
@@ -319,14 +343,14 @@ class HerdrClient implements TmuxClient {
 				const fresh = await this.snapshot(own);
 				if (!fresh.some((p) => this.same(locator, p))) return false;
 				const info = object(
-					result(await this.run(locator.session, ["pane", "process-info", "--pane", locator.pane])).process_info,
+					result(await this.run(locator, ["pane", "process-info", "--pane", locator.pane])).process_info,
 				);
 				if (!Array.isArray(info.foreground_processes))
 					throw new Error("Herdr foreground identity unavailable; close refused");
 				verifyForeground(info, locator);
-				const last = pane(result(await this.run(locator.session, ["pane", "get", locator.pane])).pane);
+				const last = pane(result(await this.run(locator, ["pane", "get", locator.pane])).pane);
 				if (!this.same(locator, last)) return false;
-				await this.run(locator.session, ["pane", "close", locator.pane]);
+				await this.run(locator, ["pane", "close", locator.pane]);
 				return true;
 			},
 		};
@@ -336,7 +360,7 @@ class HerdrClient implements TmuxClient {
 		// Presentation only: metadata failure must not become launch/task state.
 		// Never report-agent, hide delegates, or replace Herdr's agent list.
 		try {
-			await this.run(locator.session, [
+			await this.run(locator, [
 				"pane",
 				"report-metadata",
 				locator.pane,
@@ -348,7 +372,7 @@ class HerdrClient implements TmuxClient {
 		} catch {
 			/* best-effort sidebar label, never lifecycle authority */
 		}
-		const ready = pane(result(await this.run(locator.session, ["pane", "get", locator.pane])).pane);
+		const ready = pane(result(await this.run(locator, ["pane", "get", locator.pane])).pane);
 		if (!this.same(locator, ready)) throw new Error("Herdr terminal changed before launch");
 	}
 
@@ -365,7 +389,7 @@ class HerdrClient implements TmuxClient {
 		}
 		try {
 			const created = result(
-				await this.run(own.session, [
+				await this.run(own, [
 					"tab",
 					"create",
 					"--workspace",
@@ -394,10 +418,10 @@ class HerdrClient implements TmuxClient {
 				launchFile,
 			};
 			// Verify the exact terminal before typing; never retry an ambiguous create/run.
-			const live = pane(result(await this.run(own.session, ["pane", "get", locator.pane])).pane);
+			const live = pane(result(await this.run(own, ["pane", "get", locator.pane])).pane);
 			if (!this.same(locator, live)) throw new Error("Herdr terminal changed before launch");
 			await this.label(locator);
-			await this.run(own.session, [
+			await this.run(own, [
 				"pane",
 				"run",
 				locator.pane,
@@ -437,7 +461,7 @@ class HerdrClient implements TmuxClient {
 		if (!locator || !own || locator.session !== own.session || locator.socket !== own.socket) return undefined;
 		if (!(await this.snapshot(own)).some((p) => this.same(locator, p))) return undefined;
 		// Recheck exact terminal immediately before the caller's explicit action.
-		const last = pane(result(await this.run(own.session, ["pane", "get", locator.pane])).pane);
+		const last = pane(result(await this.run(own, ["pane", "get", locator.pane])).pane);
 		return this.same(locator, last) ? locator : undefined;
 	}
 	async verifyLivePane(value: object): Promise<import("./tmux.ts").VerifiedLiveWindow | undefined> {
@@ -452,7 +476,7 @@ class HerdrClient implements TmuxClient {
 		if (!(await verify())) return { shown: false };
 		const locator = await this.verifiedTarget(target.locator);
 		if (!locator) throw new Error("no verified open tab for this delegation; tab changed or unavailable");
-		await this.run(own.session, ["tab", "focus", locator.tab]);
+		await this.run(own, ["tab", "focus", locator.tab]);
 		return {
 			shown: true,
 			returnHint: `select ${origin ? `tab ${origin.tab}` : "your previous tab"} in Herdr's tab bar to return`,
@@ -461,7 +485,7 @@ class HerdrClient implements TmuxClient {
 	async peek(target: WindowTarget): Promise<string> {
 		const locator = await this.verifiedTarget(target.locator);
 		if (!locator) throw new Error("no verified open tab for this delegation; tab changed or unavailable");
-		return this.run(locator.session, ["pane", "read", locator.pane, "--source", "recent"]);
+		return this.run(locator, ["pane", "read", locator.pane, "--source", "recent"]);
 	}
 	async listWindows(): Promise<never> {
 		throw new Error("Herdr windows must be observed through terminal-fenced states");

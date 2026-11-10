@@ -139,6 +139,21 @@ follows [Semantic Versioning](https://semver.org/).
   behaviour assertions; exact start-type assertions migrate in the existing
   delegate/tool schema tests.
 
+### Fixed
+
+- Herdr auto-detection missed Herdr's default session. Its panes have
+  `HERDR_ENV=1`, workspace, pane and socket context but no `HERDR_SESSION`,
+  so a Pi started in a plain `herdr` was reported as inside neither tmux nor
+  Herdr (only named sessions worked). A pane with an absent or empty
+  `HERDR_SESSION` is now the default session: pi-squire calls `herdr`
+  without `--session`, without `HERDR_SESSION` and with `HERDR_SOCKET_PATH`
+  pinned to the pane's socket, and requires `status server` to report that
+  socket with `"session": null`. Its locators record `"session": null` and
+  the socket, so default and named sessions (and default sessions on other
+  sockets) never route, close or resume each other's tabs; existing named
+  locators are unchanged. The not-in-Herdr refusal now names the variables it
+  needs.
+
 ## [0.20.2] - 2026-11-04
 
 ### Removed

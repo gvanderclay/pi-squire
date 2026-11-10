@@ -2,7 +2,7 @@
 // launch and close paths, without touching any installed server or user UI.
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
-import { createHerdrClient, type HerdrContext } from "../src/herdr.ts";
+import { createHerdrClient, type HerdrContext, type HerdrRoute } from "../src/herdr.ts";
 import { herdrLocator } from "../src/herdr-locator.ts";
 import type { WindowRecord, WindowSpec } from "../src/tmux.ts";
 import { askWindowStates } from "../src/window-state.ts";
@@ -17,17 +17,15 @@ type Pane = {
 	agent_session?: { source?: string; value?: string } | null;
 };
 export class HerdrWire {
-	readonly context: HerdrContext = {
-		session: "test-isolated",
-		workspace: "w1",
-		pane: "w1:p1",
-		socket: "/private/test-herdr.sock",
-	};
+	readonly context: HerdrContext;
+	constructor(session: string | null = "test-isolated", socket = "/private/test-herdr.sock") {
+		this.context = { session, workspace: "w1", pane: "w1:p1", socket };
+	}
 	readonly panes = new Map<string, Pane>([
 		["w1:p1", { pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1", terminal_id: "parent" }],
 	]);
 	readonly tabs = new Map<string, string>([["w1:t1", "main"]]);
-	readonly calls: { session: string; args: string[] }[] = [];
+	readonly calls: { session: string | null; socket: string; args: string[] }[] = [];
 	snapshotFails = false;
 	readonly staged: string[] = [];
 	failedAsk = false;
@@ -45,12 +43,13 @@ export class HerdrWire {
 	/** Replace the whole process-info answer, for malformed or partial responses. */
 	processInfo: ((pane: string) => unknown) | undefined;
 	readonly client = createHerdrClient({
-		run: (session, args) => this.run(session, args),
+		run: (route, args) => this.run(route, args),
 		context: () => (this.unavailable ? undefined : this.context),
 	});
-	async run(session: string, args: string[]): Promise<string> {
-		this.calls.push({ session, args });
-		if (session !== this.context.session) throw new Error("unscoped Herdr call");
+	async run(route: HerdrRoute, args: string[]): Promise<string> {
+		const { session, socket } = route;
+		this.calls.push({ session, socket, args });
+		if (session !== this.context.session || socket !== this.context.socket) throw new Error("unscoped Herdr call");
 		if (this.failedAsk) throw new Error("server unavailable");
 		const result = (value: unknown): string => JSON.stringify({ result: value });
 		if (args[0] === "status")

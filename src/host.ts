@@ -60,7 +60,7 @@ export type StartConfiguration = {
 export interface DelegateHost extends LiveNavigation {
 	/** New terminal sessions receive mail before open; reopened ones after it. */
 	taskMailTiming(kind: StartKind): "before-open" | "after-open";
-	/** Optional API configuration after open, before after-open task mail. */
+	/** Optional API configuration after open; requires after-open task mail for every start kind. */
 	configureStart?(opened: OpenedWindow, configuration: StartConfiguration): Promise<void>;
 	/** Setting/inheritance key; never inferred from a presentation noun. */
 	readonly id: string;

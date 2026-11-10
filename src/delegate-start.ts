@@ -164,8 +164,8 @@ function launchPayload(input: StartInput): LaunchPayload {
 }
 
 /** Mail failure after open uses only the host's taskless-resource rollback seam. */
-export async function mailTask(
-	deps: { tmux: DelegateHost; sendTask(to: string, task: string): string },
+async function mailTask(
+	deps: { host: DelegateHost; sendTask(to: string, task: string): string },
 	opened: OpenedWindow,
 	sessionId: string,
 	task: string,
@@ -173,7 +173,7 @@ export async function mailTask(
 	try {
 		return deps.sendTask(sessionId, task);
 	} catch (error) {
-		return closeAfterFailure(deps.tmux, opened, error);
+		return closeAfterFailure(deps.host, opened, error);
 	}
 }
 
@@ -287,7 +287,7 @@ export class DelegateStarter {
 		const before = client.taskMailTiming(input.session.kind) === "before-open";
 		const mailed = before ? this.mailBeforeOpen(input, token) : undefined;
 		const opened = await this.openSession(input, token, ctx);
-		if (client.configureStart) await this.configure(input, opened, before);
+		if (client.configureStart) await this.configure(input, opened);
 		const requestId = mailed ?? (await this.mailAfterOpen(input, opened, token, ctx));
 		this.deps.results.recordStart(startRecord(input, opened, requestId), ctx);
 		this.deps.startPolling();
@@ -308,7 +308,7 @@ export class DelegateStarter {
 		ctx: ExtensionContext,
 	): Promise<string> {
 		const requestId = await mailTask(
-			{ tmux: input.admission.client, sendTask: (to: string, task: string) => this.sendTask(to, task) },
+			{ host: input.admission.client, sendTask: (to: string, task: string) => this.sendTask(to, task) },
 			opened,
 			sessionIdFor(input),
 			input.task,
@@ -318,7 +318,7 @@ export class DelegateStarter {
 		return requestId;
 	}
 
-	private async configure(input: StartInput, opened: OpenedWindow, mailed: boolean): Promise<void> {
+	private async configure(input: StartInput, opened: OpenedWindow): Promise<void> {
 		const client = input.admission.client;
 		if (!client.configureStart) return;
 		try {
@@ -332,8 +332,7 @@ export class DelegateStarter {
 				sessionDir: input.sessionDir,
 			});
 		} catch (error) {
-			if (!mailed) await closeAfterFailure(client, opened, error);
-			throw error;
+			await closeAfterFailure(client, opened, error);
 		}
 	}
 

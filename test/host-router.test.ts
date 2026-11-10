@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import type { DelegateHost, WindowSpec } from "../src/host.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { after, beforeEach, test } from "node:test";
+import type { DelegateHost, OpenedWindow, WindowSpec } from "../src/host.ts";
 import { type WindowRecord, windowLocator } from "../src/locators.ts";
 import { createHostRouter } from "../src/multiplexer.ts";
-import { mailTask } from "../src/resume.ts";
 import { liveLocator } from "../src/tmux-locator.ts";
 import { askPaneStates, windowStates } from "../src/window-state.ts";
 import { FakeTmux } from "./fake-tmux.ts";
+import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+
+beforeEach(resetRoot);
+after(cleanup);
 
 function adapter(id: string, calls: string[]): DelegateHost {
 	const ownsLocator = (value: unknown): boolean =>
@@ -54,68 +59,89 @@ function adapter(id: string, calls: string[]): DelegateHost {
 		peek: async () => id,
 	};
 }
-test("failed resume task mail closes through the opened locator's owner, not the launch choice or tmux", async () => {
-	const calls: string[] = [];
+/** Drive the production starter through resume, then change the router's
+ * selection after open. Its admitted concrete host must still own rollback. */
+async function failedResumeMail(closeError?: Error) {
+	const calls: OpenedWindow[] = [];
 	const tmux = new FakeTmux();
-	const third = adapter("third", calls);
+	const third = new FakeTmux();
+	Object.defineProperty(third, "id", { value: "third" });
+	let choice = "third";
 	const router = createHostRouter(
 		[tmux, third],
-		() => "tmux",
+		() => choice,
 		() => tmux,
 		"unavailable",
 	);
-	const opened = await third.openWindow({ name: "worker", cwd: ".", argv: [], env: {} }, "current", "unused");
-	const error = new Error("mailbox down");
-	await assert.rejects(
-		mailTask(
-			{
-				tmux: router,
-				sendTask: () => {
-					throw error;
-				},
-			},
-			opened,
-			"session",
-			"task",
-		),
-		(value) => value === error,
+	writeAgent("scout", agentFile({ model: "alpha/fast-model", thinking: "low" }));
+	const s = session({ multiplexer: router, tmux });
+	await s.start();
+	const launched = await s.toolCall("delegate", { agent: "scout", task: "first" });
+	const id = (launched.structuredContent as { id: string }).id;
+	mkdirSync(sessionDir, { recursive: true });
+	writeFileSync(
+		join(sessionDir, `source_${id}.jsonl`),
+		`${JSON.stringify({ type: "session", version: 3, id, cwd: root, timestamp: "2026-10-26T00:00:00.000Z" })}\n`,
 	);
-	assert.deepEqual(calls, ["third:open", "third:taskless"]);
-	assert.deepEqual(tmux.killed, []);
+	third.windows.clear();
+	const open = third.openWindow.bind(third);
+	third.openWindow = async (...args) => {
+		const opened = await open(...args);
+		choice = "tmux";
+		return opened;
+	};
+	const close = third.closeTaskless.bind(third);
+	third.closeTaskless = async (opened) => {
+		calls.push(opened);
+		if (closeError) throw closeError;
+		await close(opened);
+	};
+	const cause = new Error("provider failure");
+	const error = new Error("mailbox down", { cause });
+	// Throw a known error at the synchronous send boundary so rollback must
+	// preserve the original object and its cause, not just its text.
+	s.events.on("message:send", (payload: unknown) => {
+		Object.defineProperty(payload, "error", {
+			get: () => {
+				throw error;
+			},
+		});
+	});
+	return { s, tmux, third, calls, cause, error, resume: () => s.toolCall("delegation_resume", { id, task: "again" }) };
+}
+
+test("failed resume task mail closes through the admitted host after the router's launch choice changes", async () => {
+	const fixture = await failedResumeMail();
+	try {
+		await assert.rejects(
+			fixture.resume(),
+			(value) => value instanceof Error && value === fixture.error && value.cause === fixture.cause,
+		);
+		assert.equal(fixture.calls.length, 1);
+		assert.equal(fixture.calls[0].id, fixture.third.opened.at(-1)?.windowId);
+		assert.deepEqual(fixture.third.killed, [fixture.calls[0].id]);
+		assert.deepEqual(fixture.tmux.killed, []);
+		assert.equal(fixture.tmux.opened.length, 0);
+	} finally {
+		await fixture.s.shutdown();
+	}
 });
 
-test("taskless close failure keeps the mail error and owning host's recovery advice", async () => {
-	const third = adapter("third", []);
-	third.closeTaskless = async () => {
-		throw new Error("third close refused; inspect the worker");
-	};
-	const router = createHostRouter(
-		[third],
-		() => "third",
-		() => third,
-		"unavailable",
-	);
-	const opened = await third.openWindow({ name: "worker", cwd: ".", argv: [], env: {} }, "current", "unused");
-	const cause = new Error("mailbox down");
-	await assert.rejects(
-		mailTask(
-			{
-				tmux: router,
-				sendTask: () => {
-					throw cause;
-				},
-			},
-			opened,
-			"session",
-			"task",
-		),
-		(error) => {
+test("taskless close failure keeps the mail error and admitted host's recovery advice", async () => {
+	const fixture = await failedResumeMail(new Error("third close refused; inspect the worker"));
+	try {
+		await assert.rejects(fixture.resume(), (error) => {
 			assert.ok(error instanceof Error);
-			assert.equal(error.cause, cause);
+			assert.equal(error.cause, fixture.error);
 			assert.equal(error.message, "mailbox down; third close refused; inspect the worker");
 			return true;
-		},
-	);
+		});
+		assert.equal(fixture.calls.length, 1);
+		assert.equal(fixture.calls[0].id, fixture.third.opened.at(-1)?.windowId);
+		assert.deepEqual(fixture.tmux.killed, []);
+	} finally {
+		await fixture.s.shutdown();
+	}
 });
 
 test("legacy tmux navigation keeps target-id validation and rejects raw pane locators", async () => {

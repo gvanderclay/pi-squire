@@ -71,6 +71,24 @@ test("a host without window placement never reads terminal settings", async () =
 	assert.equal(admitted.companionSuffix, "delegates");
 });
 
+test("configuration hosts refuse before-open task mail for every start kind at admission", async () => {
+	for (const kind of ["launch", "resume", "fork"] as const) {
+		const host = Object.assign(new FakeTmux(), {
+			configureStart: async () => {
+				throw new Error("configuration must not run");
+			},
+		});
+		host.taskMailTiming = (candidate) => (candidate === kind ? "before-open" : "after-open");
+		const gate = createHostAdmission(host, () => {
+			throw new Error("placement must not be read");
+		});
+		await assert.rejects(gate.admit(), {
+			message: `internal delegate host error: tmux provides configureStart but mails ${kind} tasks before open; configuration requires after-open task mail`,
+		});
+		assert.equal(host.opened.length, 0);
+	}
+});
+
 test("version refusal wins over invalid placement at full admission", async () => {
 	const host = new FakeTmux();
 	host.versionText = "tmux 3.1";

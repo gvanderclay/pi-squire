@@ -32,9 +32,6 @@ import { recordedIdentity } from "./tree-view.ts";
 import { askWindowStates } from "./window-state.ts";
 import type { Workspace } from "./workspace.ts";
 
-// Internal compatibility export; taskless rollback lives with the shared sequence.
-export { mailTask } from "./delegate-start.ts";
-
 /** What a resume asks for; the fields after `task` are optional overrides. */
 export type ResumeRequest = {
 	id: string;

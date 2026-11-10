@@ -413,11 +413,6 @@ async function listedWindows(run: Run): Promise<TmuxWindow[]> {
 		});
 }
 
-/**
- * The real client. A window is opened relative to the session of the pane in
- * `TMUX_PANE`, not whatever session a client happens to have attached, so it
- * works with several clients on one server.
- */
 async function currentTmuxWindow(run: Run): Promise<{ id: string; name: string } | undefined> {
 	const pane = process.env.TMUX_PANE;
 	if (!pane) return undefined;
@@ -430,6 +425,11 @@ async function currentTmuxWindow(run: Run): Promise<{ id: string; name: string }
 	return { id, name: name.join("\t") };
 }
 
+/**
+ * The real client. A window is opened relative to the session of the pane in
+ * `TMUX_PANE`, not whatever session a client happens to have attached, so it
+ * works with several clients on one server.
+ */
 export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClient & TmuxNavigation {
 	const timeoutMs = options.timeoutMs ?? 10_000;
 	const run: Run = (args) => runTmux(args, timeoutMs);

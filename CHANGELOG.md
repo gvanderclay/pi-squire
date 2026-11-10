@@ -16,8 +16,7 @@ follows [Semantic Versioning](https://semver.org/).
   owned pane, preserving user-added panes and restored/replaced terminals.
   Unavailable probes stay unknown; ambiguous creates remain charged and are
   neither adopted nor closed. tmux remains the default with no auto-detection
-  or fallback. Preview limitations: retained shells after Pi exits, no Herdr
-  resume or widget navigation, and sidebar display-agent polish deferred.
+  or fallback. Preview limitations: no Herdr resume or widget navigation.
   The shared adapter conformance suite now includes the real Herdr adapter
   over a deterministic wire fixture, alongside targeted launch, environment,
   mixed-history and safety tests in `test/herdr.test.ts`. No existing
@@ -33,6 +32,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Herdr delegate panes now close on a clean Pi exit even while focused, without
+  closing user-added panes in the same tab. Error exits and failed starts retain
+  readable diagnostics and a shell for inspection; status no longer reports the
+  exited delegate as running, and explicit close removes its owned pane. Delegate
+  names also label Herdr's native agent sidebar via best-effort display metadata;
+  metadata does not control task or window lifecycle. tmux behavior is unchanged.
+  `test/herdr.test.ts` adds deliberate runner/status assertions for these new
+  exit semantics, including failed starts, signals and metadata failures; no
+  existing behavioral assertion or hook contract is weakened.
 - Adapter validation now runs one executable delegate-window contract against a
   narrow in-memory model and real tmux on a private socket (skipped only when
   tmux is absent). Backend-specific placement, naming races and command tests

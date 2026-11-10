@@ -16,7 +16,9 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   is in now for the navigator and widget, `tracking.ts` holds the status and close
   tools, `poll.ts` the poll (with `window-state.ts`, which answers and closes a delegation's window), `navigator.ts`
   `/delegate-open` and the compact widget close action, `new-delegate.ts` the new-delegate
-  form, `resume-picker.ts` the resume picker, `resume.ts` the resume launch (`resume-checks.ts` the checks the picker shares) and the `delegation_resume` tool, `workspace.ts` resolves a
+  form, `delegate-start.ts` owns the shared launch/resume/fork start sequence,
+  `host-admission.ts` freezes the call-time host and placement,
+  `resume-picker.ts` the resume picker, `resume.ts` the resume launch (`resume-checks.ts` the checks the picker shares) and the `delegation_resume` tool, `workspace.ts` resolves a
   delegate's directory, its Git checkout at launch and its project trust,
   `trust-prompt.ts` serializes local/root trust choices, `trust-control.ts`
   owns root control lifecycle and `trust-wire.ts` carries bounded loopback requests,

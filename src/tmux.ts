@@ -413,6 +413,18 @@ async function listedWindows(run: Run): Promise<TmuxWindow[]> {
 		});
 }
 
+async function currentTmuxWindow(run: Run): Promise<{ id: string; name: string } | undefined> {
+	const pane = process.env.TMUX_PANE;
+	if (!pane) return undefined;
+	const out = (await run(["display-message", "-p", "-t", pane, "-F", "#{window_id}\t#{window_name}"])).replace(
+		/\r?\n$/,
+		"",
+	);
+	const [id, ...name] = out.split("\t");
+	if (!/^@[0-9]+$/.test(id) || !name.length) return undefined;
+	return { id, name: name.join("\t") };
+}
+
 /**
  * The real client. A window is opened relative to the session of the pane in
  * `TMUX_PANE`, not whatever session a client happens to have attached, so it
@@ -441,6 +453,7 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 		...calls,
 		...navigationVerbs(calls),
 		id: "tmux",
+		taskMailTiming: (kind) => (kind === "resume" ? "after-open" : "before-open"),
 		closeTaskless: (opened) => client.kill(opened.id).catch(() => {}),
 		ownsLocator: ownsTmuxLocator,
 		usesWindowPlacement: true,
@@ -470,17 +483,7 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 
 		listPanes: () => listPanes(run),
 
-		async currentWindow() {
-			const pane = process.env.TMUX_PANE;
-			if (!pane) return undefined;
-			const out = (await run(["display-message", "-p", "-t", pane, "-F", "#{window_id}\t#{window_name}"])).replace(
-				/\r?\n$/,
-				"",
-			);
-			const [id, ...name] = out.split("\t");
-			if (!/^@[0-9]+$/.test(id) || !name.length) return undefined;
-			return { id, name: name.join("\t") };
-		},
+		currentWindow: () => currentTmuxWindow(run),
 
 		listWindows: () => listedWindows(run),
 

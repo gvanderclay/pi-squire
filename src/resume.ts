@@ -2,18 +2,17 @@
 // its own session file, and the `delegation_resume` tool. A resume is recorded
 // as a new delegation (`resumedFrom` the old id) that keeps the old session id
 // (`sessionId`), so mail, replies and usage-limit marks still find the session.
-// `index.ts` supplies the pieces it shares with a launch: model choice, trust,
-// the task mail and the window.
+// Eligibility/model/trust stay here; DelegateStarter owns the start sequence.
 import { randomUUID } from "node:crypto";
-
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { type TObject, Type } from "typebox";
-
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
+import type { DelegateStarter } from "./delegate-start.ts";
 import type { DelegateHost, OpenedWindow } from "./host.ts";
-import { type Identity, readIdentity } from "./identity.ts";
+import type { AdmittedHost, HostAdmission } from "./host-admission.ts";
+import type { Identity } from "./identity.ts";
 import { openedIn } from "./location.ts";
-import { windowLocator, windowPresentation } from "./locators.ts";
+import { windowPresentation } from "./locators.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
@@ -28,9 +27,8 @@ import {
 	windowCheck,
 } from "./resume-checks.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
-import { bindTree, failedTree, type Reservation } from "./tree-registry.ts";
+import type { Reservation } from "./tree-registry.ts";
 import { recordedIdentity } from "./tree-view.ts";
-import type { WindowPlacement } from "./window-placement.ts";
 import { askWindowStates } from "./window-state.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -54,14 +52,13 @@ export type ResumeDeps = {
 	tmux: DelegateHost;
 	/** The `delegate` tool's result schema, which a resume's result extends. */
 	delegateSchema: TObject;
-	startPolling(): void;
-	/** The window placement for this call; throws on an invalid setting. */
-	placement(): WindowPlacement;
+	admission: HostAdmission;
+	starter: DelegateStarter;
+	childTools(agent: Agent): readonly string[];
 	roster(ctx: ExtensionContext): Roster;
 	/** Depth/current-parent grant check, before even an exited window is killed. */
 	admit?(agent: string, ctx: ExtensionContext): void;
 	authorize?(id: string, ctx: ExtensionContext): void;
-	reserve(record: StartedRecorded, id: string, ctx: ExtensionContext): Promise<Reservation>;
 	/** The parent's current model and thinking level, which a field the agent locks but does not set keeps. */
 	parentDefaults(ctx: ExtensionContext): { model?: string; thinking: string };
 	chooseModel(
@@ -78,26 +75,6 @@ export type ResumeDeps = {
 		signal: AbortSignal | undefined,
 		agent: string,
 	): Promise<{ workspace: Workspace; trusted: boolean }>;
-	/** Mail the task to a session id; returns the request id. */
-	sendTask(to: string, task: string): string;
-	/** Open the window with `--session <path>`; returns its id and session. */
-	open(input: {
-		id: string;
-		name: string;
-		sessionPath: string;
-		workspace: Workspace;
-		trusted: boolean;
-		cwd: string;
-		sessionDir: string;
-		start: { agent: Agent; model: string; rest: string[]; thinking: string; autoExit: boolean; notices: string[] };
-		toolCallId: string | undefined;
-		ctx: ExtensionContext;
-		placement: WindowPlacement;
-		/** The backend preflight froze for this call. */
-		launchClient: DelegateHost;
-		identity: Identity;
-		sessionId: string;
-	}): Promise<OpenedWindow>;
 };
 
 /** A started resume: what the tool and the command report. */
@@ -210,46 +187,6 @@ async function planResume(
 	};
 }
 
-/** Mail the task, open the window on the session file and record the new delegation. */
-/**
- * Mail the task to a window already open. Unlike a launch, a resume mails
- * after the window opens: the session's inbox outlives a failed attempt, so
- * mail sent for a window that never opened would reach the next resume as a
- * second task. The reopened session's provider still delivers mail that
- * arrives after it starts. A failed send kills the window, which has no task.
- */
-export async function mailTask(
-	deps: Pick<ResumeDeps, "tmux" | "sendTask">,
-	opened: OpenedWindow,
-	sessionId: string,
-	task: string,
-): Promise<string> {
-	try {
-		return deps.sendTask(sessionId, task);
-	} catch (err) {
-		try {
-			await deps.tmux.closeTaskless(opened);
-		} catch (closeError) {
-			throw new Error(
-				`${(err as Error).message ?? String(err)}; ${(closeError as Error).message ?? String(closeError)}`,
-				{ cause: err },
-			);
-		}
-		throw err;
-	}
-}
-
-function publishResumeRequest(token: Reservation, requestId: string, windowId: string, ctx: ExtensionContext): void {
-	try {
-		bindTree(token, { requestId });
-	} catch (error) {
-		ctx.ui.notify(
-			`delegate: window ${windowId} opened and task mail was sent, but shared request publication failed: ${String(error)}. Local tracking continues; accounting reconciles before the next admission.`,
-			"warning",
-		);
-	}
-}
-
 async function startResume(
 	deps: ResumeDeps,
 	input: {
@@ -258,57 +195,34 @@ async function startResume(
 		plan: Plan;
 		task: string;
 		toolCallId: string | undefined;
-		placement: WindowPlacement;
-		launchClient: DelegateHost;
+		admission: AdmittedHost;
 		reservation: Reservation;
 	},
 	ctx: ExtensionContext,
 ): Promise<Resumed> {
-	const { record, session, plan, task, toolCallId, placement, launchClient } = input;
+	const { record, session, plan, task, toolCallId, admission } = input;
 	const { start, workspace } = plan;
 	const id = input.reservation.id;
 	const sessionId = sessionIdOf(record);
 	const name = recordedName(record);
-	const opened = await deps.open({
-		id,
-		name,
-		identity: record.identity,
-		sessionId,
-		sessionPath: session.path,
-		workspace,
-		trusted: plan.trusted,
-		cwd: workspace.cwd,
-		sessionDir: session.dir,
-		start,
-		toolCallId,
-		ctx,
-		placement,
-		launchClient,
-	});
-	const windowId = opened.id;
-	const requestId = await mailTask(deps, opened, sessionId, task);
-	publishResumeRequest(input.reservation, requestId, windowId, ctx);
-	deps.results.recordStart(
+	const { opened } = await deps.starter.start(
 		{
 			id,
-			identity: readIdentity(sessionId) ?? record.identity,
-			agent: start.agent.name,
-			...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
-			model: start.model,
-			thinking: start.thinking,
 			name,
-			locator: opened.locator ?? windowLocator({ id: windowId, name }),
-			requestId,
-			autoExit: start.autoExit,
-			cwd: workspace.cwd,
-			sessionDir: session.dir,
+			identity: record.identity,
+			session: { kind: "resume", id: record.id, path: session.path, sessionId },
 			workspace,
-			resumedFrom: record.id,
-			sessionId,
+			trusted: plan.trusted,
+			sessionDir: session.dir,
+			start,
+			task,
+			toolCallId,
+			admission,
+			// Read before open; a terminal resume mails only after it opens.
+			tools: deps.childTools(start.agent),
 		},
 		ctx,
 	);
-	deps.startPolling();
 	return resumedResult({ id, resumedFrom: record.id, name, plan, sessionDir: session.dir, opened });
 }
 
@@ -360,7 +274,8 @@ async function resume(
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 ): Promise<Resumed> {
-	const { placement, client } = await preflight(deps); // read once, before the exited window is killed or anything is mailed
+	const admission = await preflight(deps); // read once, before the exited window is killed or anything is mailed
+	const { client } = admission;
 	if (request.task.trim() === "") throw new Error("a task is required");
 	deps.authorize?.(request.id, ctx);
 	const found = newestStarted(deps.results, request.id);
@@ -370,7 +285,7 @@ async function resume(
 	await guardSession(deps, record, client, ctx);
 	assertNoOwner(record);
 	deps.results.checkStorage(true);
-	const reservation = await deps.reserve(record, randomUUID(), ctx);
+	const reservation = await deps.starter.reserveResume(record, randomUUID(), ctx);
 	let acquired = false;
 	try {
 		await ensureExited(record, deps.tmux);
@@ -386,18 +301,13 @@ async function resume(
 				plan,
 				task: request.task,
 				toolCallId: request.toolCallId,
-				placement,
-				launchClient: client,
+				admission,
 				reservation,
 			},
 			ctx,
 		);
 	} catch (error) {
-		try {
-			failedTree(reservation);
-		} catch (accounting) {
-			ctx.ui.notify(`delegate: reservation remains charged: ${String(accounting)}`, "error");
-		}
+		deps.starter.refund(reservation, ctx);
 		throw error;
 	} finally {
 		if (acquired) inFlight.delete(record.id);

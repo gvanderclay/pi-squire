@@ -15,7 +15,6 @@ import { deriveState, finishedModel, locateSession, type StartedRecorded } from 
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
-import type { WindowPlacement } from "./window-placement.ts";
 import type { WindowStates } from "./window-state.ts";
 
 /**
@@ -178,11 +177,8 @@ export async function settleModel(
  * (frozen like a launch's), that backend usable, and a valid placement setting
  * (only for hosts that use window placement).
  */
-export async function preflight(deps: ResumeDeps): Promise<{ placement: WindowPlacement; client: DelegateHost }> {
-	const client = deps.tmux.forLaunch?.() ?? deps.tmux;
-	const refusal = await client.unavailable(true);
-	if (refusal !== undefined) throw new Error(refusal);
-	return { placement: client.usesWindowPlacement ? deps.placement() : "current", client };
+export function preflight(deps: ResumeDeps): ReturnType<ResumeDeps["admission"]["admit"]> {
+	return deps.admission.admit();
 }
 
 /** Before any side effect: no other live Pi (including a host-restored session) may already host the session. */

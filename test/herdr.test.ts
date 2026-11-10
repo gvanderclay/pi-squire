@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 import { childEnvironment } from "../src/herdr.ts";
@@ -96,6 +96,11 @@ test("Herdr delegate uses named unfocused tab, keeps mail authority, status and 
 	const status = await s.toolCall("delegation_status", { id: start.id });
 	assert.match(status.content[0].text, /state: running/);
 	assert.match(status.content[0].text, /tab: scout-native \(w1:t2\) in workspace w1/);
+	assert.match(status.content[0].text, /a clean exit closes its Herdr pane \(errors retain it\)/);
+	writeFileSync(`${own.launchFile}.status`, JSON.stringify({ pid: 99, exit: 1 }));
+	const exited = await s.toolCall("delegation_status", { id: start.id });
+	assert.doesNotMatch(exited.content[0].text, /state: running/);
+	assert.equal(h.panes.has(own.pane), true, "an error pane remains available for inspection and explicit close");
 	const close = await s.toolCall("delegation_close", { id: start.id });
 	assert.match(close.content[0].text, /Closed delegation subtree/);
 	assert.equal(h.panes.has(own.pane), false);
@@ -175,6 +180,82 @@ test("staged launch safely handles long argv/env and preserves only the child's 
 		"runner exit is factual, not an agent-status guess",
 	);
 	assert.deepEqual(childEnvironment({ HERDR_SESSION: "parent", TMUX_PANE: "parent", OK: "yes" }), { OK: "yes" });
+});
+
+test("runner exits only its launching shell on success and keeps failures readable with factual stopped state", async () => {
+	for (const scenario of [
+		{ argv: [process.execPath, "-e", "console.log('CLEAN-EXIT')"], code: 0, message: /CLEAN-EXIT/ },
+		{ argv: [process.execPath, "-e", "console.error('PI-ERROR');process.exit(23)"], code: 23, message: /PI-ERROR/ },
+		{ argv: ["/pi-squire-test/missing-executable"], code: 1, message: /failed to start delegate:.*ENOENT/ },
+		{
+			argv: [process.execPath, "-e", "process.kill(process.pid,'SIGKILL')"],
+			code: 1,
+			message: /terminated by SIGKILL/,
+		},
+	]) {
+		const h = wire();
+		const record = await h.open("exit", { argv: scenario.argv });
+		const own = herdrLocator(record.locator);
+		assert.ok(own);
+		const command = h.calls.find((call) => call.args[1] === "run")?.args[3];
+		assert.ok(command);
+		// The trailing command models returning to the interactive shell. On a
+		// clean exit it must never run; errors must leave that shell available.
+		const run = spawnSync("sh", ["-c", `${command}; printf SHELL-RETAINED`], { encoding: "utf8" });
+		assert.equal(run.status, 0);
+		assert.match(run.stdout + run.stderr, scenario.message);
+		assert.equal(run.stdout.includes("SHELL-RETAINED"), scenario.code !== 0);
+		if (scenario.code !== 0) assert.match(run.stderr, new RegExp(`delegate exited with status ${scenario.code}`));
+		assert.equal(JSON.parse(readFileSync(`${own.launchFile}.status`, "utf8")).exit, scenario.code);
+		const states = await askWindowStates(h.client);
+		assert.equal(states.state(record), "gone", "runner exit, not sidebar metadata, decides liveness");
+		assert.equal(states.listed?.(record), true, "a retained pane can still be explicitly closed");
+		assert.equal(await states.close(record), true);
+	}
+});
+
+test("sidebar display metadata labels delegates without agent lifecycle authority", async () => {
+	const h = wire();
+	const record = await h.open("scout-sidebar");
+	const own = herdrLocator(record.locator);
+	assert.ok(own);
+	const metadata = h.calls.find((call) => call.args[1] === "report-metadata");
+	assert.deepEqual(metadata?.args, [
+		"pane",
+		"report-metadata",
+		own.pane,
+		"--source",
+		"pi-squire",
+		"--display-agent",
+		"scout-sidebar",
+	]);
+	assert.equal(
+		h.calls.some((call) => ["report-agent", "release-agent"].includes(call.args[1])),
+		false,
+	);
+	assert.equal((await askWindowStates(h.client)).state(record), "running");
+	h.metadataFails = true;
+	const unlabelled = await h.open("still-launch");
+	assert.equal(
+		(await askWindowStates(h.client)).state(unlabelled),
+		"running",
+		"metadata failure is not launch failure",
+	);
+	assert.equal(h.calls.filter((call) => call.args[1] === "run").length, 2);
+});
+
+test("terminal replacement during metadata reporting prevents launch into the replacement", async () => {
+	const h = wire();
+	h.beforeMetadata = () => {
+		h.panes.get("w1:p2")!.terminal_id = "replacement";
+	};
+	await assert.rejects(h.open("metadata-race"), /terminal changed before launch/);
+	assert.equal(
+		h.calls.some((call) => call.args[1] === "run" || call.args[1] === "close"),
+		false,
+	);
+	const metadataPane = h.panes.get("w1:p2");
+	assert.equal(metadataPane?.terminal_id, "replacement");
 });
 
 test("close rechecks terminal after observation, leaves restored identity and user-added panes alone", async () => {

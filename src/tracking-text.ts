@@ -6,7 +6,7 @@ import { windowTerms } from "./tmux-locator.ts";
 export function autoExitLine(record: StartedRecorded): string {
 	if (windowTerms(record).noun === "tab")
 		return record.autoExit === true
-			? "on — Pi exits after a normal completion; the Herdr tab stays for explicit close"
+			? "on — Pi exits after a normal completion; a clean exit closes its Herdr pane (errors retain it)"
 			: "off — Pi and its Herdr tab stay open after the result";
 	return record.autoExit === true
 		? "on — the delegate closes its window after a normal completion unless the user took over there"

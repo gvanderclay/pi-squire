@@ -25,6 +25,8 @@ export class HerdrWire {
 	ambiguous = false;
 	unavailable = false;
 	protocol = 22;
+	metadataFails = false;
+	beforeMetadata: (() => void) | undefined;
 	foreground: unknown[] = [{ pid: 10 }];
 	shown = "w1:t1";
 	next = 1;
@@ -80,6 +82,11 @@ export class HerdrWire {
 		if (args[1] === "close") {
 			this.panes.delete(args[2]);
 			return result({});
+		}
+		if (args[1] === "report-metadata") {
+			this.beforeMetadata?.();
+			if (this.metadataFails) throw new Error("metadata unavailable");
+			return "";
 		}
 		if (args[1] === "run") return result({});
 		if (args[1] === "read") return "SQUIRE-ADAPTER-SCREEN";

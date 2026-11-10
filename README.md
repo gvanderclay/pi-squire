@@ -382,11 +382,16 @@ its last pane; user-added panes remain. Failed probes are unknown, never assumed
 gone. Restored/replaced terminals are treated as gone and left untouched; do
 not use explicit close to remove a tab restored by Herdr after a restart.
 
-Preview limitations: Pi's auto-exit still works, but the tab's shell remains for
-explicit close after Pi exits (clean or error). Sidebar display-agent labelling,
-widget switch/peek/return-to-parent, and Herdr resume are not available yet;
-use Herdr's tab bar to view a delegate. Automatic backend detection is not
-enabled. tmux behaviour and its existing controls are unchanged.
+A clean Pi exit closes its pane, even while you are viewing it. The tab goes
+away only when that was its last pane; user-added panes remain. Error exits,
+including failed starts, retain a shell and readable diagnostics for inspection;
+`delegation_close` removes the owned pane. Delegates remain in Herdr's native
+agent sidebar and show their delegate name through display metadata. That
+metadata never controls lifecycle or hides other agents.
+
+Preview limitations: widget switch/peek/return-to-parent and Herdr resume are
+not available yet; use Herdr's tab bar to view a delegate. Automatic backend
+detection is not enabled. tmux behaviour and its existing controls are unchanged.
 
 ## Where delegate windows open
 

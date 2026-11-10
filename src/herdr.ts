@@ -130,8 +130,9 @@ Object.assign(env,spec.env);
 publish();
 const child=spawn(spec.argv[0],spec.argv.slice(1),{cwd:spec.cwd,env,stdio:'inherit'});
 status.child=child.pid;publish();
-child.on('error',()=>{status.exit=1;publish();process.exitCode=1;});
-child.on('exit',(code)=>{status.exit=code??1;publish();process.exitCode=status.exit;});
+function finish(code){status.exit=code;publish();process.exitCode=code;if(code!==0) console.error('pi-squire: delegate exited with status '+code);}
+child.on('error',(error)=>{console.error('pi-squire: failed to start delegate: '+error.message);finish(1);});
+child.on('exit',(code,signal)=>{if(signal) console.error('pi-squire: delegate terminated by '+signal);finish(code??1);});
 `,
 		{ mode: 0o600 },
 	);
@@ -276,6 +277,26 @@ class HerdrClient implements TmuxClient {
 		};
 	}
 
+	async label(locator: HerdrLocator): Promise<void> {
+		// Presentation only: metadata failure must not become launch/task state.
+		// Never report-agent, hide delegates, or replace Herdr's agent list.
+		try {
+			await this.run(locator.session, [
+				"pane",
+				"report-metadata",
+				locator.pane,
+				"--source",
+				"pi-squire",
+				"--display-agent",
+				locator.name,
+			]);
+		} catch {
+			/* best-effort sidebar label, never lifecycle authority */
+		}
+		const ready = pane(result(await this.run(locator.session, ["pane", "get", locator.pane])).pane);
+		if (!this.same(locator, ready)) throw new Error("Herdr terminal changed before launch");
+	}
+
 	async openWindow(spec: WindowSpec): Promise<OpenedWindow> {
 		const problem = await this.available();
 		if (problem) throw new WindowOpenError(problem, "not-opened");
@@ -320,11 +341,15 @@ class HerdrClient implements TmuxClient {
 			// Verify the exact terminal before typing; never retry an ambiguous create/run.
 			const live = pane(result(await this.run(own.session, ["pane", "get", locator.pane])).pane);
 			if (!this.same(locator, live)) throw new Error("Herdr terminal changed before launch");
+			await this.label(locator);
 			await this.run(own.session, [
 				"pane",
 				"run",
 				locator.pane,
-				`sh -c ${quote(`${quote(process.execPath)} ${quote(launchFile)}`)}`,
+				// ticket01 verified this form on Herdr 0.9.5: exit only this pane's
+				// interactive shell on success, even if focused. No tab close (a user
+				// may have added panes); on error retain the shell and readable output.
+				`sh -c ${quote(`${quote(process.execPath)} ${quote(launchFile)}`)} && exit`,
 			]);
 			return {
 				id: locator.tab,

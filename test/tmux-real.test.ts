@@ -281,7 +281,7 @@ test("real tmux: trailing ';' in every placement reaches the program, and a new 
 			SQUIRE_CONTRACT_MID: "mid;dle",
 		};
 		const extra = ["ends;", ";", "back\\;", "two\\\\;", "mid;dle", "trailing\\"];
-		const base = "semi;-delegate-session";
+		const base = "semi-delegate-session;";
 		const launch = async (name: string, placement: "current" | "companion") => {
 			const report = join(dir, `${name}.json`);
 			const argv = [process.execPath, program, report, ...extra];

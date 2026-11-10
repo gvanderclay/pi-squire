@@ -1,5 +1,6 @@
 // Read-only direct-child adapter. Results remains the task/result authority.
 // Rows are keyed by native session id, never by a mutable title or launch id.
+import { herdrLocator } from "./herdr-locator.ts";
 import { isStarted, locateSession, type Results, recordedName, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import type { Activity } from "./widget-activity.ts";
@@ -48,6 +49,16 @@ function candidates(results: Results): StartedRecorded[] {
 	return [...sessions.values()].reverse().filter((record) => !record.closed);
 }
 
+function rowVisible(
+	record: StartedRecorded,
+	working: boolean,
+	window: WindowState,
+	current: boolean,
+	retained: boolean,
+): boolean {
+	return retained || (window !== "gone" && (working || ((!!record.result || current) && window === "running")));
+}
+
 /** Independently refreshable metadata cache, with no writes to Results or shared accounting. */
 export class DirectDelegateView {
 	private readonly metadata: Metadata;
@@ -70,7 +81,7 @@ export class DirectDelegateView {
 
 	needsWindows(results: Results): boolean {
 		return candidates(results).some((record) => {
-			if (!record.gone || record.result) return true;
+			if (!record.gone || record.result || herdrLocator(record.locator)) return true;
 			try {
 				return sessionIsOwned(sessionIdOf(record));
 			} catch {
@@ -92,11 +103,12 @@ export class DirectDelegateView {
 		for (const saved of candidates(results)) {
 			const current = currentWindows.get(saved.id);
 			const record: StartedRecorded = current ? { ...saved, ...current } : saved;
-			if (record.gone && !record.result && !current) continue;
+			const retained = !!herdrLocator(record.locator) && windows.listed(record);
+			if (!retained && record.gone && !record.result && !current) continue;
 			// A verified exact live pane wins over list-windows pane_dead for another active pane.
 			const window: WindowState = current ? "running" : windows.state(record);
 			const working: boolean = running.has(record.id);
-			if (window === "gone" || (!working && ((!record.result && !current) || window !== "running"))) continue;
+			if (!rowVisible(record, working, window, !!current, retained)) continue;
 			entries.push({ record, row: this.row(record, working, window) });
 		}
 		const ordered: Entry[] = [

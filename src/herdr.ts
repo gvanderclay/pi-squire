@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type HerdrLocator, herdrLocator } from "./herdr-locator.ts";
+import { type HerdrLocator, type HerdrPaneLocator, herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
 import {
 	type OpenedWindow,
 	type ShowResult,
@@ -198,7 +198,7 @@ class HerdrClient implements TmuxClient {
 		if (check) return this.available();
 		return this.caller() ? undefined : this.refusal;
 	}
-	same(own: HerdrLocator, live: Pane): boolean {
+	same(own: HerdrLocator | HerdrPaneLocator, live: Pane): boolean {
 		return (
 			own.pane === live.pane_id &&
 			own.tab === live.tab_id &&
@@ -236,8 +236,14 @@ class HerdrClient implements TmuxClient {
 			return locator && own && locator.session === own.session && locator.socket === own.socket ? locator : undefined;
 		};
 		const listed = (record: WindowRecord): boolean => {
-			const locator = locate(record);
-			return !!locator && !!panes?.some((p) => this.same(locator, p));
+			const locator = locate(record) ?? herdrPaneLocator(record.locator);
+			return (
+				!!locator &&
+				!!own &&
+				locator.session === own.session &&
+				locator.socket === own.socket &&
+				!!panes?.some((p) => this.same(locator, p))
+			);
 		};
 		const look = (record: WindowRecord): WindowLook => {
 			const locator = locate(record);
@@ -361,23 +367,58 @@ class HerdrClient implements TmuxClient {
 			throw new WindowOpenError(String(error), "unknown");
 		}
 	}
+	async observeLivePane(): Promise<HerdrPaneLocator | undefined> {
+		const own = this.caller();
+		if (!own) return undefined;
+		const live = (await this.snapshot(own)).find((p) => p.pane_id === own.pane);
+		if (!live || live.workspace_id !== own.workspace) return undefined;
+		return {
+			adapter: "herdr",
+			version: 1,
+			kind: "pane",
+			...own,
+			tab: live.tab_id,
+			terminal: live.terminal_id,
+			name: live.tab_id,
+		};
+	}
+	async verifiedTarget(value: unknown): Promise<HerdrLocator | HerdrPaneLocator | undefined> {
+		const locator = herdrLocator(value) ?? herdrPaneLocator(value);
+		const own = this.caller();
+		if (!locator || !own || locator.session !== own.session || locator.socket !== own.socket) return undefined;
+		if (!(await this.snapshot(own)).some((p) => this.same(locator, p))) return undefined;
+		// Recheck exact terminal immediately before the caller's explicit action.
+		const last = pane(result(await this.run(own.session, ["pane", "get", locator.pane])).pane);
+		return this.same(locator, last) ? locator : undefined;
+	}
+	async verifyLivePane(value: object): Promise<import("./tmux.ts").VerifiedLiveWindow | undefined> {
+		if (!herdrPaneLocator(value)) return undefined;
+		const locator = await this.verifiedTarget(value);
+		return locator ? { locator, paneTarget: locator.pane } : undefined;
+	}
 	async show(target: WindowTarget, verify: () => Promise<boolean>): Promise<ShowResult> {
 		const own = this.caller();
 		if (!own) return { text: this.refusal, brief: "no Herdr pane context" };
+		const origin = await this.observeLivePane();
 		if (!(await verify())) return { shown: false };
-		await this.run(own.session, ["tab", "focus", target.windowId]);
-		return { shown: true, returnHint: `select the parent tab in Herdr's tab bar` };
+		const locator = await this.verifiedTarget(target.locator);
+		if (!locator) throw new Error("no verified open tab for this delegation; tab changed or unavailable");
+		await this.run(own.session, ["tab", "focus", locator.tab]);
+		return {
+			shown: true,
+			returnHint: `select ${origin ? `tab ${origin.tab}` : "your previous tab"} in Herdr's tab bar to return`,
+		};
 	}
 	async peek(target: WindowTarget): Promise<string> {
-		const own = this.caller();
-		if (!own || !target.paneId) throw new Error("Herdr peek needs a verified delegate pane");
-		return this.run(own.session, ["pane", "read", target.paneId, "--source", "visible"]);
+		const locator = await this.verifiedTarget(target.locator);
+		if (!locator) throw new Error("no verified open tab for this delegation; tab changed or unavailable");
+		return this.run(locator.session, ["pane", "read", locator.pane, "--source", "recent"]);
 	}
 	async listWindows(): Promise<never> {
 		throw new Error("Herdr windows must be observed through terminal-fenced states");
 	}
 	async listPanes(): Promise<never> {
-		throw new Error("Herdr live widget navigation is not available yet");
+		throw new Error("Herdr live panes must be observed through terminal-fenced navigation");
 	}
 	async kill(): Promise<never> {
 		throw new Error("Herdr close requires a terminal-fenced locator");

@@ -389,8 +389,15 @@ including failed starts, retain a shell and readable diagnostics for inspection;
 agent sidebar and show their delegate name through display metadata. That
 metadata never controls lifecycle or hides other agents.
 
-Preview limitations: widget switch/peek/return-to-parent and Herdr resume are
-not available yet; use Herdr's tab bar to view a delegate. Automatic backend
+Widget Enter and `/delegate-open <id> --switch` focus the delegate's tab only
+after re-verifying its terminal identity. `--peek` shows its pane's recent rows
+without changing focus; `r` refreshes, Enter switches, and Escape returns to
+the prompt. Error tabs that remain open can still be viewed. A delegate's
+parent breadcrumb switches to its verified live parent, including a root Pi.
+Switch confirmations name the originating tab in Herdr's tab bar so you can
+return without assuming any configured keybinding.
+
+Preview limitations: Herdr resume is not available yet. Automatic backend
 detection is not enabled. tmux behaviour and its existing controls are unchanged.
 
 ## Where delegate windows open

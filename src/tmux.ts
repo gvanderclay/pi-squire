@@ -1,7 +1,7 @@
 // The tmux operations `delegate` needs, behind an interface so tests can use a
 // fake. This client talks to tmux with `execFile` and no shell.
 import { execFile } from "node:child_process";
-import type { WindowLocator } from "./tmux-locator.ts";
+import type { LiveNavigation, WindowLocator } from "./tmux-locator.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { ClosableStates } from "./window-state.ts";
 
@@ -14,7 +14,7 @@ export type WindowSpec = {
 };
 
 /** One window as tmux lists it: its id, its session's name, its name, and whether the program in its pane has exited. */
-export type TmuxWindow = { id: string; session: string; name: string; exited: boolean };
+export type TmuxWindow = { id: string; session: string; name: string; exited: boolean; locator?: WindowLocator };
 
 export type OpenedWindow = {
 	id: string;
@@ -122,7 +122,7 @@ export type PaneListing = {
 };
 
 /** Where a delegate window is: its tmux window id and, when known, the exact pane to read. */
-export type WindowTarget = { windowId: string; paneId?: string };
+export type WindowTarget = { windowId: string; paneId?: string; locator?: WindowLocator };
 
 /** Showing either switched, was canceled by verification, or could not find a viewing terminal. */
 export type ShowResult = { shown: true; returnHint: string } | { shown: false } | NoViewer;
@@ -152,7 +152,7 @@ export type TmuxNavigation = {
 	capture(target: string): Promise<string>;
 };
 
-export interface TmuxClient {
+export interface TmuxClient extends LiveNavigation {
 	readonly windowNoun?: "tab";
 	/** Mixed-backend observations route each durable locator to its owning adapter. */
 	states?(strict?: boolean): Promise<ClosableStates>;

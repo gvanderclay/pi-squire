@@ -69,6 +69,42 @@ test("current navigation preserves gone/failed launch facts and exact-pane liven
 	assert.equal(JSON.stringify(f.records), before);
 });
 
+test("tmux pane moves after selection refuse stale window verification and switch despite unchanged startup telemetry", async () => {
+	const f = setup();
+	f.tmux.addWindow("@3", "moved", "new-session");
+	const [selected] = (await f.view.items())!;
+	assert.equal(selected.window.id, "@2");
+	const startup = JSON.stringify(f.live);
+	f.tmux.panes.set("%2", { windowId: "@3", exited: false });
+	assert.equal(await f.view.verified(selected), false, "the current verified window changed after selection");
+	assert.equal((await f.view.items())![0].window.id, "@3", "a fresh selection follows the moved pane");
+	assert.equal(JSON.stringify(f.live), startup, "startup telemetry remains fixed across a pane move");
+
+	f.tmux.panes.set("%2", { windowId: "@2", exited: false });
+	f.tmux.attachClient("attached", 10);
+	const original = LiveActivityReader.prototype.locator;
+	LiveActivityReader.prototype.locator = f.reader.locator;
+	try {
+		const clientFor = f.tmux.clientFor.bind(f.tmux);
+		f.tmux.clientFor = async (name) => {
+			const client = await clientFor(name);
+			f.tmux.panes.set("%2", { windowId: "@3", exited: false });
+			return client;
+		};
+		const notifications: string[] = [];
+		const ctx = {
+			mode: "tui",
+			ui: { notify: (text: string) => notifications.push(text) },
+		} as unknown as ExtensionContext;
+		await createNavigator(f.results, f.tmux, {} as never).openDelegate(ctx, f.record.id, "switch");
+		assert.deepEqual(f.tmux.switches, [], "neither the stale window nor the moved-to window is focused");
+		assert.ok(notifications.some((note) => note.includes("window changed or unavailable")));
+		assert.equal(f.tmux.windows.has("@2"), true, "the old window still exists and must not be mistaken for the target");
+	} finally {
+		LiveActivityReader.prototype.locator = original;
+	}
+});
+
 test("lost/invalid current evidence never falls back to an old still-open window, including later refreshes", async () => {
 	const f = setup();
 	const [item] = (await f.view.items())!;

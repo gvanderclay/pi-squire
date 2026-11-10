@@ -8,6 +8,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Herdr widget Enter and `/delegate-open` now focus a delegate's tab only after
+  re-verifying its exact terminal; `--peek` reads recent rows without focusing.
+  Retained error tabs remain navigable. Children can select the parent
+  breadcrumb to return to a verified live ancestor, including the root.
+  Confirmations name the originating tab in Herdr's tab bar, without assuming
+  a keybinding. Disposable live-pane telemetry remains distinct from durable
+  launch/close authority; tmux behaviour and the opt-in selection are unchanged.
+  `test/herdr-navigation.test.ts` covers identity refusals, retained errors,
+  explicit widget focus and ancestor return. The internal mixed-history
+  expectation in `test/herdr.test.ts` deliberately changes from unknown to
+  running for a verified Herdr widget observation; it now asks the owning
+  adapter instead of interpreting a tmux-only pane listing. tmux selections still
+  compare the current verified window after a pane move, not only fixed startup
+  telemetry; `test/navigator-current.test.ts` covers refusal before focus.
+
 - Opt-in Herdr delegation via `"multiplexer": "herdr"` in
   `squire/settings.json`, read at each launch. Delegates open as named,
   unfocused tabs in their direct parent's workspace with their selected cwd
@@ -16,7 +31,7 @@ follows [Semantic Versioning](https://semver.org/).
   owned pane, preserving user-added panes and restored/replaced terminals.
   Unavailable probes stay unknown; ambiguous creates remain charged and are
   neither adopted nor closed. tmux remains the default with no auto-detection
-  or fallback. Preview limitations: no Herdr resume or widget navigation.
+  or fallback. Preview limitation: no Herdr resume.
   The shared adapter conformance suite now includes the real Herdr adapter
   over a deterministic wire fixture, alongside targeted launch, environment,
   mixed-history and safety tests in `test/herdr.test.ts`. No existing

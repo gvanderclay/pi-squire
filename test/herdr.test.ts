@@ -390,8 +390,8 @@ test("mixed histories route by durable locator even after setting changes and ba
 	tmux.failList = undefined;
 	assert.equal(
 		(await askPaneStates(mux)).state(hr),
-		"unknown",
-		"a tmux-only widget observation cannot fabricate Herdr disappearance",
+		"running",
+		"widget observations route Herdr identity through its own adapter, not a tmux pane listing",
 	);
 	assert.equal(await other.close(hr), true);
 });

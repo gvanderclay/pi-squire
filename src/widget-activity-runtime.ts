@@ -12,7 +12,9 @@ async function observeLocator(
 	ctx: ExtensionContext,
 ): Promise<void> {
 	try {
-		const locator = await tmux.inspectPane?.().catch(() => undefined);
+		const locator = await (tmux.observeLivePane ? tmux.observeLivePane() : tmux.inspectPane?.())?.catch(
+			() => undefined,
+		);
 		if (matchesSessionOwner(id, process.pid, token))
 			publisher.publishLocator(locator, token, ctx.sessionManager.getSessionFile());
 	} catch {

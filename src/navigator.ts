@@ -2,7 +2,8 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { NavigatorView, type OpenDelegate } from "./navigator-view.ts";
 import { isStarted, type Results, recordedName } from "./results.ts";
-import { livePaneTarget, type TmuxClient } from "./tmux.ts";
+import { livePaneTarget, type TmuxClient, windowLocator } from "./tmux.ts";
+import { windowTerms } from "./tmux-locator.ts";
 import type { Tracking } from "./tracking.ts";
 
 /** What `/delegate-open` does with a verified window. */
@@ -153,10 +154,11 @@ async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Pr
 	env.actions.assertActive?.();
 	let returnHint: string;
 	try {
-		const found = await env.tmux.show({ windowId: item.window.id }, async () => {
+		const found = await env.tmux.show({ windowId: item.window.id, locator: windowLocator(item.window) }, async () => {
 			env.actions.assertActive?.();
 			if (await verifiedWindow(env, item)) return true;
-			ctx.ui.notify("delegate: no verified open window for this delegation; window changed or unavailable", "error");
+			const noun = windowTerms(item.record).noun;
+			ctx.ui.notify(`delegate: no verified open ${noun} for this delegation; ${noun} changed or unavailable`, "error");
 			return false;
 		});
 		if ("text" in found) return ctx.ui.notify(`delegate: cannot switch: ${found.text}`, "warning");
@@ -208,8 +210,12 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 				item,
 				theme: theme as unknown as PanelTheme,
 				read: async (windowId: string): Promise<string> => {
-					if (!(await verifiedWindow(env, item))) throw new Error("no verified open window");
-					return env.tmux.peek({ windowId, paneId: item.live ? livePaneTarget(item.live.locator) : undefined });
+					if (!(await verifiedWindow(env, item))) throw new Error(`no verified open ${windowTerms(item.record).noun}`);
+					return env.tmux.peek({
+						windowId,
+						locator: windowLocator(item.window),
+						paneId: item.live ? livePaneTarget(item.live.locator) : undefined,
+					});
 				},
 				done,
 				redraw: (): void => tui.requestRender(),
@@ -231,11 +237,14 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 	if (items === undefined) return noWindows(env, ctx);
 	const item = items.find((candidate) => candidate.id === id);
 	if (item === undefined) {
-		if (env.results.find(id))
+		const record = env.results.find(id);
+		if (record) {
+			const noun = isStarted(record) ? windowTerms(record).noun : "window";
 			return ctx.ui.notify(
-				"delegate: no verified open window for this delegation; window changed or unavailable",
+				`delegate: no verified open ${noun} for this delegation; ${noun} changed or unavailable`,
 				"error",
 			);
+		}
 		const known = items.map((candidate) => candidate.id).join(", ") || "none";
 		return ctx.ui.notify(`delegate: no open delegate ${JSON.stringify(id)}; open: ${known}`, "error");
 	}

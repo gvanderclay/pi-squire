@@ -79,7 +79,7 @@ test("invalid widget settings name the key/file rather than silently disabling t
 		assert.throws(widgetSettings, /expected an object/);
 	}
 	writeFileSync(settingsFile, "{");
-	assert.throws(widgetSettings, /could not read widget settings/);
+	assert.throws(widgetSettings, /could not read squire settings .*settings\.json/);
 });
 
 test("native JSONL title reader honors latest metadata across branches, explicit clear and partial lines", () => {

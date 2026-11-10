@@ -3,42 +3,18 @@
 // environment. Ambiguity and absence refuse; a chosen backend that is unusable
 // refuses without falling back. Historical records always use the adapter
 // their durable locator names, independent of today's choice.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createHerdrClient } from "./herdr.ts";
 import { herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
+import { type Multiplexer, multiplexerSetting, squireSettingsFile as settingsFile } from "./settings.ts";
 import { createTmuxClient, type TmuxClient, type WindowRecord, type WindowSpec, type WindowTarget } from "./tmux.ts";
 import { validWindowLocator } from "./tmux-locator.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import { askToClose, askWindowStates, type ClosableStates, windowStates } from "./window-state.ts";
 
-export type Multiplexer = "tmux" | "herdr";
+export { type Multiplexer, multiplexerSetting };
 /** The backend that opened this delegate, set by its launcher; a delegate's tree keeps its root's choice. */
 export const MULTIPLEXER_ENV = "PI_DELEGATE_MULTIPLEXER";
-
-const settingsFile = (agentDir: string): string => join(agentDir, "squire", "settings.json");
-
-/** The explicit setting, or undefined when absent (auto-detect). Throws, naming the file, on an invalid value. */
-export function multiplexerSetting(agentDir: string): Multiplexer | undefined {
-	const file = settingsFile(agentDir);
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(file, "utf8"));
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		throw new Error(`could not read multiplexer settings ${file}: ${String(error)}`);
-	}
-	const value =
-		parsed && typeof parsed === "object" && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>).multiplexer
-			: undefined;
-	if (value === undefined) return undefined;
-	if (value === "tmux" || value === "herdr") return value;
-	throw new Error(
-		`invalid multiplexer settings ${file}: multiplexer must be "tmux" or "herdr", not ${JSON.stringify(value)}`,
-	);
-}
 
 /**
  * The backend a launch uses now. Explicit setting > the launcher-recorded

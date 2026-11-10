@@ -2,16 +2,18 @@
 // opens them in a shared project session named `<project>-<companionSuffix>`
 // (default suffix `delegates`); `current` opens in the parent's own session. Read from
 // `<agent dir>/squire/settings.json` at every launch, like `worktreeRoot`.
-import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 
 import { inspectGit } from "./git.ts";
+import {
+	DEFAULT_COMPANION_SUFFIX as DEFAULT_SUFFIX,
+	NUMBERED_ENDING as numberedEnding,
+	SAFE_NAME as safeName,
+	type WindowPlacement,
+	windowSettings,
+} from "./settings.ts";
 
-export type WindowPlacement = "companion" | "current";
-
-const DEFAULT_SUFFIX = "delegates";
-const safeName = /^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?$/;
-const numberedEnding = /(^|-)[0-9]+$/;
+export { type WindowPlacement, windowSettings };
 
 /** A preferred base, never a selected numbered companion or a tmux locator. */
 export function assertRootPlacement(value: unknown): asserts value is string {
@@ -35,39 +37,4 @@ export function placementProject(cwd: string, suffix = DEFAULT_SUFFIX): { compan
 					]
 				: [],
 	};
-}
-
-/**
- * The placement for this call. An unknown value refuses with the file named.
- * This reader defaults malformed/unreadable files to companion; mandatory
- * tree-cap admission separately refuses those files for every launch/resume.
- */
-export function windowSettings(agentDir: string): { placement: WindowPlacement; companionSuffix: string } {
-	const file = join(agentDir, "squire", "settings.json");
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(file, "utf8"));
-	} catch {
-		return { placement: "companion", companionSuffix: DEFAULT_SUFFIX };
-	}
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-		return { placement: "companion", companionSuffix: DEFAULT_SUFFIX };
-	const { windowPlacement: placement = "companion", companionSuffix = DEFAULT_SUFFIX } = parsed as Record<
-		string,
-		unknown
-	>;
-	if (placement !== "companion" && placement !== "current")
-		throw new Error(
-			`invalid window placement settings ${file}: windowPlacement must be "companion" or "current", not ${JSON.stringify(placement)}`,
-		);
-	if (
-		typeof companionSuffix !== "string" ||
-		companionSuffix.length > 32 ||
-		!safeName.test(companionSuffix) ||
-		numberedEnding.test(companionSuffix)
-	)
-		throw new Error(
-			`invalid window placement settings ${file}: companionSuffix must be 1 to 32 ASCII letters, digits, underscores or hyphens, with no edge hyphen or numeric final segment, not ${JSON.stringify(companionSuffix)}`,
-		);
-	return { placement, companionSuffix };
 }

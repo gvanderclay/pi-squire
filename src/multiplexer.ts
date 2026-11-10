@@ -110,6 +110,7 @@ export function createHostRouter(
 		ownsLocator: (value: unknown, target?: WindowTarget) =>
 			!!value && typeof value === "object" && owner(value)?.ownsLocator(value, target) === true,
 		forLaunch: selected,
+		taskMailTiming: (kind: import("./host.ts").StartKind) => selected().taskMailTiming(kind),
 		unavailable,
 		openWindow: (spec: WindowSpec, placement: WindowPlacement, companion: string) =>
 			selected().openWindow(spec, placement, companion),

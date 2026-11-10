@@ -46,7 +46,22 @@ export type ShowResult = { shown: true; returnHint: string } | { shown: false } 
  */
 export type NoViewer = { text: string; brief: string; cause?: unknown };
 
+export type StartKind = "launch" | "resume" | "fork";
+export type StartConfiguration = {
+	kind: StartKind;
+	sessionId: string;
+	launchId: string;
+	model: string;
+	thinking: string;
+	cwd: string;
+	sessionDir: string;
+};
+
 export interface DelegateHost extends LiveNavigation {
+	/** New terminal sessions receive mail before open; reopened ones after it. */
+	taskMailTiming(kind: StartKind): "before-open" | "after-open";
+	/** Optional API configuration after open, before after-open task mail. */
+	configureStart?(opened: OpenedWindow, configuration: StartConfiguration): Promise<void>;
 	/** Setting/inheritance key; never inferred from a presentation noun. */
 	readonly id: string;
 	/** Accept owned identity; with a navigation target, also validate its adapter-specific routing fields. */

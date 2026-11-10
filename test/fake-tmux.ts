@@ -37,6 +37,9 @@ import type { WindowPlacement } from "../src/window-placement.ts";
 export class FakeTmux implements TmuxClient, TmuxNavigation {
 	private readonly verbs = navigationVerbs(this);
 	readonly id = "tmux";
+	taskMailTiming(kind: import("../src/host.ts").StartKind): "before-open" | "after-open" {
+		return kind === "resume" ? "after-open" : "before-open";
+	}
 	closeTaskless(opened: OpenedWindow): Promise<void> {
 		return this.kill(opened.id).catch(() => {});
 	}

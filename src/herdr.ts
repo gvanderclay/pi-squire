@@ -196,6 +196,9 @@ function verifyForeground(info: Json, locator: HerdrLocator): void {
 type HerdrOptions = { run?: HerdrRun; context?: () => HerdrContext | undefined; timeoutMs?: number };
 class HerdrClient implements DelegateHost {
 	readonly id = "herdr";
+	taskMailTiming(kind: import("./host.ts").StartKind): "before-open" | "after-open" {
+		return kind === "resume" ? "after-open" : "before-open";
+	}
 	ownsLocator(value: unknown): boolean {
 		return !!herdrLocator(value) || !!herdrPaneLocator(value);
 	}

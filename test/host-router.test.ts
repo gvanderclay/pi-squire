@@ -32,6 +32,7 @@ function adapter(id: string, calls: string[]): DelegateHost {
 		check ? Promise.resolve(undefined) : undefined) as DelegateHost["unavailable"];
 	return {
 		id,
+		taskMailTiming: (kind) => (kind === "resume" ? "after-open" : "before-open"),
 		ownsLocator,
 		usesWindowPlacement: false,
 		requiresSessionGuard: false,

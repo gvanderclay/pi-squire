@@ -42,11 +42,10 @@
 //
 // The `session:launch` contract this package provides, and the `message:*`
 // hooks it consumes, live in this package's README.
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
 
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
 	type ExtensionAPI,
 	type ExtensionContext,
@@ -54,7 +53,6 @@ import {
 	type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
 import {
 	type Agent,
 	delegateTools,
@@ -65,15 +63,12 @@ import {
 	THINKING_LEVELS,
 	withoutLocked,
 } from "./agents.ts";
-import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV, registerChild } from "./child.ts";
+import { registerChild } from "./child.ts";
 import { registerCompletionHost } from "./completion-holds.ts";
 import {
 	DELEGATION_TOOLS,
-	delegatePrompt,
 	delegateVisible,
-	parentCommand,
 	parentTrust,
-	toolArgs,
 	toolDescription,
 	toolSelection,
 	whereAgentsGo,
@@ -90,44 +85,32 @@ import {
 	thinkingProblem,
 	USAGE,
 } from "./delegate-request.ts";
+import { createDelegateStart } from "./delegate-start.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
-import { type DelegateHost, type OpenedWindow, WindowOpenError } from "./host.ts";
-import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
+import { type DelegateHost, WindowOpenError } from "./host.ts";
+import { createHostAdmission } from "./host-admission.ts";
+import { createIdentity, grantsNesting } from "./identity.ts";
 import { clearMarks, readMarks } from "./limits.ts";
 import { openedIn } from "./location.ts";
-import { windowLocator } from "./locators.ts";
 import { agentModels, chooseModel, fallbackNote, modelIds, type Skipped } from "./model-choice.ts";
-import { createMultiplexer, MULTIPLEXER_ENV } from "./multiplexer.ts";
+import { createMultiplexer } from "./multiplexer.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
-import { createResults, delegateName, isStarted, sessionIdOf, type WorkspaceAttempt } from "./results.ts";
+import { createResults, delegateName, isStarted, type WorkspaceAttempt } from "./results.ts";
 import { createResume, resumableIds, startedLine } from "./resume.ts";
 import { pickResume } from "./resume-picker.ts";
-import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
+import { ownedAPI, SessionOwner } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
-import {
-	assertParentPlacement,
-	bindTree,
-	claimTree,
-	dispatchTree,
-	failedTree,
-	finishTree,
-	openedTree,
-	publishTreeRecords,
-	type Reservation,
-	readTree,
-	reconcileTree,
-	reserveTree,
-} from "./tree-registry.ts";
+import { claimTree, finishTree, publishTreeRecords, type Reservation, readTree } from "./tree-registry.ts";
 import { assertChildAuthority, assertResumeAuthority, historicalRecord, visibleRecords } from "./tree-view.ts";
 import { registerTrustControl } from "./trust-control.ts";
 import { createProactive, createUsageClient, type UsageClient } from "./usage.ts";
 import { registerDelegateWidget } from "./widget.ts";
 import { registerActivityRuntime } from "./widget-activity-runtime.ts";
-import { assertRootPlacement, placementProject, type WindowPlacement, windowSettings } from "./window-placement.ts";
+import { assertRootPlacement, placementProject, windowSettings } from "./window-placement.ts";
 import {
 	normalizeWorkspaceValue,
 	prepareDirectory,
@@ -149,14 +132,6 @@ import {
 const PARENT_PROMPT = "delegation_prompt.md";
 /** The parent system-prompt section this extension owns. */
 const PARENT_SECTION = "squire_parent_delegation";
-/** The hook a provider of `message:*` answers with the written request. */
-const SEND = "message:send";
-/** The hook emitted just before a delegate's window opens. */
-const LAUNCH = "session:launch";
-/** The direct parent address in a new delegate's environment. */
-const PARENT_ENV = "PI_DELEGATE_PARENT";
-/** Forwarded to the child when the parent has it set. */
-const SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 /** The `delegate` tool's structured result, which is also its details. */
 export const DelegateSchema = Type.Object({
 	outcome: Type.Literal("started"),
@@ -175,23 +150,8 @@ export const DelegateSchema = Type.Object({
 	workspace: WorkspaceSchema,
 });
 
-type SendPayload = { to: unknown; body: unknown; envelope?: { id?: unknown }; error?: unknown };
-/** `cwd` is informational: the window opens in the launch's own value, whatever a listener assigns. */
-type LaunchPayload = {
-	args: string[];
-	env: Record<string, string>;
-	agent: string;
-	readonly cwd: string;
-	readonly parent: string;
-	readonly root: string;
-	readonly depth: number;
-	readonly chain: readonly string[];
-	readonly toolCallId: string | undefined;
-};
 /** A request that passed the roster, model, thinking and label checks. */
 type Start = {
-	/** Call-time backend, frozen before side effects. */
-	launchClient?: DelegateHost;
 	agent: Agent;
 	model: string;
 	/** Candidates passed over for `model`, with why; empty unless a fallback was used. */
@@ -211,8 +171,6 @@ type Start = {
 	autoExit: boolean;
 	task: string;
 };
-/** What opening a delegate's window reads from a request: a `Start`, or the parts of one a resume decides. */
-type ChildStart = Pick<Start, "agent" | "model" | "rest" | "thinking" | "autoExit" | "notices" | "launchClient">;
 /** A delegation that is open in a tmux window. */
 type Launched = {
 	location?: string;
@@ -227,23 +185,6 @@ type Launched = {
 	sessionDir: string;
 	workspace: Workspace;
 };
-
-/**
- * Write the appended system prompt to a fresh owner-only directory under the
- * system temporary folder and return the file's path. Pi reads an existing
- * path as a file, so the prompt stays off the delegate's command line and out
- * of `ps`. The directory comes from `mkdtemp`, which no other user can
- * pre-create or swap.
- *
- * ponytail: one file per launch accumulates until the operating system clears
- * its temporary folder; the upgrade path is to delete the file once the poll
- * finds the window gone.
- */
-function writePromptFile(prompt: string): string {
-	const path = join(mkdtempSync(join(tmpdir(), "pi-squire-")), "prompt.md");
-	writeFileSync(path, prompt, { mode: 0o600 });
-	return path;
-}
 
 /** Read `<agent dir>/squire/delegation_prompt.md`; missing or whitespace-only means no guidance. */
 function readParentPrompt(): { text?: string; error?: string } {
@@ -486,235 +427,15 @@ export default function delegate(
 		};
 	}
 
-	/** Write the task to the delegate's inbox and return its request id; the delegate finds it at session start. */
-	function sendTask(to: string, task: string): string {
-		const sent: SendPayload = { to, body: task };
-		pi.events.emit(SEND, sent);
-		if (typeof sent.error === "string") throw new Error(`could not send the task to ${to}: ${sent.error}`);
-		if (sent.envelope === undefined)
-			throw new Error(
-				"needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)",
-			);
-		const requestId = sent.envelope.id;
-		if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${to}`);
-		return requestId;
-	}
-
-	/**
-	 * Build the delegate's command line and environment, emit `session:launch`
-	 * and open its window; returns the window id and session. A launch and a resume share
-	 * it and differ only in `session`, the arguments that choose the session:
-	 * `--session-id <id> --name <name>` for a new one (plus `--fork <path>`
-	 * to copy context), `--session <path>` to reopen.
-	 */
-	async function openChild(input: {
-		id: string;
-		name: string;
-		session: string[];
-		workspace: Workspace;
-		trusted: boolean;
-		cwd: string;
-		sessionDir: string;
-		start: ChildStart;
-		/** The tool call that started this launch or resume; undefined from a command. */
-		toolCallId: string | undefined;
-		ctx: ExtensionContext;
-		/** Chosen once, when the launch or resume began, so no later settings change can refuse it after mail. */
-		placement: WindowPlacement;
-		/** The delegate's tools, from `toolSelection`, read when the launch began; empty means none. */
-		tools: readonly string[];
-		onWindowOpened?: () => void;
-		identity: Identity;
-		sessionId?: string;
-		forkSourceCwd?: string;
-	}): Promise<OpenedWindow> {
-		const {
-			id,
-			name,
-			session,
-			workspace,
-			trusted,
-			cwd,
-			sessionDir,
-			start,
-			toolCallId,
-			ctx,
-			placement,
-			tools,
-			onWindowOpened,
-		} = input;
-		admit(start.agent.name, currentRoster(ctx));
-		results.checkStorage(true);
-		if (input.sessionId && sessionIsOwned(input.sessionId))
-			throw new Error(`delegate session ${input.sessionId} is already open; resume refused before spawn`);
-		const own = input.identity;
-		assertRootPlacement(own.rootPlacement);
-		own.autoExit = start.autoExit;
-		writeIdentity(input.sessionId ?? id, own);
-		const parent = own.parent;
-		const managedContext =
-			workspace.mode === "managed"
-				? `\n\nYour managed worktree is ${workspace.cwd}, branch ${workspace.createdBranch}, based on commit ${workspace.baseCommit}.`
-				: workspace.mode === "existing"
-					? `\n\nThe session that started you chose your working directory: ${workspace.cwd}`
-					: "";
-		const forkContext =
-			workspace.mode === "managed" && input.forkSourceCwd
-				? `\n\nThis session was forked from one that worked in ${input.forkSourceCwd}. Work only in ${workspace.cwd}; its uncommitted changes are not here.`
-				: "";
-		const prompt = writePromptFile(delegatePrompt(start.agent, managedContext + forkContext));
-		const argv = [
-			...parentCommand(),
-			...session,
-			// Always explicit, so a permissive global default cannot trust what the parent does not.
-			trusted ? "--approve" : "--no-approve",
-			"--session-dir",
-			sessionDir,
-			"--model",
-			start.model,
-			"--thinking",
-			start.thinking,
-			...toolArgs(tools),
-			"--append-system-prompt",
-			prompt,
-		];
-		const env: Record<string, string> = {
-			PI_CODING_AGENT_DIR: getAgentDir(),
-			// Private live metadata correlation: resume retains session id, not launch id.
-			PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: input.sessionId ?? id, launchId: id }),
-			[PARENT_ENV]: parent,
-			PI_DELEGATE_ROOT: own.root,
-			PI_DELEGATE_DEPTH: String(own.depth),
-			PI_DELEGATE_CHAIN: own.chain.join(","),
-			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
-			[AGENT_ENV]: start.agent.name,
-			// The backend that opens this delegate, so its own delegates follow the root's choice.
-			[MULTIPLEXER_ENV]: (start.launchClient ?? tmux).id,
-			// A general signal for any extension: no human watches this session, so don't wait on a dialog.
-			PI_UNATTENDED: "1",
-		};
-		if (start.rest.length > 0) env[FALLBACK_ENV] = start.rest.join(",");
-		// Pi ranks `--session-dir` above this variable, so it cannot move the child's storage.
-		const envSessionDir = process.env[SESSION_DIR_ENV];
-		if (envSessionDir !== undefined && envSessionDir !== "") env[SESSION_DIR_ENV] = envSessionDir;
-		// Listeners may only append to `args` and add to `env`; there is no veto.
-		const payload: LaunchPayload = {
-			args: argv,
-			env,
-			agent: start.agent.name,
-			cwd,
-			toolCallId,
-			parent: own.parent,
-			root: own.root,
-			depth: own.depth,
-			chain: Object.freeze([...own.chain]),
-		};
-		for (const key of ["parent", "root", "depth", "chain"] as const)
-			Object.defineProperty(payload, key, { writable: false, configurable: false });
-		pi.events.emit(LAUNCH, payload);
-		const token: Reservation = { root: own.root, id };
-		bindTree(token, { cwd, workspace });
-		dispatchTree(token);
-		const windowNoun = (start.launchClient ?? tmux).windowNoun ?? "window";
-		let opened: OpenedWindow;
-		try {
-			opened = await (start.launchClient ?? tmux).openWindow(
-				{ name, cwd, argv: payload.args, env: payload.env },
-				placement,
-				own.rootPlacement,
-			);
-		} catch (err) {
-			if (err instanceof WindowOpenError && err.certainty === "not-opened") {
-				try {
-					failedTree(token, true);
-				} catch (accounting) {
-					ctx.ui.notify(
-						`delegate: could not refund the pre-start reservation: ${String(accounting)}; it remains charged.`,
-						"warning",
-					);
-				}
-			}
-			if (err instanceof WindowOpenError) {
-				throw new WindowOpenError(`could not open ${windowNoun} ${name} for ${id}: ${err.message}`, err.certainty);
-			}
-			throw new WindowOpenError(`could not open ${windowNoun} ${name} for ${id}: ${(err as Error).message}`, "unknown");
-		}
-		onWindowOpened?.();
-		try {
-			openedTree(token, opened.locator ?? windowLocator({ id: opened.id, name }));
-		} catch (error) {
-			ctx.ui.notify(
-				`delegate: ${windowNoun} ${opened.id} opened, but shared accounting publication failed: ${String(error)}. Local tracking continues; the reservation remains charged until accounting reconciles.`,
-				"warning",
-			);
-		}
-		return opened;
-	}
-
-	async function launchWindow(input: {
-		identity: Identity;
-		id: string;
-		requestId: string;
-		workspace: Workspace;
-		trusted: boolean;
-		cwd: string;
-		sessionDir: string;
-		start: Start;
-		toolCallId: string | undefined;
-		ctx: ExtensionContext;
-		placement: WindowPlacement;
-		tools: readonly string[];
-		onWindowOpened: () => void;
-		fork?: ForkSource;
-	}): Promise<Launched> {
-		const { id, requestId, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement, onWindowOpened } =
-			input;
-		const name = delegateName(start.agent.displayName ?? start.agent.name, id, start.label);
-		const {
-			id: windowId,
-			session: windowSession,
-			locator,
-			location,
-		} = await openChild({
-			id,
-			name,
-			session: [...(input.fork ? ["--fork", input.fork.sessionPath] : []), "--session-id", id, "--name", name],
-			identity: input.identity,
-			workspace,
-			trusted,
-			cwd,
-			sessionDir,
-			start,
-			toolCallId,
-			ctx,
-			placement,
-			tools: input.tools,
-			onWindowOpened,
-			forkSourceCwd: input.fork?.sourceCwd,
-		});
-		// No task text in the record: the request copy in `sent/` has it.
-		results.recordStart(
-			{
-				id,
-				identity: readIdentity(id),
-				agent: start.agent.name,
-				...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
-				model: start.model,
-				thinking: start.thinking,
-				name,
-				locator: locator ?? windowLocator({ id: windowId, name }),
-				requestId,
-				autoExit: start.autoExit,
-				cwd,
-				sessionDir,
-				workspace,
-				...(input.fork ? { forkedFrom: input.fork.id } : {}),
-			},
-			ctx,
-		);
-		tracking.startPolling();
-		return { id, name, windowId, windowName: name, windowSession, requestId, cwd, sessionDir, workspace, location };
-	}
+	const admission = createHostAdmission(tmux, () => windowSettings(getAgentDir()));
+	const starter = createDelegateStart({
+		pi,
+		host: tmux,
+		identity,
+		results,
+		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
+		startPolling: tracking.startPolling,
+	});
 
 	async function launch(
 		start: Start,
@@ -725,13 +446,8 @@ export default function delegate(
 	): Promise<Launched> {
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
-		start.launchClient = tmux.forLaunch?.() ?? tmux;
-		const refusal = await start.launchClient.unavailable(true);
-		if (refusal !== undefined) throw new Error(refusal);
-		// Read once, before anything is created or mailed; the launch keeps these values.
-		const { placement, companionSuffix } = start.launchClient.usesWindowPlacement
-			? windowSettings(getAgentDir())
-			: { placement: "current" as const, companionSuffix: "delegates" };
+		const admitted = await admission.admit();
+		const { placement, companionSuffix } = admitted;
 		const parentIdentity = identity.current();
 		const project = parentIdentity
 			? { companion: parentIdentity.rootPlacement, notices: [] }
@@ -739,8 +455,7 @@ export default function delegate(
 				? { companion: fork.rootPlacement, notices: [] }
 				: placementProject(ctx.cwd, companionSuffix);
 		assertRootPlacement(project.companion);
-		const own = identity.child(start.agent, ctx, project.companion);
-		if (parentIdentity) assertParentPlacement(readTree(own.root), own);
+		const own = starter.childIdentity(start.agent, ctx, project.companion);
 		if (placement === "companion") start.notices.push(...project.notices);
 		const tools = childTools(start.agent);
 		const sessionDir = fork?.sessionDir ?? ctx.sessionManager.getSessionDir();
@@ -803,16 +518,18 @@ export default function delegate(
 		const run = async (): Promise<Launched> => {
 			admit(start.agent.name, currentRoster(ctx));
 			results.checkStorage(true);
-			await reconcileTree(own.root, tmux);
-			admit(start.agent.name, currentRoster(ctx));
-			if (combined?.aborted) throw new Error("the launch was aborted");
-			reservation = reserveTree({
-				id,
-				sessionId: id,
-				identity: own,
-				sessionDir,
-				...(fork ? { forkedFrom: fork.id } : {}),
-			});
+			reservation = await starter.reserve(
+				{
+					id,
+					sessionId: id,
+					identity: own,
+					sessionDir,
+					...(fork ? { forkedFrom: fork.id } : {}),
+				},
+				start.agent.name,
+				ctx,
+				combined,
+			);
 			if (plan !== undefined) {
 				revalidate(plan);
 				revalidateTrust?.();
@@ -858,45 +575,53 @@ export default function delegate(
 			if (managed !== undefined) workspace = managed;
 			else if (directory !== undefined) workspace = directory;
 			else throw new Error("workspace preparation did not produce a launch directory");
-			// The task goes on disk before the window exists: the delegate finds it
-			// at session start without a handshake, and a window that fails leaves
-			// mail that is reported rather than cleaned up.
-			const requestId = sendTask(id, start.task);
-			bindTree(reservation, { requestId });
-			if (attempt !== undefined) {
-				attempt = { ...attempt, requestId };
-				results.recordAttempt(attempt, ctx);
-			}
-			return launchWindow({
-				identity: own,
+			const name = delegateName(start.agent.displayName ?? start.agent.name, id, start.label);
+			const { opened, requestId } = await starter.start(
+				{
+					identity: own,
+					id,
+					name,
+					session: fork
+						? { kind: "fork", id: fork.id, path: fork.sessionPath, sourceCwd: fork.sourceCwd }
+						: { kind: "launch" },
+					workspace,
+					trusted,
+					sessionDir,
+					start,
+					task: start.task,
+					toolCallId,
+					admission: admitted,
+					tools,
+					onMailed: (requestId) => {
+						if (attempt !== undefined) {
+							attempt = { ...attempt, requestId };
+							results.recordAttempt(attempt, ctx);
+						}
+					},
+					onWindowOpened: () => {
+						windowOpened = true;
+					},
+				},
+				ctx,
+			);
+			return {
 				id,
+				name,
+				windowId: opened.id,
+				windowName: name,
+				windowSession: opened.session,
 				requestId,
-				workspace,
-				trusted,
 				cwd: workspace.cwd,
 				sessionDir,
-				start,
-				toolCallId,
-				ctx,
-				placement,
-				tools,
-				onWindowOpened: () => {
-					windowOpened = true;
-				},
-				fork,
-			});
+				workspace,
+				location: opened.location,
+			};
 		};
 		const runWithRollback = async (): Promise<Launched> => {
 			try {
 				return await run();
 			} catch (error) {
-				if (reservation) {
-					try {
-						failedTree(reservation);
-					} catch (accounting) {
-						ctx.ui.notify(`delegate: reservation remains charged: ${String(accounting)}`, "error");
-					}
-				}
+				if (reservation) starter.refund(reservation, ctx);
 				if (attempt !== undefined && managed !== undefined) {
 					const cause = (error as Error).message;
 					if (windowOpened || (error instanceof WindowOpenError && error.certainty === "unknown")) {
@@ -957,8 +682,9 @@ export default function delegate(
 		results,
 		tmux,
 		delegateSchema: DelegateSchema,
-		startPolling: tracking.startPolling,
-		placement: () => windowSettings(getAgentDir()).placement,
+		admission,
+		starter,
+		childTools,
 		roster: rosterFor,
 		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
 		authorize: (id, ctx) => {
@@ -967,60 +693,12 @@ export default function delegate(
 			const record = results.find(id) ?? viewResults.find(id) ?? historicalRecord(id, ctx);
 			if (record && isStarted(record)) assertResumeAuthority(record, ctx);
 		},
-		reserve: async (record, id, ctx) => {
-			const own = record.identity;
-			if (!own) throw new Error(`delegation ${record.id} has no original root placement identity; resume refused`);
-			assertRootPlacement(own.rootPlacement);
-			await reconcileTree(own.root, tmux);
-			admit(record.agent, currentRoster(ctx));
-			return reserveTree({
-				id,
-				sessionId: sessionIdOf(record),
-				identity: own,
-				resumedFrom: record.id,
-				sessionDir: record.sessionDir,
-			});
-		},
 		parentDefaults,
 		chooseModel: (explicit, agent, models, preferred) =>
 			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
 		thinkingProblem,
 		prepareDirectory: (cwd, ctx, signal, agent) =>
 			prepareDirectory({ cwd, signal, trust: trustControl.forAgent(agent, ctx) }, ctx, getAgentDir()),
-		sendTask,
-		open: ({
-			id,
-			name,
-			sessionPath,
-			workspace,
-			trusted,
-			cwd,
-			sessionDir,
-			start,
-			toolCallId,
-			ctx,
-			placement,
-			launchClient,
-			identity: own,
-			sessionId,
-		}) =>
-			openChild({
-				id,
-				name,
-				session: ["--session", sessionPath],
-				identity: own,
-				sessionId,
-				workspace,
-				trusted,
-				cwd,
-				sessionDir,
-				start: { ...start, launchClient },
-				toolCallId,
-				ctx,
-				placement,
-				// Read before the window opens, and a resume mails only after it opens.
-				tools: childTools(start.agent),
-			}),
 	});
 
 	/** Where a selected directory put the delegate, for the start text; inherited starts stay compact. */
@@ -1050,7 +728,7 @@ export default function delegate(
 
 	/** What the no-argument `/delegate` form needs. */
 	const newDelegateDeps: NewDelegateDeps = {
-		unavailable: () => tmux.unavailable(),
+		unavailable: admission.probe,
 		roster: rosterFor,
 		noAgents,
 		defaults: (agent, ctx) => {
@@ -1080,7 +758,7 @@ export default function delegate(
 		await pickResume(
 			ctx,
 			{
-				unavailable: () => tmux.unavailable(),
+				unavailable: admission.probe,
 				eligible: resumer.eligible,
 				resume: async (request, context) => {
 					try {
@@ -1168,7 +846,7 @@ export default function delegate(
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		) {
-			const refusal = tmux.unavailable();
+			const refusal = admission.probe();
 			if (refusal !== undefined) throw new Error(refusal);
 			// Some models fill every optional field with null or the string "null"; both mean unset.
 			const given = (value: string | null | undefined) => (value == null || value === "null" ? undefined : value);

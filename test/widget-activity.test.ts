@@ -101,7 +101,7 @@ const row = (id: string): DelegateRow => ({
 	title: undefined,
 	state: "running",
 	running: true,
-	window: "open",
+	window: "running",
 	model: "provider/model",
 	lastActive: undefined,
 });

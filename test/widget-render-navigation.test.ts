@@ -13,7 +13,7 @@ const rows: DelegateRow[] = Array.from({ length: 8 }, (_, index) => ({
 	title: "表情🔎",
 	state: "running",
 	running: true,
-	window: "open",
+	window: "running",
 	model: "provider/model",
 	lastActive: undefined,
 }));

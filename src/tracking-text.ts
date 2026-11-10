@@ -1,8 +1,13 @@
 // How `delegation_status` words a delegation's state, auto-exit and age.
 import type { DelegationState, StartedRecorded } from "./results.ts";
+import { windowTerms } from "./tmux-locator.ts";
 
 /** Records from before auto-exit existed kept their windows open, so they read off. */
 export function autoExitLine(record: StartedRecorded): string {
+	if (windowTerms(record).noun === "tab")
+		return record.autoExit === true
+			? "on — Pi exits after a normal completion; the Herdr tab stays for explicit close"
+			: "off — Pi and its Herdr tab stay open after the result";
 	return record.autoExit === true
 		? "on — the delegate closes its window after a normal completion unless the user took over there"
 		: "off — the window stays open after the result";
@@ -10,19 +15,20 @@ export function autoExitLine(record: StartedRecorded): string {
 
 /** The state, worded for the `state:` line. */
 export function stateLine(state: DelegationState, record: StartedRecorded): string {
+	const { noun, host } = windowTerms(record);
 	switch (state) {
 		case "running":
-			return "running — the window is open and no result has arrived";
+			return `running — the ${noun} is open and no result has arrived`;
 		case "gone":
-			return "closed without a result — the window is gone and no reply arrived; a late reply would make it done";
+			return `closed without a result — the ${noun} is gone and no reply arrived; a late reply would make it done`;
 		case "done":
 			return `done — result status: ${record.result?.status ?? "unknown"}; the result reaches this session as a [delegate] message on its own`;
 		case "closed":
 			return "closed — delegation_close recorded it";
 		case "window-closed":
-			return "closed — the window is gone";
+			return `closed — the ${noun} is gone`;
 		case "unknown":
-			return "unknown — tmux could not be asked whether the window is open";
+			return `unknown — ${host} could not be asked whether the ${noun} is open`;
 		case "planned":
 		case "created":
 		case "rolled-back":

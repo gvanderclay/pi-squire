@@ -1,6 +1,6 @@
 # pi-squire
 
-Starts a delegate Pi session in a background tmux window and shows you its result.
+Starts a delegate Pi session in a background tmux window (or an opt-in Herdr tab) and shows you its result.
 
 You give a task to a named agent with the `/delegate` command, or the model does
 it with the `delegate` tool. The delegate works in its own tmux window and
@@ -19,7 +19,8 @@ You need:
   first version with `new-session -e`. Windows are placed
   relative to the pane's session (see [Where delegate windows
   open](#where-delegate-windows-open)), so a client attached elsewhere does
-  not matter.
+  not matter. Alternatively, use the [opt-in Herdr preview](#opt-in-herdr-support)
+  below instead of tmux.
 - A provider of the four `message:*` hooks, including `message:reply`;
   [pi-session-mail](https://github.com/gvanderclay/pi-session-mail) **0.6.0 or
   later** supplies them. Without a provider there is no way to send the task or get an
@@ -345,7 +346,51 @@ to the old tree. Current allowlists, depth, caps and
 directory/source trust still apply to resume, including its picker. A live
 same-id Squire owner and obsolete local/shared resume chains are refused.
 
+## Opt-in Herdr support
+
+tmux remains the default. To try Herdr, run Pi inside a Herdr pane and set
+`multiplexer` in `<agent dir>/squire/settings.json` (not Pi's own settings):
+
+```json
+{ "multiplexer": "herdr" }
+```
+
+The setting is read at every launch; `"tmux"` forces tmux, and removing it
+restores the tmux default. An invalid value, missing Herdr pane context,
+unavailable server, or incompatible API refuses the launch with no fallback.
+This preview targets Herdr 0.9.5, protocol 22, on macOS/Linux with a POSIX-compatible
+interactive shell (`sh -c` launch; tested with zsh).
+
+Each delegate opens as a named, unfocused **tab in its direct parent's Herdr
+workspace**, including nested delegates and worktree launches. `windowPlacement`
+and `companionSuffix` affect only tmux placement. The tab runs in the selected
+working directory with the parent's environment and `session:launch` additions;
+parent/user-supplied `TMUX*` and `HERDR*` routing values are excluded, while
+Herdr's newly assigned child context is preserved. Large arguments/environment
+values travel through an owner-only staged launch file, not a typed shell line.
+Like prompt files, these files remain until the operating system clears the
+temporary directory; they can contain credentials from the launch environment.
+
+Task/result delivery still uses the same `message:*` provider. Neither screen
+text nor Herdr's agent status counts as a result. `delegation_status` uses
+Herdr's tab/workspace vocabulary. Public result fields retain their names:
+`windowId` is the tab id and `windowSession` is the workspace id.
+
+`delegation_close` re-verifies the exact pane and terminal incarnation, then
+closes **only the pane pi-squire created**. Herdr removes the tab when that was
+its last pane; user-added panes remain. Failed probes are unknown, never assumed
+gone. Restored/replaced terminals are treated as gone and left untouched; do
+not use explicit close to remove a tab restored by Herdr after a restart.
+
+Preview limitations: Pi's auto-exit still works, but the tab's shell remains for
+explicit close after Pi exits (clean or error). Sidebar display-agent labelling,
+widget switch/peek/return-to-parent, and Herdr resume are not available yet;
+use Herdr's tab bar to view a delegate. Automatic backend detection is not
+enabled. tmux behaviour and its existing controls are unchanged.
+
 ## Where delegate windows open
+
+The rest of this section describes **tmux** placement.
 
 By default a delegate's window opens in a shared **project companion session**
 named `<project>-delegates` on your existing tmux server. The owning

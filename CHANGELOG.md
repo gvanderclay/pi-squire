@@ -6,6 +6,23 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in Herdr delegation via `"multiplexer": "herdr"` in
+  `squire/settings.json`, read at each launch. Delegates open as named,
+  unfocused tabs in their direct parent's workspace with their selected cwd
+  and environment; task/results still use session mail. Status uses Herdr
+  terms, and explicit close re-verifies terminal identity and removes only the
+  owned pane, preserving user-added panes and restored/replaced terminals.
+  Unavailable probes stay unknown; ambiguous creates remain charged and are
+  neither adopted nor closed. tmux remains the default with no auto-detection
+  or fallback. Preview limitations: retained shells after Pi exits, no Herdr
+  resume or widget navigation, and sidebar display-agent polish deferred.
+  The shared adapter conformance suite now includes the real Herdr adapter
+  over a deterministic wire fixture, alongside targeted launch, environment,
+  mixed-history and safety tests in `test/herdr.test.ts`. No existing
+  behavioural assertions or public hook contracts are changed.
+
 ### Changed
 
 - Adapter validation now runs one executable delegate-window contract against a

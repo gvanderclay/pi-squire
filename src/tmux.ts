@@ -1,8 +1,9 @@
 // The tmux operations `delegate` needs, behind an interface so tests can use a
 // fake. This client talks to tmux with `execFile` and no shell.
 import { execFile } from "node:child_process";
-
+import type { WindowLocator } from "./tmux-locator.ts";
 import type { WindowPlacement } from "./window-placement.ts";
+import type { ClosableStates } from "./window-state.ts";
 
 /** One window to open: its name, working directory, command and environment. */
 export type WindowSpec = {
@@ -15,8 +16,12 @@ export type WindowSpec = {
 /** One window as tmux lists it: its id, its session's name, its name, and whether the program in its pane has exited. */
 export type TmuxWindow = { id: string; session: string; name: string; exited: boolean };
 
-/** A window just opened: its id and the name of the session it is in, when known. */
-export type OpenedWindow = { id: string; session: string | undefined };
+export type OpenedWindow = {
+	id: string;
+	session: string | undefined;
+	locator?: WindowLocator;
+	location?: string;
+};
 
 export {
 	currentLiveWindow,
@@ -97,7 +102,6 @@ export class WindowOpenError extends Error {
 	}
 }
 
-/** The session the parent's pane is in: its id (`$N`) and name. */
 export type OwnSession = { id: string; name: string };
 
 /** A positively inspected pane on one server incarnation; names are not routing identity. */
@@ -138,7 +142,6 @@ export type NoViewer = { text: string; brief: string; cause?: unknown };
 export type TmuxNavigation = {
 	/** Whether this process runs in a tmux pane. */
 	insideTmux(): boolean;
-	/** The tmux version, asked once. */
 	version(): Promise<TmuxVersion>;
 	/** The session the parent's pane is in; undefined when it cannot be told. */
 	ownSession(): Promise<OwnSession | undefined>;
@@ -146,43 +149,35 @@ export type TmuxNavigation = {
 	clientFor(session: string): Promise<string | undefined>;
 	/** Show the window to a client: `switch-client -c <client> -t @N`. */
 	switchTo(client: string, windowId: string): Promise<void>;
-	/** The window's or pane's visible text (`capture-pane -p`). */
 	capture(target: string): Promise<string>;
 };
 
 export interface TmuxClient {
+	readonly windowNoun?: "tab";
+	/** Mixed-backend observations route each durable locator to its owning adapter. */
+	states?(strict?: boolean): Promise<ClosableStates>;
+	/** Freeze the call-time launch choice before mail or workspace side effects. */
+	forLaunch?(): TmuxClient;
 	/** Environment-only refusal, without asking tmux (forms and early tool admission). */
 	unavailable(): string | undefined;
 	/** Launch refusal, checking the environment before the cached minimum version. */
 	unavailable(checkVersion: true): Promise<string | undefined>;
-	/**
-	 * Find the viewing terminal, reverify the target, then switch. Keeping
-	 * verification after client lookup preserves the existing race checks and
-	 * refusal order. False cancels without switching; verification errors propagate.
-	 */
+	/** Find the viewer, then reverify before switching. False cancels; errors propagate. */
 	show(target: WindowTarget, verify: () => Promise<boolean>): Promise<ShowResult>;
-	/** Refusal text for a failed window listing. */
 	readonly windowListRefusal: string;
 	/** A delegate window's visible text: its pane when known, else the window's active pane. */
 	peek(target: WindowTarget): Promise<string>;
-	/**
-	 * Open a detached window and return its id (for example `@3`) and session.
-	 * `current` opens it in the parent's session; `companion` in
-	 * the root project's managed companion, created when it does not exist.
-	 */
+	/** Open detached in the parent (current) or root-project managed companion. */
 	openWindow(spec: WindowSpec, placement: WindowPlacement, companion: string): Promise<OpenedWindow>;
 	/** This process's pane window, for recovering an ambiguous launch at child startup. */
 	currentWindow?(): Promise<{ id: string; name: string } | undefined>;
 	/** Inspect exactly a pane on this client's server; omitted pane means this process's TMUX_PANE. */
 	inspectPane?(paneId?: string): Promise<PaneLocator | undefined>;
-	/** Every window on the server, in one tmux call. */
 	listWindows(): Promise<TmuxWindow[]>;
 	listPanes(): Promise<PaneListing>;
-	/** Kill a window. */
 	kill(windowId: string): Promise<void>;
 }
 
-/** The short refusal when no client can be found. */
 const NO_CLIENT_HERE = "no tmux client attached to this session";
 
 /**

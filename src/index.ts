@@ -72,6 +72,7 @@ import { registerCompletionHost } from "./completion-holds.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
 import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
+import { createMultiplexer, multiplexerSetting } from "./multiplexer.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
@@ -80,7 +81,7 @@ import { createResume, type ResumeRequest, resumableIds, startedLine } from "./r
 import { pickResume } from "./resume-picker.ts";
 import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
-import { createTmuxClient, type OpenedWindow, type TmuxClient, WindowOpenError, windowLocator } from "./tmux.ts";
+import { type OpenedWindow, type TmuxClient, WindowOpenError, windowLocator } from "./tmux.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import {
@@ -236,6 +237,8 @@ type Parsed = {
 };
 /** A request that passed the roster, model, thinking and label checks. */
 type Start = {
+	/** Call-time backend, frozen before side effects. */
+	launchClient?: TmuxClient;
 	agent: Agent;
 	model: string;
 	/** Candidates passed over for `model`, with why; empty unless a fallback was used. */
@@ -258,9 +261,10 @@ type Start = {
 /** A candidate model passed over: `why` finishes "<model> is …", `reason` is the long form for a refusal. */
 type Skipped = { model: string; why: string; reason: string };
 /** What opening a delegate's window reads from a request: a `Start`, or the parts of one a resume decides. */
-type ChildStart = Pick<Start, "agent" | "model" | "rest" | "thinking" | "autoExit" | "notices">;
+type ChildStart = Pick<Start, "agent" | "model" | "rest" | "thinking" | "autoExit" | "notices" | "launchClient">;
 /** A delegation that is open in a tmux window. */
 type Launched = {
+	location?: string;
 	id: string;
 	name: string;
 	windowId: string;
@@ -653,7 +657,7 @@ function delegatePrompt(agent: Agent, managedContext: string): string {
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 function toolDescription(agents: readonly Agent[]): string {
 	const intro =
-		"Start a delegate Pi session on a self-contained task in a background tmux window. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status or mail it just to wait.";
+		"Start a delegate Pi session on a self-contained task in a background terminal. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status or mail it just to wait.";
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${whereAgentsGo()}.`;
 	}
@@ -674,7 +678,7 @@ function toolDescription(agents: readonly Agent[]): string {
  */
 export default function delegate(
 	api: ExtensionAPI,
-	tmux: TmuxClient = createTmuxClient(),
+	tmux: TmuxClient = createMultiplexer(),
 	usage: UsageClient = createUsageClient(),
 ): void {
 	const owner = new SessionOwner();
@@ -1024,9 +1028,14 @@ export default function delegate(
 		const token: Reservation = { root: own.root, id };
 		bindTree(token, { cwd, workspace });
 		dispatchTree(token);
+		const windowNoun = (start.launchClient ?? tmux).windowNoun ?? "window";
 		let opened: OpenedWindow;
 		try {
-			opened = await tmux.openWindow({ name, cwd, argv: payload.args, env: payload.env }, placement, own.rootPlacement);
+			opened = await (start.launchClient ?? tmux).openWindow(
+				{ name, cwd, argv: payload.args, env: payload.env },
+				placement,
+				own.rootPlacement,
+			);
 		} catch (err) {
 			if (err instanceof WindowOpenError && err.certainty === "not-opened") {
 				try {
@@ -1039,16 +1048,16 @@ export default function delegate(
 				}
 			}
 			if (err instanceof WindowOpenError) {
-				throw new WindowOpenError(`could not open window ${name} for ${id}: ${err.message}`, err.certainty);
+				throw new WindowOpenError(`could not open ${windowNoun} ${name} for ${id}: ${err.message}`, err.certainty);
 			}
-			throw new WindowOpenError(`could not open window ${name} for ${id}: ${(err as Error).message}`, "unknown");
+			throw new WindowOpenError(`could not open ${windowNoun} ${name} for ${id}: ${(err as Error).message}`, "unknown");
 		}
 		onWindowOpened?.();
 		try {
-			openedTree(token, windowLocator({ id: opened.id, name }));
+			openedTree(token, opened.locator ?? windowLocator({ id: opened.id, name }));
 		} catch (error) {
 			ctx.ui.notify(
-				`delegate: window ${opened.id} opened, but shared accounting publication failed: ${String(error)}. Local tracking continues; the reservation remains charged until accounting reconciles.`,
+				`delegate: ${windowNoun} ${opened.id} opened, but shared accounting publication failed: ${String(error)}. Local tracking continues; the reservation remains charged until accounting reconciles.`,
 				"warning",
 			);
 		}
@@ -1074,7 +1083,12 @@ export default function delegate(
 		const { id, requestId, workspace, trusted, cwd, sessionDir, start, toolCallId, ctx, placement, onWindowOpened } =
 			input;
 		const name = delegateName(start.agent.displayName ?? start.agent.name, id, start.label);
-		const { id: windowId, session: windowSession } = await openChild({
+		const {
+			id: windowId,
+			session: windowSession,
+			locator,
+			location,
+		} = await openChild({
 			id,
 			name,
 			session: [...(input.fork ? ["--fork", input.fork.sessionPath] : []), "--session-id", id, "--name", name],
@@ -1101,7 +1115,7 @@ export default function delegate(
 				model: start.model,
 				thinking: start.thinking,
 				name,
-				locator: windowLocator({ id: windowId, name }),
+				locator: locator ?? windowLocator({ id: windowId, name }),
 				requestId,
 				autoExit: start.autoExit,
 				cwd,
@@ -1112,7 +1126,7 @@ export default function delegate(
 			ctx,
 		);
 		tracking.startPolling();
-		return { id, name, windowId, windowName: name, windowSession, requestId, cwd, sessionDir, workspace };
+		return { id, name, windowId, windowName: name, windowSession, requestId, cwd, sessionDir, workspace, location };
 	}
 
 	async function launch(
@@ -1124,10 +1138,14 @@ export default function delegate(
 	): Promise<Launched> {
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
-		const refusal = await tmux.unavailable(true);
+		start.launchClient = tmux.forLaunch?.() ?? tmux;
+		const refusal = await start.launchClient.unavailable(true);
 		if (refusal !== undefined) throw new Error(refusal);
 		// Read once, before anything is created or mailed; the launch keeps these values.
-		const { placement, companionSuffix } = windowSettings(getAgentDir());
+		const { placement, companionSuffix } =
+			start.launchClient.windowNoun === "tab"
+				? { placement: "current" as const, companionSuffix: "delegates" }
+				: windowSettings(getAgentDir());
 		const parentIdentity = identity.current();
 		const project = parentIdentity
 			? { companion: parentIdentity.rootPlacement, notices: [] }
@@ -1354,7 +1372,11 @@ export default function delegate(
 		tmux,
 		delegateSchema: DelegateSchema,
 		startPolling: tracking.startPolling,
-		placement: () => windowSettings(getAgentDir()).placement,
+		placement: () => {
+			if (tmux.forLaunch && multiplexerSetting(getAgentDir()) === "herdr")
+				throw new Error("Herdr delegation resume is not available yet; use a new delegation instead");
+			return windowSettings(getAgentDir()).placement;
+		},
 		roster: rosterFor,
 		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
 		authorize: (id, ctx) => {
@@ -1418,6 +1440,8 @@ export default function delegate(
 			}),
 	});
 
+	const launchLocation = (launched: Launched): string =>
+		launched.location ?? `window ${launched.windowName}${inSession(launched.windowSession)}`;
 	/** The session a window opened in, for the start text. */
 	const inSession = (session: string | undefined): string => (session === undefined ? "" : ` in session ${session}`);
 
@@ -1426,7 +1450,7 @@ export default function delegate(
 		launched.workspace.mode !== "inherited" ? ` in ${launched.cwd}` : "";
 
 	const started = (launched: Launched, start: Start): string =>
-		`delegate: ${start.agent.name} ${launched.id} started in window ${launched.windowName}${inSession(launched.windowSession)}${placedIn(launched)}${launched.workspace.mode === "managed" ? `. Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
+		`delegate: ${start.agent.name} ${launched.id} started in ${launchLocation(launched)}${placedIn(launched)}${launched.workspace.mode === "managed" ? `. Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
 
 	/** Start a delegate from a parsed `/delegate` or the form, telling the user how it went. */
 	async function runDelegate(parsed: Parsed, ctx: ExtensionContext): Promise<void> {
@@ -1593,7 +1617,7 @@ export default function delegate(
 			const launched = await launch(start, ctx, signal, toolCallId);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
-				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in window ${launched.windowName}${inSession(launched.windowSession)}${placedIn(launched)}.${launched.workspace.mode === "managed" ? ` Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""} It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
+				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in ${launchLocation(launched)}${placedIn(launched)}.${launched.workspace.mode === "managed" ? ` Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""} It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
 				{
 					outcome: "started",
 					id: launched.id,
@@ -1676,7 +1700,7 @@ export default function delegate(
 	}
 
 	pi.registerCommand("delegate", {
-		description: `Start a delegate Pi session in a background tmux window: ${USAGE}`,
+		description: `Start a delegate Pi session in a background terminal: ${USAGE}`,
 		getArgumentCompletions: completions,
 		handler: command,
 	});

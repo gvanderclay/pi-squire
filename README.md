@@ -360,7 +360,7 @@ With no setting, each launch looks at the session's environment:
 | Pi runs inside | pi-squire uses |
 | --- | --- |
 | tmux only (`TMUX` set) | tmux |
-| a Herdr pane only (`HERDR_ENV=1` and its pane context) | Herdr |
+| a Herdr pane only (`HERDR_ENV=1` and its pane context), in a named or the default session | Herdr |
 | both, for example Herdr started from a tmux pane | refuses, naming the setting |
 | neither | refuses, naming both |
 

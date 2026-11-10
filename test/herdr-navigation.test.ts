@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
-import { createHerdrClient } from "../src/herdr.ts";
+import { createHerdrClient, type HerdrRoute } from "../src/herdr.ts";
 import { herdrLocator, herdrPaneLocator } from "../src/herdr-locator.ts";
 import { createMultiplexer } from "../src/multiplexer.ts";
 import { NavigatorView } from "../src/navigator-view.ts";
@@ -103,10 +103,10 @@ test("Herdr rechecks the exact terminal after its snapshot immediately before fo
 	const locator = herdrLocator(record.locator)!;
 	const client = createHerdrClient({
 		context: () => h.context,
-		run: async (session: string, args: string[]): Promise<string> => {
+		run: async (route: HerdrRoute, args: string[]): Promise<string> => {
 			if (args[0] === "pane" && args[1] === "get" && args[2] === locator.pane)
 				h.panes.get(locator.pane)!.terminal_id = "replacement";
-			return h.run(session, args);
+			return h.run(route, args);
 		},
 	});
 	const target = { windowId: locator.tab, locator };

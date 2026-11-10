@@ -3,7 +3,8 @@ export type HerdrLocator = {
 	adapter: "herdr";
 	version: 1;
 	kind: "window";
-	session: string;
+	/** null is Herdr's default session (no HERDR_SESSION), reached by its socket. */
+	session: string | null;
 	socket: string;
 	workspace: string;
 	tab: string;
@@ -20,7 +21,8 @@ export function herdrPaneLocator(value: unknown): HerdrPaneLocator | undefined {
 	return own.adapter === "herdr" &&
 		own.version === 1 &&
 		own.kind === "pane" &&
-		[own.session, own.socket, own.workspace, own.tab, own.pane, own.terminal, own.name].every(bounded)
+		sessionField(own.session) &&
+		[own.socket, own.workspace, own.tab, own.pane, own.terminal, own.name].every(bounded)
 		? (own as HerdrPaneLocator)
 		: undefined;
 }
@@ -36,13 +38,16 @@ export function sameHerdrPane(a: HerdrPaneLocator | HerdrLocator, b: HerdrPaneLo
 }
 const bounded = (value: unknown): value is string =>
 	typeof value === "string" && value.length > 0 && Buffer.byteLength(value) <= 4096;
+/** A named session, or null for the default one; never empty or absent. */
+const sessionField = (value: unknown): boolean => value === null || bounded(value);
 export function herdrLocator(value: unknown): HerdrLocator | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const own = value as Partial<HerdrLocator>;
 	return own.adapter === "herdr" &&
 		own.version === 1 &&
 		own.kind === "window" &&
-		[own.session, own.socket, own.workspace, own.tab, own.pane, own.terminal, own.name, own.launchFile].every(bounded)
+		sessionField(own.session) &&
+		[own.socket, own.workspace, own.tab, own.pane, own.terminal, own.name, own.launchFile].every(bounded)
 		? (own as HerdrLocator)
 		: undefined;
 }

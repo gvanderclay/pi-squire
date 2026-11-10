@@ -16,7 +16,9 @@ export type HostPane = {
 	agent_session?: { value?: string } | null;
 };
 export type HostTab = { tab_id: string; label?: string };
-type Context = { session: string; socket: string };
+type Context = { session: string | null; socket: string };
+const named = (session: string | null): string =>
+	session === null ? "the default Herdr session" : `Herdr session ${session}`;
 export type HostEvidence = {
 	own: Context | undefined;
 	inventory(): Promise<{ panes: HostPane[]; tabs: HostTab[] }>;
@@ -73,7 +75,7 @@ export async function assertSessionFree(
 	const recorded = herdrLocator(record.locator);
 	if (recorded && (recorded.session !== own.session || recorded.socket !== own.socket))
 		throw new Error(
-			`this delegation ran in Herdr session ${recorded.session}, not ${own.session}; resume it from Pi inside that Herdr session`,
+			`this delegation ran in ${named(recorded.session)} (socket ${recorded.socket}), not ${named(own.session)} (socket ${own.socket}); resume it from Pi inside that Herdr session`,
 		);
 	const found = await observed(evidence, what);
 	const tabName = (p: HostPane): string => {

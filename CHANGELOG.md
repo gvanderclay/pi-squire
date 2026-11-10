@@ -19,7 +19,9 @@ follows [Semantic Versioning](https://semver.org/).
   explicit widget focus and ancestor return. The internal mixed-history
   expectation in `test/herdr.test.ts` deliberately changes from unknown to
   running for a verified Herdr widget observation; it now asks the owning
-  adapter instead of interpreting a tmux-only pane listing.
+  adapter instead of interpreting a tmux-only pane listing. tmux selections still
+  compare the current verified window after a pane move, not only fixed startup
+  telemetry; `test/navigator-current.test.ts` covers refusal before focus.
 
 - Opt-in Herdr delegation via `"multiplexer": "herdr"` in
   `squire/settings.json`, read at each launch. Delegates open as named,

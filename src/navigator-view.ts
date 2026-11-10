@@ -1,5 +1,5 @@
 // Read-only navigation projection. Never supplies locators to close or task accounting.
-import { herdrLocator } from "./herdr-locator.ts";
+import { herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -50,8 +50,8 @@ function sameLive(a: LiveLocator | undefined, b: LiveLocator | undefined): boole
 }
 function sameTarget(a: OpenDelegate, b: OpenDelegate): boolean {
 	return (
-		(a.live && b.live
-			? sameLiveLocator(a.live.locator, b.live.locator)
+		(herdrPaneLocator(a.window.locator) || herdrPaneLocator(b.window.locator)
+			? sameLiveLocator(a.window.locator, b.window.locator)
 			: sameWindowLocator({ locator: windowLocator(a.window) }, { locator: windowLocator(b.window) })) &&
 		sameLive(a.live, b.live)
 	);

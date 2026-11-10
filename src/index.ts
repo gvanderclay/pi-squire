@@ -72,6 +72,7 @@ import { registerCompletionHost } from "./completion-holds.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
 import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
+import { openedIn } from "./location.ts";
 import { createMultiplexer, MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
@@ -1439,17 +1440,12 @@ export default function delegate(
 			}),
 	});
 
-	const launchLocation = (launched: Launched): string =>
-		launched.location ?? `window ${launched.windowName}${inSession(launched.windowSession)}`;
-	/** The session a window opened in, for the start text. */
-	const inSession = (session: string | undefined): string => (session === undefined ? "" : ` in session ${session}`);
-
 	/** Where a selected directory put the delegate, for the start text; inherited starts stay compact. */
 	const placedIn = (launched: Launched): string =>
 		launched.workspace.mode !== "inherited" ? ` in ${launched.cwd}` : "";
 
 	const started = (launched: Launched, start: Start): string =>
-		`delegate: ${start.agent.name} ${launched.id} started in ${launchLocation(launched)}${placedIn(launched)}${launched.workspace.mode === "managed" ? `. Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
+		`delegate: ${start.agent.name} ${launched.id} started in ${openedIn(launched)}${placedIn(launched)}${launched.workspace.mode === "managed" ? `. Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""}${start.skipped.length > 0 ? `. ${fallbackNote(start)}` : ""}${start.notices.map((line) => `. ${line}`).join("")}`;
 
 	/** Start a delegate from a parsed `/delegate` or the form, telling the user how it went. */
 	async function runDelegate(parsed: Parsed, ctx: ExtensionContext): Promise<void> {
@@ -1616,7 +1612,7 @@ export default function delegate(
 			const launched = await launch(start, ctx, signal, toolCallId);
 			ctx.ui.notify(started(launched, start), "info");
 			return toolResult(
-				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in ${launchLocation(launched)}${placedIn(launched)}.${launched.workspace.mode === "managed" ? ` Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""} It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
+				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in ${openedIn(launched)}${placedIn(launched)}.${launched.workspace.mode === "managed" ? ` Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""} It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
 				{
 					outcome: "started",
 					id: launched.id,

@@ -12,6 +12,7 @@ import { type TObject, Type } from "typebox";
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
 import { herdrLocator } from "./herdr-locator.ts";
 import { type Identity, readIdentity } from "./identity.ts";
+import { openedIn } from "./location.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
@@ -427,16 +428,9 @@ async function eligible(deps: ResumeDeps, ctx: ExtensionContext): Promise<Starte
 	return found.reverse();
 }
 
-/** The session a window opened in, for the start text. */
-const inSession = (session: string | undefined): string => (session === undefined ? "" : ` in session ${session}`);
-
-/** Where a resume opened: the adapter's wording, else the tmux window and session. */
-const where = (resumed: Resumed): string =>
-	resumed.location ?? `window ${resumed.windowName}${inSession(resumed.windowSession)}`;
-
 /** The one line the command and the tool tell the user. */
 export function startedLine(resumed: Resumed): string {
-	return `delegate: resumed ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} in ${where(resumed)}${resumed.fallbackNote === "" ? "" : `. ${resumed.fallbackNote}`}${resumed.notices.map((line) => `. ${line}`).join("")}`;
+	return `delegate: resumed ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} in ${openedIn(resumed)}${resumed.fallbackNote === "" ? "" : `. ${resumed.fallbackNote}`}${resumed.notices.map((line) => `. ${line}`).join("")}`;
 }
 
 /** The `delegation_resume` tool. */
@@ -469,7 +463,7 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 			const { fallbackNote, location: _location, ...details } = resumed;
 			ctx.ui.notify(startedLine(resumed), "info");
 			return toolResult(
-				`Resumed delegation ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} (${resumed.model}, thinking ${resumed.thinking}) in ${where(resumed)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote === "" ? "" : ` ${fallbackNote}`}${resumed.notices.map((line) => ` ${line}`).join("")}`,
+				`Resumed delegation ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} (${resumed.model}, thinking ${resumed.thinking}) in ${openedIn(resumed)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote === "" ? "" : ` ${fallbackNote}`}${resumed.notices.map((line) => ` ${line}`).join("")}`,
 				{ outcome: "started", ...details },
 			);
 		},

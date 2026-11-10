@@ -17,6 +17,7 @@ import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText }
 import type { Static } from "typebox";
 
 import type { DelegateSchema } from "./index.ts";
+import { inSession, windowDetail } from "./location.ts";
 import type { MessageDetails, ResourceFacts, WorkspaceAttempt } from "./results.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 import type { PathSummary, Workspace } from "./workspace.ts";
@@ -286,7 +287,7 @@ export function renderDelegateResult(
 	const lines = [
 		`${theme.fg("accent", "●")} ${theme.fg("toolTitle", theme.bold(started.windowName))}${theme.fg(
 			"dim",
-			`${started.windowSession === undefined ? "" : ` in session ${started.windowSession}`} (${started.model}) — started`,
+			`${inSession(started.windowSession)} (${started.model}) — started`,
 		)}`,
 	];
 	const task = taskLine(context.args.task, theme);
@@ -297,7 +298,7 @@ export function renderDelegateResult(
 			...[
 				...started.notices,
 				`delegation ${started.id}`,
-				`window ${started.windowName} (${started.windowId})${started.windowSession === undefined ? "" : ` in session ${started.windowSession}`}`,
+				windowDetail(started),
 				// Results saved before cwd was recorded have none.
 				`cwd ${(started.cwd as string | undefined) === undefined ? cwdLine(undefined) : tilde(started.cwd)}`,
 				// Results saved before workspaces were recorded have none.

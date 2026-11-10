@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { adapterConformance } from "./adapter-contract.ts";
+import { herdrAdapter } from "./herdr-adapter-fixture.ts";
 import { memoryAdapter } from "./memory-adapter.ts";
 import { tmuxAdapter } from "./tmux-adapter-fixture.ts";
 
@@ -8,4 +9,5 @@ import { tmuxAdapter } from "./tmux-adapter-fixture.ts";
 const probe = spawnSync("tmux", ["-V"], { stdio: "ignore" });
 const noTmux = (probe.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 adapterConformance("memory", memoryAdapter);
+adapterConformance("Herdr wire", herdrAdapter);
 adapterConformance("real tmux", tmuxAdapter, noTmux ? "tmux is not installed" : false);

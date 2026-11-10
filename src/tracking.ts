@@ -24,6 +24,7 @@ import {
 } from "./results.ts";
 import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
 import { type TmuxClient, windowPresentation } from "./tmux.ts";
+import { windowTerms } from "./tmux-locator.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
 import { ago, autoExitLine, stateLine } from "./tracking-text.ts";
 import { type CloseResult, CloseSchema, closeTree } from "./tree-close.ts";
@@ -170,7 +171,9 @@ function view(
 		snapshot,
 		resumedAs,
 		windowSession,
-		canResume: (record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId(),
+		canResume:
+			windowTerms(record).noun !== "tab" &&
+			(record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId(),
 	};
 }
 
@@ -187,7 +190,7 @@ function viewText({ record, state, name, sessionPath, lastActive, snapshot, resu
 		...(record.forkedFrom === undefined ? [] : [`  forked from ${record.forkedFrom}`]),
 		...(resumedAs === undefined ? [] : [`  resumed as ${resumedAs}`]),
 		`  state: ${stateLine(state, record)}${seen}`,
-		`  window: ${windowPresentation(record).windowName} (${windowPresentation(record).windowId})${windowSession === undefined || windowSession === "" ? "" : ` in session ${windowSession}`}`,
+		`  ${windowTerms(record).noun}: ${windowPresentation(record).windowName} (${windowPresentation(record).windowId})${windowSession === undefined || windowSession === "" ? "" : ` in ${windowTerms(record).group} ${windowSession}`}`,
 		`  cwd: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
 		`  checkout now: ${checkout}`,

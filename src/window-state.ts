@@ -2,6 +2,7 @@
 // Callers ask once per multiplexer read and look up as many records as they need;
 // they never match ids or names or read
 // whether a window's program exited themselves.
+import { herdrLocator } from "./herdr-locator.ts";
 import {
 	matchWindow,
 	type PaneListing,
@@ -55,7 +56,7 @@ function findWindow(windows: readonly TmuxWindow[], record: WindowRecord): TmuxW
 /** States from one window listing; `undefined` (a failed or skipped ask) makes every record `unknown`. */
 export function windowStates(windows: readonly TmuxWindow[] | undefined): WindowStates {
 	const look = (record: WindowRecord): WindowLook => {
-		if (windows === undefined || !recordLocator(record)) return { state: "unknown" };
+		if (windows === undefined || !recordLocator(record) || herdrLocator(record.locator)) return { state: "unknown" };
 		const own: TmuxWindow | undefined = findWindow(windows, record);
 		if (own === undefined) return { state: "gone" };
 		// A window whose program exited counts as gone.
@@ -75,7 +76,8 @@ function closableStates(tmux: TmuxClient, windows: readonly TmuxWindow[] | undef
 		...windowStates(windows),
 		async close(record: WindowRecord): Promise<boolean> {
 			if (windows === undefined) throw new Error("could not ask tmux which windows are open, so none was closed");
-			if (!recordLocator(record)) throw new Error("invalid or unsupported delegate window locator; close refused");
+			if (!recordLocator(record) || herdrLocator(record.locator))
+				throw new Error("invalid or unsupported delegate window locator; close refused");
 			const own: TmuxWindow | undefined = findWindow(windows, record);
 			if (own === undefined) return false;
 			await tmux.kill(own.id);
@@ -89,6 +91,7 @@ export const UNASKED: PaneStates = { ...windowStates(undefined), listing: undefi
 
 /** One `list-windows` ask; a failed ask yields `unknown` for every record, never `gone`. */
 export async function askWindowStates(tmux: TmuxClient): Promise<ClosableStates> {
+	if (tmux.states) return tmux.states();
 	let windows: TmuxWindow[] | undefined;
 	try {
 		windows = await tmux.listWindows();
@@ -100,6 +103,7 @@ export async function askWindowStates(tmux: TmuxClient): Promise<ClosableStates>
 
 /** One `list-windows` ask before a close; a failed ask rejects with the multiplexer's error, since close never guesses. */
 export async function askToClose(tmux: TmuxClient): Promise<ClosableStates> {
+	if (tmux.states) return tmux.states(true);
 	return closableStates(tmux, await tmux.listWindows());
 }
 

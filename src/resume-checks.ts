@@ -13,6 +13,7 @@ import { deriveState, finishedModel, locateSession, type StartedRecorded } from 
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
 import { windowPresentation } from "./tmux.ts";
+import { windowTerms } from "./tmux-locator.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { WindowStates } from "./window-state.ts";
@@ -121,6 +122,12 @@ export function assertNoOwner(record: StartedRecorded): void {
 		);
 }
 
+/** Refuse unsupported historical backends before reservation or terminal cleanup. */
+export function assertResumeBackend(record: StartedRecorded): void {
+	if (windowTerms(record).noun === "tab")
+		throw new Error("Herdr delegation resume is not available yet; use a new delegation instead");
+}
+
 /** Steps 5 and 6: the session file and the agent, and no resume of the delegation already under way. */
 export function recordCheck(
 	deps: ResumeDeps,
@@ -128,6 +135,7 @@ export function recordCheck(
 	ctx: ExtensionContext,
 ): { session: SessionFile; agent: Agent } {
 	assertResumeAuthority(record, ctx);
+	assertResumeBackend(record);
 	assertNoOwner(record);
 	deps.authorize?.(record.id, ctx);
 	deps.admit?.(record.agent, ctx);

@@ -15,6 +15,7 @@ import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
 	assertNoOwner,
+	assertResumeBackend,
 	inFlight,
 	passes,
 	preflight,
@@ -330,6 +331,7 @@ async function resume(
 	const record = { ...found, identity: requiredIdentity(found) };
 	deps.admit?.(record.agent, ctx);
 	assertNoOwner(record);
+	assertResumeBackend(record);
 	deps.results.checkStorage(true);
 	const reservation = await deps.reserve(record, randomUUID(), ctx);
 	let acquired = false;

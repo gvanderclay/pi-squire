@@ -1,4 +1,5 @@
 // The tmux adapter owns durable locator encoding, validation and comparison.
+import { herdrLocator, sameHerdrLocator } from "./herdr-locator.ts";
 import type { PaneListing, PaneLocator, TmuxClient, TmuxWindow } from "./tmux.ts";
 
 /** Adapter-owned durable values. Callers may store them, never inspect their shape. */
@@ -13,6 +14,7 @@ function bounded(value: unknown, empty = false): value is string {
 	return typeof value === "string" && (empty || value.length > 0) && Buffer.byteLength(value) <= 512;
 }
 export function validWindowLocator(value: unknown): value is WindowLocator {
+	if (herdrLocator(value)) return true;
 	if (!value || typeof value !== "object") return false;
 	const own = value as Partial<TmuxLocator>;
 	return (
@@ -38,12 +40,22 @@ export function recordLocator(record: WindowRecord): WindowLocator | undefined {
 	return validWindowLocator(locator) ? locator : undefined;
 }
 export function sameWindowLocator(a: WindowRecord, b: WindowRecord): boolean {
+	const herdrA = herdrLocator(recordLocator(a));
+	const herdrB = herdrLocator(recordLocator(b));
+	if (herdrA || herdrB) return !!herdrA && !!herdrB && sameHerdrLocator(herdrA, herdrB);
 	const left = recordLocator(a) as TmuxLocator | undefined;
 	const right = recordLocator(b) as TmuxLocator | undefined;
 	return !!left && !!right && left.id === right.id && left.name === right.name;
 }
+export function windowTerms(record: WindowRecord): { noun: string; host: string; group: string } {
+	return herdrLocator(record.locator)
+		? { noun: "tab", host: "Herdr", group: "workspace" }
+		: { noun: "window", host: "tmux", group: "session" };
+}
 /** Public display/result fields are presentation only, never routing authority. */
 export function windowPresentation(record: WindowRecord): { windowId: string; windowName: string } {
+	const herdr = herdrLocator(recordLocator(record));
+	if (herdr) return { windowId: herdr.tab, windowName: herdr.name };
 	const own = recordLocator(record) as TmuxLocator | undefined;
 	return { windowId: own?.id ?? "not-recorded", windowName: own?.name ?? "not-recorded" };
 }
@@ -57,6 +69,7 @@ export function locatedRecord<T extends WindowRecord>(record: T): T {
 	return copy;
 }
 export function matchWindow(windows: readonly TmuxWindow[], record: WindowRecord): TmuxWindow | undefined {
+	if (herdrLocator(recordLocator(record))) return undefined;
 	const own = recordLocator(record) as TmuxLocator | undefined;
 	return own ? windows.find((window) => window.id === own.id && window.name === own.name) : undefined;
 }

@@ -241,6 +241,8 @@ export type Entry = { customType: string; data: Record<string, unknown> };
 export type SessionOptions = {
 	/** Shared server for multi-instance tree accounting tests. */
 	tmux?: FakeTmux;
+	/** Select a real second-backend/router fixture without changing the tmux model. */
+	multiplexer?: import("../src/tmux.ts").TmuxClient;
 	/** Install a real mail provider instead of the send/scan stubs. */
 	mailProvider?: (pi: ExtensionAPI) => void;
 	/** Exercise the opposite extension load order. */
@@ -630,7 +632,7 @@ export function session(options: SessionOptions = {}) {
 		});
 	if (!options.mailProviderLast) options.mailProvider?.(pi as never);
 	options.beforeSquire?.(pi as never);
-	register(pi as never, tmux, usage);
+	register(pi as never, options.multiplexer ?? tmux, usage);
 	if (options.mailProviderLast) {
 		options.beforeMailProvider?.(pi as never);
 		options.mailProvider?.(pi as never);

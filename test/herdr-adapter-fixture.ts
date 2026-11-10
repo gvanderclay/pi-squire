@@ -1,6 +1,6 @@
 // Deterministic Herdr wire fixture: exercises the production parser, identity,
 // launch and close paths, without touching any installed server or user UI.
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHerdrClient, type HerdrContext, type HerdrRoute } from "../src/herdr.ts";
 import { herdrLocator } from "../src/herdr-locator.ts";
@@ -29,6 +29,8 @@ export class HerdrWire {
 	snapshotFails = false;
 	readonly staged: string[] = [];
 	failedAsk = false;
+	/** When set, `pane close` refuses after every identity check passed. */
+	failClose = false;
 	ambiguous = false;
 	unavailable = false;
 	protocol = 22;
@@ -94,6 +96,7 @@ export class HerdrWire {
 			return result({ process_info: { pane_id: args[3], shell_pid: 10, foreground_processes: this.foreground } });
 		}
 		if (args[1] === "close") {
+			if (this.failClose) throw new Error("pane close refused");
 			this.panes.delete(args[2]);
 			return result({});
 		}
@@ -169,6 +172,43 @@ export async function herdrAdapter(): Promise<AdapterFixture> {
 		isShown: async (record) => wire.shown === herdrLocator(record.locator)?.tab,
 		async dispose() {
 			wire.dispose();
+		},
+		host: wire.client,
+		spec: (name) => ({ name, cwd: process.cwd(), argv: [process.execPath, "unused"], env: {} }),
+		async openHost(spec) {
+			const opened = await wire.client.openWindow(spec, "companion", "unused-delegates");
+			const own = herdrLocator(opened.locator);
+			if (!own) throw new Error("missing Herdr locator");
+			wire.staged.push(dirname(own.launchFile));
+			return opened;
+		},
+		async started(opened) {
+			// The staged runner spawns exactly this argv/env/cwd once the pane's shell runs it.
+			const own = herdrLocator(opened.locator);
+			if (!own) throw new Error("missing Herdr locator");
+			const line = readFileSync(own.launchFile, "utf8")
+				.split("\n")
+				.find((text) => text.startsWith("const spec = "));
+			if (!line) throw new Error("Herdr launch file has no spec");
+			return JSON.parse(line.slice("const spec = ".length, -1));
+		},
+		failClose: (fail) => {
+			wire.failClose = fail;
+		},
+		async exitRetained(record) {
+			// The runner published a non-zero exit; Herdr keeps the shell and its pane.
+			const own = herdrLocator(record.locator);
+			if (!own) throw new Error("invalid Herdr record");
+			writeFileSync(`${own.launchFile}.status`, JSON.stringify({ pid: 10, exit: 1 }));
+		},
+		holdSession(session) {
+			wire.panes.set("w1:p90", {
+				pane_id: "w1:p90",
+				tab_id: "w1:t90",
+				workspace_id: "w1",
+				terminal_id: "restored",
+				agent_session: { value: session.id },
+			});
 		},
 	};
 }

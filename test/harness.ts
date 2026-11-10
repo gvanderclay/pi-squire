@@ -2,6 +2,7 @@
 // with a real event bus, a `message:send` provider stub and the fake tmux.
 // Tests drive the extension only through its registration function and watch
 // the bus, the injected messages, the recorded entries and the fake tmux.
+// `memorySession` runs the same session on the in-memory host instead.
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -23,6 +24,7 @@ import register from "../src/index.ts";
 import { placementProject } from "../src/window-placement.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { FakeUsage } from "./fake-usage.ts";
+import { MemoryHost } from "./memory-host.ts";
 
 /** A throwaway root for this test file; `PI_CODING_AGENT_DIR` points inside it. */
 export const root = mkdtempSync(join(tmpdir(), "delegate-test-"));
@@ -829,4 +831,17 @@ export function session(options: SessionOptions = {}) {
 		completions: async (prefix: string) =>
 			(await commands.delegate.getArgumentCompletions?.(prefix)) as { value: string; label: string }[] | null,
 	};
+}
+
+/**
+ * A session whose delegates start on an in-memory host instead of FakeTmux,
+ * for feature tests where no tmux behaviour is the subject. `host.started`
+ * holds each start's spec (name, cwd, argv, env). Share one host between
+ * sessions that must see each other's delegates, as with `tmux`.
+ */
+export function memorySession(
+	options: Omit<SessionOptions, "tmux" | "multiplexer"> & { host?: MemoryHost } = {},
+): ReturnType<typeof session> & { host: MemoryHost } {
+	const { host = new MemoryHost(), ...rest } = options;
+	return Object.assign(session({ ...rest, multiplexer: host }), { host });
 }

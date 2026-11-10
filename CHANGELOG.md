@@ -20,6 +20,27 @@ follows [Semantic Versioning](https://semver.org/).
   New `test/host-router.test.ts` cases exercise a third, pane-free host and a
   refused rollback. Persisted locator formats are unchanged; unknown tags still
   fail closed in durable readers.
+- A tmux resume whose task mail fails, and whose new window then cannot be
+  closed, no longer reports only the mail error. The error keeps the mail
+  error and adds that the window (by id and session) may still run Pi with no
+  task, with the `tmux kill-window -t` command to close it. A refused close
+  whose window a fresh listing shows already gone still reports only the mail
+  error. The real-tmux adapter contract case "closeTaskless reports a refused
+  close instead of swallowing it" now runs instead of being a known gap; new
+  `test/resume.test.ts` cases cover the combined error; no existing
+  assertions changed.
+- A tmux delegate whose argv, environment value, window name, working
+  directory or companion session name ends in `;` now opens with that value
+  unchanged. tmux reads any argument ending in `;` as a command separator, so
+  such an argv element lost its `;` and such an environment value made the open
+  fail. Every argument pi-squire passes tmux now gets tmux's own escape (a final
+  `;` is sent as `\;`); the separators that keep a new companion's
+  creation and options in one command queue are unchanged. The real-tmux
+  adapter contract case "argv and environment values ending in ';' reach the
+  program unchanged" now runs instead of being a known gap; new
+  `test/tmux.test.ts` and opt-in `test/tmux-real.test.ts` cases cover the
+  current, existing-companion and new-companion starts; no existing assertions
+  changed.
 
 
 ### Added

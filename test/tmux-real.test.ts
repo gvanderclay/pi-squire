@@ -3,7 +3,16 @@
 // Run: SQUIRE_REAL_TMUX=1 node --test test/tmux-real.test.ts
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -255,5 +264,46 @@ test("real tmux: parallel creators converge, with exactly one task process per l
 			tasks.map(Number).sort((a, b) => a - b),
 			launches.map((_, index) => index),
 		);
+	});
+});
+
+test("real tmux: trailing ';' in every placement reaches the program, and a new companion is still marked", {
+	skip: process.env.SQUIRE_REAL_TMUX !== "1",
+}, async () => {
+	await isolated(async ({ dir, run, client }) => {
+		const program = new URL("./fixtures/adapter-program.mjs", import.meta.url).pathname;
+		const cwd = join(dir, "work;");
+		mkdirSync(cwd);
+		const env = {
+			SQUIRE_CONTRACT_END: "ends;",
+			SQUIRE_CONTRACT_ALONE: ";",
+			SQUIRE_CONTRACT_BACK: "back\\;",
+			SQUIRE_CONTRACT_MID: "mid;dle",
+		};
+		const extra = ["ends;", ";", "back\\;", "two\\\\;", "mid;dle", "trailing\\"];
+		const base = "semi-delegate-session;";
+		const launch = async (name: string, placement: "current" | "companion") => {
+			const report = join(dir, `${name}.json`);
+			const argv = [process.execPath, program, report, ...extra];
+			const opened = await client.openWindow({ name, cwd, env, argv }, placement, base);
+			for (let attempt = 0; attempt < 150 && !existsSync(report); attempt++)
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			const started = JSON.parse(readFileSync(report, "utf8"));
+			assert.deepEqual(started.argv, argv, name);
+			assert.equal(realpathSync(started.cwd), realpathSync(cwd), name);
+			assert.deepEqual(started.env, env, name);
+			assert.equal(run("display-message", "-p", "-t", opened.id, "#{window_name}"), name);
+			return opened;
+		};
+		const current = await launch("current;", "current");
+		assert.equal(current.session, "test-parent");
+		const created = await launch("new-companion;", "companion");
+		assert.equal(created.session, base);
+		assert.equal(run("show-options", "-v", "-t", `=${base}:`, "@squire-companion"), "1");
+		assert.equal(run("show-options", "-v", "-t", `=${base}:`, "detach-on-destroy"), "off");
+		assert.throws(() => run("show-environment", "-t", `=${base}:`, "SQUIRE_CONTRACT_END"), /unknown variable/);
+		const existing = await launch("existing-companion;", "companion");
+		assert.equal(existing.session, base);
+		assert.equal(run("list-windows", "-t", `=${base}:`, "-F", "#{window_id}").split("\n").length, 2);
 	});
 });

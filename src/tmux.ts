@@ -1,15 +1,15 @@
 // The tmux operations `delegate` needs, behind an interface so tests can use a
-// fake. This client talks to tmux with `execFile` and no shell.
-import { execFile } from "node:child_process";
+// fake. This client talks to tmux with `execFile` and no shell (src/tmux-command.ts).
 import type { DelegateHost, OpenedWindow, WindowSpec, WindowTarget } from "./host.ts";
 import { WindowOpenError } from "./host.ts";
 
 export type { DelegateHost, NoViewer, OpenedWindow, ShowResult, WindowSpec, WindowTarget } from "./host.ts";
 export { WindowOpenError } from "./host.ts";
 
+import { runTmux } from "./tmux-command.ts";
 import type { WindowLocator } from "./tmux-locator.ts";
 import { liveLocator, paneLocator, tmuxLocator, tmuxLocators, verifyTmuxPaneWindow } from "./tmux-locator.ts";
-import { tmuxPaneStates, tmuxStates } from "./tmux-state.ts";
+import { closeTasklessWindow, tmuxPaneStates, tmuxStates } from "./tmux-state.ts";
 
 /** One window as tmux lists it. */
 export type TmuxWindow = { id: string; session: string; name: string; exited: boolean; locator?: WindowLocator };
@@ -186,25 +186,8 @@ export function navigationVerbs(
 	};
 }
 
-/** Run one tmux command and return its stdout; never a shell. */
-function runTmux(args: string[], timeout: number): Promise<string> {
-	return new Promise((resolve, reject) => {
-		execFile("tmux", args, { encoding: "utf8", timeout }, (error, stdout, stderr) => {
-			if (error) {
-				if (error.killed) {
-					reject(new Error(`tmux ${args[0]} timed out after ${timeout / 1000} s`));
-					return;
-				}
-				const reason = ["duplicate session", "can't find session"].find((text) => stderr.includes(text));
-				reject(new Error(`tmux ${args[0]} failed${reason === undefined ? "" : `: ${reason}`}`));
-				return;
-			}
-			resolve(stdout);
-		});
-	});
-}
-
-type Run = (args: string[]) => Promise<string>;
+/** Run a command; further commands join it in one tmux command queue. */
+type Run = (command: string[], ...more: string[][]) => Promise<string>;
 type Parent = OwnSession;
 
 /** The user option that marks a session pi-squire made for delegate windows. */
@@ -226,10 +209,10 @@ const envArgs = (spec: WindowSpec): string[] =>
 	Object.entries(spec.env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
 
 /** Dispatch one create; after dispatch even an error or timeout may have left a window. */
-async function create(run: Run, args: string[]): Promise<string> {
+async function create(run: Run, command: string[], ...more: string[][]): Promise<string> {
 	let out: string;
 	try {
-		out = await run(args);
+		out = await run(command, ...more);
 	} catch (err) {
 		throw new WindowOpenError((err as Error).message, "unknown");
 	}
@@ -297,11 +280,11 @@ async function openCompanion(run: Run, spec: WindowSpec, base: string): Promise<
 			...Object.entries(spec.env).map(([key, value]) => `${key}=${value}`),
 			...spec.argv,
 		);
-		args.push(";", "set-option", "-t", `=${session}:`, COMPANION_OPTION, "1");
-		args.push(";", "set-option", "-t", `=${session}:`, "detach-on-destroy", "off");
+		const mark = ["set-option", "-t", `=${session}:`, COMPANION_OPTION, "1"];
+		const keep = ["set-option", "-t", `=${session}:`, "detach-on-destroy", "off"];
 		certainty = "unknown";
 		try {
-			return { id: await create(run, args), session };
+			return { id: await create(run, args, mark, keep), session };
 		} catch (err) {
 			if (!failedWith(err, "duplicate session")) throw err;
 		}
@@ -432,7 +415,7 @@ async function currentTmuxWindow(run: Run): Promise<{ id: string; name: string }
  */
 export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClient & TmuxNavigation {
 	const timeoutMs = options.timeoutMs ?? 10_000;
-	const run: Run = (args) => runTmux(args, timeoutMs);
+	const run: Run = (command, ...more) => runTmux([command, ...more], timeoutMs);
 	let cachedVersion: Promise<TmuxVersion> | undefined;
 	const calls: TmuxNavigation = {
 		insideTmux: () => (process.env.TMUX ?? "") !== "",
@@ -454,7 +437,7 @@ export function createTmuxClient(options: { timeoutMs?: number } = {}): TmuxClie
 		...navigationVerbs(calls),
 		id: "tmux",
 		taskMailTiming: (kind) => (kind === "resume" ? "after-open" : "before-open"),
-		closeTaskless: (opened) => client.kill(opened.id).catch(() => {}),
+		closeTaskless: (opened) => closeTasklessWindow(client, opened),
 		ownsLocator: ownsTmuxLocator,
 		usesWindowPlacement: true,
 		requiresSessionGuard: tmuxLocators.requiresSessionGuard,

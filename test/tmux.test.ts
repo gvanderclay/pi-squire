@@ -4,6 +4,121 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createTmuxClient, parseTmuxVersion, requireTmuxVersion } from "../src/tmux.ts";
+import { tmuxArgument, tmuxSequence } from "../src/tmux-command.ts";
+
+test("an argument ending in ';' gets tmux's own escape; nothing else changes", () => {
+	assert.equal(tmuxArgument("ends;"), "ends\\;");
+	assert.equal(tmuxArgument(";"), "\\;");
+	assert.equal(
+		tmuxArgument("back\\;"),
+		"back\\\\;",
+		"tmux unescapes only the final pair, keeping the earlier backslash",
+	);
+	assert.equal(tmuxArgument(";;"), ";\\;");
+	for (const plain of ["", "mid;dle", "\\", "trailing\\", ";lead", "\\;x"]) assert.equal(tmuxArgument(plain), plain);
+	assert.deepEqual(
+		tmuxSequence([
+			["new-session", "x;"],
+			["set-option", ";"],
+		]),
+		["new-session", "x\\;", ";", "set-option", "\\;"],
+	);
+});
+
+/** The exact argv each placement hands tmux, recorded NUL-separated per subcommand. */
+async function placementArgs(sessions: string, placement: "current" | "companion", base: string): Promise<string[]> {
+	const dir = mkdtempSync(join(tmpdir(), "squire-tmux-escape-"));
+	const saved = { path: process.env.PATH, tmux: process.env.TMUX, pane: process.env.TMUX_PANE };
+	try {
+		const script = [
+			"#!/bin/sh",
+			`printf '%s\\0' "$@" > '${dir}/args-'"$1"`,
+			'case "$1" in',
+			"display-message) printf '$1\\twork\\n';;",
+			`list-sessions) printf '${sessions}';;`,
+			"new-window|new-session) echo @7;;",
+			"esac",
+		].join("\n");
+		writeFileSync(join(dir, "tmux"), `${script}\n`);
+		chmodSync(join(dir, "tmux"), 0o755);
+		process.env.PATH = `${dir}:${saved.path}`;
+		process.env.TMUX = "present";
+		process.env.TMUX_PANE = "%1";
+		const spec = {
+			name: "name;",
+			cwd: "/work;",
+			env: { A: "ends;", B: ";", C: "back\\;" },
+			argv: ["pi", "ends;", ";", "back\\;", "mid;dle"],
+		};
+		await createTmuxClient().openWindow(spec, placement, base);
+		const command = placement === "current" || sessions !== "" ? "new-window" : "new-session";
+		return readFileSync(join(dir, `args-${command}`), "utf8")
+			.split("\0")
+			.slice(0, -1);
+	} finally {
+		process.env.PATH = saved.path;
+		process.env.TMUX = saved.tmux;
+		if (saved.pane === undefined) delete process.env.TMUX_PANE;
+		else process.env.TMUX_PANE = saved.pane;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+const ESCAPED_ARGV = ["pi", "ends\\;", "\\;", "back\\\\;", "mid;dle"];
+const ESCAPED_ENV = ["A=ends\\;", "B=\\;", "C=back\\\\;"];
+
+test("every placement escapes trailing ';' in names, directories, environment and argv", async () => {
+	const window = ["new-window", "-d", "-P", "-F", "#{window_id}", "-n", "name\\;", "-c", "/work\\;"];
+	const env = ESCAPED_ENV.flatMap((value) => ["-e", value]);
+	assert.deepEqual(await placementArgs("", "current", "unused"), [
+		...window,
+		...env,
+		"-t",
+		"$1",
+		"--",
+		...ESCAPED_ARGV,
+	]);
+	assert.deepEqual(await placementArgs("$2\\t1\\tproj;\\n", "companion", "proj;"), [
+		...window,
+		...env,
+		"-t",
+		"$2",
+		"--",
+		...ESCAPED_ARGV,
+	]);
+});
+
+test("a new companion escapes its data but keeps the separators of its one command queue", async () => {
+	assert.deepEqual(await placementArgs("", "companion", "proj;"), [
+		"new-session",
+		"-d",
+		"-s",
+		"proj\\;",
+		"-n",
+		"name\\;",
+		"-c",
+		"/work\\;",
+		"-P",
+		"-F",
+		"#{window_id}",
+		"--",
+		"env",
+		...ESCAPED_ENV,
+		...ESCAPED_ARGV,
+		";",
+		"set-option",
+		"-t",
+		"=proj;:",
+		"@squire-companion",
+		"1",
+		";",
+		"set-option",
+		"-t",
+		"=proj;:",
+		"detach-on-destroy",
+		"off",
+	]);
+});
 
 test("a tmux call that outlasts the timeout rejects naming the subcommand", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "squire-tmux-"));

@@ -1,5 +1,6 @@
 // One tmux observation answers many records; low-level listing and kill stay here.
 
+import type { OpenedWindow } from "./host.ts";
 import { matchWindow, type PaneListing, recordLocator, type TmuxClient, type TmuxWindow } from "./tmux.ts";
 import { currentLiveWindow, type LivePaneLocator, tmuxLocator } from "./tmux-locator.ts";
 import type {
@@ -48,6 +49,34 @@ function closableStates(tmux: TmuxClient, windows: readonly TmuxWindow[] | undef
 			return true;
 		},
 	};
+}
+
+/**
+ * Close a start that has no task. A refused kill is reported with recovery
+ * wording unless a fresh listing proves the window already went (its program
+ * may exit on its own), so a failed rollback never hides a taskless Pi.
+ */
+export async function closeTasklessWindow(
+	tmux: Pick<TmuxClient, "kill" | "listWindows">,
+	opened: OpenedWindow,
+): Promise<void> {
+	let refusal: unknown;
+	try {
+		await tmux.kill(opened.id);
+		return;
+	} catch (error) {
+		refusal = error;
+	}
+	const gone = await tmux.listWindows().then(
+		(windows) => !windows.some((window) => window.id === opened.id),
+		() => false,
+	);
+	if (gone) return;
+	const where = opened.session === undefined ? "" : ` in session ${opened.session}`;
+	throw new Error(
+		`the delegate's tmux window ${opened.id}${where} could not be closed (${(refusal as Error).message ?? String(refusal)}) and may still run Pi with no task. Check it is the delegate, then close it yourself (tmux kill-window -t ${opened.id})`,
+		{ cause: refusal },
+	);
 }
 
 export async function tmuxStates(tmux: TmuxClient, strict = false): Promise<ClosableStates> {

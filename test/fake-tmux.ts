@@ -28,7 +28,7 @@ import {
 	type WindowTarget,
 } from "../src/tmux.ts";
 import { liveLocator, verifyTmuxPaneWindow } from "../src/tmux-locator.ts";
-import { tmuxPaneStates, tmuxStates } from "../src/tmux-state.ts";
+import { closeTasklessWindow, tmuxPaneStates, tmuxStates } from "../src/tmux-state.ts";
 import type { WindowPlacement } from "../src/window-placement.ts";
 
 // The tmux calls (`insideTmux`, `ownSession`, `clientFor`, `switchTo`, `capture`)
@@ -41,7 +41,7 @@ export class FakeTmux implements TmuxClient, TmuxNavigation {
 		return kind === "resume" ? "after-open" : "before-open";
 	}
 	closeTaskless(opened: OpenedWindow): Promise<void> {
-		return this.kill(opened.id).catch(() => {});
+		return closeTasklessWindow(this, opened);
 	}
 	ownsLocator = ownsTmuxLocator;
 	readonly usesWindowPlacement = true;

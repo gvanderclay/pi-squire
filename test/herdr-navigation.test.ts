@@ -36,7 +36,9 @@ function wire(): HerdrWire {
 }
 function instance(h: HerdrWire, pane = h.context.pane, parent?: string): ReturnType<typeof session> {
 	const client = createHerdrClient({ run: h.run.bind(h), context: () => ({ ...h.context, pane }) });
-	const s = session({ mode: "tui", parent, multiplexer: createMultiplexer(new FakeTmux(), client, () => agentDir) });
+	// A Herdr-hosted Pi: no tmux context, so its own-pane telemetry host is unambiguous.
+	const tmux = Object.assign(new FakeTmux(), { inside: false });
+	const s = session({ mode: "tui", parent, multiplexer: createMultiplexer(tmux, client, () => agentDir) });
 	sessions.push(s);
 	return s;
 }

@@ -431,6 +431,7 @@ test("the child's env names the parent's root and address, and the session dir w
 		PI_DELEGATE_CHAIN: "scout",
 		PI_DELEGATE_AUTO_EXIT: "1",
 		PI_DELEGATE_AGENT: "scout",
+		PI_DELEGATE_MULTIPLEXER: "tmux",
 		PI_UNATTENDED: "1",
 	});
 	process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/other-sessions";

@@ -1,5 +1,8 @@
-// Opt-in launch selection. Historical records always use their owning adapter,
-// independent of today's setting; there is deliberately no auto-detection yet.
+// Launch selection: an explicit `multiplexer` setting, else the backend a
+// delegate's launcher recorded (`PI_DELEGATE_MULTIPLEXER`), else the
+// environment. Ambiguity and absence refuse; a chosen backend that is unusable
+// refuses without falling back. Historical records always use the adapter
+// their durable locator names, independent of today's choice.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -10,23 +13,60 @@ import { validWindowLocator } from "./tmux-locator.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import { askToClose, askWindowStates, type ClosableStates, windowStates } from "./window-state.ts";
 
-export function multiplexerSetting(agentDir: string): "tmux" | "herdr" {
-	const file = join(agentDir, "squire", "settings.json");
+export type Multiplexer = "tmux" | "herdr";
+/** The backend that opened this delegate, set by its launcher; a delegate's tree keeps its root's choice. */
+export const MULTIPLEXER_ENV = "PI_DELEGATE_MULTIPLEXER";
+
+const settingsFile = (agentDir: string): string => join(agentDir, "squire", "settings.json");
+
+/** The explicit setting, or undefined when absent (auto-detect). Throws, naming the file, on an invalid value. */
+export function multiplexerSetting(agentDir: string): Multiplexer | undefined {
+	const file = settingsFile(agentDir);
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(file, "utf8"));
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return "tmux";
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw new Error(`could not read multiplexer settings ${file}: ${String(error)}`);
 	}
 	const value =
 		parsed && typeof parsed === "object" && !Array.isArray(parsed)
 			? (parsed as Record<string, unknown>).multiplexer
 			: undefined;
-	if (value === undefined) return "tmux";
+	if (value === undefined) return undefined;
 	if (value === "tmux" || value === "herdr") return value;
 	throw new Error(
 		`invalid multiplexer settings ${file}: multiplexer must be "tmux" or "herdr", not ${JSON.stringify(value)}`,
+	);
+}
+
+/**
+ * The backend a launch uses now. Explicit setting > the launcher-recorded
+ * backend of this delegate > environment detection (tmux only, Herdr only).
+ * Both or neither present refuses; nothing falls back.
+ */
+export function chooseMultiplexer(input: {
+	agentDir: string;
+	inherited: string | undefined;
+	inTmux: boolean;
+	inHerdr: boolean;
+}): Multiplexer {
+	const setting = multiplexerSetting(input.agentDir);
+	if (setting) return setting;
+	if (input.inherited !== undefined && input.inherited !== "") {
+		if (input.inherited === "tmux" || input.inherited === "herdr") return input.inherited;
+		throw new Error(
+			`invalid ${MULTIPLEXER_ENV} ${JSON.stringify(input.inherited)} from this delegate's launcher; set "multiplexer": "tmux" or "herdr" in ${settingsFile(input.agentDir)}`,
+		);
+	}
+	if (input.inTmux && input.inHerdr)
+		throw new Error(
+			`this session is inside both tmux and Herdr, so pi-squire will not guess where to open delegates; set "multiplexer": "tmux" or "herdr" in ${settingsFile(input.agentDir)}`,
+		);
+	if (input.inTmux) return "tmux";
+	if (input.inHerdr) return "herdr";
+	throw new Error(
+		`this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in ${settingsFile(input.agentDir)})`,
 	);
 }
 
@@ -40,12 +80,40 @@ async function observe(client: TmuxClient, strict: boolean): Promise<ClosableSta
 	}
 }
 
+type Backends = { tmux: TmuxClient; herdr: TmuxClient; agentDir: () => string; inherited: () => string | undefined };
+
+/** Launch choice and actual host, from environment-only presence checks (never a server call). */
+function selection(own: Backends): { choice(): Multiplexer; host(): TmuxClient | undefined } {
+	const inTmux = (): boolean => own.tmux.unavailable() === undefined;
+	const inHerdr = (): boolean => own.herdr.unavailable() === undefined;
+	return {
+		choice: () =>
+			chooseMultiplexer({ agentDir: own.agentDir(), inherited: own.inherited(), inTmux: inTmux(), inHerdr: inHerdr() }),
+		/**
+		 * The backend that actually hosts this Pi, for read-only own-pane telemetry.
+		 * Not the launch setting: a tmux-hosted Pi with a Herdr setting is still in
+		 * tmux. A delegate's launcher-recorded backend is reliable host evidence;
+		 * otherwise exactly one present context decides, and both is ambiguous.
+		 */
+		host: () => {
+			const launcher = own.inherited();
+			if (launcher === "tmux") return inTmux() ? own.tmux : undefined;
+			if (launcher === "herdr") return inHerdr() ? own.herdr : undefined;
+			const t = inTmux();
+			if (t === inHerdr()) return undefined;
+			return t ? own.tmux : own.herdr;
+		},
+	};
+}
+
 export function createMultiplexer(
 	tmux = createTmuxClient() as TmuxClient,
 	herdr = createHerdrClient(),
 	agentDir = getAgentDir,
+	inherited: () => string | undefined = () => process.env[MULTIPLEXER_ENV],
 ): TmuxClient {
-	const selected = (): TmuxClient => (multiplexerSetting(agentDir()) === "herdr" ? herdr : tmux);
+	const { choice, host } = selection({ tmux, herdr, agentDir, inherited });
+	const selected = (): TmuxClient => (choice() === "herdr" ? herdr : tmux);
 	const navigation = (target: WindowTarget): TmuxClient => {
 		if (herdrLocator(target.locator) || herdrPaneLocator(target.locator)) return herdr;
 		if ((target.locator && !validWindowLocator(target.locator)) || !/^@[0-9]+$/.test(target.windowId))
@@ -58,7 +126,8 @@ export function createMultiplexer(
 		try {
 			return check ? selected().unavailable(true) : selected().unavailable();
 		} catch (error) {
-			return check ? Promise.resolve(String(error)) : String(error);
+			const text = error instanceof Error ? error.message : String(error);
+			return check ? Promise.resolve(text) : text;
 		}
 	}
 	return {
@@ -67,11 +136,18 @@ export function createMultiplexer(
 		listWindows: () => tmux.listWindows(),
 		listPanes: () => tmux.listPanes(),
 		inspectPane: (pane?: string) => tmux.inspectPane?.(pane) ?? Promise.resolve(undefined),
-		observeLivePane: () => selected().observeLivePane?.() ?? selected().inspectPane?.() ?? Promise.resolve(undefined),
+		observeLivePane: () => {
+			const own = host();
+			return own?.observeLivePane?.() ?? own?.inspectPane?.() ?? Promise.resolve(undefined);
+		},
 		verifyLivePane: (locator: object) => herdr.verifyLivePane?.(locator) ?? Promise.resolve(undefined),
 		kill: (id: string) => tmux.kill(id),
 		get windowListRefusal(): string {
-			return selected().windowListRefusal;
+			try {
+				return selected().windowListRefusal;
+			} catch {
+				return tmux.windowListRefusal;
+			}
 		},
 		show: (target: WindowTarget, verify: () => Promise<boolean>) => navigation(target).show(target, verify),
 		peek: (target: WindowTarget) => navigation(target).peek(target),
@@ -91,11 +167,16 @@ export function createMultiplexer(
 				close: (record: WindowRecord) => forRecord(record).close(record),
 			};
 		},
+		async guardSession(record: WindowRecord, session: { path: string; id: string }, launch: TmuxClient): Promise<void> {
+			// tmux-only resumes keep their behaviour; any Herdr involvement needs
+			// positive Herdr evidence that no tab already runs this session.
+			if (!herdrLocator(record.locator) && launch !== herdr) return;
+			if (!herdr.guardSession) throw new Error("this Herdr adapter cannot check restored tabs; resume refused");
+			await herdr.guardSession(record, session, launch);
+		},
 		// Herdr startup must never recover an ambiguous tab by name or pane id.
 		// Successful opens publish their terminal-fenced locator in the parent.
 		currentWindow: () =>
-			multiplexerSetting(agentDir()) === "herdr"
-				? Promise.resolve(undefined)
-				: (tmux.currentWindow?.() ?? Promise.resolve(undefined)),
+			host() === herdr ? Promise.resolve(undefined) : (tmux.currentWindow?.() ?? Promise.resolve(undefined)),
 	};
 }

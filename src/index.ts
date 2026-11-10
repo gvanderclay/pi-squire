@@ -72,7 +72,7 @@ import { registerCompletionHost } from "./completion-holds.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
 import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { activeMark, clearMarks, isFree, readMarks } from "./limits.ts";
-import { createMultiplexer, multiplexerSetting } from "./multiplexer.ts";
+import { createMultiplexer, MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
@@ -1003,6 +1003,8 @@ export default function delegate(
 			PI_DELEGATE_CHAIN: own.chain.join(","),
 			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
 			[AGENT_ENV]: start.agent.name,
+			// The backend that opens this delegate, so its own delegates follow the root's choice.
+			[MULTIPLEXER_ENV]: (start.launchClient ?? tmux).windowNoun === "tab" ? "herdr" : "tmux",
 			// A general signal for any extension: no human watches this session, so don't wait on a dialog.
 			PI_UNATTENDED: "1",
 		};
@@ -1372,11 +1374,7 @@ export default function delegate(
 		tmux,
 		delegateSchema: DelegateSchema,
 		startPolling: tracking.startPolling,
-		placement: () => {
-			if (tmux.forLaunch && multiplexerSetting(getAgentDir()) === "herdr")
-				throw new Error("Herdr delegation resume is not available yet; use a new delegation instead");
-			return windowSettings(getAgentDir()).placement;
-		},
+		placement: () => windowSettings(getAgentDir()).placement,
 		roster: rosterFor,
 		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
 		authorize: (id, ctx) => {
@@ -1418,6 +1416,7 @@ export default function delegate(
 			toolCallId,
 			ctx,
 			placement,
+			launchClient,
 			identity: own,
 			sessionId,
 		}) =>
@@ -1431,7 +1430,7 @@ export default function delegate(
 				trusted,
 				cwd,
 				sessionDir,
-				start,
+				start: { ...start, launchClient },
 				toolCallId,
 				ctx,
 				placement,
@@ -1811,6 +1810,7 @@ export default function delegate(
 					windowId: launched.windowId,
 					windowName: launched.windowName,
 					...(launched.windowSession === undefined ? {} : { windowSession: launched.windowSession }),
+					...(launched.location === undefined ? {} : { location: launched.location }),
 					cwd: launched.cwd,
 					sessionDir: launched.sessionDir,
 					workspace: launched.workspace,

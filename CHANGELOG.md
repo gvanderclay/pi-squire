@@ -8,6 +8,42 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Herdr parity and auto-detection. With no `multiplexer` setting, pi-squire
+  uses tmux when only `TMUX` is present and Herdr when only a valid Herdr pane
+  context is present; when both are present it refuses and names the setting,
+  and when neither is it refuses naming both. `"multiplexer": "tmux" | "herdr"`
+  overrides detection in every case, is frozen per launch/resume/fork, and an
+  unusable chosen backend refuses without fallback. Delegates get
+  `PI_DELEGATE_MULTIPLEXER` (a new documented child variable) so their own
+  delegates follow the backend that opened them. `delegation_resume`, the resume
+  picker and `delegation_fork` now work under Herdr (the preview refusal is
+  removed); nested delegates open as flat tabs in the root's workspace. Before any
+  reservation, close or mail, a resume involving Herdr refuses, naming the tab,
+  when a Herdr tab already runs the delegate's session file (such as a tab Herdr
+  restored after a restart), when a restored pane reports no session and is not
+  provably just a shell, or when Herdr cannot be asked. Restored tabs are never
+  adopted or closed; pre-restart delegations read as gone. A moved parent pane
+  refuses launch naming both workspaces; a moved delegate terminal reads as
+  unknown and is not closed. Own-pane widget telemetry now follows the backend
+  that actually hosts Pi, not the launch setting, and is withheld when both
+  contexts are present without launcher evidence. Resumes now record the opened
+  Herdr locator, close a Herdr tab through its terminal-fenced locator if task
+  mail fails (when that close cannot be confirmed, the error names the tab and
+  the `herdr pane close` to run after checking it), and word their start text in
+  Herdr's tab terms. New
+  `test/herdr-parity.test.ts` covers selection combinations, overrides, child
+  environment, host telemetry, nested/fork/resume parity, restart refusal before
+  side effects and unknown probes. Deliberate test changes: `test/herdr.test.ts`
+  drops the two "Herdr resume is not available" refusal tests (replaced by
+  parity tests) and its selection test now expects an absent setting to mean
+  auto-detect (both present refuses) instead of tmux;
+  `test/herdr-navigation.test.ts` models its Herdr-hosted Pi without a tmux
+  context, since both contexts no longer publish own-pane telemetry; and
+  `test/delegate.test.ts`'s exact child environment adds
+  `PI_DELEGATE_MULTIPLEXER: "tmux"`. The `verify-pi-squire` skill gains
+  `launch --herdr` runs in a private named Herdr session, with
+  `herdr-restart` and a Herdr feature recipe.
+
 - Herdr widget Enter and `/delegate-open` now focus a delegate's tab only after
   re-verifying its exact terminal; `--peek` reads recent rows without focusing.
   Retained error tabs remain navigable. Children can select the parent
@@ -30,23 +66,21 @@ follows [Semantic Versioning](https://semver.org/).
   terms, and explicit close re-verifies terminal identity and removes only the
   owned pane, preserving user-added panes and restored/replaced terminals.
   Unavailable probes stay unknown; ambiguous creates remain charged and are
-  neither adopted nor closed. tmux remains the default with no auto-detection
-  or fallback. Preview limitation: no Herdr resume.
+  neither adopted nor closed. Never falls back to another multiplexer.
   The shared adapter conformance suite now includes the real Herdr adapter
   over a deterministic wire fixture, alongside targeted launch, environment,
   mixed-history and safety tests in `test/herdr.test.ts`. No existing
   behavioural assertions or public hook contracts are changed.
 
-### Fixed
-
-- Refuse historical Herdr delegation resume before reserving a successor or
-  cleaning up the retained pane, even after switching `multiplexer` to tmux.
-  The resume picker keeps excluding Herdr records. The new historical-switch
-  regression in `test/herdr.test.ts` preserves the pane and shared accounting;
-  existing tmux refusal ordering is unchanged.
-
 ### Changed
 
+- Default change for tmux users whose environment also has a Herdr pane
+  context: with no `multiplexer` setting, launches used tmux and now refuse,
+  naming the setting. `"multiplexer": "tmux"` in `squire/settings.json`
+  restores tmux.
+- When Pi runs in neither tmux nor Herdr and no `multiplexer` is set, the
+  refusal now names both multiplexers and the setting instead of only tmux. With
+  `"multiplexer": "tmux"` the old "not inside tmux" wording is unchanged.
 - Herdr delegate panes now close on a clean Pi exit even while focused, without
   closing user-added panes in the same tab. Error exits and failed starts retain
   readable diagnostics and a shell for inspection; status no longer reports the

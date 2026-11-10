@@ -8,7 +8,14 @@ import type { WindowRecord, WindowSpec } from "../src/tmux.ts";
 import { askWindowStates } from "../src/window-state.ts";
 import type { AdapterFixture } from "./adapter-contract.ts";
 
-type Pane = { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string };
+type Pane = {
+	pane_id: string;
+	tab_id: string;
+	workspace_id: string;
+	terminal_id: string;
+	agent?: string | null;
+	agent_session?: { source?: string; value?: string } | null;
+};
 export class HerdrWire {
 	readonly context: HerdrContext = {
 		session: "test-isolated",
@@ -19,7 +26,9 @@ export class HerdrWire {
 	readonly panes = new Map<string, Pane>([
 		["w1:p1", { pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1", terminal_id: "parent" }],
 	]);
+	readonly tabs = new Map<string, string>([["w1:t1", "main"]]);
 	readonly calls: { session: string; args: string[] }[] = [];
+	snapshotFails = false;
 	readonly staged: string[] = [];
 	failedAsk = false;
 	ambiguous = false;
@@ -33,6 +42,8 @@ export class HerdrWire {
 	ambiguousPane: string | undefined;
 	beforeSnapshot: (() => void) | undefined;
 	beforeProcessInfo: (() => void) | undefined;
+	/** Replace the whole process-info answer, for malformed or partial responses. */
+	processInfo: ((pane: string) => unknown) | undefined;
 	readonly client = createHerdrClient({
 		run: (session, args) => this.run(session, args),
 		context: () => (this.unavailable ? undefined : this.context),
@@ -53,7 +64,9 @@ export class HerdrWire {
 			});
 		if (args[0] === "api") {
 			this.beforeSnapshot?.();
-			return result({ snapshot: { protocol: this.protocol, panes: [...this.panes.values()] } });
+			if (this.snapshotFails) throw new Error("snapshot timed out");
+			const tabs = [...this.tabs].map(([tab_id, label]) => ({ tab_id, label }));
+			return result({ snapshot: { protocol: this.protocol, panes: [...this.panes.values()], tabs } });
 		}
 		if (args[0] === "tab" && args[1] === "create") {
 			const id = ++this.next;
@@ -64,6 +77,7 @@ export class HerdrWire {
 				terminal_id: `term_${id}`,
 			};
 			this.panes.set(p.pane_id, p);
+			this.tabs.set(p.tab_id, args[args.indexOf("--label") + 1]);
 			if (this.ambiguous) {
 				this.ambiguousPane = p.pane_id;
 				throw new Error("create reply lost");
@@ -77,6 +91,7 @@ export class HerdrWire {
 		if (args[0] === "pane" && args[1] === "get") return result({ pane: this.panes.get(args[2]) });
 		if (args[1] === "process-info") {
 			this.beforeProcessInfo?.();
+			if (this.processInfo) return result({ process_info: this.processInfo(args[3]) });
 			return result({ process_info: { pane_id: args[3], shell_pid: 10, foreground_processes: this.foreground } });
 		}
 		if (args[1] === "close") {

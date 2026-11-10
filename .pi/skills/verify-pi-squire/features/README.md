@@ -6,7 +6,7 @@ This folder is the maintained source for verifying pi-squire's user-facing behav
 
 - A run started with `node .pi/skills/verify-pi-squire/scripts/squire-verify.mjs launch` and a passing `doctor`.
 - The root Pi has not been driven yet, or every earlier delegation in it has a result or is closed.
-- Never drive a tmux server or Pi session this run did not start.
+- Never drive a tmux server, Herdr session or Pi session this run did not start.
 
 ## Driving conventions
 
@@ -32,5 +32,6 @@ Each feature file starts with an H1 and one paragraph, then exactly four H2s in 
 - [Delegation status](./status.md): the `delegation_status` tool reports a delegation's state, identity and model.
 - [Close a delegation](./close.md): the `delegation_close` tool kills a delegate's window and reports each member's outcome.
 - [Resume a delegation](./resume.md): the `delegation_resume` tool reopens an exited delegate's session with a follow-up task.
+- [Herdr runs](./herdr.md): `launch --herdr` proves auto-detection, Herdr fork/resume/nested tabs and the restart refusal.
 
 Not mapped yet: nested delegation (needs `squire/settings.json` limits and an agent with `allow_nested_delegation`), managed worktrees (`--worktree`), `--cwd` project trust, the `/delegates` panel and the delegate widget.

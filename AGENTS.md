@@ -12,7 +12,8 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   the roster and the `delegateTools` setting, `results.ts` handles replies and works out a delegation's
   state (`result-message.ts` words the result; `result-restore.ts` restores
   semantic records fail-closed), `render.ts` draws the
-  delegate messages, `tracking.ts` holds the status and close
+  delegate messages, `current-window.ts` answers which window a delegation
+  is in now for the navigator and widget, `tracking.ts` holds the status and close
   tools, `poll.ts` the poll (with `window-state.ts`, which answers and closes a delegation's window), `navigator.ts`
   `/delegate-open` and the compact widget close action, `new-delegate.ts` the new-delegate
   form, `resume-picker.ts` the resume picker, `resume.ts` the resume launch (`resume-checks.ts` the checks the picker shares) and the `delegation_resume` tool, `workspace.ts` resolves a

@@ -1,11 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { currentChildWindows } from "./current-window.ts";
 import type { DelegateHost } from "./host.ts";
 import { isStarted, type Recorded, type Results, type StartedRecorded } from "./results.ts";
 import { readTreeDisplay } from "./tree-registry.ts";
 import { visibleRecordFacts } from "./tree-view.ts";
 import { joinActivities } from "./widget-activity-join.ts";
 import { type Breadcrumb, BreadcrumbView, switchAncestor } from "./widget-ancestors.ts";
-import { currentChildWindows } from "./widget-current.ts";
 import { type DelegateRow, DirectDelegateView, delegateTree } from "./widget-data.ts";
 import { WidgetFocus } from "./widget-focus.ts";
 import { LiveActivityReader } from "./widget-live.ts";
@@ -214,7 +214,7 @@ class Overview {
 				settings.maxEntries > 0 && this.view.needsWindows(observed) ? await askPaneStates(this.tmux) : UNASKED;
 			if (this.stopped || revision !== this.factsRevision) return;
 			const sessionDir: string = this.ctx.sessionManager.getSessionDir();
-			const current = await currentChildWindows(observed, windows.listing, this.live);
+			const current = await currentChildWindows(observed, windows, this.live);
 			await this.readBreadcrumb();
 			if (this.stopped || revision !== this.factsRevision) return;
 			const eligible: DelegateRow[] = this.view.read(observed, windows, sessionDir, { offset: 0, limit: 0 }, current);

@@ -1,8 +1,8 @@
 // Read-only navigation projection. Never supplies locators to close or task accounting.
 
+import { CurrentWindows, type NavigationWindow, sameLive } from "./current-window.ts";
 import type { DelegateHost } from "./host.ts";
-import type { WindowLocator } from "./locators.ts";
-import { sameLiveLocator, sameNavigationWindow, windowFacts, windowLocator, windowPresentation } from "./locators.ts";
+import { sameNavigationWindow, windowLocator, windowPresentation } from "./locators.ts";
 import {
 	type DelegationState,
 	deriveState,
@@ -12,13 +12,8 @@ import {
 	type StartedRecorded,
 	sessionIdOf,
 } from "./results.ts";
-
-import { verifyLiveWindow } from "./widget-ancestors.ts";
 import { LiveActivityReader, type LiveLocator } from "./widget-live.ts";
-import { askWindowStates, type WindowRecord, type WindowStates } from "./window-state.ts";
-
-/** Navigation projection, not a host inventory or lifecycle authority. */
-type NavigationWindow = { id: string; name: string; session: string; exited: boolean; locator?: WindowLocator };
+import { askWindowStates, type WindowStates } from "./window-state.ts";
 
 export type OpenDelegate = {
 	id: string;
@@ -37,16 +32,6 @@ function openItem(item: OpenDelegate): boolean {
 	);
 }
 
-function sameLive(a: LiveLocator | undefined, b: LiveLocator | undefined): boolean {
-	if (!a || !b) return a === b;
-	return (
-		a.generation === b.generation &&
-		a.ownerToken === b.ownerToken &&
-		a.pid === b.pid &&
-		a.sessionFile === b.sessionFile &&
-		sameLiveLocator(a.locator, b.locator)
-	);
-}
 function sameTarget(a: OpenDelegate, b: OpenDelegate): boolean {
 	return (
 		sameNavigationWindow({ locator: windowLocator(a.window) }, { locator: windowLocator(b.window) }) &&
@@ -54,27 +39,11 @@ function sameTarget(a: OpenDelegate, b: OpenDelegate): boolean {
 	);
 }
 
-/** The record's own window when its program runs, as the navigator switches to it. */
-function runningWindow(windows: WindowStates, record: StartedRecorded): NavigationWindow | undefined {
-	const look = windows.look(record);
-	return look.state === "running" || (windowFacts(record).retainedAfterExit && windows.listed(record))
-		? {
-				id: windowPresentation(record).windowId,
-				name: windowPresentation(record).windowName,
-				locator: record.locator,
-				session: look.session ?? "",
-				exited: false,
-			}
-		: undefined;
-}
-
 /** Current evidence supersedes historical navigation, but never mutates a saved launch/result. */
 export class NavigatorView {
 	private readonly results: Results;
 	private readonly tmux: DelegateHost;
-	private readonly reader: Pick<LiveActivityReader, "locator">;
-	// A disappearing/replaced runtime cannot fall back, except a host-retained resource after a recorded exit.
-	private readonly current: Set<string> = new Set();
+	private readonly windows: CurrentWindows;
 
 	constructor(
 		results: Results,
@@ -83,7 +52,7 @@ export class NavigatorView {
 	) {
 		this.results = results;
 		this.tmux = tmux;
-		this.reader = reader;
+		this.windows = new CurrentWindows(tmux, reader);
 	}
 
 	async items(): Promise<OpenDelegate[] | undefined> {
@@ -100,14 +69,7 @@ export class NavigatorView {
 	}
 
 	private async item(record: StartedRecorded, latest: boolean, windows: WindowStates): Promise<OpenDelegate> {
-		const historical: NavigationWindow | undefined = runningWindow(windows, record);
-		const live: LiveLocator | undefined =
-			latest && !record.closed ? await this.reader.locator(sessionIdOf(record)) : undefined;
-		if (live) this.current.add(record.id);
-		const window: NavigationWindow | undefined = this.current.has(record.id)
-			? ((await this.liveWindow(live, windows)) ??
-				(!live && windowFacts(record).retainedAfterExit && windows.state(record) === "gone" ? historical : undefined))
-			: historical;
+		const { live, window } = await this.windows.place(record, latest, windows);
 		return {
 			id: record.id,
 			name: recordedName(record),
@@ -124,26 +86,6 @@ export class NavigatorView {
 		};
 	}
 
-	private async liveWindow(
-		live: LiveLocator | undefined,
-		windows: WindowStates,
-	): Promise<NavigationWindow | undefined> {
-		if (!live || !windows.answered) return undefined;
-		const pane = await verifyLiveWindow(this.tmux, live).catch(() => undefined);
-		if (!pane) return undefined;
-		const own: WindowRecord = pane;
-		// Exact Pi pane, not a different active pane's pane_dead: a listed window counts as running.
-		return windows.listed(own)
-			? {
-					id: windowPresentation(pane).windowId,
-					locator: pane.locator,
-					name: windowPresentation(pane).windowName,
-					session: windows.look(own).session ?? "",
-					exited: false,
-				}
-			: undefined;
-	}
-
 	async verified(item: OpenDelegate): Promise<boolean> {
 		const all: StartedRecorded[] = this.results.list().filter(isStarted);
 		const record: StartedRecorded | undefined = all.find((entry) => entry.id === item.id);
@@ -152,7 +94,7 @@ export class NavigatorView {
 		const current: OpenDelegate = await this.item(record, latest, await askWindowStates(this.tmux));
 		if (!current.navigable || !sameTarget(item, current)) return false;
 		if (!current.live) return true;
-		const final: LiveLocator | undefined = await this.reader.locator(sessionIdOf(record));
+		const final: LiveLocator | undefined = await this.windows.live(sessionIdOf(record));
 		return sameLive(final, current.live);
 	}
 }

@@ -151,7 +151,7 @@ test("optional terminal snapshots remain available for cross-host historical nav
 		"unavailable",
 	);
 	const observation = await askPaneStates(router);
-	assert.equal(observation.listing?.windows[0].id, "@1");
+	assert.equal(observation.livePanes?.running({ windowId: "@1", windowName: "historical" }), true);
 	assert.equal(tmux.paneListCalls, 1);
 	assert.equal(observation.state({ windowId: "@1", windowName: "historical" }), "running");
 });

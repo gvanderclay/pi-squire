@@ -357,8 +357,9 @@ async function resume(
 	const found = newestStarted(deps.results, request.id);
 	const record = { ...found, identity: requiredIdentity(found) };
 	deps.admit?.(record.agent, ctx);
-	assertNoOwner(record);
+	// Herdr evidence first, so a restored tab is named; the owner check still refuses any other live writer.
 	await guardSession(deps, record, client, ctx);
+	assertNoOwner(record);
 	deps.results.checkStorage(true);
 	const reservation = await deps.reserve(record, randomUUID(), ctx);
 	let acquired = false;

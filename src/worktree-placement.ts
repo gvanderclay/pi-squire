@@ -1,18 +1,18 @@
 // Call-time placement settings for managed worktrees. This module only
 // chooses a destination; source, base, trust and lifecycle remain in the
 // worktree plan and creation code.
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 import type { GitIdentity } from "./git.ts";
+import { worktreeSettingsError as settingsError, squireSettingsFile, worktreeSettings } from "./settings.ts";
 
 type Settings = {
 	worktreeRoot?: string;
 	worktreeRootByRepo: Map<string, string>;
 };
 
-const SETTINGS_NAME = "settings.json";
 const exists = (path: string): boolean => lstatSync(path, { throwIfNoEntry: false }) !== undefined;
 
 /** Resolve existing symlink ancestors while retaining the not-yet-created suffix. */
@@ -32,50 +32,11 @@ function expandHome(path: string): string {
 	return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function settingsError(file: string, problem: string): Error {
-	return new Error(`invalid worktree placement settings ${file}: ${problem}`);
-}
-
-/** Validate all templates, including overrides not selected by this launch. */
-function validateTemplate(file: string, template: string): void {
-	if (template.trim() === "") throw settingsError(file, "templates must not be empty");
-	const remainder = template.replace(/\{[^{}]*\}/g, (placeholder) => {
-		const name = placeholder.slice(1, -1);
-		if (name !== "branch" && name !== "repo" && name !== "repoParent") {
-			throw settingsError(file, `unknown template placeholder ${placeholder}`);
-		}
-		return "";
-	});
-	if (/[{}]/.test(remainder)) throw settingsError(file, "templates contain an unmatched brace");
-	if (!template.includes("{branch}")) throw settingsError(file, "every template must contain {branch}");
-}
-
-function readJson(file: string): unknown {
-	try {
-		return JSON.parse(readFileSync(file, "utf8"));
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
-		throw settingsError(file, `could not read or parse the file: ${(err as Error).message}`);
-	}
-}
-
-function readOverrides(
-	file: string,
-	settingsDir: string,
-	value: Record<string, unknown> | undefined,
-): Map<string, string> {
+/** Canonicalize each repository key, refusing two that name the same checkout. */
+function readOverrides(file: string, settingsDir: string, overrides: [string, string][]): Map<string, string> {
 	const templates = new Map<string, string>();
 	const originalKeys = new Map<string, string>();
-	for (const [key, template] of Object.entries(value ?? {})) {
-		if (key === "") throw settingsError(file, "repository override keys must not be empty");
-		if (typeof template !== "string") {
-			throw settingsError(file, `worktreeRootByRepo[${JSON.stringify(key)}] must be a string`);
-		}
-		validateTemplate(file, template);
+	for (const [key, template] of overrides) {
 		let canonicalKey: string;
 		try {
 			canonicalKey = canonical(resolve(settingsDir, expandHome(key)));
@@ -96,23 +57,10 @@ function readOverrides(
 }
 
 function readSettings(agentDir: string): Settings {
-	const file = join(agentDir, "squire", SETTINGS_NAME);
-	const parsed = readJson(file);
-	if (!isObject(parsed)) throw settingsError(file, "the top level must be an object");
-
-	const worktreeRoot = parsed.worktreeRoot;
-	if (worktreeRoot !== undefined && typeof worktreeRoot !== "string") {
-		throw settingsError(file, "worktreeRoot must be a string when provided");
-	}
-	if (typeof worktreeRoot === "string") validateTemplate(file, worktreeRoot);
-
-	const byRepo = parsed.worktreeRootByRepo;
-	if (byRepo !== undefined && !isObject(byRepo)) {
-		throw settingsError(file, "worktreeRootByRepo must be an object when provided");
-	}
+	const { file, worktreeRoot, worktreeRootByRepo } = worktreeSettings(agentDir);
 	return {
-		...(typeof worktreeRoot === "string" ? { worktreeRoot } : {}),
-		worktreeRootByRepo: readOverrides(file, dirname(file), byRepo),
+		...(worktreeRoot === undefined ? {} : { worktreeRoot }),
+		worktreeRootByRepo: readOverrides(file, dirname(file), worktreeRootByRepo),
 	};
 }
 
@@ -131,7 +79,7 @@ export function worktreeDestination(agentDir: string, identity: GitIdentity, bra
 			case "branch":
 				return branch.replaceAll("/", "-");
 			default:
-				throw settingsError(join(settingsDir, SETTINGS_NAME), `unknown template placeholder {${name}}`);
+				throw settingsError(squireSettingsFile(agentDir), `unknown template placeholder {${name}}`);
 		}
 	});
 	return canonical(resolve(settingsDir, expandHome(expanded)));

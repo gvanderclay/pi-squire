@@ -177,8 +177,14 @@ test("invalid creation keys do not affect inherited/cwd launches, but unreadable
 	assert.deepEqual(s.tmux.opened, []);
 	assert.deepEqual(readFileSync(join(source, ".git", "index")), indexBefore);
 
-	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "blocked inherited" }), /tree caps/);
-	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "blocked cwd", cwd: plain }), /tree caps/);
+	await assert.rejects(
+		s.toolCall("delegate", { agent: "scout", task: "blocked inherited" }),
+		/could not read squire settings .*settings\.json/,
+	);
+	await assert.rejects(
+		s.toolCall("delegate", { agent: "scout", task: "blocked cwd", cwd: plain }),
+		/could not read squire settings .*settings\.json/,
+	);
 	rmSync(settingsPath(), { recursive: true });
 	setSettings({ worktreeRoot: 3 }); // invalid creation key, but readable cap settings
 	const inherited = await s.toolCall("delegate", { agent: "scout", task: "ordinary inherited launch" });

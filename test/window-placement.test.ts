@@ -311,7 +311,7 @@ test("malformed, unreadable or non-object settings refuse launch rather than era
 	for (const [index, damage] of bad.entries()) {
 		rmSync(settingsFile, { recursive: true, force: true });
 		damage();
-		await assert.rejects(call(s, `fallback-${index}`), /tree caps/);
+		await assert.rejects(call(s, `fallback-${index}`), /squire settings .*settings\.json/);
 	}
 	assert.equal(s.tmux.opened.length, 0);
 	assert.equal(s.sendCalls.length, 0);

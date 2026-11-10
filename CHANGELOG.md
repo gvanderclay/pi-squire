@@ -74,6 +74,27 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- One reader for `<agent dir>/squire/settings.json` (`src/settings.ts`) with
+  a stated policy per key. A malformed, unreadable or non-object file now
+  refuses every key that affects launching or limits with one error naming the
+  file (`could not read squire settings <file>: ...` or `invalid squire
+  settings <file>: expected an object`): `multiplexer`, `windowPlacement` and
+  `companionSuffix`, `maxDepth` at admission, `maxConcurrentDelegates`,
+  `maxDelegatesPerRoot`, `delegateTools`, `worktreeRoot` and
+  `worktreeRootByRepo`. Before, `windowPlacement`, `maxDepth` and
+  `delegateTools` quietly used defaults and the launch was refused later by
+  the tree-cap reader with a "tree caps" error. Exposing the delegation tools
+  still treats a broken file as `maxDepth` 1; `toolBundles` now also
+  disables bundle users, naming the file, when the file is unreadable or not an
+  object (before only when it was not JSON); widget settings still fall back to
+  defaults with one warning. Deliberate test changes: `test/window-placement.test.ts`
+  ("malformed, unreadable or non-object settings refuse launch rather than erase
+  tree caps") and `test/worktree-ticket05.test.ts` ("invalid creation keys do
+  not affect inherited/cwd launches, but unreadable shared settings refuse
+  all") expect the shared settings error instead of `/tree caps/`;
+  `test/widget-data.test.ts` ("invalid widget settings name the key/file")
+  expects it instead of `could not read widget settings`. New
+  `test/settings.test.ts` covers the policy table.
 - Default change for tmux users whose environment also has a Herdr pane
   context: with no `multiplexer` setting, launches used tmux and now refuse,
   naming the setting. `"multiplexer": "tmux"` in `squire/settings.json`

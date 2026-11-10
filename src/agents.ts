@@ -25,6 +25,9 @@ import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { type Bundles, expandBundles, toolBundles } from "./tool-bundles.ts";
 import { toolMatches } from "./tool-names.ts";
 
+// The `delegateTools` setting is read and validated by settings.ts.
+export { delegateTools } from "./settings.ts";
+
 /** The levels `pi --thinking` accepts. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -455,42 +458,4 @@ export function withoutLocked<T extends { model?: string; thinking?: string }>(
 		request: kept,
 		notice: `Agent ${agent.name} locks ${refused.join(" and ")}, so the ${given} given ${refused.length > 1 ? "were" : "was"} not used.`,
 	};
-}
-
-/**
- * The `delegateTools` setting in `<agent dir>/squire/settings.json`: tool
- * names or `*` patterns added to every delegate's tools, whether they come
- * from the agent's `tools` or the parent. Empty when unset or when the file
- * cannot be read or parsed (the worktree settings report that when a launch
- * needs them); a value that is not a list of names, or an entry holding a
- * comma or starting with `+` or `-`, refuses the launch with the file named.
- */
-export function delegateTools(agentDir: string): string[] {
-	const file = join(agentDir, "squire", "settings.json");
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(file, "utf8"));
-	} catch {
-		return [];
-	}
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
-	const value = (parsed as Record<string, unknown>).delegateTools;
-	if (value === undefined) return [];
-	if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry.trim() !== "")) {
-		throw new Error(
-			`invalid delegate tools settings ${file}: delegateTools must be a list of tool names or patterns, not ${JSON.stringify(value)}`,
-		);
-	}
-	const names = value.map((entry: string) => entry.trim());
-	const comma = names.find((name) => name.includes(","));
-	if (comma !== undefined)
-		throw new Error(
-			`invalid delegate tools settings ${file}: delegateTools entry ${JSON.stringify(comma)} holds a comma; give one tool name or pattern per entry`,
-		);
-	const modifier = names.find((name) => name.startsWith("+") || name.startsWith("-"));
-	if (modifier !== undefined)
-		throw new Error(
-			`invalid delegate tools settings ${file}: delegateTools entries are tool names; ${JSON.stringify(modifier)} starts with ${modifier[0]}, which is not accepted there`,
-		);
-	return names;
 }

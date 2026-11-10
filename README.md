@@ -164,9 +164,10 @@ milestone is integrated and tested.
 The default `maxDepth` in `<agent dir>/squire/settings.json` is **1**: root
 (depth 0) → delegate (depth 1), with no grandchildren. Set `maxDepth: 2` for
 root → coordinator → worker. A readable value must be a positive safe integer;
-an absent/unreadable settings file uses the safe depth-1 default for exposure.
-Launch/resume refuses malformed, unreadable or non-object settings rather than
-risk silently losing configured tree caps.
+an absent, malformed, unreadable or non-object settings file uses the safe
+depth-1 default when deciding whether to expose the delegation tools.
+Launch/resume refuses such a file, naming it, rather than risk silently losing
+configured tree caps (see [Configuration](#configuration)).
 
 A coordinator's agent file opts in with
 `allow_nested_delegation: [worker, reviewer]`, or `true` for any current roster
@@ -856,8 +857,8 @@ Worktree placement keys are read only for managed creation. A missing file
 uses the built-in default; invalid templates and duplicate canonical repository
 keys refuse creation rather than silently falling back. Those creation-key
 errors do not affect inherited or `cwd` launches, but malformed, inaccessible
-or non-object shared settings refuse every launch/resume because tree caps
-cannot be read safely. Placement does
+or non-object shared settings refuse every launch/resume with an error naming
+the file (see [Configuration](#configuration)). Placement does
 not choose a source checkout or base commit. Pi discovers `AGENTS.md`, skills
 and other project context from the created directory and its ancestors, so the
 chosen layout determines which instructions and skills apply. For a layout
@@ -1113,9 +1114,10 @@ An agent then writes `tools: [$readonly, pstack_models]`, which reads as
 bundle name is letters, digits, `_` or `-`; each entry is one tool name or
 `*` pattern, with no comma and no leading `+`, `-` or `$`, so bundles do not
 nest. A bundle carries tools only, not permission rules. The setting is read
-with the roster. A setting that is not an object of such lists disables every
-agent that uses a bundle, with the reason; agents without bundles are
-unaffected. (`$`, unlike `@`, may start a plain YAML value.)
+with the roster. A setting that is not an object of such lists, or a settings
+file that cannot be read or is not a JSON object, disables every agent that
+uses a bundle, with the reason naming the file; agents without bundles are
+unaffected by the setting itself. (`$`, unlike `@`, may start a plain YAML value.)
 
 The delegation tools (`delegate`, `delegation_status`, `delegation_close`,
 `delegation_resume`, `delegation_fork`) are removed from ordinary tool selections. An opted-in
@@ -1182,10 +1184,18 @@ add one.
 ## Configuration
 
 `<agent dir>/squire/` holds the optional parent guidance file and
-`settings.json` (`maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`,
-`windowPlacement`, `companionSuffix`, `worktreeRoot`, `delegateTools`, `toolBundles`,
+`settings.json` (`multiplexer`, `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`,
+`windowPlacement`, `companionSuffix`, `worktreeRoot`, `worktreeRootByRepo`, `delegateTools`, `toolBundles`,
 `delegateWidgetPlacement` and `delegateWidgetMaxEntries`); the
 agents live in `<agent dir>/agents/` (see [Agents](#agents)).
+`settings.json` is read when a setting is needed, never cached, so a change
+applies to the next launch. A missing file means every default. A file that
+cannot be read, is not JSON or is not an object refuses every launch, resume
+and fork with an error naming the file, as does an invalid value of a setting
+that affects launching or limits. The exceptions: deciding whether to expose
+the delegation tools treats such a file as `maxDepth` 1, `toolBundles`
+problems disable only the agents that use a bundle, and widget setting
+problems show one warning and use the widget defaults.
 `delegation_prompt.md` is Markdown, inserted unchanged as the
 `squire_parent_delegation` system-prompt section before each new run, including
 a run started by an idle delegate result. It is not a conversation or user

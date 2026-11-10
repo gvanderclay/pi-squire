@@ -1,11 +1,11 @@
 // Launch identity is session-local durable state, not the shared tree registry.
 // Readers (trust routing, caps and views) use session ids for routing; chain is
 // ordered roster names for labels only. A resume retains the original identity.
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Agent, Roster } from "./agents.ts";
 import { readState, writeState } from "./local-state.ts";
+import { exposedDepth, maxDepth as readMaxDepth } from "./settings.ts";
 import { assertRootPlacement } from "./window-placement.ts";
 
 export const DELEGATION_TOOLS = [
@@ -63,24 +63,14 @@ export function readIdentity(session: string): Identity | undefined {
 }
 export const writeIdentity = (session: string, identity: Identity): void => writeState(pathFor(session), identity);
 
+/** The configured depth limit for admission; refuses on a broken settings file or invalid value. */
 export function maxDepth(): number {
-	const file = join(getAgentDir(), "squire", "settings.json");
-	let settings: { maxDepth?: unknown };
-	try {
-		settings = JSON.parse(readFileSync(file, "utf8")) as typeof settings;
-	} catch {
-		// Match existing settings readers: an unreadable file grants only the
-		// safe single-level default; a readable invalid maxDepth refuses.
-		return 1;
-	}
-	const value = settings?.maxDepth ?? 1;
-	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
-		throw new Error(`invalid maxDepth in ${file}: expected a positive integer`);
-	return value;
+	return readMaxDepth(getAgentDir());
 }
 
+/** Whether to expose the delegation tools; a broken settings file grants no nesting (admission refuses it). */
 export function grantsNesting(agent: Agent, depth: number): boolean {
-	return (agent.allowNested === true || (agent.allowNested?.length ?? 0) > 0) && depth < maxDepth();
+	return (agent.allowNested === true || (agent.allowNested?.length ?? 0) > 0) && depth < exposedDepth(getAgentDir());
 }
 
 export function createIdentity(pi: ExtensionAPI): {

@@ -1,17 +1,12 @@
 // How `delegation_status` words a delegation's state, auto-exit and age.
 
 import { locationTerms } from "./location.ts";
+import { autoExitText } from "./locators.ts";
 import type { DelegationState, StartedRecorded } from "./results.ts";
 
 /** Records from before auto-exit existed kept their windows open, so they read off. */
 export function autoExitLine(record: StartedRecorded): string {
-	if (locationTerms(record).noun === "tab")
-		return record.autoExit === true
-			? "on — Pi exits after a normal completion; a clean exit closes its Herdr pane (errors retain it)"
-			: "off — Pi and its Herdr tab stay open after the result";
-	return record.autoExit === true
-		? "on — the delegate closes its window after a normal completion unless the user took over there"
-		: "off — the window stays open after the result";
+	return autoExitText(record, record.autoExit === true);
 }
 
 /** The state, worded for the `state:` line. */

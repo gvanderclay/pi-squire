@@ -91,9 +91,11 @@ import {
 	USAGE,
 } from "./delegate-request.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
+import { type DelegateHost, type OpenedWindow, WindowOpenError } from "./host.ts";
 import { createIdentity, grantsNesting, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { clearMarks, readMarks } from "./limits.ts";
 import { openedIn } from "./location.ts";
+import { windowLocator } from "./locators.ts";
 import { agentModels, chooseModel, fallbackNote, modelIds, type Skipped } from "./model-choice.ts";
 import { createMultiplexer, MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
@@ -104,7 +106,6 @@ import { createResume, resumableIds, startedLine } from "./resume.ts";
 import { pickResume } from "./resume-picker.ts";
 import { ownedAPI, SessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
-import { type OpenedWindow, type TmuxClient, WindowOpenError, windowLocator } from "./tmux.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import {
@@ -190,7 +191,7 @@ type LaunchPayload = {
 /** A request that passed the roster, model, thinking and label checks. */
 type Start = {
 	/** Call-time backend, frozen before side effects. */
-	launchClient?: TmuxClient;
+	launchClient?: DelegateHost;
 	agent: Agent;
 	model: string;
 	/** Candidates passed over for `model`, with why; empty unless a fallback was used. */
@@ -265,7 +266,7 @@ function readParentPrompt(): { text?: string; error?: string } {
  */
 export default function delegate(
 	api: ExtensionAPI,
-	tmux: TmuxClient = createMultiplexer(),
+	tmux: DelegateHost = createMultiplexer(),
 	usage: UsageClient = createUsageClient(),
 ): void {
 	const owner = new SessionOwner();
@@ -588,7 +589,7 @@ export default function delegate(
 			[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
 			[AGENT_ENV]: start.agent.name,
 			// The backend that opens this delegate, so its own delegates follow the root's choice.
-			[MULTIPLEXER_ENV]: (start.launchClient ?? tmux).windowNoun === "tab" ? "herdr" : "tmux",
+			[MULTIPLEXER_ENV]: (start.launchClient ?? tmux).id,
 			// A general signal for any extension: no human watches this session, so don't wait on a dialog.
 			PI_UNATTENDED: "1",
 		};
@@ -728,10 +729,9 @@ export default function delegate(
 		const refusal = await start.launchClient.unavailable(true);
 		if (refusal !== undefined) throw new Error(refusal);
 		// Read once, before anything is created or mailed; the launch keeps these values.
-		const { placement, companionSuffix } =
-			start.launchClient.windowNoun === "tab"
-				? { placement: "current" as const, companionSuffix: "delegates" }
-				: windowSettings(getAgentDir());
+		const { placement, companionSuffix } = start.launchClient.usesWindowPlacement
+			? windowSettings(getAgentDir())
+			: { placement: "current" as const, companionSuffix: "delegates" };
 		const parentIdentity = identity.current();
 		const project = parentIdentity
 			? { companion: parentIdentity.rootPlacement, notices: [] }

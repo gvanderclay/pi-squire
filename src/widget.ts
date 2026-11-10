@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { DelegateHost } from "./host.ts";
 import { isStarted, type Recorded, type Results, type StartedRecorded } from "./results.ts";
-import type { TmuxClient } from "./tmux.ts";
 import { readTreeDisplay } from "./tree-registry.ts";
 import { visibleRecordFacts } from "./tree-view.ts";
 import { joinActivities } from "./widget-activity-join.ts";
@@ -22,7 +22,7 @@ type OpenDelegate = (ctx: ExtensionContext, id: string) => Promise<void>;
 /** Observation and UI only; direct Results/task authority and the configured editor/footer stay untouched. */
 class Overview {
 	private readonly results: Results;
-	private readonly tmux: TmuxClient;
+	private readonly tmux: DelegateHost;
 	private readonly view = new DirectDelegateView();
 	private readonly breadcrumbView = new BreadcrumbView();
 	private readonly live = new LiveActivityReader();
@@ -50,7 +50,7 @@ class Overview {
 
 	constructor(
 		results: Results,
-		tmux: TmuxClient,
+		tmux: DelegateHost,
 		ctx: ExtensionContext,
 		open: OpenDelegate,
 		close: OpenDelegate,
@@ -283,7 +283,7 @@ class Overview {
 export function registerDelegateWidget(
 	pi: ExtensionAPI,
 	results: Results,
-	tmux: TmuxClient,
+	tmux: DelegateHost,
 	open: OpenDelegate,
 	close: OpenDelegate,
 	assertActive: () => void,

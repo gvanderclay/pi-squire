@@ -1,27 +1,24 @@
-// The tmux adapter owns durable locator encoding, validation and comparison.
-import { herdrLocator, herdrPaneLocator, sameHerdrLocator, sameHerdrPane } from "./herdr-locator.ts";
+// The tmux adapter owns only tmux encodings and exact server/pane matching.
+import type {
+	LivePaneLocator,
+	LocatorRules,
+	VerifiedLiveWindow,
+	WindowLocator,
+	WindowRecord,
+} from "./locator-rules.ts";
 import type { PaneListing, PaneLocator, TmuxClient, TmuxWindow } from "./tmux.ts";
 
-/** Adapter-owned durable values. Callers may store them, never inspect their shape. */
-export type WindowLocator = object;
-export type LivePaneLocator = object;
-/** Optional adapter-owned observation and terminal verification for disposable telemetry. */
-export type LiveNavigation = {
-	observeLivePane?(): Promise<LivePaneLocator | undefined>;
-	verifyLivePane?(locator: LivePaneLocator): Promise<VerifiedLiveWindow | undefined>;
-	/** Before resume side effects: reject when another live Pi may host the session, or that is unknown. */
-	guardSession?(record: WindowRecord, session: { path: string; id: string }, launch: TmuxClient): Promise<void>;
-};
-/** Legacy fields are read only when no locator property is present. */
-export type WindowRecord = { locator?: WindowLocator; windowId?: string; windowName?: string };
+// Compatibility exports for released imports; host-neutral rules live in locators.ts.
+export * from "./locators.ts";
+
 type TmuxLocator = { adapter: "tmux"; version: 1; kind: "window"; id: string; name: string };
 type TmuxPaneLocator = { adapter: "tmux"; version: 1; kind: "pane"; pane: PaneLocator };
 
 function bounded(value: unknown, empty = false): value is string {
 	return typeof value === "string" && (empty || value.length > 0) && Buffer.byteLength(value) <= 512;
 }
-export function validWindowLocator(value: unknown): value is WindowLocator {
-	if (herdrLocator(value)) return true;
+
+export function tmuxLocator(value: unknown): value is WindowLocator {
 	if (!value || typeof value !== "object") return false;
 	const own = value as Partial<TmuxLocator>;
 	return (
@@ -33,56 +30,20 @@ export function validWindowLocator(value: unknown): value is WindowLocator {
 		typeof own.name === "string"
 	);
 }
-/** Mint only after a positive adapter observation or create response. */
-export function windowLocator(window: { id: string; name: string; locator?: WindowLocator }): WindowLocator {
-	if (window.locator) {
-		if (!validWindowLocator(window.locator) && !herdrPaneLocator(window.locator))
-			throw new Error("invalid navigation locator");
-		return window.locator;
-	}
+
+export function tmuxWindowLocator(window: { id: string; name: string }): WindowLocator {
 	const locator: TmuxLocator = { adapter: "tmux", version: 1, kind: "window", id: window.id, name: window.name };
-	if (!validWindowLocator(locator)) throw new Error("invalid tmux window locator");
+	if (!tmuxLocator(locator)) throw new Error("invalid tmux window locator");
 	return locator;
 }
-export function recordLocator(record: WindowRecord): WindowLocator | undefined {
-	// An explicit malformed/foreign value must never downgrade to legacy identity.
-	if ("locator" in record) return validWindowLocator(record.locator) ? record.locator : undefined;
+function tmuxRecord(record: WindowRecord): TmuxLocator | undefined {
+	if ("locator" in record) return tmuxLocator(record.locator) ? (record.locator as TmuxLocator) : undefined;
 	if (typeof record.windowId !== "string" || typeof record.windowName !== "string") return undefined;
 	const locator = { adapter: "tmux", version: 1, kind: "window", id: record.windowId, name: record.windowName };
-	return validWindowLocator(locator) ? locator : undefined;
-}
-export function sameWindowLocator(a: WindowRecord, b: WindowRecord): boolean {
-	const herdrA = herdrLocator(recordLocator(a));
-	const herdrB = herdrLocator(recordLocator(b));
-	if (herdrA || herdrB) return !!herdrA && !!herdrB && sameHerdrLocator(herdrA, herdrB);
-	const left = recordLocator(a) as TmuxLocator | undefined;
-	const right = recordLocator(b) as TmuxLocator | undefined;
-	return !!left && !!right && left.id === right.id && left.name === right.name;
-}
-export function windowTerms(record: WindowRecord): { noun: string; host: string; group: string } {
-	return herdrLocator(record.locator)
-		? { noun: "tab", host: "Herdr", group: "workspace" }
-		: { noun: "window", host: "tmux", group: "session" };
-}
-/** Public display/result fields are presentation only, never routing authority. */
-export function windowPresentation(record: WindowRecord): { windowId: string; windowName: string } {
-	const herdr = herdrLocator(recordLocator(record)) ?? herdrPaneLocator(record.locator);
-	if (herdr) return { windowId: herdr.tab, windowName: herdr.name };
-	const own = recordLocator(record) as TmuxLocator | undefined;
-	return { windowId: own?.id ?? "not-recorded", windowName: own?.name ?? "not-recorded" };
-}
-/** Upgrade released records on read/write without retaining duplicate routing authority. */
-export function locatedRecord<T extends WindowRecord>(record: T): T {
-	const locator = recordLocator(record);
-	if (!locator) throw new Error("invalid or unsupported delegate window locator");
-	const copy = { ...record, locator };
-	delete copy.windowId;
-	delete copy.windowName;
-	return copy;
+	return tmuxLocator(locator) ? (locator as TmuxLocator) : undefined;
 }
 export function matchWindow(windows: readonly TmuxWindow[], record: WindowRecord): TmuxWindow | undefined {
-	if (herdrLocator(recordLocator(record))) return undefined;
-	const own = recordLocator(record) as TmuxLocator | undefined;
+	const own = tmuxRecord(record);
 	return own ? windows.find((window) => window.id === own.id && window.name === own.name) : undefined;
 }
 function validPane(value: unknown): value is PaneLocator {
@@ -116,37 +77,6 @@ export function paneLocator(value: unknown): PaneLocator | undefined {
 	}
 	return validPane(value) ? { ...value } : undefined;
 }
-/** Accept released telemetry on read, but always publish an adapter envelope. */
-export function normalizeLiveLocator(value: unknown): LivePaneLocator | undefined {
-	const herdr = herdrPaneLocator(value);
-	if (herdr) return { ...herdr };
-	const pane = paneLocator(value);
-	return pane ? liveLocator(pane) : undefined;
-}
-export function runningLiveLocator(value: unknown): LivePaneLocator | undefined {
-	const herdr = herdrPaneLocator(value);
-	if (herdr) return { ...herdr };
-	const pane = paneLocator(value);
-	return pane && !pane.exited ? liveLocator(pane) : undefined;
-}
-export function sameLiveLocator(a: unknown, b: unknown): boolean {
-	const h = herdrPaneLocator(a),
-		other = herdrPaneLocator(b);
-	if (h || other) return !!h && !!other && sameHerdrPane(h, other);
-	const left = paneLocator(a);
-	const right = paneLocator(b);
-	return (
-		!!left &&
-		!!right &&
-		left.socket === right.socket &&
-		left.serverPid === right.serverPid &&
-		left.serverStarted === right.serverStarted &&
-		left.paneId === right.paneId &&
-		left.windowId === right.windowId &&
-		left.windowName === right.windowName &&
-		left.exited === right.exited
-	);
-}
 
 /** Project one verified live pane onto its current window without exposing locator internals. */
 export function currentLiveWindow(listing: PaneListing, value: LivePaneLocator): WindowRecord | undefined {
@@ -161,21 +91,16 @@ export function currentLiveWindow(listing: PaneListing, value: LivePaneLocator):
 	)
 		return undefined;
 	const pane = listing.panes.get(locator.paneId);
-	return pane && !pane.exited ? { locator: windowLocator({ id: pane.windowId, name: pane.windowName }) } : undefined;
+	return pane && !pane.exited
+		? { locator: tmuxWindowLocator({ id: pane.windowId, name: pane.windowName }) }
+		: undefined;
 }
-export type VerifiedLiveWindow = WindowRecord & { paneTarget: string };
-export function sameVerifiedWindow(a: VerifiedLiveWindow, b: VerifiedLiveWindow): boolean {
-	return (
-		(herdrPaneLocator(a.locator) ? sameLiveLocator(a.locator, b.locator) : sameWindowLocator(a, b)) &&
-		a.paneTarget === b.paneTarget
-	);
-}
+
 /** Same-server, exact-pane, then id/name listing; preserves the existing three asks. */
-export async function verifyPaneWindow(
+export async function verifyTmuxPaneWindow(
 	tmux: TmuxClient,
 	value: LivePaneLocator,
 ): Promise<VerifiedLiveWindow | undefined> {
-	if (herdrPaneLocator(value)) return tmux.verifyLivePane?.(value);
 	const locator = paneLocator(value);
 	if (!locator) return undefined;
 	const sameServer = (pane: PaneLocator): boolean =>
@@ -186,10 +111,57 @@ export async function verifyPaneWindow(
 	if (!own || !sameServer(own)) return undefined;
 	const pane = await tmux.inspectPane?.(locator.paneId);
 	if (!pane || pane.exited || !sameServer(pane)) return undefined;
-	const record = { locator: windowLocator({ id: pane.windowId, name: pane.windowName }) };
+	const record = { locator: tmuxWindowLocator({ id: pane.windowId, name: pane.windowName }) };
 	const windows = await tmux.listWindows().catch(() => undefined);
 	return windows && matchWindow(windows, record) ? { ...record, paneTarget: pane.paneId } : undefined;
 }
-export function livePaneTarget(value: LivePaneLocator): string | undefined {
-	return herdrPaneLocator(value)?.pane ?? paneLocator(value)?.paneId;
-}
+
+export const tmuxLocators: LocatorRules = {
+	id: "tmux",
+	terms: { noun: "window", host: "tmux", group: "session" },
+	retainedAfterExit: false,
+	requiresSessionGuard: false,
+	ancestorReturnHint: false,
+	liveIsWindow: false,
+	window: tmuxLocator,
+	normalizeLive(value: unknown): LivePaneLocator | undefined {
+		const pane = paneLocator(value);
+		return pane ? liveLocator(pane) : undefined;
+	},
+	runningLive(value: unknown): LivePaneLocator | undefined {
+		const pane = paneLocator(value);
+		return pane && !pane.exited ? liveLocator(pane) : undefined;
+	},
+	sameWindow(a: object, b: object): boolean {
+		const left = a as TmuxLocator,
+			right = b as TmuxLocator;
+		return left.id === right.id && left.name === right.name;
+	},
+	sameLive(a: object, b: object): boolean {
+		const left = paneLocator(a),
+			right = paneLocator(b);
+		return (
+			!!left &&
+			!!right &&
+			left.socket === right.socket &&
+			left.serverPid === right.serverPid &&
+			left.serverStarted === right.serverStarted &&
+			left.paneId === right.paneId &&
+			left.windowId === right.windowId &&
+			left.windowName === right.windowName &&
+			left.exited === right.exited
+		);
+	},
+	presentation(value: object): { windowId: string; windowName: string } {
+		const own = value as TmuxLocator;
+		return { windowId: own.id, windowName: own.name };
+	},
+	paneTarget(value: object): string | undefined {
+		return paneLocator(value)?.paneId;
+	},
+	autoExitText(on: boolean): string {
+		return on
+			? "on — the delegate closes its window after a normal completion unless the user took over there"
+			: "off — the window stays open after the result";
+	},
+};

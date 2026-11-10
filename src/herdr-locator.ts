@@ -1,4 +1,5 @@
 // Herdr pane/tab ids survive restoration; terminal_id is the incarnation fence.
+import type { LivePaneLocator, LocatorRules } from "./locator-rules.ts";
 export type HerdrLocator = {
 	adapter: "herdr";
 	version: 1;
@@ -62,3 +63,35 @@ export function sameHerdrLocator(a: HerdrLocator, b: HerdrLocator): boolean {
 		a.launchFile === b.launchFile
 	);
 }
+
+export const herdrLocators: LocatorRules = {
+	id: "herdr",
+	terms: { noun: "tab", host: "Herdr", group: "workspace" },
+	retainedAfterExit: true,
+	requiresSessionGuard: true,
+	ancestorReturnHint: true,
+	liveIsWindow: true,
+	window: (value: unknown) => !!herdrLocator(value),
+	normalizeLive(value: unknown): LivePaneLocator | undefined {
+		const own = herdrPaneLocator(value);
+		return own ? { ...own } : undefined;
+	},
+	runningLive(value: unknown): LivePaneLocator | undefined {
+		const own = herdrPaneLocator(value);
+		return own ? { ...own } : undefined;
+	},
+	sameWindow: (a: object, b: object) => sameHerdrLocator(a as HerdrLocator, b as HerdrLocator),
+	sameLive: (a: object, b: object) => sameHerdrPane(a as HerdrPaneLocator, b as HerdrPaneLocator),
+	presentation(value: object): { windowId: string; windowName: string } {
+		const own = value as HerdrLocator | HerdrPaneLocator;
+		return { windowId: own.tab, windowName: own.name };
+	},
+	paneTarget(value: object): string | undefined {
+		return herdrPaneLocator(value)?.pane;
+	},
+	autoExitText(on: boolean): string {
+		return on
+			? "on — Pi exits after a normal completion; a clean exit closes its Herdr pane (errors retain it)"
+			: "off — Pi and its Herdr tab stay open after the result";
+	},
+};

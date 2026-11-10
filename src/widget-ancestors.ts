@@ -1,17 +1,17 @@
 // Read-only exact-session ancestry and live navigation. No adoption or resume.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { herdrPaneLocator } from "./herdr-locator.ts";
+import type { DelegateHost } from "./host.ts";
 import { type Identity, readIdentity } from "./identity.ts";
-import { locateSession, recordedName } from "./results.ts";
-import { matchesSessionOwner, sessionIsOwned } from "./session-owner.ts";
 import {
 	sameLiveLocator,
 	sameVerifiedWindow,
-	type TmuxClient,
 	type VerifiedLiveWindow,
 	verifyPaneWindow,
+	windowFacts,
 	windowPresentation,
-} from "./tmux.ts";
+} from "./locators.ts";
+import { locateSession, recordedName } from "./results.ts";
+import { matchesSessionOwner, sessionIsOwned } from "./session-owner.ts";
 import { readTreeDisplay, type TreeEntry } from "./tree-registry.ts";
 import { LiveActivityReader, type LiveLocator } from "./widget-live.ts";
 import { WidgetTitleMirrors } from "./widget-title.ts";
@@ -112,14 +112,14 @@ function sameTarget(a: LiveLocator, b: LiveLocator): boolean {
 }
 
 /** Positive own-server + exact target-pane + id/name listing, not a launch snapshot. */
-export async function verifyLiveWindow(tmux: TmuxClient, live: LiveLocator): Promise<VerifiedLiveWindow | undefined> {
+export async function verifyLiveWindow(tmux: DelegateHost, live: LiveLocator): Promise<VerifiedLiveWindow | undefined> {
 	return verifyPaneWindow(tmux, live.locator);
 }
 
 export async function switchAncestor(
 	ctx: ExtensionContext,
 	sessionId: string,
-	tmux: TmuxClient,
+	tmux: DelegateHost,
 	assertActive: () => void,
 	reader: LiveActivityReader = new LiveActivityReader(),
 ): Promise<void> {
@@ -146,6 +146,6 @@ export async function switchAncestor(
 	if ("text" in shown) throw shown.cause ?? new Error(shown.brief);
 	assertActive();
 	if (!shown.shown) return;
-	const hint = herdrPaneLocator(pane.locator) ? ` · ${shown.returnHint}` : "";
+	const hint = windowFacts(pane).ancestorReturnHint ? ` · ${shown.returnHint}` : "";
 	ctx.ui.notify(`delegate: switched to ancestor ${sessionId} (${windowPresentation(pane).windowId})${hint}`, "info");
 }

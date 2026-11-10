@@ -14,6 +14,7 @@ import {
 	navigationVerbs,
 	type OpenedWindow,
 	type OwnSession,
+	ownsTmuxLocator,
 	type PaneListing,
 	type PaneLocator,
 	parseTmuxVersion,
@@ -26,6 +27,8 @@ import {
 	type WindowSpec,
 	type WindowTarget,
 } from "../src/tmux.ts";
+import { liveLocator, verifyTmuxPaneWindow } from "../src/tmux-locator.ts";
+import { tmuxPaneStates, tmuxStates } from "../src/tmux-state.ts";
 import type { WindowPlacement } from "../src/window-placement.ts";
 
 // The tmux calls (`insideTmux`, `ownSession`, `clientFor`, `switchTo`, `capture`)
@@ -33,6 +36,26 @@ import type { WindowPlacement } from "../src/window-placement.ts";
 // adapter's protocol over them, so tests that set or replace a call still see it used.
 export class FakeTmux implements TmuxClient, TmuxNavigation {
 	private readonly verbs = navigationVerbs(this);
+	readonly id = "tmux";
+	closeTaskless(opened: OpenedWindow): Promise<void> {
+		return this.kill(opened.id).catch(() => {});
+	}
+	ownsLocator = ownsTmuxLocator;
+	readonly usesWindowPlacement = true;
+	readonly requiresSessionGuard = false;
+	states(strict = false) {
+		return tmuxStates(this, strict);
+	}
+	paneStates() {
+		return tmuxPaneStates(this);
+	}
+	async observeLivePane() {
+		const pane = await this.inspectPane();
+		return pane ? liveLocator(pane) : undefined;
+	}
+	verifyLivePane(value: object) {
+		return verifyTmuxPaneWindow(this, value);
+	}
 	/** Whether the session looks like it runs inside tmux. */
 	inside = true;
 	/** The session the parent's pane is in. */

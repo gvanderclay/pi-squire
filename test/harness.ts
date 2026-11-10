@@ -242,7 +242,7 @@ export type SessionOptions = {
 	/** Shared server for multi-instance tree accounting tests. */
 	tmux?: FakeTmux;
 	/** Select a real second-backend/router fixture without changing the tmux model. */
-	multiplexer?: import("../src/tmux.ts").TmuxClient;
+	multiplexer?: import("../src/host.ts").DelegateHost;
 	/** Install a real mail provider instead of the send/scan stubs. */
 	mailProvider?: (pi: ExtensionAPI) => void;
 	/** Exercise the opposite extension load order. */

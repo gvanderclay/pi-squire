@@ -5,12 +5,12 @@
 // their durable locator names, independent of today's choice.
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createHerdrClient } from "./herdr.ts";
-import { herdrLocator, herdrPaneLocator } from "./herdr-locator.ts";
+import type { DelegateHost, OpenedWindow, WindowSpec, WindowTarget } from "./host.ts";
+import { recordLocator, type WindowRecord } from "./locators.ts";
 import { type Multiplexer, multiplexerSetting, squireSettingsFile as settingsFile } from "./settings.ts";
-import { createTmuxClient, type TmuxClient, type WindowRecord, type WindowSpec, type WindowTarget } from "./tmux.ts";
-import { validWindowLocator } from "./tmux-locator.ts";
+import { createTmuxClient } from "./tmux.ts";
 import type { WindowPlacement } from "./window-placement.ts";
-import { askToClose, askWindowStates, type ClosableStates, windowStates } from "./window-state.ts";
+import { type ClosableStates, windowStates } from "./window-state.ts";
 
 export { type Multiplexer, multiplexerSetting };
 /** The backend that opened this delegate, set by its launcher; a delegate's tree keeps its root's choice. */
@@ -46,55 +46,43 @@ export function chooseMultiplexer(input: {
 	);
 }
 
-async function observe(client: TmuxClient, strict: boolean): Promise<ClosableStates> {
+async function observe(client: DelegateHost, strict: boolean): Promise<ClosableStates> {
 	try {
-		return await (strict ? askToClose(client) : askWindowStates(client));
+		return await client.states(strict);
 	} catch (error) {
-		// Preserve this backend\'s original close refusal without preventing a
-		// different, positively observed backend from closing its own resource.
 		return { ...windowStates(undefined), close: () => Promise.reject(error) };
 	}
 }
 
-type Backends = { tmux: TmuxClient; herdr: TmuxClient; agentDir: () => string; inherited: () => string | undefined };
-
-/** Launch choice and actual host, from environment-only presence checks (never a server call). */
-function selection(own: Backends): { choice(): Multiplexer; host(): TmuxClient | undefined } {
-	const inTmux = (): boolean => own.tmux.unavailable() === undefined;
-	const inHerdr = (): boolean => own.herdr.unavailable() === undefined;
-	return {
-		choice: () =>
-			chooseMultiplexer({ agentDir: own.agentDir(), inherited: own.inherited(), inTmux: inTmux(), inHerdr: inHerdr() }),
-		/**
-		 * The backend that actually hosts this Pi, for read-only own-pane telemetry.
-		 * Not the launch setting: a tmux-hosted Pi with a Herdr setting is still in
-		 * tmux. A delegate's launcher-recorded backend is reliable host evidence;
-		 * otherwise exactly one present context decides, and both is ambiguous.
-		 */
-		host: () => {
-			const launcher = own.inherited();
-			if (launcher === "tmux") return inTmux() ? own.tmux : undefined;
-			if (launcher === "herdr") return inHerdr() ? own.herdr : undefined;
-			const t = inTmux();
-			if (t === inHerdr()) return undefined;
-			return t ? own.tmux : own.herdr;
-		},
-	};
+function tag(value: object | undefined): string | undefined {
+	return value && "adapter" in value && typeof value.adapter === "string" ? value.adapter : undefined;
 }
 
-export function createMultiplexer(
-	tmux = createTmuxClient() as TmuxClient,
-	herdr = createHerdrClient(),
-	agentDir = getAgentDir,
-	inherited: () => string | undefined = () => process.env[MULTIPLEXER_ENV],
-): TmuxClient {
-	const { choice, host } = selection({ tmux, herdr, agentDir, inherited });
-	const selected = (): TmuxClient => (choice() === "herdr" ? herdr : tmux);
-	const navigation = (target: WindowTarget): TmuxClient => {
-		if (herdrLocator(target.locator) || herdrPaneLocator(target.locator)) return herdr;
-		if ((target.locator && !validWindowLocator(target.locator)) || !/^@[0-9]+$/.test(target.windowId))
+/** N-host routing. A locator can only reach its registered owner; unknown tags never fall back. */
+export function createHostRouter(
+	adapters: readonly DelegateHost[],
+	choice: () => string,
+	host: () => DelegateHost | undefined,
+	unselectedRefusal: string,
+): DelegateHost {
+	const byId = new Map(adapters.map((adapter) => [adapter.id, adapter]));
+	if (byId.size !== adapters.length) throw new Error("duplicate delegate host id");
+	const selected = (): DelegateHost => {
+		const found = byId.get(choice());
+		if (!found) throw new Error("unsupported delegate host");
+		return found;
+	};
+	const owner = (locator: object | undefined): DelegateHost | undefined => {
+		const adapter = byId.get(tag(locator) ?? "");
+		return adapter?.ownsLocator(locator) ? adapter : undefined;
+	};
+	const navigation = (target: WindowTarget): DelegateHost => {
+		// Released navigation callers can still supply only a tmux window id.
+		const locator = target.locator ?? recordLocator({ windowId: target.windowId, windowName: "" });
+		const found = owner(locator);
+		if (!found?.ownsLocator(locator, target))
 			throw new Error("no verified delegate navigation locator; target changed or unavailable");
-		return tmux;
+		return found;
 	};
 	function unavailable(): string | undefined;
 	function unavailable(check: true): Promise<string | undefined>;
@@ -107,52 +95,132 @@ export function createMultiplexer(
 		}
 	}
 	return {
-		openWindow: (spec: WindowSpec, placement: WindowPlacement, companion: string) =>
-			tmux.openWindow(spec, placement, companion),
-		listWindows: () => tmux.listWindows(),
-		listPanes: () => tmux.listPanes(),
-		inspectPane: (pane?: string) => tmux.inspectPane?.(pane) ?? Promise.resolve(undefined),
-		observeLivePane: () => {
-			const own = host();
-			return own?.observeLivePane?.() ?? own?.inspectPane?.() ?? Promise.resolve(undefined);
+		get id(): string {
+			return selected().id;
 		},
-		verifyLivePane: (locator: object) => herdr.verifyLivePane?.(locator) ?? Promise.resolve(undefined),
-		kill: (id: string) => tmux.kill(id),
+		get windowNoun(): string | undefined {
+			return selected().windowNoun;
+		},
+		get usesWindowPlacement(): boolean {
+			return selected().usesWindowPlacement;
+		},
+		get requiresSessionGuard(): boolean {
+			return selected().requiresSessionGuard;
+		},
+		ownsLocator: (value: unknown, target?: WindowTarget) =>
+			!!value && typeof value === "object" && owner(value)?.ownsLocator(value, target) === true,
+		forLaunch: selected,
+		unavailable,
+		openWindow: (spec: WindowSpec, placement: WindowPlacement, companion: string) =>
+			selected().openWindow(spec, placement, companion),
+		closeTaskless: (opened: OpenedWindow) =>
+			navigation({ windowId: opened.id, locator: opened.locator }).closeTaskless(opened),
+		observeLivePane: () => host()?.observeLivePane?.() ?? Promise.resolve(undefined),
+		verifyLivePane: (value: object) => owner(value)?.verifyLivePane?.(value) ?? Promise.resolve(undefined),
+		paneStates: () => navigationStates(adapters, owner),
 		get windowListRefusal(): string {
 			try {
 				return selected().windowListRefusal;
 			} catch {
-				return tmux.windowListRefusal;
+				return unselectedRefusal;
 			}
 		},
 		show: (target: WindowTarget, verify: () => Promise<boolean>) => navigation(target).show(target, verify),
 		peek: (target: WindowTarget) => navigation(target).peek(target),
-		forLaunch: selected,
-		unavailable,
-		async states(strict = false): Promise<ClosableStates> {
-			// Each backend fails independently: an unavailable Herdr cannot fabricate
-			// disappearance of a tmux record, or vice versa.
-			const [t, h] = await Promise.all([observe(tmux, strict), observe(herdr, strict)]);
-			const forRecord = (record: WindowRecord) =>
-				herdrLocator(record.locator) || herdrPaneLocator(record.locator) ? h : t;
-			return {
-				answered: t.answered || h.answered,
-				look: (record: WindowRecord) => forRecord(record).look(record),
-				state: (record: WindowRecord) => forRecord(record).state(record),
-				listed: (record: WindowRecord) => forRecord(record).listed(record),
-				close: (record: WindowRecord) => forRecord(record).close(record),
-			};
-		},
-		async guardSession(record: WindowRecord, session: { path: string; id: string }, launch: TmuxClient): Promise<void> {
-			// tmux-only resumes keep their behaviour; any Herdr involvement needs
-			// positive Herdr evidence that no tab already runs this session.
-			if (!herdrLocator(record.locator) && launch !== herdr) return;
-			if (!herdr.guardSession) throw new Error("this Herdr adapter cannot check restored tabs; resume refused");
-			await herdr.guardSession(record, session, launch);
-		},
-		// Herdr startup must never recover an ambiguous tab by name or pane id.
-		// Successful opens publish their terminal-fenced locator in the parent.
-		currentWindow: () =>
-			host() === herdr ? Promise.resolve(undefined) : (tmux.currentWindow?.() ?? Promise.resolve(undefined)),
+		states: (strict?: boolean) => observeHosts(adapters, owner, strict),
+		guardSession: (record: WindowRecord, session: { path: string; id: string }, launch: DelegateHost) =>
+			guardHosts(owner, record, session, launch),
+		currentWindow: () => recoverWindow(adapters, host()),
 	};
+}
+
+/** Keep the released tmux navigation snapshot available even when this Pi is on another host. */
+async function navigationStates(
+	adapters: readonly DelegateHost[],
+	owner: (locator: object | undefined) => DelegateHost | undefined,
+): Promise<import("./window-state.ts").PaneStates> {
+	const snapshots = await Promise.all(adapters.map((adapter) => adapter.paneStates?.()));
+	const states = await observeHosts(adapters, owner);
+	return { ...states, listing: snapshots.find((snapshot) => snapshot?.listing !== undefined)?.listing };
+}
+
+/** Startup recovery is a positive observation, not a launch fallback. */
+async function recoverWindow(
+	adapters: readonly DelegateHost[],
+	host: DelegateHost | undefined,
+): Promise<{ id: string; name: string } | undefined> {
+	if (host) return host.currentWindow?.();
+	// Released roots without unambiguous host evidence still asked the sole
+	// recovery-capable adapter. Do not adopt when several adapters can recover.
+	const capable = adapters.filter((adapter) => adapter.currentWindow !== undefined);
+	return capable.length === 1 ? capable[0].currentWindow?.() : undefined;
+}
+
+async function guardHosts(
+	owner: (locator: object | undefined) => DelegateHost | undefined,
+	record: WindowRecord,
+	session: { path: string; id: string },
+	launch: DelegateHost,
+): Promise<void> {
+	const involved = new Set([owner(recordLocator(record)), launch]);
+	for (const adapter of involved) {
+		if (!adapter?.requiresSessionGuard) continue;
+		if (!adapter.guardSession) throw new Error("this delegate host cannot check restored sessions; resume refused");
+		await adapter.guardSession(record, session, launch);
+	}
+}
+
+async function observeHosts(
+	adapters: readonly DelegateHost[],
+	owner: (locator: object | undefined) => DelegateHost | undefined,
+	strict = false,
+): Promise<ClosableStates> {
+	const observations = new Map(
+		await Promise.all(adapters.map(async (adapter) => [adapter, await observe(adapter, strict)] as const)),
+	);
+	const unknown = {
+		...windowStates(undefined),
+		close: (): Promise<never> =>
+			Promise.reject(new Error("invalid or unsupported delegate window locator; close refused")),
+	};
+	const forRecord = (record: WindowRecord): ClosableStates => {
+		const adapter = owner(record.locator ?? recordLocator(record));
+		return (adapter && observations.get(adapter)) || unknown;
+	};
+	return {
+		answered: [...observations.values()].some((state) => state.answered),
+		look: (record: WindowRecord) => forRecord(record).look(record),
+		state: (record: WindowRecord) => forRecord(record).state(record),
+		listed: (record: WindowRecord) => forRecord(record).listed(record),
+		close: (record: WindowRecord) => forRecord(record).close(record),
+	};
+}
+
+/** Environment evidence for the actual host is independent of the call-time launch setting. */
+export function createMultiplexer(
+	tmux = createTmuxClient(),
+	herdr: DelegateHost = createHerdrClient(),
+	agentDir = getAgentDir,
+	inherited: () => string | undefined = () => process.env[MULTIPLEXER_ENV],
+): DelegateHost {
+	const adapters = [tmux, herdr];
+	const present = (): DelegateHost[] => adapters.filter((adapter) => adapter.unavailable() === undefined);
+	const host = (): DelegateHost | undefined => {
+		const launcher = inherited();
+		const found = present();
+		if (adapters.some((adapter) => adapter.id === launcher)) return found.find((adapter) => adapter.id === launcher);
+		return found.length === 1 ? found[0] : undefined;
+	};
+	return createHostRouter(
+		adapters,
+		() =>
+			chooseMultiplexer({
+				agentDir: agentDir(),
+				inherited: inherited(),
+				inTmux: tmux.unavailable() === undefined,
+				inHerdr: herdr.unavailable() === undefined,
+			}),
+		host,
+		tmux.windowListRefusal,
+	);
 }

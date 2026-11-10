@@ -1,11 +1,14 @@
-// The test stand-in for tmux, one of the package's two injected seams. It records the
+// The tmux-specific feature-test fixture, not the narrow adapter conformance model.
+// See memory-adapter.ts and adapter-contract.ts for that executable common contract.
+// This stand-in is one of the package's two injected seams. It records the
 // windows opened (name, cwd, argv, env) and the kills, and lists windows as
 // the test sets them. It models sessions too: which windows each holds, a
 // companion session created on demand and gone with its last window, and
 // `detach-on-destroy` per session. The model is high level: placement is
 // decided here from project companion names and ownership, not by parsing the
 // real client's tmux arguments or exact-match targets (`test/tmux.test.ts`
-// covers those against a stub `tmux`). The real tmux is exercised by hand, never here.
+// covers those against a stub `tmux`). Real tmux also runs adapter-conformance.test.ts
+// and the opt-in tmux-real.test.ts placement/environment checks.
 import {
 	companionCandidate,
 	navigationVerbs,

@@ -2,11 +2,10 @@
 // Rows are keyed by native session id, never by a mutable title or launch id.
 import { isStarted, locateSession, type Results, recordedName, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { sessionIsOwned } from "./session-owner.ts";
-import type { TmuxWindow } from "./tmux.ts";
 import type { Activity } from "./widget-activity.ts";
 import { WidgetTitleMirrors } from "./widget-title.ts";
 import { WidgetTitleFiles } from "./widget-title-file.ts";
-import { type WindowState, type WindowStates, windowStates } from "./window-state.ts";
+import type { WindowState, WindowStates } from "./window-state.ts";
 
 export type DelegateRow = {
 	key: string;
@@ -21,7 +20,7 @@ export type DelegateRow = {
 	title: string | undefined;
 	state: string;
 	running: boolean;
-	window: "open" | "gone" | "unknown";
+	window: WindowState;
 	model: string;
 	/** Transcript mtime is a last-active hint, not proof of tool activity. */
 	lastActive: number | undefined;
@@ -37,16 +36,6 @@ type Metadata = {
 };
 type Located = { locator: string; path: string };
 type Entry = { record: StartedRecorded; row: DelegateRow };
-
-/** Callers may hand over a raw window listing; the match rule stays in `window-state.ts`. */
-function asStates(windows: WindowStates | readonly TmuxWindow[] | undefined): WindowStates {
-	return windows !== undefined && "look" in windows ? windows : windowStates(windows);
-}
-
-/** The row keeps its own word for a running window. */
-function rowWindow(state: WindowState): DelegateRow["window"] {
-	return state === "running" ? "open" : state;
-}
 
 function candidates(results: Results): StartedRecorded[] {
 	const sessions = new Map<string, StartedRecorded>();
@@ -92,23 +81,22 @@ export class DirectDelegateView {
 
 	read(
 		results: Results,
-		windows: WindowStates | readonly TmuxWindow[] | undefined,
+		windows: WindowStates,
 		sessionDir: string | undefined,
 		viewport: MetadataViewport = { offset: 0, limit: 3 },
 		currentWindows: ReadonlyMap<string, import("./tmux.ts").WindowRecord> = new Map(),
 		visibleKeys?: ReadonlySet<string>,
 	): DelegateRow[] {
 		const running: Set<string> = new Set(results.running().map((record) => record.id));
-		const states: WindowStates = asStates(windows);
 		const entries: Entry[] = [];
 		for (const saved of candidates(results)) {
 			const current = currentWindows.get(saved.id);
 			const record: StartedRecorded = current ? { ...saved, ...current } : saved;
 			if (record.gone && !record.result && !current) continue;
 			// A verified exact live pane wins over list-windows pane_dead for another active pane.
-			const window = current ? "open" : rowWindow(states.state(record));
+			const window: WindowState = current ? "running" : windows.state(record);
 			const working: boolean = running.has(record.id);
-			if (window === "gone" || (!working && ((!record.result && !current) || window !== "open"))) continue;
+			if (window === "gone" || (!working && ((!record.result && !current) || window !== "running"))) continue;
 			entries.push({ record, row: this.row(record, working, window) });
 		}
 		const ordered: Entry[] = [

@@ -18,6 +18,7 @@ import {
 	WidgetTitleMirrors,
 } from "../src/widget-title.ts";
 import { WidgetTitleFiles } from "../src/widget-title-file.ts";
+import { UNASKED, windowStates } from "../src/window-state.ts";
 import { agentDir, cleanup, resetRoot, root } from "./harness.ts";
 import { windowFields } from "./window-record.ts";
 
@@ -157,16 +158,20 @@ test("direct adapter is read-only, deduplicates resumes by stable id, excludes a
 		session: "work",
 	}));
 	const view = new DirectDelegateView();
-	const rows = view.read(source, windows, undefined);
+	const rows = view.read(source, windowStates(windows), undefined);
 	assert.deepEqual(
 		rows.map((r) => r.key),
 		["stable", "run", "failed", "done"],
 	);
 	assert.equal(rows[0].launchId, "new");
+	assert.ok(
+		rows.every((row) => row.window === "running"),
+		"rows use adapter states, not the old open alias",
+	);
 	assert.equal(rows[2].state, "failed");
 	assert.equal(JSON.stringify(records), before);
 	assert.deepEqual(
-		view.read(source, undefined, undefined).map((r) => r.key),
+		view.read(source, UNASKED, undefined).map((r) => r.key),
 		["stable", "run"],
 	);
 });
@@ -185,7 +190,7 @@ test("widget names remove only their own nonempty agent prefix", () => {
 
 test("responsive style B keeps identity/state, hides model before active-age and clamps wide/malicious names at every width", () => {
 	const source = results([record("identity")]);
-	const rows = new DirectDelegateView().read(source, undefined, undefined);
+	const rows = new DirectDelegateView().read(source, UNASKED, undefined);
 	rows[0].title = "Native title";
 	rows[0].lastActive = 1000;
 	const full = renderDelegateWidget(rows, 3, 120, theme, 1000).join("\n");
@@ -243,7 +248,7 @@ test("metadata work is capped after full eligibility/order, with an offset seam 
 			clear: () => {},
 		},
 	});
-	let rows = view.read(source, windows, undefined);
+	let rows = view.read(source, windowStates(windows), undefined);
 	assert.equal(rows.length, 16, "overflow/selection retain every eligible direct child");
 	assert.deepEqual(read, ["11", "10", "9"]);
 	assert.deepEqual(mirrored, read);
@@ -253,14 +258,14 @@ test("metadata work is capped after full eligibility/order, with an offset seam 
 	assert.match(renderDelegateWidget(rows, 3, 100, theme).join("\n"), /\+13 more delegates/);
 
 	read.length = mirrored.length = located.length = 0;
-	rows = view.read(source, windows, undefined);
+	rows = view.read(source, windowStates(windows), undefined);
 	assert.deepEqual(located, [], "successful path lookup is cached in the view");
 	assert.deepEqual(read, ["11", "10", "9"]);
 	assert.deepEqual(mirrored, read);
 
 	read.length = mirrored.length = 0;
 	const keys = rows.map((row) => row.key);
-	rows = view.read(source, windows, undefined, { offset: 3, limit: 2 });
+	rows = view.read(source, windowStates(windows), undefined, { offset: 3, limit: 2 });
 	assert.deepEqual(
 		rows.map((row) => row.key),
 		keys,
@@ -271,7 +276,7 @@ test("metadata work is capped after full eligibility/order, with an offset seam 
 	assert.deepEqual(located, read);
 
 	read.length = mirrored.length = located.length = 0;
-	rows = view.read(source, windows, undefined, { offset: 0, limit: 0 });
+	rows = view.read(source, windowStates(windows), undefined, { offset: 0, limit: 0 });
 	assert.equal(rows.length, 16);
 	assert.deepEqual(read, []);
 	assert.deepEqual(mirrored, []);
@@ -293,30 +298,30 @@ test("view path cache avoids directory lookup but does not cache titles; locator
 	});
 	const source = results([r]);
 	writeFileSync(path, transcript("First", "cache"));
-	assert.equal(view.read(source, undefined, "first-dir")[0].title, "First");
+	assert.equal(view.read(source, UNASKED, "first-dir")[0].title, "First");
 	assert.equal(calls, 1);
 	appendFileSync(path, `${JSON.stringify({ type: "session_info", name: "Fresh append" })}\n`);
-	assert.equal(view.read(source, undefined, "first-dir")[0].title, "Fresh append");
+	assert.equal(view.read(source, UNASKED, "first-dir")[0].title, "Fresh append");
 	assert.equal(calls, 1, "native append refreshes without relisting the directory");
 	writeFileSync(`${path}.new`, transcript("Replaced file", "cache"));
 	renameSync(`${path}.new`, path);
-	assert.equal(view.read(source, undefined, "first-dir")[0].title, "Replaced file");
+	assert.equal(view.read(source, UNASKED, "first-dir")[0].title, "Replaced file");
 	assert.equal(calls, 1, "file-identity change is handled by the reader, not directory lookup");
 	renameSync(path, moved);
 	current = moved;
-	assert.equal(view.read(source, undefined, "first-dir")[0].title, undefined);
-	assert.equal(view.read(source, undefined, "first-dir")[0].title, "Replaced file");
+	assert.equal(view.read(source, UNASKED, "first-dir")[0].title, undefined);
+	assert.equal(view.read(source, UNASKED, "first-dir")[0].title, "Replaced file");
 	assert.equal(calls, 2, "missing cached file invalidates the path");
-	view.read(source, undefined, "other-dir");
+	view.read(source, UNASKED, "other-dir");
 	assert.equal(calls, 3, "fallback storage locator changes invalidate the cache");
 	r.sessionPath = moved;
-	view.read(source, undefined, "other-dir");
+	view.read(source, UNASKED, "other-dir");
 	assert.equal(calls, 4, "recorded locator changes invalidate the cache");
 	const resumed = results([r, record("resumed", { sessionId: "cache", resumedFrom: "cache" })]);
-	assert.equal(view.read(resumed, undefined, "other-dir")[0].title, "Replaced file");
+	assert.equal(view.read(resumed, UNASKED, "other-dir")[0].title, "Replaced file");
 	assert.equal(calls, 5, "resumed launch has its own path-cache identity");
 	view.clear();
-	view.read(resumed, undefined, "other-dir");
+	view.read(resumed, UNASKED, "other-dir");
 	assert.equal(calls, 6, "session lifecycle clears path and metadata caches");
 });
 
@@ -330,10 +335,10 @@ test("missing paths are not negatively cached before the first native transcript
 		},
 	});
 	const source = results([record("flush")]);
-	assert.equal(view.read(source, undefined, undefined)[0].title, undefined);
+	assert.equal(view.read(source, UNASKED, undefined)[0].title, undefined);
 	path = join(root, "flushed.jsonl");
 	writeFileSync(path, transcript("First flush", "flush"));
-	assert.equal(view.read(source, undefined, undefined)[0].title, "First flush");
+	assert.equal(view.read(source, UNASKED, undefined)[0].title, "First flush");
 	assert.equal(calls, 2);
 });
 
@@ -404,7 +409,7 @@ test("transcript payload lines are filtered before JSON.parse and later native m
 });
 
 test("ANSI-themed long/wide rows fit every width without losing terminal state safety", () => {
-	const rows = new DirectDelegateView().read(results([record("ansi")]), undefined, undefined);
+	const rows = new DirectDelegateView().read(results([record("ansi")]), UNASKED, undefined);
 	rows[0].identity = "界👩‍💻-".repeat(30);
 	rows[0].title = "長い title ".repeat(30);
 	rows[0].lastActive = 1000;

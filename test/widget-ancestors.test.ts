@@ -15,6 +15,7 @@ import { DirectDelegateView } from "../src/widget-data.ts";
 import { LiveActivityReader } from "../src/widget-live.ts";
 import { renderDelegateWidget } from "../src/widget-render.ts";
 import { WidgetSelection } from "../src/widget-selection.ts";
+import { windowStates } from "../src/window-state.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, session, sessionDir, writeAgent } from "./harness.ts";
 import { mailSession, scan } from "./mail-harness.ts";
@@ -296,7 +297,7 @@ test("reopened gone direct child can be inspected at current window without rewr
 	const view = new DirectDelegateView();
 	const rows = view.read(
 		results,
-		[{ id: "@702", name: "new", session: "moved", exited: false }],
+		windowStates([{ id: "@702", name: "new", session: "moved", exited: false }]),
 		undefined,
 		{ offset: 0, limit: 0 },
 		new Map([["old", { windowId: "@702", windowName: "new" }]]),
@@ -322,7 +323,7 @@ test("breadcrumb excluded from cap, running indicator stays on one line, no empt
 		title: undefined,
 		state: "running",
 		running: true,
-		window: "open" as const,
+		window: "running" as const,
 		model: "m",
 		lastActive: undefined,
 		activity: { kind: "tools" as const, text: "reading very long command description…" },

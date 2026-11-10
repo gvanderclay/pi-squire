@@ -8,6 +8,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Adapter validation now runs one executable delegate-window contract against a
+  narrow in-memory model and real tmux on a private socket (skipped only when
+  tmux is absent). Backend-specific placement, naming races and command tests
+  remain separate. Widget rows now consume only window-state observations and
+  use `running` internally instead of the transitional `open` alias; visible
+  widget text and eligibility are unchanged. Internal-only fixtures migrate
+  deliberately in `test/widget-data.test.ts`, `test/widget-ancestors.test.ts`,
+  `test/widget-activity.test.ts` and `test/widget-render-navigation.test.ts`,
+  without weakening their existing behavioural assertions.
 - New delegate launch records, shared tree entries, and live-window telemetry store
   adapter-owned opaque locators instead of tmux-specific identity fields. Released
   `windowId`/`windowName` records remain readable for status, close, and resume;

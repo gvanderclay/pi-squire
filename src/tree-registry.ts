@@ -252,8 +252,12 @@ export function failedTree(token: Reservation, notOpened = false): void {
 	});
 }
 
-function applyRecord(entry: TreeEntry, record: Recorded): void {
+function applyRecord(state: TreeState, entry: TreeEntry, record: Recorded): void {
 	if (!isStarted(record)) return;
+	const sessionId: string = sessionIdOf(record);
+	// A close fence captured before the session id was recovered must follow it, or the next load rejects the fence.
+	for (const close of state.closes ?? [])
+		if (close.target === entry.sessionId && close.target !== sessionId) close.target = sessionId;
 	entry.launch = locatedRecord(record);
 	// Do not store semantic results or child processing facts in this index.
 	delete (entry.launch as Partial<typeof record>).result;
@@ -261,6 +265,7 @@ function applyRecord(entry: TreeEntry, record: Recorded): void {
 	delete (entry.launch as Partial<typeof record>).closed;
 	entry.phase = "started";
 	entry.createPending = false;
+	entry.sessionId = sessionId;
 	// A same-id manual reopen can positively locate a newer window. Historical
 	// parent facts must not overwrite that current locator at the next admission.
 	if (!recordLocator(entry) || (!entry.closed && (!entry.gone || !sessionIsOwned(entry.sessionId)))) {
@@ -294,7 +299,7 @@ export function publishTreeRecords(root: string, parent: string, records: Record
 				};
 				state.entries.push(entry);
 			}
-			if (entry?.identity.parent === parent) applyRecord(entry, record);
+			if (entry?.identity.parent === parent) applyRecord(state, entry, record);
 		}
 	});
 }
@@ -346,7 +351,7 @@ function reconcileFacts(state: TreeState): void {
 		const parent: string = entry.identity.parent;
 		if (!parents.has(parent)) parents.set(parent, readChildRecords(parent));
 		const record: Recorded | undefined = parents.get(parent)?.find((record) => record.id === entry.id);
-		if (record) applyRecord(entry, record);
+		if (record) applyRecord(state, entry, record);
 		reconcileTask(state, entry);
 		if (entry.phase === "reserved" && !processAlive(entry.ownerPid)) entry.phase = "not-started";
 	}

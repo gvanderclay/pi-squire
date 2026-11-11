@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 import { readIdentity } from "../src/identity.ts";
 import type { StartedRecorded } from "../src/results.ts";
-import { readTree, treePath } from "../src/tree-registry.ts";
+import { readTree, treePath, treeTransaction } from "../src/tree-registry.ts";
 import { agentDir, agentFile, cleanup, memorySession, resetRoot, writeAgent } from "./harness.ts";
 import { MemoryHost } from "./memory-host.ts";
 
@@ -105,13 +105,26 @@ test("a confirmed open keeps its task, assigned id and locator when session acco
 		assert.match(warning, /invalid tree registry/);
 		assert.ok(readIdentity(ASSIGNED), "the assigned id keeps its identity record");
 		writeFileSync(treePath(s.parent), saved);
+		// A fence captured while the entry still carried the launch id must follow the recovered id.
+		treeTransaction(s.parent, (state) => {
+			state.closes = [{ id: "close-before-recovery", target: record.id, entries: [record.id] }];
+		});
 		// A cap at the current known count makes the next admission reconcile the local record first.
 		writeFileSync(
 			join(agentDir, "squire", "settings.json"),
 			JSON.stringify({ maxDepth: 2, maxConcurrentDelegates: 1 }),
 		);
 		await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "over cap" }), /maxConcurrentDelegates/);
-		assert.equal(readTree(s.parent).entries.find((entry) => entry.id === record.id)?.phase, "started");
+		const registry = readTree(s.parent);
+		const entry = registry.entries.find((item) => item.id === record.id);
+		assert.ok(entry, "the next admission reconciled the local child");
+		assert.equal(entry.phase, "started");
+		assert.equal(entry.sessionId, ASSIGNED, "the entry recovers the assigned session id");
+		assert.notEqual(entry.sessionId, record.id, "the entry does not keep the launch id as its session");
+		assert.equal(entry.launch?.sessionId, ASSIGNED, "the saved launch keeps the assigned id");
+		assert.equal(record.sessionId, ASSIGNED, "the durable record still carries the assigned id");
+		assert.deepEqual(entry.locator, host.started[0].locator, "the locator survives recovery");
+		assert.equal(registry.closes?.[0]?.target, ASSIGNED, "the close fence follows the recovered id");
 	} finally {
 		if (saved !== "") writeFileSync(treePath(s.parent), saved);
 		await s.shutdown();

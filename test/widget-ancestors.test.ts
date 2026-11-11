@@ -80,8 +80,11 @@ test("five view shapes, root-to-parent chain, leaf cap0 and parent-first selecti
 	await grandLeaf.start();
 	const h = await launch(grand, "leaf", "deep");
 	await until(() => frame(grand).includes("deep"));
+	// A different session painting does not complete this overview's metadata reads.
+	await until(() => /^ {2}Delegates/.test(frame(root)));
 	assert.match(frame(root), /^ {2}Delegates/);
 	assert.doesNotMatch(frame(root), /second|deep|grand-leaf/);
+	await until(() => /^ {2}root › first \(you\)/.test(frame(coord)));
 	assert.match(frame(coord), /^ {2}root › first \(you\)/);
 	assert.doesNotMatch(frame(coord), /sibling|deep/);
 	await until(() => frame(grandLeaf).includes("(you)"));
@@ -115,6 +118,7 @@ test("five view shapes, root-to-parent chain, leaf cap0 and parent-first selecti
 	assert.doesNotMatch(frame(grand), /Delegates/);
 	assert.ok(grand.statuses.some(({ key, text }) => key === "delegate" && text?.includes("1 delegate running")));
 	assert.equal(grand.terminalKey("down"), true);
+	await until(() => /^ {2}root › sibling \(you\)/.test(frame(leaf)));
 	assert.equal(leaf.terminalKey("down"), true);
 	assert.match(frame(leaf), /▸ root › sibling \(you\)/);
 	assert.equal(h.identity?.parent, g.id);

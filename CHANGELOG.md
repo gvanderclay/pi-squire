@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Widget characterization fixtures wait for each view's first publication before
+  inspecting it. Fixed event-loop turns or a different session's rendered frame
+  cannot complete asynchronous breadcrumb metadata reads. All content/authority
+  assertions and existing wait bounds are unchanged; production behavior is unchanged.
+
 ## [0.22.1] - 2026-11-11
 
 ### Fixed

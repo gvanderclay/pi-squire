@@ -60,9 +60,11 @@ test("nested status views never broaden direct widget rows, completion barrier o
 	const worker = instance({ parent: w.id, tmux: owner.tmux, mode: "json" });
 	await worker.start();
 	scan(worker);
-	await settle();
+	// Each overview awaits its own metadata I/O; event-loop turns are not a paint barrier.
+	await frameMatches(owner, /direct/);
 	assert.match(frame(owner), /direct/);
 	assert.doesNotMatch(frame(owner), /grandchild/);
+	await frameMatches(coordinator, /grandchild/);
 	assert.match(frame(coordinator), /grandchild/);
 	const status = (await owner.toolCall("delegation_status", {})).structuredContent as {
 		delegations: { id: string; parent: string; canResume: boolean }[];
@@ -103,7 +105,7 @@ test("losing same-id runtimes cannot create widgets, overwrite native title mirr
 	const owner = instance();
 	owner.pi.setSessionName("Owner native name");
 	await launch(owner, "worker", "owned");
-	await settle();
+	await frameMatches(owner, /owned/);
 	const mirror = titleMirrorPath(owner.parent);
 	assert.equal(existsSync(mirror), true);
 	const saved = readFileSync(mirror, "utf8");
@@ -129,7 +131,7 @@ test("failed staged input still tears down widget observers and title publisher 
 	const child = instance({ parent: direct.id, tmux: owner.tmux, mode: "json" });
 	await child.start();
 	scan(child);
-	await settle();
+	await frameMatches(owner, /failed-drain/);
 	assert.match(frame(owner), /failed-drain/);
 	assert.equal(existsSync(titleMirrorPath(owner.parent)), true);
 	owner.pi.sendMessage = () => {
@@ -148,7 +150,7 @@ test("failed staged input still tears down widget observers and title publisher 
 	assert.equal(owner.widgetCalls.length, calls, "a failed owner's observation timer is cleaned up too");
 	const replacement = instance({ parent: owner.parent, tmux: owner.tmux, entries: owner.entries });
 	await replacement.start();
-	await settle();
+	await frameMatches(replacement, /failed-drain.*done/);
 	assert.match(frame(replacement), /failed-drain.*done/);
 	const mirror = readFileSync(titleMirrorPath(owner.parent), "utf8");
 	await owner.shutdown();

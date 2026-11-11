@@ -58,5 +58,8 @@
 		"pi-session-mail": "0.7.1",
 		"typebox": "1.4.3",
 		"typescript": "7.0.2"
+	},
+	"dependencies": {
+		"@getpaseo/client": "0.15.4"
 	}
 }

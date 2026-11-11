@@ -86,12 +86,15 @@ class PaseoHost implements DelegateHost {
 	}
 
 	async openWindow(spec: WindowSpec): Promise<OpenedWindow> {
+		const parentAgentId = this.env.PASEO_AGENT_ID;
+		if (!parentAgentId) throw new WindowOpenError(NOT_HOSTED, "not-opened");
 		const launch = paseoLaunch(spec);
 		const systemPrompt = promptOf(launch.promptFile);
 		let created: { sessionId: string };
 		try {
 			created = await this.api.create({
 				agentId: launch.agentId,
+				parentAgentId,
 				title: launch.title,
 				cwd: spec.cwd,
 				model: launch.model,

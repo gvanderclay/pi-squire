@@ -1,10 +1,12 @@
 // Paseo's daemon and CLI as pi-squire needs them. The SDK and the `paseo`
 // command load only inside a call, so a tmux coordinator loads neither.
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { PaseoAgentHandle, PaseoClient, PaseoClientConfig } from "@getpaseo/client";
+import type { PaseoAgentHandle, PaseoClient, PaseoClientConfig, PaseoWorkspaceHandle } from "@getpaseo/client";
+import { inspectGit } from "./git.ts";
 
 /** The label pi-squire puts on every agent it starts, so `live` sees its own. */
 const LABELS = { "pi-squire": "1" };
@@ -17,9 +19,12 @@ const SESSION_POLL_MS = 500;
 const CLI_TIMEOUT_MS = 10_000;
 /** The daemon's own default page size for `agents.list`. */
 const AGENT_PAGE_SIZE = 200;
+/** The most workspaces the daemon returns in one `workspaces.list` page. */
+const WORKSPACE_PAGE_SIZE = 200;
 
 type CreateInput = {
 	agentId: string;
+	parentAgentId: string;
 	title: string;
 	cwd: string;
 	model: string;
@@ -107,6 +112,75 @@ async function listLive(client: PaseoClient): Promise<Set<string>> {
 	}
 }
 
+/** `path` with symlinks resolved, or as given when it cannot be read. */
+function realPath(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
+}
+
+/** Each open workspace's folder and project, one page at a time over `client`. */
+async function openWorkspaces(client: PaseoClient): Promise<{ id: string; directory: string; projectId: string }[]> {
+	const found: { id: string; directory: string; projectId: string }[] = [];
+	const seen = new Set<string>();
+	let cursor: string | undefined;
+	for (;;) {
+		const { entries, pageInfo } = await client.workspaces.list({
+			page: { limit: WORKSPACE_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }) },
+		});
+		for (const entry of entries) {
+			found.push({ id: entry.id, directory: realPath(entry.workspaceDirectory), projectId: entry.projectId });
+		}
+		if (!pageInfo.hasMore) return found;
+		const next = pageInfo.nextCursor ?? "";
+		if (next === "" || seen.has(next)) {
+			throw new Error("Paseo reported more workspaces without a new cursor to read them");
+		}
+		seen.add(next);
+		cursor = next;
+	}
+}
+
+/**
+ * The workspace a delegate in `cwd` belongs to. Opening a folder Paseo has
+ * not seen registers it as a project of its own, so a linked worktree would
+ * sit apart from its repository. When Paseo has the main checkout open, a new
+ * worktree joins that project.
+ */
+async function workspaceFor(client: PaseoClient, cwd: string): Promise<PaseoWorkspaceHandle> {
+	const git = inspectGit(cwd);
+	if (git.kind !== "git") return client.workspaces.open(cwd);
+	const { mainRoot, checkoutRoot } = git.identity;
+	if (checkoutRoot === mainRoot || realPath(cwd) !== checkoutRoot) return client.workspaces.open(cwd);
+	const open = await openWorkspaces(client);
+	// `open` reuses a folder's workspace; `create` never does (0.15.4
+	// protocol messages.js, WorkspaceCreateRequestSchema).
+	if (open.some((workspace) => workspace.directory === checkoutRoot)) return client.workspaces.open(cwd);
+	// Several workspaces can back the same folder, and activity reorders the
+	// listing. All launchers must choose the same anchor for their shared key.
+	const main = open.filter((workspace) => workspace.directory === mainRoot).sort((a, b) => a.id.localeCompare(b.id))[0];
+	if (main === undefined) return client.workspaces.open(cwd);
+	// A shared daemon key arbitrates concurrent first launches; create alone
+	// never deduplicates directories (0.15.4 CreationService, handleWorkspaceCreation).
+	const key = createHash("sha256")
+		.update(JSON.stringify([main.projectId, main.id, checkoutRoot]))
+		.digest("hex");
+	const deadline = Date.now() + CONNECT_TIMEOUT_MS;
+	for (let generation = 0; ; generation++) {
+		const workspace = await client.workspaces.create({
+			idempotencyKey: `pi-squire-worktree:${key}:${generation}`,
+			source: { kind: "directory", path: checkoutRoot, projectId: main.projectId },
+		});
+		// CreationService replays completed receipts without reviving archived
+		// workspaces (0.15.4). A new generation is a new placement operation;
+		// concurrent callers still share its daemon-owned idempotency key.
+		if ((await openWorkspaces(client)).some((entry) => entry.id === workspace.id)) return workspace;
+		if (Date.now() >= deadline) throw new Error("Paseo did not provide an active worktree workspace");
+	}
+}
+
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The Pi session id after one refresh, if the daemon has chosen it yet. */
@@ -155,10 +229,11 @@ export function createPaseoApi(home: string = process.env.PASEO_HOME ?? join(hom
 		async create(input: CreateInput): Promise<{ sessionId: string }> {
 			return withClient(home, async (client) => {
 				// A plain agents.create registers a new workspace every time, so the
-				// agent goes through its folder's existing one.
-				const workspace = await client.workspaces.open(input.cwd);
+				// agent goes through its folder's own.
+				const workspace = await workspaceFor(client, input.cwd);
 				const handle = await workspace.agents.create({
 					agentId: input.agentId,
+					parent: input.parentAgentId,
 					title: input.title,
 					env: input.env,
 					labels: LABELS,

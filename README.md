@@ -484,10 +484,17 @@ Paseo can host the coordinator Pi, and then pi-squire starts each delegate as a
 command must be installed with its daemon running: reading an agent's activity
 and closing an agent run that command.
 
-- Agents are standalone: each delegate is its own Paseo agent, not nested
-  under the coordinator. A delegate in the coordinator's folder reuses that
-  folder's existing workspace, a managed worktree gets its own, and closing an
-  agent leaves its workspace in place.
+- Each delegate is a Paseo child agent of its direct coordinator. A delegate
+  in the coordinator's folder reuses that folder's existing workspace; a
+  managed worktree keeps its own workspace and working directory without
+  losing the parent link. That workspace joins the project of the worktree's
+  main checkout when Paseo has the checkout open; otherwise it shows as a
+  project of its own. Closing an agent leaves its workspace in place.
+  Existing agents and delegation records are not relinked or moved.
+- Paseo's parent link also affects lifecycle: archiving a parent in Paseo
+  archives its children. Do not archive or delete a coordinator just to move
+  back to the terminal while its delegates still need to run. Use
+  `delegation_close` for an explicit Squire subtree close.
 - Resume and fork are refused for now, with the reason "Paseo cannot resume or
   fork a delegate yet": `delegation_resume`, `/delegate-resume` and
   `delegation_fork`. Start a new delegation instead.

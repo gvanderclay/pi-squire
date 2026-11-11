@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Paseo delegates now carry their direct coordinator's native parent link
+  while keeping their explicitly selected workspace and working directory.
+  A launch without a Paseo parent refuses before contacting the daemon.
+  Paseo's native parent archive also archives its children; do not archive
+  or delete a coordinator for a terminal handoff while delegates still need
+  to run. Existing agents and delegation records are not migrated.
+  `test/paseo-launch.test.ts` now expects the parent id at agent creation and
+  covers call-time parent selection and missing-parent refusal.
+- A delegate in a linked worktree joins its main checkout's Paseo project
+  when that checkout is open. Concurrent first launches share one workspace,
+  and a launch after workspace archival stays in the same project.
+  New `test/paseo-api.test.ts` cases cover placement, concurrent idempotency
+  keys, deterministic main-workspace selection and archived receipts.
+
 ## [0.22.0] - 2026-11-11
 
 ### Added

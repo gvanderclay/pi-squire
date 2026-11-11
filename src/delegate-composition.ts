@@ -59,8 +59,9 @@ export function whereAgentsGo(agentDir: string): string {
 export function rosterLine(agent: Agent): string {
 	const models = [agent.model ?? "this session's model", ...agent.fallback.map((model) => `fallback ${model}`)];
 	const details = [
-		`default ${models.join(", ")}`,
-		`thinking ${agent.thinking ?? "this session's"}`,
+		...(agent.routingProfile
+			? [`routing profile ${agent.routingProfile}: category/data required, per-candidate thinking`]
+			: [`default ${models.join(", ")}`, `thinking ${agent.thinking ?? "this session's"}`]),
 		...(agent.autoExit ? [] : ["auto-exit off"]),
 		...toolsDetail(agent),
 		...(agent.locked.length > 0 ? [`locked: ${agent.locked.join("/")}`] : []),

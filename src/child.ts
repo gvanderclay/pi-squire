@@ -27,6 +27,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Identity, writeIdentity } from "./identity.ts";
 import { activeMark, classify, type Response, recordLimit } from "./limits.ts";
+import { registerRoutingRuntime } from "./routing-runtime.ts";
 import type { TaskReplies } from "./task-replies.ts";
 
 /** The launch variable that carries the parent's resolved setting. */
@@ -111,7 +112,7 @@ async function switchModel(
  * for what ended the last run: the failed model as `provider/id`, and why as
  * `<provider/model> <what happened>`.
  */
-function registerFallback(pi: ExtensionAPI): (failure: Failure | undefined) => void {
+function registerFallback(pi: ExtensionAPI, routed: () => boolean): (failure: Failure | undefined) => void {
 	/** The entries still to move to on a usage limit, in order: models or aliases. */
 	const fallback = (process.env[FALLBACK_ENV] ?? "")
 		.split(",")
@@ -123,7 +124,7 @@ function registerFallback(pi: ExtensionAPI): (failure: Failure | undefined) => v
 	pi.on("agent_before_settle", async (_event, ctx) => {
 		const from = failure;
 		failure = undefined;
-		if (from === undefined) return;
+		if (from === undefined || routed()) return;
 		tried.add(from.model);
 		const next = await switchModel(pi, ctx, fallback, tried);
 		if (next === undefined) return;
@@ -136,16 +137,16 @@ function registerFallback(pi: ExtensionAPI): (failure: Failure | undefined) => v
 }
 
 /** A failed run that should move to a fallback: the model it failed on, and why. */
-type Failure = { model: string; reason: string };
+type Failure = { model: string; reason: string; raw?: string };
 
 /** Why a failed run should move to a fallback, with `reason` as `<provider/model> <what happened>`; undefined when it should not. */
 function fallbackReason(last: Message | undefined): Failure | undefined {
 	const error = last?.errorMessage;
 	if (typeof error !== "string") return undefined;
 	const model = `${String(last?.provider)}/${String(last?.model)}`;
-	if (classify(error) !== undefined) return { model, reason: `${model} hit a usage limit` };
+	if (classify(error) !== undefined) return { model, reason: `${model} hit a usage limit`, raw: error };
 	// Pi has already retried an unavailable endpoint; it marks nothing, but this run moves on.
-	if (/unavailable/i.test(error)) return { model, reason: `${model} was unavailable (${error})` };
+	if (/unavailable/i.test(error)) return { model, reason: `${model} was unavailable (${error})`, raw: error };
 	return undefined;
 }
 
@@ -169,13 +170,25 @@ function shutdownWhenActive(ctx: ExtensionContext, active: () => boolean): void 
 	});
 }
 
+function registerChildFallback(
+	pi: ExtensionAPI,
+	identity: () => Identity | undefined,
+): (failure: Failure | undefined) => void {
+	const routing = registerRoutingRuntime(pi, () => identity() !== undefined);
+	const legacyFailure = registerFallback(pi, routing.active);
+	return (value: Failure | undefined): void => {
+		if (routing.active()) routing.failure(value);
+		else legacyFailure(value);
+	};
+}
+
 export function registerChild(
 	pi: ExtensionAPI,
 	replies: TaskReplies,
 	identity: () => Identity | undefined,
 	active: () => boolean = () => true,
 ): void {
-	const setFailure = registerFallback(pi);
+	const setFailure = registerChildFallback(pi, identity);
 
 	let armed = false;
 	/** Whether the run that just ended finished without the user stopping it. */

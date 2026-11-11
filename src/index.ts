@@ -57,6 +57,7 @@ import {
 	type Agent,
 	delegateTools,
 	disabledProblem,
+	isThinking,
 	projectAgentsDir,
 	type Roster,
 	readRoster,
@@ -85,6 +86,7 @@ import {
 	thinkingProblem,
 	USAGE,
 } from "./delegate-request.ts";
+import { DelegateSchema } from "./delegate-schema.ts";
 import { createDelegateStart } from "./delegate-start.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
 import { type DelegateHost, WindowOpenError } from "./host.ts";
@@ -101,6 +103,10 @@ import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } f
 import { createResults, delegateName, isStarted, type WorkspaceAttempt } from "./results.ts";
 import { createResume, resumableIds, startedLine } from "./resume.ts";
 import { pickResume } from "./resume-picker.ts";
+import { createRoutingDispatch } from "./routing-dispatch.ts";
+import { promptRouting } from "./routing-input.ts";
+import { RoutingRequestSchema } from "./routing-schema.ts";
+import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
 import { ownedAPI, SessionOwner } from "./session-owner.ts";
 import { registerTaskReplies } from "./task-replies.ts";
 import { availableTools } from "./tool-names.ts";
@@ -112,13 +118,7 @@ import { createProactive, createUsageClient, type UsageClient } from "./usage.ts
 import { registerDelegateWidget } from "./widget.ts";
 import { registerActivityRuntime } from "./widget-activity-runtime.ts";
 import { assertRootPlacement, placementProject, windowSettings } from "./window-placement.ts";
-import {
-	normalizeWorkspaceValue,
-	prepareDirectory,
-	trustPlannedWorktree,
-	type Workspace,
-	WorkspaceSchema,
-} from "./workspace.ts";
+import { normalizeWorkspaceValue, prepareDirectory, trustPlannedWorktree, type Workspace } from "./workspace.ts";
 import {
 	createWorktree,
 	inQueue,
@@ -133,26 +133,12 @@ import {
 const PARENT_PROMPT = "delegation_prompt.md";
 /** The parent system-prompt section this extension owns. */
 const PARENT_SECTION = "squire_parent_delegation";
-/** The `delegate` tool's structured result, which is also its details. */
-export const DelegateSchema = Type.Object({
-	outcome: Type.Literal("started"),
-	id: Type.String(),
-	agent: Type.String(),
-	model: Type.String(),
-	skipped: Type.Array(Type.Object({ model: Type.String(), reason: Type.String() })),
-	notices: Type.Array(Type.String()),
-	thinking: Type.String(),
-	autoExit: Type.Boolean(),
-	windowId: Type.String(),
-	windowName: Type.String(),
-	windowSession: Type.Optional(Type.String()),
-	cwd: Type.String(),
-	sessionDir: Type.String(),
-	workspace: WorkspaceSchema,
-});
+
+export { DelegateSchema } from "./delegate-schema.ts";
 
 /** A request that passed the roster, model, thinking and label checks. */
 type Start = {
+	routing?: RoutingRecord;
 	agent: Agent;
 	model: string;
 	/** Candidates passed over for `model`, with why; empty unless a fallback was used. */
@@ -346,6 +332,16 @@ export default function delegate(
 		return [...new Set(selected)];
 	}
 
+	const routing = createRoutingDispatch(
+		pi,
+		(id, ctx) => {
+			const record = viewResults.find(id) ?? historicalRecord(id, ctx);
+			return record && isStarted(record) ? record : undefined;
+		},
+		childTools,
+		proactive,
+	);
+
 	function coordinates(roster: Roster): boolean {
 		const own = identity.current();
 		const agent = roster.agents.find((item) => item.name === own?.agent);
@@ -406,7 +402,19 @@ export default function delegate(
 		const defaultThinking = agent.thinking ?? parent.thinking;
 		const unlocked = withoutLocked(agent, request, { model: own[0], thinking: defaultThinking });
 		const thinking = unlocked.request.thinking ?? defaultThinking;
-		const chosen = await chooseModel(unlocked.request.model, agent, ctx.modelRegistry, proactive, own);
+		if (request.routing !== undefined && !agent.routingProfile)
+			throw new Error("routing metadata requires an agent with routing_profile");
+		const chosen: Awaited<ReturnType<typeof chooseModel>> & { routing?: RoutingRecord; thinking?: string } =
+			agent.routingProfile
+				? await routing.choose(agent, request.routing, ctx, {
+						model: agent.locked.includes("model") ? own[0] : unlocked.request.model,
+						thinking: isThinking(unlocked.request.thinking ?? "")
+							? (unlocked.request.thinking as import("./agents.ts").Thinking)
+							: agent.locked.includes("thinking")
+								? (defaultThinking as import("./agents.ts").Thinking)
+								: undefined,
+					})
+				: await chooseModel(unlocked.request.model, agent, ctx.modelRegistry, proactive, own);
 		const { model, skipped, rest } = chosen;
 		const notices = unlocked.notice === undefined ? chosen.notices : [unlocked.notice, ...chosen.notices];
 		const badThinking = thinkingProblem(thinking);
@@ -419,7 +427,8 @@ export default function delegate(
 			skipped,
 			notices,
 			rest,
-			thinking,
+			thinking: chosen.thinking ?? thinking,
+			...(chosen.routing ? { routing: chosen.routing } : {}),
 			label: request.label,
 			cwd: request.cwd,
 			worktree: request.worktree,
@@ -585,7 +594,13 @@ export default function delegate(
 					id,
 					name,
 					session: fork
-						? { kind: "fork", id: fork.id, path: fork.sessionPath, sourceCwd: fork.sourceCwd }
+						? {
+								kind: "fork",
+								id: fork.id,
+								path: fork.sessionPath,
+								sessionId: fork.sessionId,
+								sourceCwd: fork.sourceCwd,
+							}
 						: { kind: "launch" },
 					workspace,
 					trusted,
@@ -700,6 +715,7 @@ export default function delegate(
 		chooseModel: (explicit, agent, models, preferred) =>
 			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
 		thinkingProblem,
+		chooseRouting: (agent, request, ctx, options) => routing.choose(agent, request, ctx, options),
 		prepareDirectory: (cwd, ctx, signal, agent) =>
 			prepareDirectory({ cwd, signal, trust: trustControl.forAgent(agent, ctx) }, ctx, getAgentDir()),
 	});
@@ -735,6 +751,7 @@ export default function delegate(
 		roster: rosterFor,
 		noAgents,
 		defaults: (agent, ctx) => {
+			if (agent.routingProfile) return { model: undefined, thinking: "" };
 			const parent = parentDefaults(ctx);
 			const model = agentModels(agent, parent.model)[0];
 			return { ...(model === undefined ? {} : { model }), thinking: agent.thinking ?? parent.thinking };
@@ -765,7 +782,11 @@ export default function delegate(
 				eligible: resumer.eligible,
 				resume: async (request, context) => {
 					try {
-						context.ui.notify(startedLine(await resumer.resume(request, context)), "info");
+						const record = viewResults.find(request.id);
+						const agent = currentRoster(context).agents.find((agent) => agent.name === record?.agent);
+						const routing = agent?.routingProfile ? await promptRouting(context, agent.name) : undefined;
+						if (agent?.routingProfile && !routing) return;
+						context.ui.notify(startedLine(await resumer.resume({ ...request, routing }, context)), "info");
 					} catch (err) {
 						context.ui.notify(`delegate: ${(err as Error).message}`, "error");
 					}
@@ -792,13 +813,14 @@ export default function delegate(
 	/** The roster description last registered, so unchanged metadata is not registered again. */
 	let registeredDescription: string | undefined;
 
-	const delegateTool = (description: string) => ({
+	const delegateTool = (description: string, includeRouting: boolean) => ({
 		name: "delegate",
 		label: "Delegate",
 		description,
 		parameters: Type.Object({
 			agent: Type.String({ description: "Roster agent name." }),
 			task: Type.String(),
+			...(includeRouting ? { routing: Type.Optional(RoutingRequestSchema) } : {}),
 			model: Type.Optional(Type.String({ description: "provider/id; defaults to the agent's." })),
 			thinking: Type.Optional(Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the agent's.` })),
 			label: Type.Optional(
@@ -836,6 +858,7 @@ export default function delegate(
 			params: {
 				agent: string;
 				task: string;
+				routing?: RoutingRequest;
 				model?: string | null;
 				thinking?: string | null;
 				label?: string | null;
@@ -860,6 +883,7 @@ export default function delegate(
 			const start = await validate(
 				{
 					agent: params.agent,
+					routing: params.routing,
 					model: given(params.model),
 					thinking: given(params.thinking),
 					label: given(params.label),
@@ -879,6 +903,7 @@ export default function delegate(
 				`Started delegation ${launched.id}: ${start.agent.name} (${start.model}, thinking ${start.thinking}) in ${openedIn(launched)}${placedIn(launched)}.${launched.workspace.mode === "managed" ? ` Branch ${launched.workspace.createdBranch} starts at ${launched.workspace.baseCommit}. ${dirtyNotice(launched.workspace.sourceDirty)}` : ""} It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${start.skipped.length > 0 ? ` ${fallbackNote(start)}` : ""}${start.notices.map((line) => ` ${line}`).join("")}`,
 				{
 					outcome: "started",
+					...(start.routing ? { routing: start.routing } : {}),
 					id: launched.id,
 					agent: start.agent.name,
 					model: start.model,
@@ -898,7 +923,12 @@ export default function delegate(
 	});
 
 	const registerDelegate = (description: string): void => {
-		pi.registerTool(delegateTool(description) as never);
+		pi.registerTool(
+			delegateTool(
+				description,
+				currentRoster().agents.some((agent) => agent.routingProfile),
+			) as never,
+		);
 		registeredDescription = description;
 	};
 
@@ -910,6 +940,7 @@ export default function delegate(
 		announced.clear();
 		announce(roster, ctx);
 		registerDelegate(toolDescription(roster.agents, getAgentDir()));
+		registerRoutingTools(roster);
 		exposeDelegation(roster);
 	});
 
@@ -922,6 +953,7 @@ export default function delegate(
 		if (own)
 			event.systemPromptOptions.sections.squire_delegate_task = `You are a delegate. ${parentTrust(own.parent, coordinates(roster))}`;
 		else delete event.systemPromptOptions.sections.squire_delegate_task;
+		registerRoutingTools(roster);
 		exposeDelegation(roster);
 		announce(roster, ctx);
 		const description = toolDescription(roster.agents, getAgentDir());
@@ -949,6 +981,10 @@ export default function delegate(
 				prefix,
 				() => currentRoster().agents.map((agent) => agent.name),
 				() => modelIds(registry),
+				() =>
+					currentRoster()
+						.agents.filter((agent) => agent.routingProfile)
+						.map((agent) => agent.name),
 			),
 		handler: command,
 	});
@@ -960,6 +996,11 @@ export default function delegate(
 				prefix,
 				() => resumableIds(results),
 				() => modelIds(registry),
+				() =>
+					results
+						.list()
+						.filter((record) => isStarted(record) && record.routing)
+						.map((record) => record.id),
 			),
 		handler: resumeCommand,
 	});
@@ -1007,55 +1048,65 @@ export default function delegate(
 		},
 	});
 
+	const forkDeps: Parameters<typeof forkTool>[0] = {
+		results,
+		tmux,
+		delegateSchema: DelegateSchema,
+		roster: rosterFor,
+		parentDefaults,
+		chooseModel: (explicit, agent, models, preferred) =>
+			chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
+		thinkingProblem,
+		chooseRouting: (agent, request, ctx, options) => routing.choose(agent, request, ctx, options),
+		authorize: (id, ctx) => {
+			owner.assert();
+			results.checkStorage();
+			const record = results.find(id) ?? viewResults.find(id) ?? historicalRecord(id, ctx);
+			if (record && isStarted(record)) assertChildAuthority(record, ctx, "fork");
+		},
+		admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
+		launch: async (start, source, ctx, signal, toolCallId) => {
+			const input = {
+				...start,
+				cwd: start.worktree ? undefined : start.cwd,
+				worktree_source: start.worktree ? start.cwd : undefined,
+			};
+			const launched = await launch(input, ctx, signal, toolCallId, source);
+			return {
+				...(input.routing ? { routing: input.routing } : {}),
+				id: launched.id,
+				agent: start.agent.name,
+				model: input.model,
+				skipped: start.skipped.map(({ model, reason }) => ({ model, reason })),
+				notices: start.notices,
+				thinking: input.thinking,
+				autoExit: start.autoExit,
+				windowId: launched.windowId,
+				windowName: launched.windowName,
+				...(launched.windowSession === undefined ? {} : { windowSession: launched.windowSession }),
+				...(launched.location === undefined ? {} : { location: launched.location }),
+				cwd: launched.cwd,
+				sessionDir: launched.sessionDir,
+				workspace: launched.workspace,
+			};
+		},
+	};
+	let routingMetadata: boolean | undefined;
+	function registerRoutingTools(roster: Roster): void {
+		const enabled = roster.agents.some((agent) => agent.routingProfile);
+		if (enabled === routingMetadata) return;
+		const previous = routingMetadata === undefined ? undefined : new Set(pi.getActiveTools());
+		pi.registerTool(resumer.tool(enabled) as never);
+		pi.registerTool(forkTool(forkDeps, enabled) as never);
+		routingMetadata = enabled;
+		if (previous)
+			pi.setActiveTools(
+				pi
+					.getActiveTools()
+					.filter((name) => !["delegation_resume", "delegation_fork"].includes(name) || previous.has(name)),
+			);
+	}
 	registerDelegate(toolDescription(currentRoster().agents, getAgentDir()));
 	tracking.registerTools();
-	pi.registerTool(resumer.tool() as never);
-	pi.registerTool(
-		forkTool({
-			results,
-			tmux,
-			delegateSchema: DelegateSchema,
-			roster: rosterFor,
-			parentDefaults,
-			chooseModel: (explicit, agent, models, preferred) =>
-				chooseModel(explicit, agent, models, proactive, agentModels(agent, undefined), preferred),
-			thinkingProblem,
-			authorize: (id, ctx) => {
-				owner.assert();
-				results.checkStorage();
-				const record = results.find(id) ?? viewResults.find(id) ?? historicalRecord(id, ctx);
-				if (record && isStarted(record)) assertChildAuthority(record, ctx, "fork");
-			},
-			admit: (agent, ctx) => admit(agent, currentRoster(ctx)),
-			launch: async (start, source, ctx, signal, toolCallId) => {
-				const launched = await launch(
-					{
-						...start,
-						cwd: start.worktree ? undefined : start.cwd,
-						worktree_source: start.worktree ? start.cwd : undefined,
-					},
-					ctx,
-					signal,
-					toolCallId,
-					source,
-				);
-				return {
-					id: launched.id,
-					agent: start.agent.name,
-					model: start.model,
-					skipped: start.skipped.map(({ model, reason }) => ({ model, reason })),
-					notices: start.notices,
-					thinking: start.thinking,
-					autoExit: start.autoExit,
-					windowId: launched.windowId,
-					windowName: launched.windowName,
-					...(launched.windowSession === undefined ? {} : { windowSession: launched.windowSession }),
-					...(launched.location === undefined ? {} : { location: launched.location }),
-					cwd: launched.cwd,
-					sessionDir: launched.sessionDir,
-					workspace: launched.workspace,
-				};
-			},
-		}) as never,
-	);
+	registerRoutingTools(currentRoster());
 }

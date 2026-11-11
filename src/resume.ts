@@ -7,12 +7,13 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { type TObject, Type } from "typebox";
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
-import type { DelegateStarter } from "./delegate-start.ts";
+import type { ChildStart, DelegateStarter } from "./delegate-start.ts";
 import type { DelegateHost, OpenedWindow } from "./host.ts";
 import type { AdmittedHost, HostAdmission } from "./host-admission.ts";
 import type { Identity } from "./identity.ts";
 import { openedIn } from "./location.ts";
 import { windowPresentation } from "./locators.ts";
+import { fallbackNote } from "./model-choice.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
@@ -26,6 +27,9 @@ import {
 	settleModel,
 	windowCheck,
 } from "./resume-checks.ts";
+import type { RoutedChoice, RouteOptions } from "./routing-dispatch.ts";
+import { RoutingRequestSchema } from "./routing-schema.ts";
+import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
 import type { Reservation } from "./tree-registry.ts";
 import { recordedIdentity } from "./tree-view.ts";
@@ -35,6 +39,7 @@ import type { Workspace } from "./workspace.ts";
 /** What a resume asks for; the fields after `task` are optional overrides. */
 export type ResumeRequest = {
 	id: string;
+	routing?: RoutingRequest;
 	task: string;
 	model?: string;
 	thinking?: string;
@@ -48,6 +53,7 @@ type Skipped = { model: string; why: string; reason: string };
 
 /** What a resume reads from the launch path in `index.ts`. */
 export type ResumeDeps = {
+	chooseRouting?(agent: Agent, request: unknown, ctx: ExtensionContext, options: RouteOptions): Promise<RoutedChoice>;
 	results: Results;
 	tmux: DelegateHost;
 	/** The `delegate` tool's result schema, which a resume's result extends. */
@@ -66,7 +72,7 @@ export type ResumeDeps = {
 		agent: Agent,
 		models: ModelRegistry,
 		preferred: readonly string[],
-	): Promise<{ model: string; skipped: Skipped[]; notices: string[]; rest: string[] }>;
+	): Promise<{ model: string; skipped: Skipped[]; notices: string[]; rest: string[]; routing?: RoutingRecord }>;
 	thinkingProblem(value: string): string | undefined;
 	/** The workspace and trust for an existing directory, deciding trust again. */
 	prepareDirectory(
@@ -80,6 +86,7 @@ export type ResumeDeps = {
 /** A started resume: what the tool and the command report. */
 export type Resumed = {
 	id: string;
+	routing?: RoutingRecord;
 	resumedFrom: string;
 	agent: string;
 	model: string;
@@ -160,7 +167,7 @@ function resultSchema(delegateSchema: TObject): TObject {
 
 /** The model, thinking and auto-exit a resume runs with, and the directory and workspace it opens in. */
 type Plan = {
-	start: { agent: Agent; model: string; rest: string[]; thinking: string; autoExit: boolean; notices: string[] };
+	start: ChildStart;
 	chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>;
 	workspace: Workspace;
 	trusted: boolean;
@@ -180,7 +187,15 @@ async function planResume(
 	// A managed worktree keeps its launch facts while the session still runs in it.
 	const workspace = record.workspace?.cwd === prepared.workspace.cwd ? record.workspace : prepared.workspace;
 	return {
-		start: { agent, model: chosen.model, rest: chosen.rest, thinking, autoExit, notices: chosen.notices },
+		start: {
+			agent,
+			model: chosen.model,
+			rest: chosen.rest,
+			thinking,
+			autoExit,
+			notices: chosen.notices,
+			...("routing" in chosen ? { routing: chosen.routing } : {}),
+		},
 		chosen,
 		workspace,
 		trusted: prepared.trusted,
@@ -242,6 +257,7 @@ function resumedResult(input: {
 		resumedFrom: input.resumedFrom,
 		agent: start.agent.name,
 		model: start.model,
+		...(start.routing ? { routing: start.routing } : {}),
 		skipped: chosen.skipped.map(({ model, reason }) => ({ model, reason })),
 		notices: chosen.notices,
 		thinking: start.thinking,
@@ -253,10 +269,7 @@ function resumedResult(input: {
 		sessionDir: input.sessionDir,
 		workspace,
 		...(opened.location === undefined ? {} : { location: opened.location }),
-		fallbackNote:
-			chosen.skipped.length === 0
-				? ""
-				: `Used fallback ${chosen.model} because ${chosen.skipped.map((item) => `${item.model} is ${item.why}`).join("; ")}.`,
+		fallbackNote: fallbackNote({ model: start.model, routing: start.routing, skipped: chosen.skipped }),
 	};
 }
 
@@ -344,7 +357,7 @@ export function startedLine(resumed: Resumed): string {
 }
 
 /** The `delegation_resume` tool. */
-function resumeTool(deps: ResumeDeps): ToolDef {
+function resumeTool(deps: ResumeDeps, includeRouting: boolean): ToolDef {
 	return {
 		name: "delegation_resume",
 		label: "Resume delegation",
@@ -352,6 +365,7 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 			"Continue an exited direct child in its own session, so it keeps the context it built, with a follow-up task in a new window. It is recorded as a new delegation whose result arrives as a message. For unrelated work, use delegate. Refuses a running delegation (mail it instead), an open window, an older link of a resumed chain (it names the newest) and a missing working directory.",
 		parameters: Type.Object({
 			id: Type.String({ description: "The newest delegation id of the child." }),
+			...(includeRouting ? { routing: Type.Optional(RoutingRequestSchema) } : {}),
 			task: Type.String(),
 			model: Type.Optional(Type.String({ description: "provider/id; defaults to the model it finished on." })),
 			thinking: Type.Optional(
@@ -364,7 +378,14 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 		async execute(
 			toolCallId: string,
-			params: { id: string; task: string; model?: string | null; thinking?: string | null; auto_exit?: boolean | null },
+			params: {
+				id: string;
+				task: string;
+				routing?: RoutingRequest;
+				model?: string | null;
+				thinking?: string | null;
+				auto_exit?: boolean | null;
+			},
 			signal: AbortSignal | undefined,
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
@@ -382,6 +403,7 @@ function resumeTool(deps: ResumeDeps): ToolDef {
 
 /** The request a tool call makes; some models fill every optional field with null or the string "null", and both mean unset. */
 function requestFrom(params: {
+	routing?: RoutingRequest;
 	id: string;
 	task: string;
 	model?: string | null;
@@ -392,6 +414,7 @@ function requestFrom(params: {
 		value == null || value === "null" ? undefined : value;
 	return {
 		id: params.id,
+		routing: params.routing,
 		task: params.task ?? "",
 		model: given(params.model),
 		thinking: given(params.thinking),
@@ -404,11 +427,11 @@ export function createResume(deps: ResumeDeps): {
 	resume(request: ResumeRequest, ctx: ExtensionContext, signal?: AbortSignal): Promise<Resumed>;
 	/** The delegations a resume would accept now, newest first. */
 	eligible(ctx: ExtensionContext): Promise<StartedRecorded[]>;
-	tool(): ToolDef;
+	tool(includeRouting?: boolean): ToolDef;
 } {
 	return {
 		eligible: (ctx: ExtensionContext) => eligible(deps, ctx),
 		resume: (request: ResumeRequest, ctx: ExtensionContext, signal?: AbortSignal) => resume(deps, request, ctx, signal),
-		tool: () => resumeTool(deps),
+		tool: (includeRouting = true) => resumeTool(deps, includeRouting),
 	};
 }

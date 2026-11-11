@@ -1,5 +1,7 @@
 import { isThinking, THINKING_LEVELS } from "./agents.ts";
 import type { ResumeRequest } from "./resume.ts";
+import { parseRoutingRequest } from "./routing-policy.ts";
+import type { RoutingRequest } from "./routing-types.ts";
 
 /** The longest label a delegation can carry. */
 export const LABEL_MAX = 32;
@@ -16,6 +18,7 @@ export function labelProblem(value: string): string | undefined {
 const FLAGS = [
 	"--model",
 	"--thinking",
+	"--routing",
 	"--label",
 	"--cwd",
 	"--worktree",
@@ -26,15 +29,16 @@ const FLAGS = [
 ] as const;
 
 export const USAGE =
-	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task>";
+	"usage: /delegate <agent> [--model <provider/id>] [--thinking <level>] [--routing <JSON>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>] ] [--auto-exit | --no-auto-exit] <task>";
 
 /** The flags `/delegate-resume` takes before the task. */
-const RESUME_FLAGS = ["--model", "--thinking", "--auto-exit", "--no-auto-exit"] as const;
+const RESUME_FLAGS = ["--model", "--thinking", "--routing", "--auto-exit", "--no-auto-exit"] as const;
 export const RESUME_USAGE =
-	"usage: /delegate-resume <id> [--model <provider/id>] [--thinking <level>] [--auto-exit | --no-auto-exit] <task>";
+	"usage: /delegate-resume <id> [--model <provider/id>] [--thinking <level>] [--routing <JSON>] [--auto-exit | --no-auto-exit] <task>";
 
 export type Parsed = {
 	agent: string;
+	routing?: RoutingRequest;
 	model?: string;
 	thinking?: string;
 	label?: string;
@@ -105,6 +109,16 @@ function flagValue(
 	return { value, end: i + 1 };
 }
 
+function routingFlag(text: string, from: number): { routing: RoutingRequest; end: number } | { error: string } {
+	const read = flagValue(text, from, "--routing");
+	if ("error" in read) return read;
+	try {
+		return { routing: parseRoutingRequest(JSON.parse(read.value)), end: read.end };
+	} catch (error) {
+		return { error: `--routing: ${(error as Error).message}` };
+	}
+}
+
 /** The request field for each value-taking launch flag. */
 function valueFlag(
 	flag: string,
@@ -135,18 +149,50 @@ function autoExitFlag(flag: string): boolean {
 	return flag === "--auto-exit" || flag === "--no-auto-exit";
 }
 
+function specialFlag(
+	flag: string,
+	text: string,
+	end: number,
+	target: { autoExit?: boolean; routing?: RoutingRequest },
+): { end: number } | { error: string } | undefined {
+	if (autoExitFlag(flag)) {
+		target.autoExit = flag === "--auto-exit";
+		return { end };
+	}
+	if (flag !== "--routing") return undefined;
+	const read = routingFlag(text, end);
+	if ("error" in read) return read;
+	target.routing = read.routing;
+	return { end: read.end };
+}
+function firstArgument(
+	text: string,
+	label: string,
+	usage: string,
+): { text: string; start: number; end: number } | { error: string } {
+	const first = word(text, 0);
+	if (!first) return { error: usage };
+	if (first.text.startsWith("-")) return { error: `the first argument is the ${label}; ${usage}` };
+	return first;
+}
+function resumeField(flag: string): "model" | "thinking" | undefined {
+	if (flag === "--model") return "model";
+	if (flag === "--thinking") return "thinking";
+	return undefined;
+}
+
 /** `/delegate`'s arguments: an agent, optional flags, then a verbatim task. */
 export function parse(text: string): { parsed: Parsed } | { error: string } {
-	const agent = word(text, 0);
-	if (agent === undefined) return { error: USAGE };
-	if (agent.text.startsWith("-")) return { error: `the first argument is the agent name; ${USAGE}` };
+	const agent = firstArgument(text, "agent name", USAGE);
+	if ("error" in agent) return agent;
 	const parsed: Parsed = { agent: agent.text, task: "" };
 	let at = agent.end;
 	for (let next = word(text, at); next?.text.startsWith("-"); next = word(text, at)) {
 		const flag = next.text;
-		if (autoExitFlag(flag)) {
-			parsed.autoExit = flag === "--auto-exit";
-			at = next.end;
+		const special = specialFlag(flag, text, next.end, parsed);
+		if (special) {
+			if ("error" in special) return special;
+			at = special.end;
 			continue;
 		}
 		const field = valueFlag(flag);
@@ -166,23 +212,23 @@ export function parse(text: string): { parsed: Parsed } | { error: string } {
 
 /** `/delegate-resume`'s arguments: a delegation id, optional flags, then a verbatim task. */
 export function parseResume(text: string): { request: ResumeRequest } | { error: string } {
-	const id = word(text, 0);
-	if (id === undefined) return { error: RESUME_USAGE };
-	if (id.text.startsWith("-")) return { error: `the first argument is the delegation id; ${RESUME_USAGE}` };
+	const id = firstArgument(text, "delegation id", RESUME_USAGE);
+	if ("error" in id) return id;
 	const request: ResumeRequest = { id: id.text, task: "" };
 	let at = id.end;
 	for (let next = word(text, at); next?.text.startsWith("-"); next = word(text, at)) {
 		const flag = next.text;
-		if (autoExitFlag(flag)) {
-			request.autoExit = flag === "--auto-exit";
-			at = next.end;
+		const special = specialFlag(flag, text, next.end, request);
+		if (special) {
+			if ("error" in special) return special;
+			at = special.end;
 			continue;
 		}
-		if (flag !== "--model" && flag !== "--thinking") return { error: `unknown flag ${flag}; ${RESUME_USAGE}` };
+		const field = resumeField(flag);
+		if (!field) return { error: `unknown flag ${flag}; ${RESUME_USAGE}` };
 		const read = flagValue(text, next.end, flag, RESUME_USAGE);
 		if ("error" in read) return read;
-		if (flag === "--model") request.model = read.value;
-		else request.thinking = read.value;
+		request[field] = read.value;
 		at = read.end;
 	}
 	request.task = text.slice(word(text, at)?.start ?? text.length).trim();
@@ -204,6 +250,7 @@ export function completions(
 	prefix: string,
 	agents: () => readonly string[],
 	models: () => readonly string[],
+	routed: () => readonly string[] = () => [],
 ): { value: string; label: string }[] | null {
 	const partial = /(?:^|\s)(\S*)$/.exec(prefix)?.[1] ?? "";
 	const head = prefix.slice(0, prefix.length - partial.length);
@@ -216,7 +263,7 @@ export function completions(
 	const previous = tokens[tokens.length - 1];
 	if (previous === "--model") return pick(models());
 	if (previous === "--thinking") return pick(THINKING_LEVELS);
-	return pick(FLAGS);
+	return pick(routed().includes(tokens[0]) ? FLAGS : FLAGS.filter((flag) => flag !== "--routing"));
 }
 
 /** Delegation ids, flags, model ids and thinking levels, at the cursor's token. */
@@ -224,12 +271,15 @@ export function resumeCompletions(
 	prefix: string,
 	ids: () => readonly string[],
 	models: () => readonly string[],
+	routed: () => readonly string[] = () => [],
 ): { value: string; label: string }[] | null {
 	const partial = /(?:^|\s)(\S*)$/.exec(prefix)?.[1] ?? "";
 	const head = prefix.slice(0, prefix.length - partial.length);
 	const tokens = head.trim() === "" ? [] : head.trim().split(/\s+/);
 	const previous = tokens[tokens.length - 1];
-	let values: readonly string[] = RESUME_FLAGS;
+	let values: readonly string[] = routed().includes(tokens[0])
+		? RESUME_FLAGS
+		: RESUME_FLAGS.filter((flag) => flag !== "--routing");
 	if (tokens.length === 0) values = ids();
 	else if (previous === "--model") values = models();
 	else if (previous === "--thinking") values = THINKING_LEVELS;

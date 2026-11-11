@@ -63,6 +63,9 @@ export function resetRoot(): void {
 		rmSync(join(agentDir, name), CLEAR);
 	}
 	rmSync(join(agentDir, "squire", "settings.json"), CLEAR);
+	rmSync(join(agentDir, "squire", "routing.json"), CLEAR);
+	rmSync(join(agentDir, "squire", "routing-state"), CLEAR);
+	delete process.env.PI_DELEGATE_ROUTING;
 	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles", "live-sessions", "owners"])
 		rmSync(join(agentDir, "squire", name), CLEAR);
 	delete process.env.PI_SQUIRE_LIVE_LAUNCH;
@@ -285,6 +288,8 @@ export type SessionOptions = {
 	agentEnv?: string;
 	/** Custom entries the session already holds, as on a resume. */
 	entries?: readonly Entry[];
+	/** Raw active ancestry, before custom entries appended by this fake runtime. */
+	branch?: import("../src/routing-provenance.ts").ProvenanceEntry[];
 	/** Answers `ctx.ui` gives, in order, one queue per dialog. An empty queue cancels. */
 	ui?: UiAnswers;
 	/** The tool names `pi.getAllTools()` reports once the session has started. */
@@ -296,7 +301,15 @@ export type SessionOptions = {
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
 	noCredentials?: readonly string[];
 	/** Models only this session's registry also knows, on top of `FAKE_MODELS`. */
-	extraModels?: readonly { provider: string; id: string; cost?: { input: number; output: number } }[];
+	extraModels?: readonly {
+		provider: string;
+		id: string;
+		cost?: { input: number; output: number };
+		api?: string;
+		reasoning?: boolean;
+		contextWindow?: number;
+		input?: ("text" | "image")[];
+	}[];
 	/** The fake usage client; a session without one gets a fake that reports no reading. */
 	usage?: FakeUsage;
 	/** Models ("provider/id") that count as logged in with OAuth; the rest use an API key. */
@@ -437,12 +450,16 @@ export function session(options: SessionOptions = {}) {
 	const registeredTools = options.registeredTools ?? DEFAULT_TOOLS;
 	let activeTools = [...(options.activeTools ?? [...DEFAULT_TOOLS, ...DELEGATION_TOOLS])];
 	let sessionName: string | undefined;
+	let thinkingLevel = options.parentThinking ?? "medium";
 	const pi = {
 		getSessionName: () => sessionName,
 		setSessionName: (name: string) => {
 			sessionName = name;
 		},
-		getThinkingLevel: () => options.parentThinking ?? "medium",
+		getThinkingLevel: () => thinkingLevel,
+		setThinkingLevel: (value: string) => {
+			thinkingLevel = value;
+		},
 		getActiveTools: () => [...activeTools],
 		setActiveTools: (names: string[]) => {
 			activeTools = [...new Set([...activeTools.filter((name) => names.includes(name)), ...names])];
@@ -505,6 +522,16 @@ export function session(options: SessionOptions = {}) {
 			getSessionId: () => parent,
 			getSessionDir: () => options.sessionDir ?? sessionDir,
 			getSessionFile: () => undefined,
+			getLeafId: () => (entries.length ? `entry-${entries.length - 1}` : (options.branch?.at(-1)?.id ?? null)),
+			getBranch: () => [
+				...(options.branch ?? []),
+				...entries.map((entry, index) => ({
+					type: "custom",
+					id: `entry-${index}`,
+					parentId: index ? `entry-${index - 1}` : (options.branch?.at(-1)?.id ?? null),
+					...entry,
+				})),
+			],
 			getHeader: () => ({ type: "session", id: parent, cwd: options.cwd ?? root, ...options.sessionHeader }),
 			getEntries: () =>
 				entries.map((entry, index) => ({

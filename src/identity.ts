@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Agent, Roster } from "./agents.ts";
 import { readState, writeState } from "./local-state.ts";
+import { paseoAgentId } from "./paseo-child.ts";
 import { exposedDepth, maxDepth as readMaxDepth } from "./settings.ts";
 import { assertRootPlacement } from "./window-placement.ts";
 
@@ -63,6 +64,12 @@ export function readIdentity(session: string): Identity | undefined {
 }
 export const writeIdentity = (session: string, identity: Identity): void => writeState(pathFor(session), identity);
 
+/** The launch record Paseo filed under the agent id it chose, for the child Pi then starts. */
+function readAgentIdentity(): Identity | undefined {
+	const agent = paseoAgentId();
+	return agent === undefined ? undefined : readIdentity(agent);
+}
+
 /** The configured depth limit for admission; refuses on a broken settings file or invalid value. */
 export function maxDepth(): number {
 	return readMaxDepth(getAgentDir());
@@ -87,7 +94,8 @@ export function createIdentity(pi: ExtensionAPI): {
 		current = undefined;
 		problem = undefined;
 		try {
-			const restored = readIdentity(sessionId);
+			// Paseo files the launch record under the agent id it chose; re-file it under the session id.
+			const restored = readIdentity(sessionId) ?? readAgentIdentity();
 			if (restored) writeIdentity(sessionId, restored);
 			current = restored;
 		} catch (error) {

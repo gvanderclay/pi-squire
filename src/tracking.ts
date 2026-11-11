@@ -25,6 +25,9 @@ import {
 	sessionIdOf,
 	type WorkspaceAttempt,
 } from "./results.ts";
+import { routingEvidence } from "./routing-provenance.ts";
+import { RoutingEvidenceSchema, RoutingRecordSchema } from "./routing-schema.ts";
+import type { RoutingEvidence } from "./routing-types.ts";
 import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
 import { ago, autoExitLine, stateLine } from "./tracking-text.ts";
@@ -64,6 +67,7 @@ export function toolResult(
 /** Every tool here touches only local state: tmux, the session's entries and files under the agent directory. */
 const CLOSED_WORLD = { openWorldHint: false } as const;
 
+// Exact string enums keep status evidence explicit without bloating the shared tool declarations.
 const STARTED_STATES = ["closed", "done", "gone", "running", "window-closed", "unknown"] as const;
 
 /** One started delegation in `delegation_status`'s structured result; `viewDetails` builds it. */
@@ -80,6 +84,8 @@ const StartedSchema = Type.Object({
 	agent: Type.String(),
 	model: Type.String(),
 	finishedModel: Type.Optional(Type.String()),
+	routing: Type.Optional(RoutingRecordSchema),
+	routingEvidence: Type.Optional(RoutingEvidenceSchema),
 	thinking: Type.String(),
 	autoExit: Type.Boolean(),
 	resumedFrom: Type.Optional(Type.String()),
@@ -91,7 +97,7 @@ const StartedSchema = Type.Object({
 	sessionDir: Type.Optional(Type.String()),
 	workspace: Type.Optional(WorkspaceSchema),
 	workspaceSnapshot: WorkspaceSnapshotSchema,
-	state: Type.Union(STARTED_STATES.map((state) => Type.Literal(state))),
+	state: Type.Enum(STARTED_STATES),
 	closed: Type.Boolean(),
 	closedWithoutResult: Type.Boolean(),
 	status: Type.Optional(Type.String()),
@@ -107,7 +113,7 @@ export const StatusSchema = Type.Object({
 	marks: Type.Array(
 		Type.Object({
 			scope: Type.String(),
-			source: Type.Union([Type.Literal("reactive"), Type.Literal("proactive")]),
+			source: Type.Enum(["reactive", "proactive"]),
 			reason: Type.String(),
 			clearsAt: Type.String(),
 		}),
@@ -128,6 +134,7 @@ export type ToolDef = {
 
 /** One delegation as `delegation_status` reports it; its text and details both read from this. */
 type View = {
+	routingEvidence?: RoutingEvidence;
 	record: StartedRecorded;
 	state: DelegationState;
 	name: string;
@@ -165,6 +172,7 @@ function view(
 	const windowSession = window.session;
 	return {
 		record,
+		...(record.routing ? { routingEvidence: routingEvidence(record.routing, sessionPath) } : {}),
 		state,
 		name: recordedName(record),
 		sessionPath,
@@ -177,12 +185,28 @@ function view(
 }
 
 /** The text block for one delegation. */
-function viewText({ record, state, name, sessionPath, lastActive, snapshot, resumedAs, windowSession }: View): string {
+function viewText({
+	record,
+	state,
+	name,
+	sessionPath,
+	lastActive,
+	snapshot,
+	resumedAs,
+	windowSession,
+	routingEvidence,
+}: View): string {
 	const [checkout, ...categories] = snapshotLines(snapshot);
 	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
 	const lines = [
 		`${record.id} ${record.agent} (${modelLabel(record.model, record.result?.finishedModel)}, thinking ${record.thinking})`,
 		`  name: ${name}`,
+		...(record.routing
+			? [
+					`  routing: ${record.routing.profile}/${record.routing.request.category}; policy v${record.routing.policyVersion}; ${record.routing.reason}`,
+					`  served this attempt: ${routingEvidence?.served.map((item) => `${item.model}:${item.thinking ?? "unknown"}`).join(", ") || "unknown"}; independent family history: ${routingEvidence?.independent ?? "unverified"}`,
+				]
+			: []),
 		`  identity: session ${sessionIdOf(record)} · parent ${record.identity?.parent ?? "this session"} · root ${record.identity?.root ?? "this session"} · depth ${record.identity?.depth ?? 1}`,
 		...(accountingFor(record) ? [`  shared accounting: ${accountingFor(record)} (not result processing)`] : []),
 		...(record.resumedFrom === undefined ? [] : [`  resumed from ${record.resumedFrom}`]),
@@ -211,6 +235,7 @@ function viewDetails({
 	snapshot,
 	windowSession,
 	canResume,
+	routingEvidence,
 }: View): Record<string, unknown> {
 	return {
 		kind: "started",
@@ -224,6 +249,7 @@ function viewDetails({
 		name,
 		agent: record.agent,
 		model: record.model,
+		...(record.routing ? { routing: record.routing, routingEvidence } : {}),
 		...(record.result?.finishedModel === undefined ? {} : { finishedModel: record.result.finishedModel }),
 		thinking: record.thinking,
 		autoExit: record.autoExit === true,

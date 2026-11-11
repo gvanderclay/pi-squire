@@ -1,13 +1,16 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { type TObject, Type } from "typebox";
 
 import { disabledProblem, THINKING_LEVELS } from "./agents.ts";
 import { openedIn } from "./location.ts";
+import { fallbackNote } from "./model-choice.ts";
 import { dirtyNotice } from "./render.ts";
-import { finishedModel, sessionInputTokens } from "./result-sessions.ts";
+import { finishedModel, sessionIdOf, sessionInputTokens } from "./result-sessions.ts";
 import { deriveState, isStarted, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, Resumed } from "./resume.ts";
 import { sessionFor, settleModel } from "./resume-checks.ts";
+import { RoutingRequestSchema } from "./routing-schema.ts";
+import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
 import { assertChildAuthority, recordedIdentity } from "./tree-view.ts";
 import { askWindowStates } from "./window-state.ts";
@@ -15,12 +18,14 @@ import { askWindowStates } from "./window-state.ts";
 export type ForkSource = {
 	id: string;
 	sessionPath: string;
+	sessionId: string;
 	sessionDir: string;
 	rootPlacement: string;
 	sourceCwd: string;
 };
 type Forked = Omit<Resumed, "resumedFrom" | "fallbackNote">;
 type ForkRequest = {
+	routing?: RoutingRequest;
 	id: string;
 	task: string;
 	model?: string | null;
@@ -30,6 +35,7 @@ type ForkRequest = {
 	worktree_base?: string | null;
 };
 type ForkStart = Awaited<ReturnType<ResumeDeps["chooseModel"]>> & {
+	routing?: RoutingRecord;
 	agent: ReturnType<ResumeDeps["roster"]>["agents"][number];
 	thinking: string;
 	autoExit: boolean;
@@ -40,7 +46,14 @@ type ForkStart = Awaited<ReturnType<ResumeDeps["chooseModel"]>> & {
 };
 type ForkDeps = Pick<
 	ResumeDeps,
-	"results" | "tmux" | "roster" | "parentDefaults" | "chooseModel" | "thinkingProblem" | "delegateSchema"
+	| "results"
+	| "tmux"
+	| "roster"
+	| "parentDefaults"
+	| "chooseModel"
+	| "thinkingProblem"
+	| "delegateSchema"
+	| "chooseRouting"
 > & {
 	authorize(id: string, ctx: ExtensionContext): void;
 	admit(agent: string, ctx: ExtensionContext): void;
@@ -74,16 +87,11 @@ function forkSource(record: StartedRecorded, session: ReturnType<typeof sessionF
 	return {
 		id: record.id,
 		sessionPath: session.path,
+		sessionId: sessionIdOf(record),
 		sessionDir: session.dir,
 		rootPlacement: own.rootPlacement,
 		sourceCwd: session.cwd,
 	};
-}
-
-function fallbackNote(chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>): string {
-	return chosen.skipped.length
-		? ` Used fallback ${chosen.model} because ${chosen.skipped.map((item) => `${item.model} is ${item.why}`).join("; ")}.`
-		: "";
 }
 
 async function sharedFolderNotice(deps: ForkDeps, record: StartedRecorded, worktree?: string): Promise<string[]> {
@@ -101,11 +109,12 @@ function modelNotice(record: StartedRecorded, sessionPath: string, model: string
 
 function launchText(id: string, details: Forked, chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>): string {
 	const workspace = details.workspace;
+	const note = fallbackNote({ model: details.model, skipped: chosen.skipped, routing: details.routing });
 	const managed =
 		workspace.mode === "managed"
 			? ` Branch ${workspace.createdBranch} starts at ${workspace.baseCommit}. ${dirtyNotice(workspace.sourceDirty)}`
 			: "";
-	return `Forked delegation ${id} as ${details.id} in ${openedIn(details, { session: false })} in ${details.cwd}.${managed} The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote(chosen)}${details.notices.map((notice) => ` ${notice}`).join("")}`;
+	return `Forked delegation ${id} as ${details.id} in ${openedIn(details, { session: false })} in ${details.cwd}.${managed} The original session is untouched. Its result arrives as a message that starts your next turn on its own; delegation_close ends it.${note ? ` ${note}` : ""}${details.notices.map((notice) => ` ${notice}`).join("")}`;
 }
 
 /** `location` words the text only; the structured result keeps the delegate schema. */
@@ -121,27 +130,32 @@ const modelParameter = Type.Optional(
 	}),
 );
 
-export function forkTool(deps: ForkDeps): ToolDef {
+function forkParameters(includeRouting: boolean): TObject {
+	return Type.Object({
+		id: Type.String({ description: "The direct child's delegation id whose context to copy." }),
+		task: Type.String(),
+		...(includeRouting ? { routing: Type.Optional(RoutingRequestSchema) } : {}),
+		model: modelParameter,
+		thinking: Type.Optional(
+			Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the source's last level.` }),
+		),
+		auto_exit: Type.Optional(Type.Boolean({ description: "Defaults to the source delegation's setting." })),
+		worktree: Type.Optional(
+			Type.String({ description: "New branch for a managed worktree from the child's checkout." }),
+		),
+		worktree_base: Type.Optional(
+			Type.String({ description: "Local commit-ish; requires worktree. Defaults to the child's checkout HEAD." }),
+		),
+	});
+}
+
+export function forkTool(deps: ForkDeps, includeRouting = true): ToolDef {
 	return {
 		name: "delegation_fork",
 		label: "Fork delegation",
 		description:
 			"Start a new direct child from a copy of an existing child's session context, with a new task, session id and window. The original child is untouched and may still be running. Runs in its working folder, or a new managed worktree from that folder's checkout. Results arrive as messages like other delegations.",
-		parameters: Type.Object({
-			id: Type.String({ description: "The direct child's delegation id whose context to copy." }),
-			task: Type.String(),
-			model: modelParameter,
-			thinking: Type.Optional(
-				Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the source's last level.` }),
-			),
-			auto_exit: Type.Optional(Type.Boolean({ description: "Defaults to the source delegation's setting." })),
-			worktree: Type.Optional(
-				Type.String({ description: "New branch for a managed worktree from the child's checkout." }),
-			),
-			worktree_base: Type.Optional(
-				Type.String({ description: "Local commit-ish; requires worktree. Defaults to the child's checkout HEAD." }),
-			),
-		}),
+		parameters: forkParameters(includeRouting),
 		outputSchema: Type.Object({ ...deps.delegateSchema.properties, forkedFrom: Type.String() }),
 		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 		async execute(
@@ -161,11 +175,15 @@ export function forkTool(deps: ForkDeps): ToolDef {
 			if (!agent) throw new Error(`agent ${JSON.stringify(record.agent)} is no longer in the roster`);
 			const { thinking, chosen } = await settleModel(
 				deps,
-				{ record, agent, session, request: { model: given(params.model), thinking: given(params.thinking) } },
+				{
+					record,
+					agent,
+					session,
+					request: { model: given(params.model), thinking: given(params.thinking), routing: params.routing },
+				},
 				ctx,
 			);
 			const source = forkSource(record, session);
-			chosen.notices.push(...modelNotice(record, session.path, chosen.model));
 			chosen.notices.push(...(await sharedFolderNotice(deps, record, given(params.worktree))));
 			const details = await deps.launch(
 				{
@@ -183,6 +201,7 @@ export function forkTool(deps: ForkDeps): ToolDef {
 				signal,
 				toolCallId,
 			);
+			details.notices.push(...modelNotice(record, source.sessionPath, details.model));
 			const line = launchText(record.id, details, chosen);
 			ctx.ui.notify(`delegate: ${line}`, "info");
 			return toolResult(line, { outcome: "started", ...withoutLocation(details), forkedFrom: record.id });

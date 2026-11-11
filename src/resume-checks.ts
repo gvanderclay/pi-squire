@@ -13,6 +13,8 @@ import { windowFacts, windowPresentation, windowTerms } from "./locators.ts";
 import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-sessions.ts";
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
+import { assertRoutingSource } from "./routing-inheritance.ts";
+import { parseRoutingRequest } from "./routing-policy.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowStates } from "./window-state.ts";
@@ -148,17 +150,37 @@ export function recordCheck(
 	return { session, agent };
 }
 
+function assertRecordedBinding(record: StartedRecorded, agent: Agent): void {
+	if ((record.routingVersion || record.routing) && !agent.routingProfile)
+		throw new Error("routing_profile removed; resume/fork refused to discard routing guarantees");
+	if (record.routing && record.routing.profile !== agent.routingProfile)
+		throw new Error("routing_profile changed; resume/fork refused to discard prior routing guarantees");
+}
+
+function assertRoutingBinding(record: StartedRecorded, agent: Agent, request: unknown, path: string): void {
+	assertRecordedBinding(record, agent);
+	if (request !== undefined && !agent.routingProfile) throw new Error("routing metadata requires routing_profile");
+	assertRoutingSource(
+		agent,
+		{ path, sessionId: sessionIdOf(record) },
+		agent.routingProfile ? parseRoutingRequest(request) : undefined,
+	);
+}
+
 /** The thinking level and model a resume runs with; throws when the level is invalid or no model can be used. */
 export async function settleModel(
-	deps: Pick<ResumeDeps, "parentDefaults" | "thinkingProblem" | "chooseModel">,
+	deps: Pick<ResumeDeps, "parentDefaults" | "thinkingProblem" | "chooseModel" | "chooseRouting">,
 	input: {
 		record: StartedRecorded;
 		agent: Agent;
 		session: SessionFile;
-		request: Pick<ResumeRequest, "model" | "thinking">;
+		request: Pick<ResumeRequest, "model" | "thinking" | "routing">;
 	},
 	ctx: ExtensionContext,
-): Promise<{ thinking: string; chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>> }> {
+): Promise<{
+	thinking: string;
+	chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>> | import("./routing-dispatch.ts").RoutedChoice;
+}> {
 	const { record, agent, session } = input;
 	const defaults = resumeDefaults(record, agent, session.path, deps.parentDefaults(ctx));
 	const { request, notice } = withoutLocked(agent, input.request, {
@@ -168,6 +190,20 @@ export async function settleModel(
 	const thinking = request.thinking ?? defaults.thinking;
 	const badThinking = deps.thinkingProblem(thinking);
 	if (badThinking !== undefined) throw new Error(badThinking);
+	assertRoutingBinding(record, agent, request.routing, session.path);
+	if (agent.routingProfile) {
+		if (!deps.chooseRouting) throw new Error("routed resume/fork is unsupported by this host");
+		const chosen = await deps.chooseRouting(agent, request.routing, ctx, {
+			model: agent.locked.includes("model") ? defaults.models[0] : request.model,
+			thinking: agent.locked.includes("thinking")
+				? (defaults.thinking as import("./agents.ts").Thinking)
+				: (request.thinking as import("./agents.ts").Thinking | undefined),
+		});
+		return {
+			thinking: chosen.thinking,
+			chosen: notice === undefined ? chosen : { ...chosen, notices: [notice, ...chosen.notices] },
+		};
+	}
 	const chosen = await deps.chooseModel(request.model, agent, ctx.modelRegistry, defaults.models);
 	return { thinking, chosen: notice === undefined ? chosen : { ...chosen, notices: [notice, ...chosen.notices] } };
 }
@@ -208,6 +244,11 @@ export async function passes(
 	try {
 		windowCheck(record, windows);
 		const { session, agent } = recordCheck(deps, record, ctx);
+		// Source-dependent binding must be checked before the shared legacy model-availability cache.
+		assertRecordedBinding(record, agent);
+		assertRoutingSource(agent, { path: session.path, sessionId: sessionIdOf(record) }, undefined);
+		// Routed choices require fresh task metadata, collected after picking. This is only structural eligibility.
+		if (agent.routingProfile) return true;
 		// Model choice depends on the agent and where the delegate ended, so records alike share one answer.
 		const key = JSON.stringify([agent.name, resumeDefaults(record, agent, session.path, deps.parentDefaults(ctx))]);
 		let ok = models.get(key);

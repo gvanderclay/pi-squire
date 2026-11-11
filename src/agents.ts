@@ -53,6 +53,8 @@ const DISPLAY_NAME = /^[A-Za-z0-9_-]+$/;
 
 export type Agent = {
 	name: string;
+	/** Explicit opt-in to a required profile in squire/routing.json. */
+	routingProfile?: string;
 	/** Shown instead of the name on the delegate card, compact widget and window title; from `display_name`, `[A-Za-z0-9_-]+`. */
 	displayName?: string;
 	description: string;
@@ -143,6 +145,11 @@ function parseAgent(name: string, path: string, text: string, bundles: Bundles):
 	if (pattern !== undefined) return { invalid: pattern, notes: [] };
 	const shown = displayName(path, fields);
 	if ("invalid" in shown) return { ...shown, notes: [] };
+	if (
+		Object.hasOwn(fields, "routing_profile") &&
+		(typeof fields.routing_profile !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(fields.routing_profile))
+	)
+		return { invalid: `${path} has invalid routing_profile; name a required routing policy profile`, notes: [] };
 	// A field that cannot be used is dropped with a note; it never costs the agent.
 	const notes: string[] = [];
 	const thinking = thinkingField(path, fields, notes);
@@ -155,6 +162,7 @@ function parseAgent(name: string, path: string, text: string, bundles: Bundles):
 		notes,
 		agent: {
 			name,
+			...(fields.routing_profile === undefined ? {} : { routingProfile: fields.routing_profile as string }),
 			...shown,
 			description: field(fields, "description") ?? name,
 			...(model === undefined ? {} : { model }),

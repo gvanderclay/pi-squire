@@ -68,9 +68,11 @@ You research one question at a time and answer concisely, citing the files
 you read.
 ```
 
-Every field is optional: without `model` and `thinking` the delegate runs on
-your session's, and without `tools` it has your session's tools (see
-[Agents](#agents)). The roster is read at call time, so no reload is needed. Delegation guidance
+Every field is optional: for a legacy agent, without `model` and `thinking`
+the delegate runs on your session's, and without `tools` it has your session's
+tools (see [Agents](#agents)). A bound role uses its routing policy instead;
+see [Role/task routing](#role-task-routing-unreleased). The roster is read at
+call time, so no reload is needed. Delegation guidance
 for the parent is optional: save Markdown as
 `<agent dir>/squire/delegation_prompt.md`, and it is read before each run.
 Then, from a Pi session running in tmux, hand it a task:
@@ -93,19 +95,22 @@ model supports; a level the model does not support, whether from the agent's
 default or after changing the model, moves to the nearest supported one and says so), Auto-exit, Working directory (your own, to change)
 and Worktree (a new branch name, empty for none). A worktree and a changed
 working directory exclude each other; the base, source and fallbacks stay
-command-only. The form starts the delegate through the same path as the
+command-only. For an agent with `routing_profile`, the form also asks for
+routing JSON; leaving its model or thinking choice blank uses the policy, not
+the parent's current values. The form starts the delegate through the same path as the
 command, in the background, with the same start message. The label and
 directory are checked as `--label` and `--cwd` are, before anything is sent
 or opened.
 
 ## How a delegation works
 
-`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>]] [--auto-exit | --no-auto-exit] <task…>`
+`/delegate <agent> [--model <provider/id>] [--thinking <level>] [--routing "<JSON>"] [--label <name>] [--cwd <dir> | --worktree <branch> [--worktree-source <dir>] [--worktree-base <commit-ish>]] [--auto-exit | --no-auto-exit] <task…>`
 reads the agent from `<agent dir>/agents/<name>.md` (or a trusted project's
-`.pi/agents/<name>.md`; see [Agents](#agents)), writes
-the task to the delegate's inbox through `message:send`, emits
-`session:launch` so other extensions can shape the launch, then opens a
-detached window running the parent's own Pi in the parent's working directory,
+`.pi/agents/<name>.md`; see [Agents](#agents)). A legacy call sends the task
+through `message:send` before emitting `session:launch`; a routed call validates
+the hook's protected launch values before task delivery (see
+[Role/task routing](#role-task-routing-unreleased)). It then opens a detached
+window running the parent's own Pi in the parent's working directory,
 or the directory `--cwd` selects or the new `--worktree` checkout creates (see [Working directory](#working-directory)),
 with the parent's agent root. The agent's
 prompt reaches the child as a path to a private file under the system
@@ -1059,16 +1064,17 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | Field | Meaning |
 | --- | --- |
 | `description` | Shown in the roster and the `delegate` tool's description. Defaults to the name. |
+| `routing_profile` | Unreleased opt-in to role/task routing: the value names a profile in `<agent dir>/squire/routing.json`. Without it, the agent keeps legacy model selection. A bound role requires valid routing policy and per-call routing metadata; see [Role/task routing](#role-task-routing-unreleased). |
 | `display_name` | Shown instead of the name on the delegate card, in the compact widget and in the window title (`<display_name>-<label>`). The agent is still called by its name. It may hold only ASCII letters, digits, `-` and `_`; any other value (a space, `#`, `.`, a non-ASCII letter, or an empty value) makes the file invalid, so the agent is disabled. |
-| `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model. |
-| `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent session's level; an unknown value is dropped with a warning and the parent's level applies. Pi clamps the level to the model. |
+| `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model for legacy agents; a bound role uses its routing policy. |
+| `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Absent means the parent's level for legacy agents; a bound role uses its route's per-candidate level. An unknown value is dropped with a warning and the parent's level applies to legacy agents. Pi clamps the level to the model. |
 | `tools` | The delegate's tools (see below): tool names and `$bundle` entries for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
-| `fallback` | Models to try, in order, when `model` is usage-limited (see [Usage limits](#usage-limits)). Each entry is one model, like `model`; a `*` pattern, or a YAML list entry holding a comma, makes the file invalid. A comma-separated line (`fallback: a, b`) is two entries. |
+| `fallback` | For legacy agents, models to try in order when `model` is usage-limited (see [Usage limits](#usage-limits)). Routed roles use only their policy's frozen candidate list. Each entry is one model, like `model`; a `*` pattern, or a YAML list entry holding a comma, makes the file invalid. A comma-separated line (`fallback: a, b`) is two entries. |
 | `auto_exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
 | `allow_nested_delegation` | Unreleased: `true` or a YAML list of exact child agent names; grants nested delegation below `maxDepth` (see [Nested delegation](#nested-delegation-unreleased)). Absent, false or an empty list grants none. Malformed values disable the agent; unavailable names warn. |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
-| `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate` or a resume that passes a locked field does not get it: the agent's value is used (the parent's when the file sets none) and the result says which agent locked which field. Passing the agent's own value is the same as passing nothing: no notice, and its fallbacks still apply. A resume of a locked field runs on the file's value as it is now, not on what the delegate last ran on. `true` locks the fields the file sets. |
+| `locked` | `true`, or a list of `model` and `thinking`. A call to `delegate`, `/delegate`, resume or fork that passes a locked field does not get it: the agent's value is used (the parent's when the file sets none) and the result says which agent locked which field. Passing the agent's own value is the same as passing nothing: no notice, and its fallbacks still apply. A resume of a locked field runs on the file's value as it is now, not on what the delegate last ran on. `true` locks the fields the file sets. A routed lock still has to satisfy route constraints; see [Role/task routing](#role-task-routing-unreleased). |
 
 Any other key, such as `max_turns`, `inherit_context` or `run_in_background`,
 is ignored without a warning and left for whatever else reads the file.
@@ -1219,13 +1225,215 @@ exists, a warning says to move each `<name>/AGENT.md` to
 `<agent dir>/agents/<name>.md`. With no agents at all, `/delegate` says how to
 add one.
 
+## Role task routing (unreleased)
+
+This opt-in requires a compatible pi-squire runtime; it is not a capability of
+older published versions. It adds a policy for agents that declare
+`routing_profile` in frontmatter. The agent parser rejects a malformed
+binding instead of ignoring it. An agent without that field keeps the legacy
+selection and fallback behavior. A bound agent never silently inherits the
+parent model: a missing or invalid required policy or request metadata
+refuses the routed call before dispatch. Do not send routing metadata to an unbound agent.
+
+### Policy
+
+The strict v1 policy lives at `<agent dir>/squire/routing.json` (not in
+`settings.json`). Its top-level shape is `version: 1`, `models`, `profiles`, and
+optional `usage`. Model keys are exact physical `provider/id` names; each value
+sets an explicit `family`, `data` (`any` or `public-only`), and optional model
+`capabilities`. A profile names its rotation `pool`, may set
+`independentReview`, and supplies one or more category routes. Each route has a
+nonnegative integer `minQuality` and nonempty `candidates` with exact model,
+requested `thinking`, nonnegative integer `quality`, and optional nonnegative
+integer `priority`:
+
+```json
+{
+  "version": 1,
+  "models": {
+    "provider/model-a": { "family": "lineage-a", "data": "any" },
+    "provider/model-b": { "family": "lineage-b", "data": "public-only", "capabilities": ["vision"] }
+  },
+  "profiles": {
+    "worker": {
+      "pool": "general",
+      "routes": {
+        "standard": {
+          "minQuality": 2,
+          "candidates": [
+            { "model": "provider/model-a", "thinking": "high", "quality": 3 },
+            { "model": "provider/model-b", "thinking": "medium", "quality": 2, "priority": 1 }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+This is an illustrative policy only; use physical models and lineage names
+appropriate to your installation. Quality numbers are policy inputs, not
+runtime benchmarks. A profile may omit categories it does not support;
+requesting one without a route fails. Invalid versions, unknown fields,
+missing model metadata and malformed candidates fail closed. Virtual/opaque
+models are not route candidates. The legacy agent `fallback` list does not
+widen a routed profile.
+
+### Request metadata and selection
+
+`delegate`, `delegation_resume` and `delegation_fork` accept an optional
+`routing` object while the current roster contains an opted-in role. A legacy-only
+roster keeps the compact legacy tool schema; startup and each run refresh the
+routing schema from the roster. Command users pass the same object as
+`--routing "<JSON>"`. When the interactive form selects a bound role, it asks
+for this JSON. A bound call must provide `category` (`narrow`, `bounded`,
+`standard` or `deep`) and `data` (`private`, `public` or `unknown`). For
+example, these are illustrative request objects:
+
+```json
+{ "category": "standard", "data": "private" }
+```
+
+```json
+{ "category": "bounded", "data": "public", "safePublicContext": true }
+```
+
+```json
+{ "category": "standard", "data": "private", "review": { "authors": ["self"] } }
+```
+
+`safePublicContext: true` is an explicit attestation that the task,
+instructions, inherited context, workspace and allowed tool reads are all
+public-safe. It is not proof, sanitization or isolation. A `public-only` model
+is eligible only with `data: "public"` and that attestation.
+
+Optional `requirements` can state `contextTokens`, required `input` types
+(`text`/`image`), literal required `tools`, and required model `capabilities`.
+A required tool must exist as a known, non-hidden tool in the parent's catalogue
+and be selected for the role; child-only discovery does not satisfy a declared
+requirement. Normal child tool discovery still works for tools not declared as
+requirements.
+
+A profile requiring independent review, or a request with `review`, needs
+`review.authors`: every source must be `self` (the parent's active branch) or a
+known delegation id. Family names are not source references. Squire reads each
+source's complete active-branch served-model history and excludes every mapped
+author family before initial selection and each runtime substitution. Unknown sources or lineage fail
+closed; if no qualified independent candidate remains, routing refuses rather
+than lowering the bar.
+
+Candidate constraints are applied before ranking: public-data eligibility,
+quality floor, physical model availability and declared context/input/tool/
+capability needs, plus any review-family exclusions. Lower numeric `priority`
+comes first, then higher `quality`, then advisory quota pressure; an applicable
+fresh exhausted quota excludes a candidate, while an unknown quota observation establishes neither exhaustion nor
+headroom and is ignored. Genuine ties across distinct families rotate durably
+and concurrently per root, pool and tied-family set. Multiple endpoints
+in one family do not earn extra turns, and a launch with one qualified family
+does not consume another family's tie turn.
+
+`model` and `thinking` overrides remain available unless the agent locks the
+field. An explicit model reduces the route to that single policy candidate; it
+must still satisfy every hard constraint. A blank model/thinking choice for a
+bound role uses the route policy rather than the parent model or effort. Pi may
+clamp requested thinking to a model's supported level. Per-candidate requested
+settings and initial effective levels are frozen; each substitution reapplies its
+candidate's request and records the host's effective level. An availability switch
+can move a routed run only to another still-eligible frozen candidate. Policy,
+safety and refusal failures do not trigger that switch; this route fallback is
+not a repair or escalation policy, and it never falls through to an
+unrestricted legacy fallback or parent model.
+
+Resume and fork require fresh routing metadata for a bound role; a previous
+public-context attestation is never prefilled. They inspect the actual source
+session file, even when an older delegation id names a session that was later
+resumed. Any persisted routed history keeps the role's profile binding; removing
+or changing it refuses rather than inheriting an older attempt's runtime state.
+Unbound sessions with no routed history keep their legacy resume/fork behavior.
+
+A public resume/fork requires every attempt on the source's active ancestry to
+be public and attested. Messages, compactions or other context before its first
+routing marker are unknown; branch summaries also require public-attested source
+ancestry. Private or unknown inherited context cannot become public through a
+new attestation. After launch preparation, a routed fork captures and validates
+an owner-only source snapshot and passes that path to Pi's `--fork`. Later
+changes to the original session cannot enter that copy, even when task mail
+precedes the child's asynchronous file read. Squire rechecks the checked source
+before task mail/open. Like prompt files, snapshots remain in the OS temporary
+directory until cleanup and can contain sensitive context.
+
+Pi forks copy the whole session file, including abandoned branches; only the
+active context and referenced summaries are checked for public inheritance, not
+arbitrary future reads of that file. This is not filesystem or process isolation.
+The fresh route resolves the effective model/thinking choice under the same
+hard constraints. Launch notices name the model actually admitted after tie
+rotation and distinguish routed exclusions from legacy availability fallback.
+
+### Launch hooks, evidence and limits
+
+A routed launch freezes its candidate set, per-model effort, data and family
+constraints, request, policy version/digest and usage applicability. Routed
+`session:launch` mutations are validated before task mail is sent, including
+when a host would otherwise open the window before delivery. A listener may add
+unrelated flags and environment keys or narrow tools. It may not change model,
+thinking, session identity/storage or consent/trust arguments, rewrite the
+frozen routing environment or add an unrestricted fallback, broaden the
+selected tool set, or remove a routing-required tool. A violation refuses the
+launch before mail or window side effects.
+
+Squire records physical assistant `provider/id` and effective thinking for each
+attempt, with explicit attempt boundaries. The result and `delegation_status`
+show actual served models/efforts and whether independent family history was
+verified. Review evidence covers exactly the attempt after its marker, so an
+intermediate out-of-route model substitution makes that attempt unverified; an
+unknown or incomplete history is also unverified. Author exclusions are
+conservative across each source's full active branch, not just the edits to the
+current artifact. Keep the candidate stable while it is reviewed and identify
+every author source.
+
+`family` is operator-supplied physical model lineage, not an endpoint-provider
+inference or cryptographic/backend attestation. An active branch is not an
+artifact-ownership ledger: this evidence cannot prove that the supplied author
+list is exhaustive, that every earlier edit remains in the candidate, review
+quality, or independent error modes. Manual/user/extension model changes are
+not blocked by notification hooks; served history can expose an out-of-route
+model, but this is not an OS sandbox or public-input isolation boundary. Evidence
+covers persisted assistant messages, not arbitrary extensions' hidden or nested
+model calls.
+
+### Routed quota observations
+
+The optional `usage` object has positive-millisecond `maxAgeMs` and an
+explicit `applicableProviders` list of Pi provider names. The snapshot adapter
+consumes cached `usage-status:snapshot` v1 data through the matching
+`usage-status:request` event; that adapter does not poll, import provider code,
+read credentials or make quota requests. Routed dispatch reuses existing
+applicable proactive machinery for initial checks without a usable snapshot and
+for limit-mark rechecks: direct-key Go requests and explicitly attested Claude
+CLI checks/refreshes. Snapshots older than `maxAgeMs`,
+missing, unavailable or inapplicable observations are unknown. Duration windows and safely scoped model
+labels are matched to the routed provider/model. The provider list is frozen in
+the routing record for runtime substitutions. Reactive usage-limit marks always
+constrain routed candidates; direct-key Go proactive checks remain applicable,
+while other CLI-derived proactive checks/marks require the provider to be
+listed.
+Set applicability only when that CLI account's observations describe the Pi
+account too: Claude Code and Codex CLI caches can refer to different logins.
+Without `usage.applicableProviders`, other providers' CLI observations are
+inapplicable and ignored.
+
+Legacy agents retain the existing proactive and fallback behavior described
+under [Usage limits](#usage-limits).
+
 ## Configuration
 
 `<agent dir>/squire/` holds the optional parent guidance file and
 `settings.json` (`multiplexer`, `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`,
 `windowPlacement`, `companionSuffix`, `worktreeRoot`, `worktreeRootByRepo`, `delegateTools`, `toolBundles`,
-`delegateWidgetPlacement` and `delegateWidgetMaxEntries`); the
-agents live in `<agent dir>/agents/` (see [Agents](#agents)).
+`delegateWidgetPlacement` and `delegateWidgetMaxEntries`); `routing.json` is
+the separate optional v1 policy for agents with `routing_profile` (see
+[Role/task routing](#role-task-routing-unreleased)). The agents live in
+`<agent dir>/agents/` (see [Agents](#agents)).
 `settings.json` is read when a setting is needed, never cached, so a change
 applies to the next launch. A missing file means every default. A file that
 cannot be read, is not JSON or is not an object refuses every launch, resume
@@ -1274,9 +1482,10 @@ runner that starts Pi unattended can set it too. Anything else the
 parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
 reaches the child only through a `session:launch` contributor. `--model` and
 `--thinking` override the agent's defaults for one call, unless the agent
-locks them (see [Agents](#agents)), and an unknown value
-is refused with close matches, and so is a model with no configured
-credentials. An API key that exists only as an environment variable in the
+locks them (see [Agents](#agents)); for a bound role they override only within
+the eligible route (see [Role/task routing](#role-task-routing-unreleased)).
+An unknown value is refused with close matches, and so is a model with no
+configured credentials. An API key that exists only as an environment variable in the
 parent's shell does not reach the delegate, so log in through Pi or make the
 variable part of the tmux server's environment. `--auto-exit` and `--no-auto-exit` override the
 agent's `auto_exit`.
@@ -1289,11 +1498,11 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `delegate` | `agent`, `task`, optional `model`, `thinking`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
+| `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
-| `delegation_resume` | `id`, `task`, optional `model`, `thinking` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
-| `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
+| `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
+| `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
 
 The `delegate` tool's description lists the current roster, one line per agent:
 its name and any display name, description, default model (or this session's)
@@ -1305,8 +1514,10 @@ fields it locks.
 - scout "Recon" — Read-only recon (default provider/model-id, thinking low, auto-exit off, tools: read/grep, locked: model)
 ```
 
-The model picks an agent from these lines without reading files. The
-description also tells the model to turn `auto_exit` off when it means to keep
+The model picks an agent from these lines without reading files. For a
+routed role, selection comes from its routing profile and request metadata,
+not the legacy model/fallback defaults. The description also tells the model
+to turn `auto_exit` off when it means to keep
 talking to the delegate by mail after its result. It says a task must stand
 alone, that results arrive automatically, and that the parent should keep
 working or end its turn rather than poll or send a blocking mail request
@@ -1454,6 +1665,12 @@ removes worktrees, branches, session files or result envelopes. Existing narrow
 rollback of pristine resources on a known failed launch is unchanged.
 
 ## Usage limits
+
+Usage-limit errors still create shared reactive marks. The proactive checks
+and fallback behavior below describe legacy, unbound agents. Routed agents use
+the cached, explicitly applicable quota observations described under
+[Role/task routing](#role-task-routing-unreleased); reactive marks still
+constrain their candidates.
 
 When a delegate's run ends on a usage-limit error, it records a mark in
 `pi-squire-limits.json` in Pi's agent directory, which every Pi session on the
@@ -1717,16 +1934,17 @@ no legacy identity synthesis or migration.
 An exited delegate can continue its own session with a follow-up task:
 
 ```text
-/delegate-resume <id> [--model <provider/id>] [--thinking <level>] [--auto-exit | --no-auto-exit] <task…>
+/delegate-resume <id> [--model <provider/id>] [--thinking <level>] [--routing "<JSON>"] [--auto-exit | --no-auto-exit] <task…>
 ```
 
 The model does the same with `delegation_resume` (`id` and `task`, optionally
-`model`, `thinking` and `auto_exit`), which returns the `delegate` tool's result
+`model`, `thinking`, `routing` and `auto_exit`), which returns the `delegate` tool's result
 plus `resumedFrom`. The command completes the ids that can still be resumed.
 
 `/delegate-resume` with no arguments opens a picker instead: the delegations
 that pass every check below (newest first, from one look at tmux), then the
-multi-line editor for the follow-up. The checks change nothing: it refuses as the
+multi-line editor for the follow-up. When the selected role is bound to a
+routing profile, it also asks for fresh routing JSON. The checks change nothing: it refuses as the
 command does when tmux is older than 3.2 or `windowPlacement` is invalid, and leaves out a
 delegation whose recorded thinking level is invalid or whose model and fallbacks cannot be used
 (credentials, usage limits). An exited window is left for the resume to close, and trust is
@@ -1768,18 +1986,23 @@ and it resumes as the command does.
   The window opens in that directory, with project trust decided again for it as
   for `cwd` (see [Project trust](#project-trust)); there is no `cwd` or
   `worktree` for a resume, and no worktree is created.
-- Without `model` it continues on the model the delegate finished on, moving to
-  its agent's fallbacks when that one is unavailable or marked (see
-  [Usage limits](#usage-limits)). An explicit `model` is used alone and refused
-  rather than substituted. Without `thinking` it continues on the level the
-  delegate last ran on: the last thinking-level change on its session's
-  active branch (Pi records one at start, one per change, and one when a
-  model change clamps the level), or the delegation's recorded level when
-  the session has none. `auto_exit` defaults to the delegation's own. A
-  field the agent locks is the exception: it runs on the
+- For a legacy agent, without `model` it continues on the model the delegate
+  finished on, moving to its agent's fallbacks when that one is unavailable or
+  marked (see [Usage limits](#usage-limits)). An explicit `model` is used alone
+  and refused rather than substituted. Without `thinking` it continues on the
+  level the delegate last ran on: the last thinking-level change on its
+  session's active branch (Pi records one at start, one per change, and one
+  when a model change clamps the level), or the delegation's recorded level
+  when the session has none. For a routed role, supply fresh `routing` metadata;
+  blank model/thinking choices use the policy rather than the last served model
+  or effort. `auto_exit` defaults to the delegation's own. A
+  field the agent locks is the exception: for legacy agents it runs on the
   agent file's current `model` (then its fallbacks, even when the delegate had
-  moved to a fallback) or `thinking`, a value passed for it is not used, with
-  a notice, and passing the file's own value is the same as passing nothing. The agent's prompt and tools are those of the
+  moved to a fallback) or `thinking`; for a routed role, a locked model still
+  has to be a policy candidate, and a locked thinking value cannot bypass route
+  constraints. A value passed for a locked field is not used, with a notice,
+  and passing the
+  file's own value is the same as passing nothing. The agent's prompt and tools are those of the
   roster now, and an agent without a `tools` field gets the parent's tools as
   they are at the resume.
 - `session:launch` is emitted as for any launch, with the same payload.
@@ -1820,8 +2043,10 @@ default to the source's last settings with the same locks and fallbacks as a
 resume; the current roster supplies the prompt and tools. A different effective
 model re-reads the copied context without the source's cache; the result warns
 about the new cache write, estimating copied tokens when source usage is
-available. Keep the source's model unless the task needs another role.
-`session:launch` is emitted with the `delegation_fork` tool call id.
+available. Keep the source's model unless the task needs another role. A
+fork from a routed role requires fresh `routing` metadata and cannot carry
+forward a public-context attestation. `session:launch` is emitted with the
+`delegation_fork` tool call id.
 
 ## Hooks
 
@@ -1835,9 +2060,11 @@ that block.
 
 `pi-squire` provides this hook. It emits
 `{ args, env, agent, cwd, toolCallId, parent, root, depth, chain }`
-just before it opens the delegate's window: for a launch, after the task has
-been sent; for a resume, before it is sent, since a resume mails the task once
-the window is open (see [Resuming a delegation](#resuming-a-delegation)).
+just before it opens the delegate's window. Legacy launches send the task first;
+resumes send it once the window is open (see [Resuming a
+delegation](#resuming-a-delegation)). Routed launches validate the hook's
+protected values before any task is sent, regardless of whether the host would
+otherwise open before delivery.
 
 | Field | Meaning |
 | --- | --- |
@@ -1851,13 +2078,17 @@ the window is open (see [Resuming a delegation](#resuming-a-delegation)).
 | `depth` | Read-only numeric child depth, root = 0; retained on resume. |
 | `chain` | Read-only frozen array of roster agent names ordered root downward, including the current child last; no session ids. |
 
-Listeners may only append to `args` and add keys to `env`; there is no veto,
-and top-level launches pass both to tmux unchanged. For nested launches and
-resumes, after all listeners return, pi-squire resolves the final tool selection
-and appends an authoritative exact-name `--tools` registration allowlist bounded
-by the direct parent. This limits which tool names the child can register and
-reach, including names provided by hook-added extensions, late registrations
-and MCP. It does not
+Listeners may only append to `args` and add keys to `env`. For ordinary
+legacy launches there is no veto, and top-level launches pass both through to
+tmux. For routed launches, pi-squire validates the final values and refuses a
+hook change to model/thinking, session identity/storage or trust/consent; it
+also refuses broader tools or removal of a routing-required tool. Routed hooks
+may add unrelated flags/environment keys or narrow tools, and validation occurs
+before task delivery. For nested launches and resumes, after all listeners
+return, pi-squire resolves the final tool selection and appends an authoritative
+exact-name `--tools` registration allowlist bounded by the direct parent. This
+limits which tool names the child can register and reach, including names
+provided by hook-added extensions, late registrations and MCP. It does not
 limit extension code or implementations registered under allowed names;
 unrelated arguments/environment keys survive. For nested launches and resumes,
 final customized arguments that Pi cannot parse refuse the launch before the
@@ -1877,7 +2108,8 @@ one, `--fork` with `--session-id` for a [fork](#forking-a-delegation)) are launc
 whatever a listener assigns to the payload. A listener must not add another
 trust flag, `--session-dir`, `--session`, `--fork` or `--session-id`, or a working-directory change to `args`, since
 that would launch a child whose trust or session storage the parent did not
-choose and cannot find; append only unrelated settings.
+choose and cannot find; append only unrelated settings. Routed launches also
+protect model, thinking, consent and selected tools as described above.
 
 ```js session:launch
 // Any extension can shape a launch: append a flag and add an environment key.
@@ -2144,10 +2376,10 @@ Other extensions may rely on:
 
 - the `session:launch` payload
   `{ args, env, agent, cwd, toolCallId, parent, root, depth, chain }`, emitted
-  synchronously before the window opens (after the task is sent for a launch,
-  before it is sent for a resume), with
-  `cwd`, the trust flag and `--session-dir` chosen by `pi-squire` (see
-  [Hooks](#hooks));
+  synchronously before the window opens (legacy launches send the task first;
+  routed launches validate protected values before task delivery; resumes send
+  after the window is open), with `cwd`, the trust flag and `--session-dir`
+  chosen by `pi-squire` (see [Hooks](#hooks));
 - the `message:send`, `message:reply`, `message:inbound` and `message:scan` hooks, consumed as
   their sections document;
 - the `delegate`, `delegation_status`, `delegation_close`, `delegation_resume` and `delegation_fork` tool names,
@@ -2158,9 +2390,10 @@ Other extensions may rely on:
   `/delegate-resume` the resume picker;
 - `/delegate-open <id>` with its `--switch` and `--peek` flags;
 - the `[delegate]` result text and the closed-without-a-result text;
-- the agent file's frontmatter keys and its locations,
-  `<agent dir>/agents/<name>.md` and, in a trusted project,
-  `<cwd>/.pi/agents/<name>.md`;
+- the agent file's frontmatter keys, including opt-in `routing_profile`, and
+  its locations, `<agent dir>/agents/<name>.md` and, in a trusted project,
+  `<cwd>/.pi/agents/<name>.md`; plus the v1 `<agent dir>/squire/routing.json`
+  policy and per-call `routing` metadata contract;
 - the `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`, `toolBundles`,
   `multiplexer`, `windowPlacement`, `companionSuffix`, `worktreeRoot`, `delegateWidgetPlacement` and
   `delegateWidgetMaxEntries` settings in

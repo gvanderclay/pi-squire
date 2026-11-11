@@ -4,6 +4,7 @@ import { cwdLine, modelLabel, snapshotLines } from "./render.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import type { StartedRecorded } from "./result-types.ts";
 import type { Inbound, MessageDetails, TaskQuote } from "./results.ts";
+import type { RoutingEvidence } from "./routing-types.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 
 /** A task quoted into the result header is cut at this many UTF-8 bytes. */
@@ -55,6 +56,7 @@ export function resultDetails(
 	session: string | undefined,
 	finished: string | undefined,
 	snapshot: WorkspaceSnapshot,
+	evidence?: RoutingEvidence,
 ): ResultDetails {
 	const reply = payload.envelope;
 	const copy = payload.requests.find((request) => request.envelope?.id === delegation.requestId);
@@ -73,6 +75,7 @@ export function resultDetails(
 	const limit = reply.status === "stopped" ? undefined : limitLine(sessionIdOf(delegation), reply.status);
 	return {
 		kind: "result",
+		...(delegation.routing ? { routing: delegation.routing, routingEvidence: evidence } : {}),
 		status: reply.status,
 		name,
 		agent: delegation.agent,
@@ -105,6 +108,13 @@ export function resultText(details: ResultDetails): string {
 	return [
 		`[delegate] Result from ${details.agent} (${modelLabel(details.model, details.finishedModel)}), delegation ${details.id}${details.resumedFrom === undefined ? "" : ` (resumed from ${details.resumedFrom})`}${details.forkedFrom === undefined ? "" : ` (forked from ${details.forkedFrom})`}, request ${details.requestId}.`,
 		`Status: ${details.status}`,
+		...(details.routing
+			? [
+					`Routing: ${details.routing.profile}/${details.routing.request.category}, policy v${details.routing.policyVersion} ${details.routing.policyDigest}; ${details.routing.reason}.`,
+					`Actual served models/efforts: ${details.routingEvidence?.served.map((item) => `${item.model}:${item.thinking ?? "unknown"}`).join(", ") || "unknown"}.`,
+					`Independent review: ${details.routingEvidence?.independent ?? "unverified"}${details.routingEvidence?.reasons.length ? ` (${details.routingEvidence.reasons.join("; ")})` : ""}. Caller must identify all author sources and keep the candidate stable; this verifies family disjointness relative to supplied active-branch histories, not exhaustive artifact attribution, error independence, review quality or isolation.`,
+				]
+			: []),
 		...(details.limit === undefined ? [] : [details.limit]),
 		taskLine,
 		`Working directory: ${cwdLine(details.cwd)}`,

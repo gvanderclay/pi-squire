@@ -44,7 +44,7 @@ export type Workspace = DirectoryWorkspace | ManagedWorkspace;
 /** `Workspace` as a schema for the tools' structured outputs: the discriminant and directory, the rest open to keep tool declarations short. */
 export const WorkspaceSchema = Type.Object(
 	{
-		mode: Type.Union([Type.Literal("inherited"), Type.Literal("existing"), Type.Literal("managed")]),
+		mode: Type.Enum(["inherited", "existing", "managed"]),
 		cwd: Type.String(),
 	},
 	{ additionalProperties: true },

@@ -24,6 +24,7 @@ import {
 	type WorkspaceAttempt,
 } from "./result-types.ts";
 import { ResultsPresentation } from "./results-presentation.ts";
+import { routingEvidence } from "./routing-provenance.ts";
 import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
 import { locatedRecord, type WindowRecord, windowPresentation } from "./tmux.ts";
 import type { Workspace } from "./workspace.ts";
@@ -51,6 +52,9 @@ export type Delegation = WindowRecord & {
 	displayName?: string;
 	model: string;
 	thinking: string;
+	/** Presence survives a missing routing payload, so restoration cannot downgrade a routed attempt to legacy. */
+	routingVersion?: 1;
+	routing?: import("./routing-types.ts").RoutingRecord;
 	/** The delegate's session and window name; absent in records from before labels, where it was `<agent>-<8 id characters>`. */
 	name?: string;
 	requestId: string;
@@ -91,6 +95,7 @@ export type RequestCopy = { envelope: Envelope; path: string };
 
 /** A result, appended to the session so it is shown once and survives a resume. */
 export type Result = {
+	routingEvidence?: import("./routing-types.ts").RoutingEvidence;
 	/** The envelope's status: `done`, `failed` or `stopped`. */
 	status: string;
 	/** The reply envelope's id, so the same reply is never shown twice. */
@@ -112,6 +117,8 @@ type CommonDetails = {
 	/** The model the delegation was launched on. */
 	model: string;
 	finishedModel?: string;
+	routing?: import("./routing-types.ts").RoutingRecord;
+	routingEvidence?: import("./routing-types.ts").RoutingEvidence;
 	id: string;
 	/** The delegation this one resumed. */
 	resumedFrom?: string;
@@ -413,11 +420,13 @@ export function createResults(
 		const delegation = pending.at(-1) as StartedRecorded;
 		shown.add(reply.id);
 		const session = locateSession(delegation, ctx?.sessionManager.getSessionDir());
-		const finished = finishedModel(session);
+		const evidence = delegation.routing ? routingEvidence(delegation.routing, session) : undefined;
+		const finished = delegation.routing ? evidence?.served.at(-1)?.model : finishedModel(session);
 		// After the claim above, so a slow or failing inspection cannot let the provider or a duplicate deliver it too.
 		const snapshot = inspectWorkspace(delegation.workspace?.cwd, delegation.workspace?.git);
-		const details = resultDetails(delegation, recordedName(delegation), payload, session, finished, snapshot);
+		const details = resultDetails(delegation, recordedName(delegation), payload, session, finished, snapshot, evidence);
 		const result: Result = {
+			...(evidence ? { routingEvidence: evidence } : {}),
 			status: reply.status,
 			replyId: reply.id,
 			envelopePath: payload.path,

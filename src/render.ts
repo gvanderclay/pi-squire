@@ -14,13 +14,21 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
-import type { Static } from "typebox";
-
-import type { DelegateSchema } from "./index.ts";
 import { inSession, windowDetail } from "./location.ts";
-import type { MessageDetails, ResourceFacts, WorkspaceAttempt } from "./results.ts";
+import type { Delegation, MessageDetails, ResourceFacts, WorkspaceAttempt } from "./results.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 import type { PathSummary, Workspace } from "./workspace.ts";
+
+/** Only fields this view reads; the launch schema also carries large routing/provenance records. */
+type StartedView = Pick<Delegation, "id" | "model" | "thinking" | "cwd" | "workspace"> & {
+	outcome: "started";
+	windowId: string;
+	windowName: string;
+	windowSession?: string;
+	skipped: { model: string; reason: string }[];
+	notices: string[];
+	autoExit: boolean;
+};
 
 /** The launch model, or `launch → finished` when the delegate finished on another one. */
 export function modelLabel(model: string, finished: string | undefined): string {
@@ -155,6 +163,12 @@ function plainLines(text: string): string[] {
 
 function idLines(details: MessageDetails): string[] {
 	const lines = [`delegation ${details.id}`, `request ${details.requestId}`];
+	if (details.routing)
+		lines.push(
+			`routing ${details.routing.profile}/${details.routing.request.category}, policy v${details.routing.policyVersion}`,
+			`independent family history: ${details.routingEvidence?.independent ?? "unverified"}`,
+			`served models/efforts: ${details.routingEvidence?.served.map((item) => `${item.model}:${item.thinking ?? "unknown"}`).join(", ") || "unknown"}`,
+		);
 	if (details.resumedFrom !== undefined) lines.splice(1, 0, `resumed from ${details.resumedFrom}`);
 	if (details.forkedFrom !== undefined) lines.splice(1, 0, `forked from ${details.forkedFrom}`);
 	if (details.kind === "result") lines.push(`envelope ${tilde(details.envelopePath)}`);
@@ -278,12 +292,12 @@ export function renderDelegateResult(
 	theme: Theme,
 	context: { args: { task?: unknown }; isError: boolean },
 ): Component {
-	const details = result.details as Partial<Static<typeof DelegateSchema>> | undefined;
+	const details = result.details as Partial<StartedView> | undefined;
 	if (context.isError || details?.outcome !== "started") {
 		const text = result.content.map((part) => part.text ?? "").join("\n");
 		return new Text(context.isError ? theme.fg("error", text) : text, 0, 0);
 	}
-	const started = details as Static<typeof DelegateSchema> & { workspace: Workspace };
+	const started = details as StartedView;
 	const lines = [
 		`${theme.fg("accent", "●")} ${theme.fg("toolTitle", theme.bold(started.windowName))}${theme.fg(
 			"dim",
@@ -300,11 +314,9 @@ export function renderDelegateResult(
 				`delegation ${started.id}`,
 				windowDetail(started),
 				// Results saved before cwd was recorded have none.
-				`cwd ${(started.cwd as string | undefined) === undefined ? cwdLine(undefined) : tilde(started.cwd)}`,
+				`cwd ${started.cwd === undefined ? cwdLine(undefined) : tilde(started.cwd)}`,
 				// Results saved before workspaces were recorded have none.
-				...((started.workspace as Workspace | undefined) === undefined
-					? []
-					: [`workspace ${workspaceLine(started.workspace)}`]),
+				...(started.workspace === undefined ? [] : [`workspace ${workspaceLine(started.workspace)}`]),
 				`thinking ${started.thinking}, auto-exit ${started.autoExit ? "on" : "off"}`,
 			].map((line) => theme.fg("dim", line)),
 		);

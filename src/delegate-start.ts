@@ -13,6 +13,10 @@ import { type createIdentity, type Identity, readIdentity, writeIdentity } from 
 import { windowLocator } from "./locators.ts";
 import { MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { type Delegation, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
+import { assertRoutingSource, snapshotRoutingSource } from "./routing-inheritance.ts";
+import { ROUTING_ENV, validateRoutedLaunch } from "./routing-launch.ts";
+import { admitRouting } from "./routing-state.ts";
+import type { RoutingRecord } from "./routing-types.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import {
 	assertParentPlacement,
@@ -43,6 +47,7 @@ type LaunchPayload = {
 	readonly toolCallId: string | undefined;
 };
 export type ChildStart = {
+	routing?: RoutingRecord;
 	agent: Agent;
 	model: string;
 	rest: string[];
@@ -52,7 +57,7 @@ export type ChildStart = {
 };
 export type StartSession =
 	| { kind: "launch" }
-	| { kind: "fork"; id: string; path: string; sourceCwd: string }
+	| { kind: "fork"; id: string; path: string; sessionId: string; sourceCwd: string }
 	| { kind: "resume"; id: string; path: string; sessionId: string };
 
 type StartInput = {
@@ -80,7 +85,7 @@ type StartDeps = {
 	admit(agent: string, ctx: ExtensionContext): void;
 	startPolling(): void;
 };
-type Started = { opened: OpenedWindow; requestId: string };
+type Started = { opened: OpenedWindow; requestId: string; forkSourcePath?: string };
 
 function writePromptFile(prompt: string): string {
 	const path = join(mkdtempSync(join(tmpdir(), "pi-squire-")), "prompt.md");
@@ -126,7 +131,11 @@ function environment(input: StartInput): Record<string, string> {
 		[MULTIPLEXER_ENV]: input.admission.client.id,
 		PI_UNATTENDED: "1",
 	};
-	if (start.rest.length > 0) env[FALLBACK_ENV] = start.rest.join(",");
+	if (start.routing) {
+		env[ROUTING_ENV] = JSON.stringify({ ...start.routing, launchId: id });
+		if (Buffer.byteLength(env[ROUTING_ENV]) > 64 * 1024)
+			throw new Error("frozen route exceeds 64 KiB launch limit; reduce policy metadata");
+	} else if (start.rest.length > 0) env[FALLBACK_ENV] = start.rest.join(",");
 	const sessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
 	if (sessionDir !== undefined && sessionDir !== "") env.PI_CODING_AGENT_SESSION_DIR = sessionDir;
 	return env;
@@ -212,6 +221,7 @@ function startRecord(input: StartInput, opened: OpenedWindow, requestId: string)
 		...(start.agent.displayName === undefined ? {} : { displayName: start.agent.displayName }),
 		model: start.model,
 		thinking: start.thinking,
+		...(start.routing ? { routingVersion: 1 as const, routing: { ...start.routing, launchId: id } } : {}),
 		name,
 		locator: opened.locator ?? windowLocator({ id: opened.id, name }),
 		requestId,
@@ -287,14 +297,27 @@ export class DelegateStarter {
 	async start(input: StartInput, ctx: ExtensionContext): Promise<Started> {
 		const client = input.admission.client;
 		const token = { root: input.identity.root, id: input.id };
+		if (input.session.kind === "fork" && input.start.routing)
+			input.session = {
+				...input.session,
+				path: snapshotRoutingSource(input.start.agent, input.session, input.start.routing.request),
+			};
+		// Routed validation and synchronous hook checks precede every host's task-mail boundary.
+		const payload = input.start.routing ? this.routedPayload(input, ctx) : undefined;
+		if (input.session.kind !== "launch")
+			assertRoutingSource(input.start.agent, input.session, input.start.routing?.request);
 		const before = client.taskMailTiming(input.session.kind) === "before-open";
 		const mailed = before ? this.mailBeforeOpen(input, token) : undefined;
-		const opened = await this.openSession(input, token, ctx);
+		const opened = await this.openSession(input, token, ctx, payload);
 		if (client.configureStart) await this.configure(input, opened);
 		const requestId = mailed ?? (await this.mailAfterOpen(input, opened, token, ctx));
 		this.deps.results.recordStart(startRecord(input, opened, requestId), ctx);
 		this.deps.startPolling();
-		return { opened, requestId };
+		return {
+			opened,
+			requestId,
+			...(input.session.kind === "fork" ? { forkSourcePath: input.session.path } : {}),
+		};
 	}
 
 	private mailBeforeOpen(input: StartInput, token: Reservation): string {
@@ -339,7 +362,35 @@ export class DelegateStarter {
 		}
 	}
 
-	private async openSession(input: StartInput, token: Reservation, ctx: ExtensionContext): Promise<OpenedWindow> {
+	private routedPayload(input: StartInput, ctx: ExtensionContext): LaunchPayload {
+		const route = input.start.routing;
+		if (!route) throw new Error("missing required route");
+		this.deps.admit(input.start.agent.name, ctx);
+		this.deps.results.checkStorage(true);
+		if (input.session.kind === "resume" && sessionIsOwned(input.session.sessionId))
+			throw new Error(
+				`delegate session ${input.session.sessionId} is already open; resume refused before task delivery`,
+			);
+		return admitRouting(input.identity.root, route, (selected) => {
+			input.start.model = selected.model;
+			input.start.thinking = selected.effectiveThinking;
+			input.start.rest = route.candidates.slice(1).map((item) => item.model);
+			route.launchId = input.id;
+			const payload = launchPayload(input);
+			const before = structuredClone({ args: payload.args, env: payload.env });
+			this.deps.pi.events.emit("session:launch", payload);
+			validateRoutedLaunch(before, payload, parentCommand().length, route.request.requirements?.tools);
+			// Snapshot synchronously; a hook must not mutate the host spec after emit returns.
+			return { ...payload, args: [...payload.args], env: { ...payload.env } };
+		});
+	}
+
+	private async openSession(
+		input: StartInput,
+		token: Reservation,
+		ctx: ExtensionContext,
+		prepared?: LaunchPayload,
+	): Promise<OpenedWindow> {
 		const { start, identity: own, workspace, session } = input;
 		this.deps.admit(start.agent.name, ctx);
 		this.deps.results.checkStorage(true);
@@ -348,8 +399,8 @@ export class DelegateStarter {
 		assertRootPlacement(own.rootPlacement);
 		own.autoExit = start.autoExit && input.admission.client.keepsDelegatesOpen !== true;
 		writeIdentity(sessionIdFor(input), own);
-		const payload = launchPayload(input);
-		this.deps.pi.events.emit("session:launch", payload);
+		const payload = prepared ?? launchPayload(input);
+		if (!prepared) this.deps.pi.events.emit("session:launch", payload);
 		bindTree(token, { cwd: workspace.cwd, workspace });
 		dispatchTree(token);
 		const spec = { name: input.name, cwd: workspace.cwd, argv: payload.args, env: payload.env };

@@ -76,8 +76,14 @@ export function isFree(models: Models, provider: string, id: string): boolean {
 }
 
 /** The active mark that covers provider/id, if any. A provider mark never covers a free model. */
-export function activeMark(models: Models, provider: string, id: string, now = Date.now()): Mark | undefined {
-	const active = readMarks(now).filter((mark) => mark.clearsAt > now);
+export function activeMark(
+	models: Models,
+	provider: string,
+	id: string,
+	now = Date.now(),
+	applicable?: (mark: Mark) => boolean,
+): Mark | undefined {
+	const active = readMarks(now).filter((mark) => mark.clearsAt > now && (applicable?.(mark) ?? true));
 	return (
 		active.find((mark) => mark.scope === `${provider}/${id}`) ??
 		(isFree(models, provider, id) ? undefined : active.find((mark) => mark.scope === provider))

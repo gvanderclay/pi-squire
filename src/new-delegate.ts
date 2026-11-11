@@ -23,11 +23,14 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { type Agent, isThinking, type Roster, THINKING_LEVELS } from "./agents.ts";
+import { promptRouting } from "./routing-input.ts";
+import type { RoutingRequest } from "./routing-types.ts";
 import { resolveDirectory } from "./workspace.ts";
 
 /** What the form asks `/delegate` to start; the fields after `task` are set only when the user changed them. */
 export type NewRequest = {
 	agent: string;
+	routing?: RoutingRequest;
 	task: string;
 	label?: string;
 	model?: string;
@@ -216,7 +219,7 @@ export class SettingsForm implements Component {
 		this.clampInitialThinking();
 		const modelItems: SelectItem[] = [...new Set([this.model, ...this.byId.keys()])].map((value) => ({
 			value,
-			label: value,
+			label: value || "(routing policy)",
 		}));
 		this.items = [
 			{ id: START, label: "Start", currentValue: "▶ launch", values: ["▶ launch"] },
@@ -282,7 +285,8 @@ export class SettingsForm implements Component {
 	/** The levels the selected model supports; every level when the model is not in the registry. */
 	levels(): string[] {
 		const model = this.byId.get(this.model);
-		return model === undefined ? [...THINKING_LEVELS] : getSupportedThinkingLevels(model);
+		const levels = model === undefined ? [...THINKING_LEVELS] : getSupportedThinkingLevels(model);
+		return this.options.agent.routingProfile ? ["", ...levels] : levels;
 	}
 
 	private row(id: string): SettingItem {
@@ -444,5 +448,20 @@ export async function startNewDelegate(ctx: ExtensionContext, deps: NewDelegateD
 		{ blocked: { kind: "question", message: "Choose delegate settings" } },
 	);
 	if (chosen === undefined) return;
-	await deps.start({ agent: agent.name, task, ...(label === undefined ? {} : { label }), ...chosen }, ctx);
+	await submitForm(ctx, deps, agent, { agent: agent.name, task, label, ...chosen });
+}
+
+async function submitForm(
+	ctx: ExtensionContext,
+	deps: NewDelegateDeps,
+	agent: Agent,
+	request: NewRequest,
+): Promise<void> {
+	try {
+		const routing: RoutingRequest | undefined = agent.routingProfile ? await promptRouting(ctx, agent.name) : undefined;
+		if (agent.routingProfile && !routing) return;
+		await deps.start({ ...request, ...(routing ? { routing } : {}) }, ctx);
+	} catch (error) {
+		ctx.ui.notify(`delegate: ${(error as Error).message}`, "error");
+	}
 }

@@ -4,6 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildTasks } from "./child-tasks.ts";
 import { isStarted, isV2Start, type Recorded, START_TYPE, type WorkspaceAttempt } from "./result-types.ts";
 import type { Delegation, Result } from "./results.ts";
+import { validateRoutingMetadata } from "./routing-restore.ts";
 import { locatedRecord } from "./tmux.ts";
 import { belongsTo, restoredStarts } from "./tree-view.ts";
 
@@ -40,6 +41,7 @@ export function restoreRecords(ctx: ExtensionContext, tasks: ChildTasks): Record
 }
 function accept(record: Recorded, ctx: ExtensionContext, tasks: ChildTasks, local: boolean): boolean {
 	try {
+		if (isStarted(record)) validateRoutingMetadata(record);
 		return belongsTo(record, ctx);
 	} catch (error) {
 		tasks.blockRestore(error);
@@ -84,8 +86,10 @@ function applyTerminal(
 	data: Partial<Delegation & { result: Result; closed: boolean; gone: boolean }>,
 ): void {
 	if (!record || !isStarted(record)) return;
-	if (typeof data.result?.replyId === "string") record.result = data.result;
-	else if (data.closed === true) record.closed = true;
+	if (typeof data.result?.replyId === "string") {
+		validateRoutingMetadata({ ...record, result: data.result });
+		record.result = data.result;
+	} else if (data.closed === true) record.closed = true;
 	else if (data.gone === true) {
 		record.gone = true;
 		if (typeof data.sessionPath === "string") record.sessionPath = data.sessionPath;

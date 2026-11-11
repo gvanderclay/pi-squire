@@ -76,38 +76,45 @@ export async function chooseModel(
 }
 
 /** Recheck an active mark before a paid model's proactive quota check. */
+export type MarkPolicy = { accepts(mark: Mark): boolean; proactive: boolean };
+
 async function candidateMark(
 	model: string,
 	models: ModelRegistry,
 	proactive: Proactive,
 	notices: string[],
+	checkQuota = true,
+	policy?: MarkPolicy,
 ): Promise<Mark | undefined> {
 	const slash = model.indexOf("/");
 	const provider = model.slice(0, slash);
 	const id = model.slice(slash + 1);
-	let mark = activeMark(models, provider, id);
-	if (mark !== undefined) {
+	const marked = (): Mark | undefined => activeMark(models, provider, id, Date.now(), policy?.accepts);
+	let mark = marked();
+	if (mark !== undefined && policy?.proactive !== false) {
 		const cleared = await proactive.recheck(models, provider, id);
 		for (const line of cleared) if (!notices.includes(line)) notices.push(line);
-		if (cleared.length > 0) mark = activeMark(models, provider, id);
+		if (cleared.length > 0) mark = marked();
 	}
-	if (mark === undefined && !isFree(models, provider, id)) {
+	if (checkQuota && policy?.proactive !== false && mark === undefined && !isFree(models, provider, id)) {
 		const checked = await proactive.check(models, provider, id);
 		if (checked.notice !== undefined && !notices.includes(checked.notice)) notices.push(checked.notice);
-		mark = activeMark(models, provider, id) ?? checked.mark;
+		mark = marked() ?? checked.mark;
 	}
 	return mark;
 }
 
-async function candidateProblem(
+export async function candidateProblem(
 	model: string,
 	models: ModelRegistry,
 	proactive: Proactive,
 	notices: string[],
+	checkQuota = true,
+	policy?: MarkPolicy,
 ): Promise<Skipped | undefined> {
 	const problem = modelProblem(model, models);
 	if (problem !== undefined) return { model, why: `unavailable (${problem})`, reason: problem };
-	const mark = await candidateMark(model, models, proactive, notices);
+	const mark = await candidateMark(model, models, proactive, notices, checkQuota, policy);
 	if (mark === undefined) return undefined;
 	const what = mark.scope.includes("/") ? `model ${mark.scope}` : `provider ${mark.scope}`;
 	const until = new Date(mark.clearsAt).toISOString();
@@ -148,8 +155,10 @@ function refuseModels(
 	);
 }
 
-/** The sentence that says a fallback ran, or "" when the agent's own model did. */
-export const fallbackNote = (start: { model: string; skipped: readonly Skipped[] }): string =>
-	start.skipped.length === 0
-		? ""
-		: `Used fallback ${start.model} because ${start.skipped.map((item) => `${item.model} is ${item.why}`).join("; ")}.`;
+/** Routed policy exclusions are not availability fallback; both name the final admitted model. */
+export function fallbackNote(start: { model: string; skipped: readonly Skipped[]; routing?: unknown }): string {
+	if (start.skipped.length === 0) return "";
+	if (start.routing)
+		return `Selected ${start.model}; excluded ${start.skipped.map((item) => `${item.model}: ${item.reason}`).join("; ")}.`;
+	return `Used fallback ${start.model} because ${start.skipped.map((item) => `${item.model} is ${item.why}`).join("; ")}.`;
+}

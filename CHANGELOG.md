@@ -15,11 +15,40 @@ follows [Semantic Versioning](https://semver.org/).
   chooses Paseo. An older pi-squire that reads a Paseo delegation record
   refuses that whole delegation tree.
 
+- Opt-in role/task routing for agents bound with `routing_profile`: strict v1
+  model/profile policy, required per-call metadata, hard-constraint-aware
+  candidate selection and substitutions, durable family-balanced ties,
+  applicable cached quota observations, and attempt-scoped served-model and
+  review-independence evidence. Unbound agents retain legacy selection; the
+  feature requires a compatible pi-squire runtime.
+
 ### Fixed
 
+- `delegation_status` advertises the actual served-model, fallback and
+  review-evidence structure instead of reusing the frozen routing-record
+  schema. The schema now defines the evidence type, and malformed persisted
+  fallback observations make evidence unverified rather than violating the
+  advertised output. Equivalent compact string enums preserve the existing
+  tool-metadata budget; no characterization thresholds changed.
 - Correct the refused-daemon expectation in `test/paseo-api.test.ts` to assert
   an error, prompt rejection and client cleanup without matching Node-specific
   WebSocket wording. Runtime behavior is unchanged.
+- Routed resume/fork checks the actual source session, not an older delegation
+  record: public inheritance refuses private/unknown ancestry and branch-summary
+  sources, while persisted routing history prevents a downgrade to unbound
+  fallback. After preparation, routed forks validate an owner-only source
+  snapshot and give Pi that checked path, so a concurrent private resume cannot
+  race into the copy after mail/open. The source is checked again before task
+  mail/open. Safe public continuations and legacy sessions without routing
+  history remain supported.
+  New `test/routing-inheritance.test.ts` regressions cover the shared-session
+  public → private-resume → public-fork case, parent branch navigation and
+  pre-marker context; `test/routing-host.test.ts` covers paused preparation,
+  both mail timings and the installed Pi copy primitive. No existing
+  characterization assertions changed.
+- Resume/fork notices use the admitted model after tie rotation, including the
+  fork cache-write warning. Routed policy exclusions are called exclusions,
+  not availability fallback.
 
 ## [0.21.0] - 2026-11-10
 

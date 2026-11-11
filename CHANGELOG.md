@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Paseo support. When Paseo hosts the coordinator Pi, each delegate starts as a
+  Paseo agent in its folder's workspace. Resume and fork are refused there for
+  now. Delegates launch with auto-exit off, ignoring the roster's and call's
+  `auto_exit`, and the `multiplexer` setting is ignored because the host
+  chooses Paseo. An older pi-squire that reads a Paseo delegation record
+  refuses that whole delegation tree.
+
+### Fixed
+
+- Correct the refused-daemon expectation in `test/paseo-api.test.ts` to assert
+  an error, prompt rejection and client cleanup without matching Node-specific
+  WebSocket wording. Runtime behavior is unchanged.
+
 ## [0.21.0] - 2026-11-10
 
 ### Fixed

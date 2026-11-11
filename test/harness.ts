@@ -73,6 +73,12 @@ export function resetRoot(): void {
 	delete process.env.PI_DELEGATE_ROOT;
 	delete process.env.PI_DELEGATE_DEPTH;
 	delete process.env.PI_DELEGATE_CHAIN;
+	delete process.env.PI_DELEGATE_MULTIPLEXER;
+	// A Paseo delegate's own variables, inherited by the suite when it runs inside one.
+	delete process.env.PASEO_AGENT_ID;
+	delete process.env.PASEO_AGENT_CWD;
+	delete process.env.PI_DELEGATE_PASEO_TOOLS;
+	delete process.env.PI_DELEGATE_PASEO_TRUST;
 	delete process.env.PI_UNATTENDED;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }

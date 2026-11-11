@@ -1,10 +1,11 @@
 # pi-squire
 
-Starts a delegate Pi session in a background tmux window or Herdr tab and shows you its result.
+Starts a delegate Pi session in a background tmux window, a Herdr tab or a
+Paseo agent, and shows you its result.
 
 You give a task to a named agent with the `/delegate` command, or the model does
-it with the `delegate` tool. The delegate works in its own tmux window and
-answers with one message, which the parent session shows as a result.
+it with the `delegate` tool. The delegate works in its own window, tab or Paseo
+agent and answers with one message, which the parent session shows as a result.
 
 ## Install
 
@@ -20,7 +21,8 @@ You need:
   relative to the pane's session (see [Where delegate windows
   open](#where-delegate-windows-open)), so a client attached elsewhere does
   not matter. Alternatively, run Pi in a [Herdr](#herdr-support) pane:
-  pi-squire detects which one it is in.
+  pi-squire detects which one it is in. Or let [Paseo](#paseo-support) host
+  the Pi session; you then need neither.
 - A provider of the four `message:*` hooks, including `message:reply`;
   [pi-session-mail](https://github.com/gvanderclay/pi-session-mail) **0.6.0 or
   later** supplies them. Without a provider there is no way to send the task or get an
@@ -42,7 +44,10 @@ To follow the latest commit of pi-squire instead, install it from GitHub:
 pi install git:github.com/gvanderclay/pi-squire
 ```
 
-The package has no runtime dependencies and no build step.
+The package has no build step. Its only runtime dependency is
+`@getpaseo/client` 0.15.4, the Paseo SDK. pi-squire imports that SDK, and runs
+the `paseo` command, only for Paseo operations, so a tmux or Herdr coordinator
+loads neither.
 
 ## First use
 
@@ -372,15 +377,18 @@ own settings):
 { "multiplexer": "herdr" }
 ```
 
-`"tmux"` or `"herdr"` wins over detection in every case. It is read at every
-launch, resume and fork, and the choice is frozen before anything is created or
-mailed. If the chosen multiplexer is unusable (not inside it, server down,
-incompatible API), the launch refuses; pi-squire never falls back to the other.
-An invalid value refuses and names the file. A delegate records the backend that
-opened it in `PI_DELEGATE_MULTIPLEXER`, so its own delegates use the same one
-when no setting is present, even if its environment shows both. Existing
-delegations keep using the multiplexer they started in, whatever the setting
-says now.
+A Pi that Paseo hosts uses Paseo instead and never reads this setting (see
+[Paseo support](#paseo-support)).
+
+Outside Paseo, `"tmux"` or `"herdr"` wins over detection in every case. The
+setting is read at every launch, resume and fork, and the choice is frozen
+before anything is created or mailed. If the chosen multiplexer is unusable
+(not inside it, server down, incompatible API), the launch refuses; pi-squire
+never falls back to the other. An invalid value refuses and names the file.
+A delegate records the backend that opened it in `PI_DELEGATE_MULTIPLEXER`,
+so its own delegates use the same one when no setting is present, even if its
+environment shows both. Existing delegations keep using the multiplexer they
+started in, whatever the setting says now.
 
 ### Tabs
 
@@ -462,6 +470,36 @@ tmux pane, or tmux started inside a Herdr pane), launches without the setting
 now refuse instead of using tmux. Set `{ "multiplexer": "tmux" }` to keep tmux.
 Apart from that, and the refusal wording when Pi runs in neither multiplexer,
 tmux behaviour and its controls are unchanged.
+
+## Paseo support
+
+Paseo can host the coordinator Pi, and then pi-squire starts each delegate as a
+**Paseo agent** instead of a tmux window or a Herdr tab. Tested with Paseo
+0.15.4. The coordinator must be a Pi that Paseo started, and the `paseo`
+command must be installed with its daemon running: reading an agent's activity
+and closing an agent run that command.
+
+- Agents are standalone: each delegate is its own Paseo agent, not nested
+  under the coordinator. A delegate in the coordinator's folder reuses that
+  folder's existing workspace, a managed worktree gets its own, and closing an
+  agent leaves its workspace in place.
+- Resume and fork are refused for now, with the reason "Paseo cannot resume or
+  fork a delegate yet": `delegation_resume`, `/delegate-resume` and
+  `delegation_fork`. Start a new delegation instead.
+- A Paseo delegate starts with auto-exit off, ignoring the roster's and
+  call's `auto_exit`. It stays open and idle after its result; close it with
+  `delegation_close` or remove it in Paseo.
+- The `"multiplexer"` setting is ignored, because a Paseo-hosted Pi always opens
+  agents in Paseo.
+- A delegate has no terminal or pane to show. `windowId` is the agent id, and
+  `delegation_close` deletes that agent.
+- A pi-squire older than this support cannot read a Paseo delegation record, so
+  it refuses that whole delegation tree. Upgrade every Pi that reads the tree
+  instead of moving one back.
+
+A delegate is itself a Paseo agent. Starting another Pi by hand from a Paseo
+delegate's shell inherits that agent's identity; use Squire's `delegate` tool
+for nested workers.
 
 ## Where delegate windows open
 
@@ -1223,8 +1261,9 @@ server's environment plus `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`
 - `PI_DELEGATE_CHAIN`: comma-separated agent names, root downward, including
   the child last, e.g. `coordinator,worker`; names label requests, session ids route them;
 - `PI_DELEGATE_AUTO_EXIT`: `1` or `0`;
-- `PI_DELEGATE_MULTIPLEXER`: `tmux` or `herdr`, the backend that opened it
-  (see [Choosing tmux or Herdr](#choosing-tmux-or-herdr));
+- `PI_DELEGATE_MULTIPLEXER`: `tmux`, `herdr` or `paseo`, the backend that
+  opened it (see [Choosing tmux or Herdr](#choosing-tmux-or-herdr) and
+  [Paseo support](#paseo-support));
 - `PI_DELEGATE_FALLBACK`: remaining model candidates, when any.
 
 It always gets `PI_UNATTENDED=1`.

@@ -28,7 +28,12 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   call-time placement settings, `tool-names.ts` holds tool-name matching and
   the parent's available tools, `tool-bundles.ts` reads the `toolBundles`
   setting, and `tmux.ts` talks to tmux (`tmux-locator.ts` owns its opaque locator encoding and matching,
-  `tmux-command.ts` runs each tmux command and escapes its arguments for tmux's own parser).
+  `tmux-command.ts` runs each tmux command and escapes its arguments for tmux's own parser);
+  `paseo-locator.ts` owns the Paseo agent locator, `paseo-api.ts` talks to the
+  Paseo daemon and CLI and loads both only inside a call, `paseo-launch.ts` reads
+  a delegate's launch argv as agent fields and environment variables, `paseo.ts`
+  is the Paseo delegate host, and `paseo-child.ts` gives a Paseo delegate its
+  tool list and project-trust answer, which its host cannot pass as flags.
 - `src/task-replies.ts` owns task takeover/retries, `task-settlement.ts` the
   request settlement wording, and `task-store.ts` the durable answer outbox.
 - `src/tree-registry.ts` owns shared per-root structural facts and admission;

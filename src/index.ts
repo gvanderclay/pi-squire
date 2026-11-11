@@ -96,6 +96,7 @@ import { agentModels, chooseModel, fallbackNote, modelIds, type Skipped } from "
 import { createMultiplexer } from "./multiplexer.ts";
 import { createNavigator, OPEN_USAGE, openCompletions, parseOpen } from "./navigator.ts";
 import { type NewDelegateDeps, type NewRequest, startNewDelegate } from "./new-delegate.ts";
+import { registerPaseoChild } from "./paseo-child.ts";
 import { dirtyNotice, renderDelegateCall, renderDelegateResult, resourceLine } from "./render.ts";
 import { createResults, delegateName, isStarted, type WorkspaceAttempt } from "./results.ts";
 import { createResume, resumableIds, startedLine } from "./resume.ts";
@@ -253,6 +254,8 @@ export default function delegate(
 		},
 	);
 	registerChild(pi, replies, identity.current, () => owner.active());
+	// Pi asks for project trust before `session_start` elects this session's owner.
+	registerPaseoChild(pi, host);
 	host.on("session_start", () => owner.arm());
 	// Restore answers synchronously before this potentially slow tmux read.
 	pi.on("session_start", async (_event, ctx) => {

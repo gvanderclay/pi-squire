@@ -63,6 +63,10 @@ export class MemoryHost implements DelegateHost {
 	failConfigure: string | undefined;
 	/** When set, unavailable() refuses with this text. */
 	refusal: string | undefined;
+	/** When set, openWindow reports this Pi session id instead of the requested one. */
+	assignSessionId: string | undefined;
+	/** When true, delegates never auto-exit on this host. */
+	keepsDelegatesOpen: boolean | undefined;
 	/** Whether a viewer is attached; always false for the pane-free variant. */
 	viewer: boolean;
 	/** The window id the viewer shows, if any. */
@@ -111,7 +115,12 @@ export class MemoryHost implements DelegateHost {
 		}
 		const locator = tmuxWindowLocator({ id, name: spec.name });
 		this.started.push({ ...spec, argv: [...spec.argv], env: { ...spec.env }, id, locator, placement, companion });
-		return { id, session: undefined, locator };
+		return {
+			id,
+			session: undefined,
+			...(this.assignSessionId === undefined ? {} : { sessionId: this.assignSessionId }),
+			locator,
+		};
 	}
 
 	private own(record: WindowRecord): { id: string; name: string } | undefined {

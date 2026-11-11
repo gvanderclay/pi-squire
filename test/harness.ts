@@ -73,6 +73,7 @@ export function resetRoot(): void {
 	delete process.env.PI_DELEGATE_ROOT;
 	delete process.env.PI_DELEGATE_DEPTH;
 	delete process.env.PI_DELEGATE_CHAIN;
+	delete process.env.PI_DELEGATE_MULTIPLEXER;
 	delete process.env.PI_UNATTENDED;
 	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 }

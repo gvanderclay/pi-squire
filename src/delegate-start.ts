@@ -104,6 +104,8 @@ function sessionIdFor(input: StartInput): string {
 	return input.session.kind === "resume" ? input.session.sessionId : input.id;
 }
 
+const startedSessionId = (input: StartInput, opened: OpenedWindow): string => opened.sessionId ?? sessionIdFor(input);
+
 function sessionArgs(input: StartInput): string[] {
 	if (input.session.kind === "resume") return ["--session", input.session.path];
 	const fork = input.session.kind === "fork" ? ["--fork", input.session.path] : [];
@@ -119,7 +121,7 @@ function environment(input: StartInput): Record<string, string> {
 		PI_DELEGATE_ROOT: own.root,
 		PI_DELEGATE_DEPTH: String(own.depth),
 		PI_DELEGATE_CHAIN: own.chain.join(","),
-		[AUTO_EXIT_ENV]: start.autoExit ? "1" : "0",
+		[AUTO_EXIT_ENV]: start.autoExit && input.admission.client.keepsDelegatesOpen !== true ? "1" : "0",
 		[AGENT_ENV]: start.agent.name,
 		[MULTIPLEXER_ENV]: input.admission.client.id,
 		PI_UNATTENDED: "1",
@@ -213,12 +215,13 @@ function startRecord(input: StartInput, opened: OpenedWindow, requestId: string)
 		name,
 		locator: opened.locator ?? windowLocator({ id: opened.id, name }),
 		requestId,
-		autoExit: start.autoExit,
+		autoExit: start.autoExit && input.admission.client.keepsDelegatesOpen !== true,
 		cwd: workspace.cwd,
 		sessionDir: input.sessionDir,
 		workspace,
 		...(session.kind === "fork" ? { forkedFrom: session.id } : {}),
 		...(session.kind === "resume" ? { resumedFrom: session.id, sessionId } : {}),
+		...(opened.sessionId === undefined ? {} : { sessionId: opened.sessionId }),
 	};
 }
 
@@ -310,7 +313,7 @@ export class DelegateStarter {
 		const requestId = await mailTask(
 			{ host: input.admission.client, sendTask: (to: string, task: string) => this.sendTask(to, task) },
 			opened,
-			sessionIdFor(input),
+			startedSessionId(input, opened),
 			input.task,
 		);
 		publishRequest(token, requestId, opened.id, ctx);
@@ -324,7 +327,7 @@ export class DelegateStarter {
 		try {
 			await client.configureStart(opened, {
 				kind: input.session.kind,
-				sessionId: sessionIdFor(input),
+				sessionId: startedSessionId(input, opened),
 				launchId: input.id,
 				model: input.start.model,
 				thinking: input.start.thinking,
@@ -343,7 +346,7 @@ export class DelegateStarter {
 		if (session.kind === "resume" && sessionIsOwned(session.sessionId))
 			throw new Error(`delegate session ${session.sessionId} is already open; resume refused before spawn`);
 		assertRootPlacement(own.rootPlacement);
-		own.autoExit = start.autoExit;
+		own.autoExit = start.autoExit && input.admission.client.keepsDelegatesOpen !== true;
 		writeIdentity(sessionIdFor(input), own);
 		const payload = launchPayload(input);
 		this.deps.pi.events.emit("session:launch", payload);
@@ -351,6 +354,10 @@ export class DelegateStarter {
 		dispatchTree(token);
 		const spec = { name: input.name, cwd: workspace.cwd, argv: payload.args, env: payload.env };
 		const opened = await this.open(input, spec, token, ctx);
+		if (opened.sessionId !== undefined) {
+			writeIdentity(opened.sessionId, own);
+			bindTree(token, { sessionId: opened.sessionId });
+		}
 		input.onWindowOpened?.();
 		this.publishOpened(input, opened, token, ctx);
 		return opened;

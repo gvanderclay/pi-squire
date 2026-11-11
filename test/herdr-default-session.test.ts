@@ -75,7 +75,10 @@ test("a default-session Herdr pane (no HERDR_SESSION) is detected and checked by
 		await withEnv(defaultPane(session), async () => {
 			assert.equal(client.unavailable(), undefined, "a default-session pane is inside Herdr");
 			const inHerdr = client.unavailable() === undefined;
-			assert.equal(chooseMultiplexer({ agentDir, inherited: undefined, inTmux: false, inHerdr }), "herdr");
+			assert.equal(
+				chooseMultiplexer({ agentDir, inherited: undefined, inTmux: false, inHerdr, inPaseo: false }),
+				"herdr",
+			);
 			assert.equal(await client.unavailable(true), undefined);
 			assert.ok(calls.length > 0);
 			assert.ok(calls.every((route) => route.session === null && route.socket === SOCKET));

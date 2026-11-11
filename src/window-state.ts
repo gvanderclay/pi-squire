@@ -31,10 +31,13 @@ export type WindowStates = {
 /** Window states that can also close what they saw. */
 export type ClosableStates = WindowStates & {
 	/**
-	 * Close the record's window when this ask listed it, its program running or
-	 * exited, and resolve whether one was closed. Idempotent: a window already
-	 * gone resolves `false` without asking the multiplexer. Rejects when the ask
-	 * failed, since an unknown window is never taken as gone.
+	 * Close the record's resource after a successful observation, and resolve
+	 * whether one was removed. The durable locator is the authority, not the
+	 * listing: a terminal host closes the window its ask listed and resolves
+	 * `false` for one already gone, while an API host may attempt a terminal
+	 * delete for a resource it no longer lists but that can still revive. Either
+	 * way the call is idempotent. Rejects when the ask failed, since an unknown
+	 * window is never taken as gone.
 	 */
 	close(record: WindowRecord): Promise<boolean>;
 };

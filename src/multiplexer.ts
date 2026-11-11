@@ -1,12 +1,14 @@
-// Launch selection: an explicit `multiplexer` setting, else the backend a
-// delegate's launcher recorded (`PI_DELEGATE_MULTIPLEXER`), else the
-// environment. Ambiguity and absence refuse; a chosen backend that is unusable
-// refuses without falling back. Historical records always use the adapter
-// their durable locator names, independent of today's choice.
+// Launch selection: a Paseo-hosted Pi is its own terminal, so Paseo wins; else
+// an explicit `multiplexer` setting, else the backend a delegate's launcher
+// recorded (`PI_DELEGATE_MULTIPLEXER`), else the environment. Ambiguity and
+// absence refuse; a chosen backend that is unusable refuses without falling
+// back. Historical records always use the adapter their durable locator names,
+// independent of today's choice.
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createHerdrClient } from "./herdr.ts";
 import type { DelegateHost, OpenedWindow, WindowSpec, WindowTarget } from "./host.ts";
 import { recordLocator, type WindowRecord } from "./locators.ts";
+import { createPaseoHost } from "./paseo.ts";
 import { type Multiplexer, multiplexerSetting, squireSettingsFile as settingsFile } from "./settings.ts";
 import { createTmuxClient } from "./tmux.ts";
 import type { WindowPlacement } from "./window-placement.ts";
@@ -17,20 +19,25 @@ export { type Multiplexer, multiplexerSetting };
 export const MULTIPLEXER_ENV = "PI_DELEGATE_MULTIPLEXER";
 
 /**
- * The backend a launch uses now. Explicit setting > the launcher-recorded
- * backend of this delegate > environment detection (tmux only, Herdr only).
- * Both or neither present refuses; nothing falls back.
+ * The backend a launch uses now. Paseo hosting this Pi > explicit setting > the
+ * launcher-recorded backend of this delegate > environment detection (tmux
+ * only, Herdr only). Both or neither present refuses; nothing falls back.
  */
 export function chooseMultiplexer(input: {
 	agentDir: string;
 	inherited: string | undefined;
 	inTmux: boolean;
 	inHerdr: boolean;
-}): Multiplexer {
+	/** Whether Paseo hosts this Pi; a setting cannot move a delegate off its host. */
+	inPaseo: boolean;
+}): Multiplexer | "paseo" {
+	if (input.inPaseo) return "paseo";
 	const setting = multiplexerSetting(input.agentDir);
 	if (setting) return setting;
 	if (input.inherited !== undefined && input.inherited !== "") {
-		if (input.inherited === "tmux" || input.inherited === "herdr") return input.inherited;
+		// A Paseo delegate's launcher records "paseo"; it has no terminal to fall back to.
+		if (input.inherited === "tmux" || input.inherited === "herdr" || input.inherited === "paseo")
+			return input.inherited;
 		throw new Error(
 			`invalid ${MULTIPLEXER_ENV} ${JSON.stringify(input.inherited)} from this delegate's launcher; set "multiplexer": "tmux" or "herdr" in ${settingsFile(input.agentDir)}`,
 		);
@@ -203,10 +210,16 @@ export function createMultiplexer(
 	herdr: DelegateHost = createHerdrClient(),
 	agentDir = getAgentDir,
 	inherited: () => string | undefined = () => process.env[MULTIPLEXER_ENV],
+	paseo: DelegateHost = createPaseoHost(),
 ): DelegateHost {
-	const adapters = [tmux, herdr];
+	const adapters = [tmux, herdr, paseo];
+	const hosted = (): boolean => paseo.unavailable() === undefined;
 	const present = (): DelegateHost[] => adapters.filter((adapter) => adapter.unavailable() === undefined);
 	const host = (): DelegateHost | undefined => {
+		// Paseo is the host this Pi runs in, not a terminal it can move between, so
+		// startup recovery must never mint a terminal locator for it. A launcher
+		// that recorded Paseo leaves no terminal to fall back to either.
+		if (hosted()) return paseo;
 		const launcher = inherited();
 		const found = present();
 		if (adapters.some((adapter) => adapter.id === launcher)) return found.find((adapter) => adapter.id === launcher);
@@ -220,6 +233,7 @@ export function createMultiplexer(
 				inherited: inherited(),
 				inTmux: tmux.unavailable() === undefined,
 				inHerdr: herdr.unavailable() === undefined,
+				inPaseo: hosted(),
 			}),
 		host,
 		tmux.windowListRefusal,

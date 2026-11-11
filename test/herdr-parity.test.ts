@@ -91,7 +91,7 @@ const closes = (h: HerdrWire) => h.calls.filter((call) => call.args[1] === "clos
 // --- selection -------------------------------------------------------------
 
 test("auto-detect: tmux only, Herdr only, both refuses naming the setting, neither names both", () => {
-	const base = { agentDir, inherited: undefined };
+	const base = { agentDir, inherited: undefined, inPaseo: false };
 	assert.equal(chooseMultiplexer({ ...base, inTmux: true, inHerdr: false }), "tmux");
 	assert.equal(chooseMultiplexer({ ...base, inTmux: false, inHerdr: true }), "herdr");
 	assert.throws(
@@ -112,20 +112,26 @@ test("the setting overrides detection in every presence combination, and a launc
 		for (const inHerdr of [true, false]) {
 			for (const forced of ["tmux", "herdr"] as const) {
 				setSettings({ multiplexer: forced });
-				assert.equal(chooseMultiplexer({ agentDir, inherited: undefined, inTmux, inHerdr }), forced);
+				assert.equal(chooseMultiplexer({ agentDir, inherited: undefined, inTmux, inHerdr, inPaseo: false }), forced);
 				assert.equal(
-					chooseMultiplexer({ agentDir, inherited: forced === "tmux" ? "herdr" : "tmux", inTmux, inHerdr }),
+					chooseMultiplexer({
+						agentDir,
+						inherited: forced === "tmux" ? "herdr" : "tmux",
+						inTmux,
+						inHerdr,
+						inPaseo: false,
+					}),
 					forced,
 					"explicit setting beats the launcher-recorded backend",
 				);
 			}
 			setSettings({});
 			for (const inherited of ["tmux", "herdr"] as const)
-				assert.equal(chooseMultiplexer({ agentDir, inherited, inTmux, inHerdr }), inherited);
+				assert.equal(chooseMultiplexer({ agentDir, inherited, inTmux, inHerdr, inPaseo: false }), inherited);
 		}
 	setSettings({});
 	assert.throws(
-		() => chooseMultiplexer({ agentDir, inherited: "screen", inTmux: true, inHerdr: false }),
+		() => chooseMultiplexer({ agentDir, inherited: "screen", inTmux: true, inHerdr: false, inPaseo: false }),
 		new RegExp(`invalid ${MULTIPLEXER_ENV}`),
 	);
 });

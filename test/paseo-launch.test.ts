@@ -29,6 +29,7 @@ const DIR = scratch();
 const PROMPT = join(DIR, "prompt.md");
 writeFileSync(PROMPT, "the delegate's instructions");
 const AGENT = randomUUID();
+const PARENT_AGENT = randomUUID();
 const NOT_HOSTED = "this session is not hosted by Paseo";
 
 /** What one launch always carries; a test adds, replaces or omits an entry. */
@@ -68,7 +69,7 @@ const refusal = (argv: readonly string[]): WindowOpenError => {
 	throw new Error(`expected a refusal for ${argv.join(" ")}`);
 };
 
-const hostedEnv = (): Record<string, string | undefined> => ({ PASEO_AGENT_ID: AGENT });
+const hostedEnv = (): Record<string, string | undefined> => ({ PASEO_AGENT_ID: PARENT_AGENT });
 
 function hostFor(api: FakePaseo, env: Record<string, string | undefined> = hostedEnv()) {
 	return createPaseoHost(api, env);
@@ -203,6 +204,7 @@ test("openWindow creates the agent from the fields the launch asks for", async (
 	assert.deepEqual(api.created, [
 		{
 			agentId: AGENT,
+			parentAgentId: PARENT_AGENT,
 			title: "worker",
 			cwd: window.cwd,
 			model: "provider/model",
@@ -223,6 +225,40 @@ test("openWindow creates the agent from the fields the launch asks for", async (
 		locator: { adapter: "paseo", version: 1, kind: "window", agent: AGENT, name: "worker" },
 	});
 	assert.ok(paseoLocator(opened.locator));
+});
+
+test("a launch links to the call-time Paseo parent, not the Pi session or root", async () => {
+	const api = new FakePaseo();
+	const env = hostedEnv();
+	const host = hostFor(api, env);
+	const first = spec(flags(), { PI_DELEGATE_PARENT: "pi-parent-session", PI_DELEGATE_ROOT: "pi-root-session" });
+	await host.openWindow(first, "current", "");
+	const nextParent = randomUUID();
+	env.PASEO_AGENT_ID = nextParent;
+	const second = { ...first, cwd: "/another/worktree", argv: spec(flags({ "--session-id": randomUUID() })).argv };
+	await host.openWindow(second, "current", "");
+	assert.deepEqual(
+		api.created.map((input) => input.parentAgentId),
+		[PARENT_AGENT, nextParent],
+	);
+	assert.deepEqual(
+		api.created.map((input) => input.cwd),
+		[first.cwd, second.cwd],
+	);
+	assert.equal(api.created[1].env.PI_DELEGATE_PARENT, "pi-parent-session", "Squire ancestry stays independent");
+});
+
+test("a launch with no Paseo parent refuses before contacting the daemon", async () => {
+	const api = new FakePaseo();
+	api.failAll = true;
+	const host = hostFor(api, {});
+	await assert.rejects(host.openWindow(spec(flags()), "current", ""), (error: unknown) => {
+		assert.ok(error instanceof WindowOpenError);
+		assert.equal(error.certainty, "not-opened");
+		assert.match(error.message, /not hosted by Paseo/);
+		return true;
+	});
+	assert.deepEqual(api.calls, []);
 });
 
 test("a launch Paseo cannot honour is refused before any create", async () => {

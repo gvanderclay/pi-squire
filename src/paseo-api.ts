@@ -8,11 +8,15 @@ import type { PaseoAgentHandle, PaseoClient, PaseoClientConfig } from "@getpaseo
 
 /** The label pi-squire puts on every agent it starts, so `live` sees its own. */
 const LABELS = { "pi-squire": "1" };
+/** How long one call waits for the daemon to accept the connection. */
+const CONNECT_TIMEOUT_MS = 10_000;
 /** How long `create` waits for the daemon to report the session id it chose. */
 const SESSION_WAIT_MS = 10_000;
 const SESSION_POLL_MS = 500;
 /** How long one `paseo` CLI call may run. */
 const CLI_TIMEOUT_MS = 10_000;
+/** The daemon's own default page size for `agents.list`. */
+const AGENT_PAGE_SIZE = 200;
 
 type CreateInput = {
 	agentId: string;
@@ -52,28 +56,54 @@ function daemonAddress(home: string): string | undefined {
 const notRunning = (home: string): string =>
 	`Paseo is not running: ${pidFile(home)} is missing or has no daemon address`;
 
-/** Connect to the daemon in `home` for one call; the caller closes the client. */
-async function connect(home: string): Promise<PaseoClient> {
+/** A client for the daemon in `home`, not yet connected; the caller connects and closes it. */
+async function clientFor(home: string): Promise<PaseoClient> {
 	const listen = daemonAddress(home);
 	if (listen === undefined) throw new Error(notRunning(home));
 	const { createPaseoClient } = await import("@getpaseo/client");
-	// The daemon's local credential is not in the published config type
-	// (0.15.4 dist/index.d.ts), but its transport reads this option.
 	const config = {
 		url: `ws://${listen}/ws`,
+		connectTimeoutMs: CONNECT_TIMEOUT_MS,
+		// One call owns one connection, so a daemon that drops must fail the call:
+		// reconnect would leave `connect` waiting on a daemon that is gone.
+		reconnect: { enabled: false },
+		// The daemon's local credential is not in the published config type
+		// (0.15.4 dist/index.d.ts), but its transport reads this option.
 		localCredential: (): string => readFileSync(join(home, "local-credential"), "utf8").trim(),
 	} as PaseoClientConfig;
-	const client = createPaseoClient(config);
-	await client.connect();
-	return client;
+	return createPaseoClient(config);
 }
 
 async function withClient<T>(home: string, run: (client: PaseoClient) => Promise<T>): Promise<T> {
-	const client = await connect(home);
+	const client = await clientFor(home);
 	try {
+		await client.connect();
 		return await run(client);
 	} finally {
 		await client.close();
+	}
+}
+
+/** Every labelled agent id, one page at a time over `client`. */
+async function listLive(client: PaseoClient): Promise<Set<string>> {
+	const live = new Set<string>();
+	const seen = new Set<string>();
+	let cursor: string | undefined;
+	for (;;) {
+		const { entries, pageInfo } = await client.agents.list({
+			filter: { labels: LABELS },
+			page: { limit: AGENT_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }) },
+		});
+		for (const entry of entries) live.add(entry.agent.id);
+		if (!pageInfo.hasMore) return live;
+		const next = pageInfo.nextCursor ?? "";
+		// A cursor already read cannot advance the listing, so waiting for it to
+		// end would hang. A short set of agents reads as agents that are gone.
+		if (next === "" || seen.has(next)) {
+			throw new Error("Paseo reported more agents without a new cursor to read them");
+		}
+		seen.add(next);
+		cursor = next;
 	}
 }
 
@@ -102,12 +132,17 @@ async function assignedSession(handle: PaseoAgentHandle): Promise<string> {
 
 type CliRun = { stdout: string; stderr: string; failure: string | undefined };
 
-/** Run the `paseo` CLI with no shell; a non-zero exit comes back for the caller to read. */
-function runPaseo(args: readonly string[]): Promise<CliRun> {
+/** Run the `paseo` CLI against the daemon in `home`; a non-zero exit comes back for the caller to read. */
+function runPaseo(home: string, args: readonly string[]): Promise<CliRun> {
 	return new Promise((resolve) => {
-		execFile("paseo", args, { encoding: "utf8", timeout: CLI_TIMEOUT_MS }, (error, stdout, stderr) => {
-			resolve(error === null ? { stdout, stderr, failure: undefined } : { stdout, stderr, failure: error.message });
-		});
+		execFile(
+			"paseo",
+			["--home", home, ...args],
+			{ encoding: "utf8", timeout: CLI_TIMEOUT_MS },
+			(error, stdout, stderr) => {
+				resolve(error === null ? { stdout, stderr, failure: undefined } : { stdout, stderr, failure: error.message });
+			},
+		);
 	});
 }
 
@@ -137,18 +172,15 @@ export function createPaseoApi(home: string = process.env.PASEO_HOME ?? join(hom
 			});
 		},
 		async live(): Promise<Set<string>> {
-			return withClient(home, async (client) => {
-				const { entries } = await client.agents.list({ filter: { labels: LABELS } });
-				return new Set(entries.map((entry) => entry.agent.id));
-			});
+			return withClient(home, listLive);
 		},
 		async activity(agentId: string): Promise<string> {
-			const { stdout, stderr, failure } = await runPaseo(["logs", agentId, "--tail", "40"]);
+			const { stdout, stderr, failure } = await runPaseo(home, ["logs", agentId, "--tail", "40"]);
 			if (failure !== undefined) throw new Error(`paseo logs ${agentId} failed: ${stderr.trim() || failure}`);
 			return stdout;
 		},
 		async remove(agentId: string): Promise<boolean> {
-			const { stdout, stderr, failure } = await runPaseo(["delete", agentId, "--json"]);
+			const { stdout, stderr, failure } = await runPaseo(home, ["delete", agentId, "--json"]);
 			const output = `${stdout}\n${stderr}`;
 			if (output.includes("No agent found matching")) return false;
 			if (failure !== undefined) throw new Error(output.trim() || failure);

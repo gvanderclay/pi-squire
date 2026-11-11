@@ -52,9 +52,10 @@ const listed = (name: string, patterns: readonly string[]): boolean =>
  * A Paseo delegate's tools and trust answer. The list is applied at every
  * start because another extension can add a tool back after `session_start`;
  * a call outside it is refused too, in case a tool comes back after the last
- * start.
+ * start. Trust is asked before `session_start`, so it is registered on
+ * `trustApi`, which answers while `pi` still waits for the session owner.
  */
-export function registerPaseoChild(pi: ExtensionAPI): void {
+export function registerPaseoChild(pi: ExtensionAPI, trustApi: ExtensionAPI): void {
 	const apply = (): void => {
 		const patterns = toolList();
 		if (patterns === undefined) return;
@@ -73,7 +74,7 @@ export function registerPaseoChild(pi: ExtensionAPI): void {
 		if (patterns.some((pattern) => toolMatches(pattern, event.toolName))) return undefined;
 		return { block: true, reason: `${event.toolName} is not in this delegate's tool list` };
 	});
-	pi.on("project_trust", (event): { trusted: "yes" | "no" | "undecided" } => {
+	trustApi.on("project_trust", (event): { trusted: "yes" | "no" | "undecided" } => {
 		const wanted = process.env[PASEO_TRUST_ENV];
 		const answer = wanted === "yes" || wanted === "no" ? wanted : "undecided";
 		return { trusted: hosted() && ownFolder(event.cwd) ? answer : "undecided" };

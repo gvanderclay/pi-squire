@@ -12,7 +12,8 @@ import {
 	writeIdentity,
 } from "../src/identity.ts";
 import { PASEO_TOOLS_ENV, PASEO_TRUST_ENV, registerPaseoChild } from "../src/paseo-child.ts";
-import { cleanup, resetRoot } from "./harness.ts";
+import { sessionIsOwned } from "../src/session-owner.ts";
+import { cleanup, memorySession, resetRoot } from "./harness.ts";
 
 /** The agent id Paseo chose and exported to the child it started. */
 const AGENT = "6f1d2c3b-4a59-4e8f-9b7c-5d3e2f1a0b9c";
@@ -130,7 +131,8 @@ function child(active: readonly string[] = STARTED) {
 			activeTools = [...names];
 		},
 	};
-	registerPaseoChild(pi as unknown as ExtensionAPI);
+	// This bare fake is both APIs here: the ownership gate is another file's test.
+	registerPaseoChild(pi as unknown as ExtensionAPI, pi as unknown as ExtensionAPI);
 	return {
 		/** Every `pi.setActiveTools` call, in order. */
 		writes,
@@ -320,4 +322,59 @@ test("a child without PASEO_AGENT_ID leaves the trust decision to Pi", async () 
 	process.env[PASEO_TRUST_ENV] = "yes";
 	const c = child();
 	assert.deepEqual((await c.fire("project_trust", { cwd: real }))[0], { trusted: "undecided" });
+});
+
+// Pi asks for project trust before `session_start`, and this extension answers
+// selection and tools only after that start elects the exact-session owner. These
+// cases register the whole extension, not one hook on a bare fake, so the gate is real.
+test("the whole extension answers project trust before session ownership is elected", async () => {
+	const { real } = folder();
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env.PASEO_AGENT_CWD = real;
+	process.env[PASEO_TRUST_ENV] = "yes";
+	const s = memorySession({ cwd: real });
+	assert.equal(sessionIsOwned(s.parent), false);
+	assert.deepEqual(await s.fire("project_trust", { cwd: real }), [{ trusted: "yes" }]);
+	process.env[PASEO_TRUST_ENV] = "no";
+	assert.deepEqual(await s.fire("project_trust", { cwd: real }), [{ trusted: "no" }]);
+	assert.equal(sessionIsOwned(s.parent), false);
+});
+
+test("the whole extension leaves project trust undecided before session_start for another folder or no agent id", async () => {
+	const own = folder();
+	const other = folder();
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env.PASEO_AGENT_CWD = own.real;
+	process.env[PASEO_TRUST_ENV] = "yes";
+	const s = memorySession({ cwd: own.real });
+	assert.deepEqual(await s.fire("project_trust", { cwd: other.real }), [{ trusted: "undecided" }]);
+	put("PASEO_AGENT_ID", undefined);
+	assert.deepEqual(await s.fire("project_trust", { cwd: own.real }), [{ trusted: "undecided" }]);
+	assert.equal(sessionIsOwned(s.parent), false);
+});
+
+test("the whole extension keeps its tool list and tool gate behind session ownership", async () => {
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env[PASEO_TOOLS_ENV] = "read";
+	const s = memorySession();
+	const before = s.pi.getActiveTools();
+	assert.deepEqual(await s.fire("tool_call", { toolName: "bash", toolCallId: "call-1", input: {} }), [undefined]);
+	await s.fire("before_agent_start", {
+		messageType: "user",
+		prompt: "question",
+		systemPrompt: "",
+		systemPromptOptions: {
+			cwd: s.context.cwd,
+			selectedTools: [],
+			hiddenTools: [],
+			toolSnippets: {},
+			toolGuidelines: {},
+			promptGuidelines: [],
+			appendSystemPrompt: "",
+			sections: {},
+			contextFiles: [],
+			skills: [],
+		},
+	});
+	assert.deepEqual(s.pi.getActiveTools(), before);
 });

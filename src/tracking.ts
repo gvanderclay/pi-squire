@@ -26,7 +26,7 @@ import {
 	type WorkspaceAttempt,
 } from "./results.ts";
 import { routingEvidence } from "./routing-provenance.ts";
-import { RoutingRecordSchema } from "./routing-schema.ts";
+import { RoutingEvidenceSchema, RoutingRecordSchema } from "./routing-schema.ts";
 import type { RoutingEvidence } from "./routing-types.ts";
 import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
@@ -67,6 +67,7 @@ export function toolResult(
 /** Every tool here touches only local state: tmux, the session's entries and files under the agent directory. */
 const CLOSED_WORLD = { openWorldHint: false } as const;
 
+// Exact string enums keep status evidence explicit without bloating the shared tool declarations.
 const STARTED_STATES = ["closed", "done", "gone", "running", "window-closed", "unknown"] as const;
 
 /** One started delegation in `delegation_status`'s structured result; `viewDetails` builds it. */
@@ -84,7 +85,7 @@ const StartedSchema = Type.Object({
 	model: Type.String(),
 	finishedModel: Type.Optional(Type.String()),
 	routing: Type.Optional(RoutingRecordSchema),
-	routingEvidence: Type.Optional(RoutingRecordSchema),
+	routingEvidence: Type.Optional(RoutingEvidenceSchema),
 	thinking: Type.String(),
 	autoExit: Type.Boolean(),
 	resumedFrom: Type.Optional(Type.String()),
@@ -96,7 +97,7 @@ const StartedSchema = Type.Object({
 	sessionDir: Type.Optional(Type.String()),
 	workspace: Type.Optional(WorkspaceSchema),
 	workspaceSnapshot: WorkspaceSnapshotSchema,
-	state: Type.Union(STARTED_STATES.map((state) => Type.Literal(state))),
+	state: Type.Enum(STARTED_STATES),
 	closed: Type.Boolean(),
 	closedWithoutResult: Type.Boolean(),
 	status: Type.Optional(Type.String()),
@@ -112,7 +113,7 @@ export const StatusSchema = Type.Object({
 	marks: Type.Array(
 		Type.Object({
 			scope: Type.String(),
-			source: Type.Union([Type.Literal("reactive"), Type.Literal("proactive")]),
+			source: Type.Enum(["reactive", "proactive"]),
 			reason: Type.String(),
 			clearsAt: Type.String(),
 		}),

@@ -1,4 +1,6 @@
+import type { Static } from "typebox";
 import type { Thinking } from "./agents.ts";
+import type { RoutingEvidenceSchema } from "./routing-schema.ts";
 
 export const CATEGORIES = ["narrow", "bounded", "standard", "deep"] as const;
 export type Category = (typeof CATEGORIES)[number];
@@ -26,7 +28,7 @@ export type RoutingPolicy = {
 	usage?: { maxAgeMs: number; applicableProviders: string[] };
 };
 export type Candidate = RouteCandidate & ModelPolicy & { effectiveThinking: Thinking; pressure: boolean };
-export type ServedModel = { model: string; thinking?: string; entryId: string };
+export type ServedModel = RoutingEvidence["served"][number];
 export type AuthorProof = {
 	source: string;
 	sessionId: string;
@@ -62,10 +64,4 @@ export type RoutingRecord = {
 	launchId?: string;
 	tieTurn?: number;
 };
-export type RoutingEvidence = {
-	served: ServedModel[];
-	fallbacks: { from: string; to: string; reason: string; requestedThinking: string; effectiveThinking?: string }[];
-	complete: boolean;
-	independent: "verified" | "not-required" | "unverified";
-	reasons: string[];
-};
+export type RoutingEvidence = Static<typeof RoutingEvidenceSchema>;

@@ -24,6 +24,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `delegation_status` advertises the actual served-model, fallback and
+  review-evidence structure instead of reusing the frozen routing-record
+  schema. The schema now defines the evidence type, and malformed persisted
+  fallback observations make evidence unverified rather than violating the
+  advertised output. Equivalent compact string enums preserve the existing
+  tool-metadata budget; no characterization thresholds changed.
 - Correct the refused-daemon expectation in `test/paseo-api.test.ts` to assert
   an error, prompt rejection and client cleanup without matching Node-specific
   WebSocket wording. Runtime behavior is unchanged.

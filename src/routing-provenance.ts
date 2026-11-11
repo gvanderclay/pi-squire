@@ -1,6 +1,8 @@
 import { readFileSync, statSync } from "node:fs";
+import { Value } from "typebox/value";
 import { reviewFamilies } from "./routing.ts";
 import { parseRuntimeRouting } from "./routing-record.ts";
+import { RoutingEvidenceSchema } from "./routing-schema.ts";
 import type { AuthorProof, ModelPolicy, RoutingEvidence, RoutingRecord, ServedModel } from "./routing-types.ts";
 
 export const ROUTING_ATTEMPT = "delegate-routing-attempt";
@@ -136,7 +138,10 @@ export function routingEvidence(route: RoutingRecord, path: string | undefined):
 	return evidence;
 }
 function fallbackHistory(entries: ProvenanceEntry[]): RoutingEvidence["fallbacks"] {
-	return entries
+	const observations: unknown[] = entries
 		.filter((entry) => entry.type === "custom" && entry.customType === ROUTING_FALLBACK)
-		.map((entry) => entry.data as RoutingEvidence["fallbacks"][number]);
+		.map((entry) => entry.data);
+	if (!Value.Check(RoutingEvidenceSchema.properties.fallbacks, observations))
+		throw new Error("invalid fallback provenance");
+	return observations;
 }

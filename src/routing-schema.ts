@@ -47,3 +47,31 @@ export const RoutingRequestSchema = Type.Object(
 	},
 );
 export const RoutingRecordSchema = Type.Record(Type.String(), Type.Unknown());
+
+/** Runtime evidence, not the frozen dispatch record; shared by status output and its TypeScript type. */
+export const RoutingEvidenceSchema = Type.Object(
+	{
+		served: Type.Array(
+			Type.Object(
+				{ model: Type.String(), thinking: Type.Optional(Type.String()), entryId: Type.String() },
+				{ additionalProperties: false },
+			),
+		),
+		fallbacks: Type.Array(
+			Type.Object(
+				{
+					from: Type.String(),
+					to: Type.String(),
+					reason: Type.String(),
+					requestedThinking: Type.String(),
+					effectiveThinking: Type.Optional(Type.String()),
+				},
+				{ additionalProperties: false },
+			),
+		),
+		complete: Type.Boolean(),
+		independent: Type.Enum(["verified", "not-required", "unverified"]),
+		reasons: Type.Array(Type.String()),
+	},
+	{ additionalProperties: false },
+);

@@ -1,5 +1,6 @@
 // A Paseo delegate takes no Pi flags: the host creates it from API fields, so
 // the tool list and the project-trust answer arrive as environment variables.
+import { realpathSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DELEGATION_TOOLS, toolMatches } from "./delegate-composition.ts";
 
@@ -11,6 +12,21 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Whether Paseo started this Pi: it exports the agent id it chose. */
 const hosted = (): boolean => (process.env.PASEO_AGENT_ID ?? "") !== "";
+
+/**
+ * Whether `cwd` is the folder Paseo started this agent in. A shell the delegate
+ * runs inherits these variables, so a folder that cannot be resolved, or any
+ * other folder, gets no answer from them.
+ */
+function ownFolder(cwd: string): boolean {
+	const own = process.env.PASEO_AGENT_CWD;
+	if (own === undefined || own === "") return false;
+	try {
+		return realpathSync(own) === realpathSync(cwd);
+	} catch {
+		return false;
+	}
+}
 
 /** The agent id Paseo chose, when it is a UUID; a delegate's launch record is filed under it. */
 export function paseoAgentId(): string | undefined {
@@ -57,9 +73,9 @@ export function registerPaseoChild(pi: ExtensionAPI): void {
 		if (patterns.some((pattern) => toolMatches(pattern, event.toolName))) return undefined;
 		return { block: true, reason: `${event.toolName} is not in this delegate's tool list` };
 	});
-	pi.on("project_trust", (): { trusted: "yes" | "no" | "undecided" } => {
+	pi.on("project_trust", (event): { trusted: "yes" | "no" | "undecided" } => {
 		const wanted = process.env[PASEO_TRUST_ENV];
 		const answer = wanted === "yes" || wanted === "no" ? wanted : "undecided";
-		return { trusted: hosted() ? answer : "undecided" };
+		return { trusted: hosted() && ownFolder(event.cwd) ? answer : "undecided" };
 	});
 }

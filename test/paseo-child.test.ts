@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { createEventBus, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
@@ -41,6 +44,7 @@ const STARTED = ["read", "bash", "edit", "write", "delegate"];
 /** The variables this file sets, restored after each test so nothing leaks into other files. */
 const SAVED = {
 	agent: process.env.PASEO_AGENT_ID,
+	cwd: process.env.PASEO_AGENT_CWD,
 	tools: process.env[PASEO_TOOLS_ENV],
 	trust: process.env[PASEO_TRUST_ENV],
 };
@@ -53,17 +57,36 @@ function put(name: string, value: string | undefined): void {
 beforeEach(() => {
 	resetRoot();
 	put("PASEO_AGENT_ID", undefined);
+	put("PASEO_AGENT_CWD", undefined);
 	put(PASEO_TOOLS_ENV, undefined);
 	put(PASEO_TRUST_ENV, undefined);
 });
 
 afterEach(() => {
 	put("PASEO_AGENT_ID", SAVED.agent);
+	put("PASEO_AGENT_CWD", SAVED.cwd);
 	put(PASEO_TOOLS_ENV, SAVED.tools);
 	put(PASEO_TRUST_ENV, SAVED.trust);
 });
 
-after(() => cleanup());
+/** Throwaway folders the trust tests created, removed when this file finishes. */
+const TEMPS: string[] = [];
+
+/** A real folder plus a symlink naming it, both under one throwaway directory. */
+function folder(): { real: string; link: string } {
+	const dir = mkdtempSync(join(tmpdir(), "squire-paseo-cwd-"));
+	TEMPS.push(dir);
+	const real = join(dir, "work");
+	mkdirSync(real);
+	const link = join(dir, "link");
+	symlinkSync(real, link);
+	return { real, link };
+}
+
+after(() => {
+	for (const dir of TEMPS) rmSync(dir, { recursive: true, force: true });
+	cleanup();
+});
 
 /** The identity lifecycle alone, on Pi's own bus, as `test/identity-lifecycle.test.ts` runs it. */
 function lifecycle() {
@@ -230,9 +253,11 @@ test("a child with no PASEO_AGENT_ID changes no tool even with a list set", asyn
 });
 
 test("a Paseo child answers the trust question from its environment", async () => {
+	const { real } = folder();
 	process.env.PASEO_AGENT_ID = AGENT;
+	process.env.PASEO_AGENT_CWD = real;
 	const c = child();
-	const ask = async (): Promise<unknown> => (await c.fire("project_trust", { cwd: "/work" }))[0];
+	const ask = async (): Promise<unknown> => (await c.fire("project_trust", { cwd: real }))[0];
 	process.env[PASEO_TRUST_ENV] = "yes";
 	assert.deepEqual(await ask(), { trusted: "yes" });
 	process.env[PASEO_TRUST_ENV] = "no";
@@ -243,8 +268,56 @@ test("a Paseo child answers the trust question from its environment", async () =
 	assert.deepEqual(await ask(), { trusted: "undecided" });
 });
 
-test("a child without PASEO_AGENT_ID leaves the trust decision to Pi", async () => {
+test("a Paseo child answers its own folder when a symlink names it", async () => {
+	const { real, link } = folder();
+	process.env.PASEO_AGENT_ID = AGENT;
 	process.env[PASEO_TRUST_ENV] = "yes";
 	const c = child();
-	assert.deepEqual((await c.fire("project_trust", { cwd: "/work" }))[0], { trusted: "undecided" });
+	const ask = async (cwd: string): Promise<unknown> => (await c.fire("project_trust", { cwd }))[0];
+	process.env.PASEO_AGENT_CWD = real;
+	assert.deepEqual(await ask(link), { trusted: "yes" });
+	process.env.PASEO_AGENT_CWD = link;
+	assert.deepEqual(await ask(real), { trusted: "yes" });
+	process.env[PASEO_TRUST_ENV] = "no";
+	assert.deepEqual(await ask(real), { trusted: "no" });
+});
+
+test("a Paseo child answers undecided for a folder other than the one it started in", async () => {
+	const own = folder();
+	const other = folder();
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env.PASEO_AGENT_CWD = own.real;
+	process.env[PASEO_TRUST_ENV] = "yes";
+	const c = child();
+	assert.deepEqual((await c.fire("project_trust", { cwd: other.real }))[0], { trusted: "undecided" });
+	process.env[PASEO_TRUST_ENV] = "no";
+	assert.deepEqual((await c.fire("project_trust", { cwd: other.real }))[0], { trusted: "undecided" });
+});
+
+test("a Paseo child answers undecided when a folder cannot be resolved", async () => {
+	const { real } = folder();
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env[PASEO_TRUST_ENV] = "yes";
+	const c = child();
+	const gone = join(real, "gone");
+	process.env.PASEO_AGENT_CWD = gone;
+	assert.deepEqual((await c.fire("project_trust", { cwd: gone }))[0], { trusted: "undecided" });
+	process.env.PASEO_AGENT_CWD = real;
+	assert.deepEqual((await c.fire("project_trust", { cwd: gone }))[0], { trusted: "undecided" });
+});
+
+test("a Paseo child with no PASEO_AGENT_CWD answers undecided", async () => {
+	const { real } = folder();
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env[PASEO_TRUST_ENV] = "yes";
+	const c = child();
+	assert.deepEqual((await c.fire("project_trust", { cwd: real }))[0], { trusted: "undecided" });
+});
+
+test("a child without PASEO_AGENT_ID leaves the trust decision to Pi", async () => {
+	const { real } = folder();
+	process.env.PASEO_AGENT_CWD = real;
+	process.env[PASEO_TRUST_ENV] = "yes";
+	const c = child();
+	assert.deepEqual((await c.fire("project_trust", { cwd: real }))[0], { trusted: "undecided" });
 });

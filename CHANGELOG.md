@@ -15,6 +15,12 @@ follows [Semantic Versioning](https://semver.org/).
   chooses Paseo. An older pi-squire that reads a Paseo delegation record
   refuses that whole delegation tree.
 
+### Fixed
+
+- Correct the refused-daemon expectation in `test/paseo-api.test.ts` to assert
+  an error, prompt rejection and client cleanup without matching Node-specific
+  WebSocket wording. Runtime behavior is unchanged.
+
 ## [0.21.0] - 2026-11-10
 
 ### Fixed

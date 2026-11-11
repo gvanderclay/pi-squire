@@ -154,8 +154,8 @@ test("a daemon that refuses the connection fails the call at once and is closed"
 		closes++;
 	});
 	const started = Date.now();
-	// The wording is the transport's; the timing is the wrapper's claim.
-	await assert.rejects(createPaseoApi(home).live(), /Transport closed|refused/i);
+	// Node's transport wording varies; prompt rejection and cleanup are the contract.
+	await assert.rejects(createPaseoApi(home).live(), Error);
 	assert.ok(Date.now() - started < 5_000, "a refused connection must not wait on a retry");
 	assert.equal(closes, 1, "the client is closed after the connection fails");
 });

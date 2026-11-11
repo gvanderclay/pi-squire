@@ -14,6 +14,8 @@ export type WindowSpec = {
 export type OpenedWindow = {
 	id: string;
 	session: string | undefined;
+	/** The Pi session id, when the host assigned one instead of using the requested id. */
+	sessionId?: string;
 	locator?: WindowLocator;
 	location?: string;
 };
@@ -71,6 +73,8 @@ export interface DelegateHost extends LiveNavigation {
 	readonly usesWindowPlacement: boolean;
 	/** Whether resume needs the session file before other checks. */
 	readonly requiresSessionGuard: boolean;
+	/** Delegates never auto-exit on this host. */
+	readonly keepsDelegatesOpen?: boolean;
 	states(strict?: boolean): Promise<ClosableStates>;
 	/** Optional terminal navigation snapshot; hosts without panes omit it. */
 	paneStates?(): Promise<PaneStates>;

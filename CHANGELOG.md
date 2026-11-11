@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-11
+
 ### Added
 
 - Paseo support. When Paseo hosts the coordinator Pi, each delegate starts as a
@@ -1426,7 +1428,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/gvanderclay/pi-squire/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/gvanderclay/pi-squire/compare/v0.20.2...v0.21.0
 [0.20.2]: https://github.com/gvanderclay/pi-squire/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/gvanderclay/pi-squire/compare/v0.20.0...v0.20.1

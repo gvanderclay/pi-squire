@@ -144,16 +144,20 @@ test("legacy A -> routed B -> unbound fork A refuses persisted routing rather th
 	assert.deepEqual({ mail: s.sendCalls.length, windows: s.tmux.opened.length }, before);
 });
 
-test("the copy boundary re-reads source changes after preview and hooks, before mail/open", async () => {
+test("source changes during hooks cannot change the checked public snapshot handed to Pi", async () => {
 	const d = await source();
 	const privateRoute = { ...frozenRoute(), role: "role", launchId: "late-private-attempt" };
 	d.s.events.on("session:launch", () => appendAttempt(d.path, privateRoute, d.leaf));
-	await assert.rejects(
-		d.s.toolCall("delegation_fork", { id: d.first.id, task: "public fork", routing: publicRequest }),
-		/inherited session context/,
-	);
-	assert.equal(d.s.sendCalls.length, 1);
-	assert.equal(d.s.tmux.opened.length, 1);
+	const forked = await d.s.toolCall("delegation_fork", { id: d.first.id, task: "public fork", routing: publicRequest });
+	assert.equal((forked.structuredContent as Started).routing.request.data, "public");
+	assert.ok(!(forked.structuredContent as Started).notices.some((notice) => notice.includes("new cache")));
+	const argv = d.s.tmux.opened[1].argv;
+	const snapshot = argv[argv.indexOf("--fork") + 1];
+	assert.notEqual(snapshot, d.path);
+	assert.ok(!readFileSync(snapshot, "utf8").includes("late-private-attempt"));
+	assert.ok(readFileSync(d.path, "utf8").includes("late-private-attempt"));
+	assert.equal(d.s.sendCalls.length, 2);
+	assert.equal(d.s.tmux.opened.length, 2);
 });
 
 test("inactive routed history binds the role, but only active ancestry determines public inheritance", async () => {

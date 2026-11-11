@@ -201,7 +201,7 @@ export function forkTool(deps: ForkDeps, includeRouting = true): ToolDef {
 				signal,
 				toolCallId,
 			);
-			details.notices.push(...modelNotice(record, session.path, details.model));
+			details.notices.push(...modelNotice(record, source.sessionPath, details.model));
 			const line = launchText(record.id, details, chosen);
 			ctx.ui.notify(`delegate: ${line}`, "info");
 			return toolResult(line, { outcome: "started", ...withoutLocation(details), forkedFrom: record.id });

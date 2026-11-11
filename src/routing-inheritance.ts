@@ -1,10 +1,29 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Agent } from "./agents.ts";
 import { type ProvenanceEntry, ROUTING_ATTEMPT, readActiveBranch } from "./routing-provenance.ts";
 import { parseRuntimeRouting } from "./routing-record.ts";
 import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
 
 export type RoutingSource = { path: string; sessionId: string };
+
+/** Pi evaluates --fork asynchronously. Give it the checked bytes, never the mutable original path. */
+export function snapshotRoutingSource(agent: Agent, source: RoutingSource, request: RoutingRequest): string {
+	if (statSync(source.path).size > 64 * 1024 * 1024) throw new Error("session provenance exceeds 64 MiB; unknown");
+	const directory: string = mkdtempSync(join(tmpdir(), "pi-squire-source-"));
+	const path: string = join(directory, "source.jsonl");
+	try {
+		writeFileSync(path, readFileSync(source.path), { mode: 0o600, flag: "wx" });
+		assertRoutingSource(agent, { ...source, path }, request);
+		// Like prompt files, keep it until OS cleanup: openWindow may return before Pi has copied it.
+		return path;
+	} catch (error) {
+		rmSync(path, { force: true });
+		rmdirSync(directory);
+		throw error;
+	}
+}
 const STATE_ONLY: ReadonlySet<string> = new Set([
 	"model_change",
 	"thinking_level_change",
@@ -31,8 +50,8 @@ function hasRoutingHistory(path: string): boolean {
 
 /**
  * Inspect the actual source, not a named delegation's possibly older record.
- * All persisted attempts bind the profile; only active ancestry is copied context.
- * This is a read-before-launch check, not isolation from concurrent file changes.
+ * All persisted attempts bind the profile; only active ancestry is model context.
+ * Fork callers validate a private snapshot before using it as the copy source.
  */
 export function assertRoutingSource(agent: Agent, source: RoutingSource, request: RoutingRequest | undefined): void {
 	if (!agent.routingProfile && !hasRoutingHistory(source.path)) return;

@@ -30,11 +30,16 @@ follows [Semantic Versioning](https://semver.org/).
 - Routed resume/fork checks the actual source session, not an older delegation
   record: public inheritance refuses private/unknown ancestry and branch-summary
   sources, while persisted routing history prevents a downgrade to unbound
-  fallback. The source is checked again before task mail/open. Safe public
-  continuations and legacy sessions without routing history remain supported.
+  fallback. After preparation, routed forks validate an owner-only source
+  snapshot and give Pi that checked path, so a concurrent private resume cannot
+  race into the copy after mail/open. The source is checked again before task
+  mail/open. Safe public continuations and legacy sessions without routing
+  history remain supported.
   New `test/routing-inheritance.test.ts` regressions cover the shared-session
   public → private-resume → public-fork case, parent branch navigation and
-  pre-marker context; no existing characterization assertions changed.
+  pre-marker context; `test/routing-host.test.ts` covers paused preparation,
+  both mail timings and the installed Pi copy primitive. No existing
+  characterization assertions changed.
 - Resume/fork notices use the admitted model after tie rotation, including the
   fork cache-write warning. Routed policy exclusions are called exclusions,
   not availability fallback.

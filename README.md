@@ -1355,10 +1355,16 @@ A public resume/fork requires every attempt on the source's active ancestry to
 be public and attested. Messages, compactions or other context before its first
 routing marker are unknown; branch summaries also require public-attested source
 ancestry. Private or unknown inherited context cannot become public through a
-new attestation. Squire rechecks the source before task mail/open, but does not
-isolate it from concurrent file changes. Pi forks copy the whole session file,
-including abandoned branches; only the active context and referenced summaries
-are checked for public inheritance, not arbitrary future reads of that file.
+new attestation. After launch preparation, a routed fork captures and validates
+an owner-only source snapshot and passes that path to Pi's `--fork`. Later
+changes to the original session cannot enter that copy, even when task mail
+precedes the child's asynchronous file read. Squire rechecks the checked source
+before task mail/open. Like prompt files, snapshots remain in the OS temporary
+directory until cleanup and can contain sensitive context.
+
+Pi forks copy the whole session file, including abandoned branches; only the
+active context and referenced summaries are checked for public inheritance, not
+arbitrary future reads of that file. This is not filesystem or process isolation.
 The fresh route resolves the effective model/thinking choice under the same
 hard constraints. Launch notices name the model actually admitted after tie
 rotation and distinguish routed exclusions from legacy availability fallback.

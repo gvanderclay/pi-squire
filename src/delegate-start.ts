@@ -13,7 +13,7 @@ import { type createIdentity, type Identity, readIdentity, writeIdentity } from 
 import { windowLocator } from "./locators.ts";
 import { MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { type Delegation, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
-import { assertRoutingSource } from "./routing-inheritance.ts";
+import { assertRoutingSource, snapshotRoutingSource } from "./routing-inheritance.ts";
 import { ROUTING_ENV, validateRoutedLaunch } from "./routing-launch.ts";
 import { admitRouting } from "./routing-state.ts";
 import type { RoutingRecord } from "./routing-types.ts";
@@ -85,7 +85,7 @@ type StartDeps = {
 	admit(agent: string, ctx: ExtensionContext): void;
 	startPolling(): void;
 };
-type Started = { opened: OpenedWindow; requestId: string };
+type Started = { opened: OpenedWindow; requestId: string; forkSourcePath?: string };
 
 function writePromptFile(prompt: string): string {
 	const path = join(mkdtempSync(join(tmpdir(), "pi-squire-")), "prompt.md");
@@ -297,6 +297,11 @@ export class DelegateStarter {
 	async start(input: StartInput, ctx: ExtensionContext): Promise<Started> {
 		const client = input.admission.client;
 		const token = { root: input.identity.root, id: input.id };
+		if (input.session.kind === "fork" && input.start.routing)
+			input.session = {
+				...input.session,
+				path: snapshotRoutingSource(input.start.agent, input.session, input.start.routing.request),
+			};
 		// Routed validation and synchronous hook checks precede every host's task-mail boundary.
 		const payload = input.start.routing ? this.routedPayload(input, ctx) : undefined;
 		if (input.session.kind !== "launch")
@@ -308,7 +313,11 @@ export class DelegateStarter {
 		const requestId = mailed ?? (await this.mailAfterOpen(input, opened, token, ctx));
 		this.deps.results.recordStart(startRecord(input, opened, requestId), ctx);
 		this.deps.startPolling();
-		return { opened, requestId };
+		return {
+			opened,
+			requestId,
+			...(input.session.kind === "fork" ? { forkSourcePath: input.session.path } : {}),
+		};
 	}
 
 	private mailBeforeOpen(input: StartInput, token: Reservation): string {

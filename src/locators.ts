@@ -11,6 +11,7 @@ import type {
 	WindowLocator,
 	WindowRecord,
 } from "./locator-rules.ts";
+import { paseoLocators } from "./paseo-locator.ts";
 import { tmuxLocators, tmuxWindowLocator } from "./tmux-locator.ts";
 
 export type {
@@ -23,7 +24,7 @@ export type {
 // Terminal-specific compatibility helpers; these are not the shared host protocol.
 export { currentLiveWindow, liveLocator, matchWindow, paneLocator } from "./tmux-locator.ts";
 
-const adapters = (): readonly LocatorRules[] => [tmuxLocators, herdrLocators];
+const adapters = (): readonly LocatorRules[] => [tmuxLocators, herdrLocators, paseoLocators];
 function codec(value: unknown): LocatorRules | undefined {
 	if (!value || typeof value !== "object" || !("adapter" in value)) return undefined;
 	return adapters().find((adapter) => adapter.id === value.adapter);

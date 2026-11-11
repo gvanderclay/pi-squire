@@ -177,10 +177,12 @@ class PaseoHost implements DelegateHost {
 				const own = owner(record);
 				return own !== undefined && live.has(own.agent);
 			},
+			// The durable locator is authority, not this listing: Paseo can revive an
+			// archived agent and a missing label hides a live one. The daemon answers
+			// false for an id it does not have.
 			close: async (record: WindowRecord): Promise<boolean> => {
 				const own = owner(record);
 				if (own === undefined) throw new Error(`${INVALID_LOCATOR}; close refused`);
-				if (!live.has(own.agent)) return false;
 				return await this.api.remove(own.agent);
 			},
 		};

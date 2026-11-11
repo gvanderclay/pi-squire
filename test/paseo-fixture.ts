@@ -18,9 +18,13 @@ export type PaseoCreate = Parameters<PaseoApi["create"]>[0];
 /** The daemon as a set of agent ids: create adds one, remove deletes one, live lists them. */
 export class FakePaseo implements PaseoApi {
 	readonly running = new Set<string>();
+	/** Rows the daemon no longer lists but still holds: live leaves them out, remove deletes them. */
+	readonly archived = new Set<string>();
 	readonly created: PaseoCreate[] = [];
 	/** Every method this fake was asked for, in order. */
 	readonly calls: string[] = [];
+	/** Every agent id the host asked to delete, in order. */
+	readonly removals: string[] = [];
 	failCreate: string | undefined;
 	failLive = false;
 	failRemove = false;
@@ -67,8 +71,9 @@ export class FakePaseo implements PaseoApi {
 
 	async remove(agentId: string): Promise<boolean> {
 		this.use("remove");
+		this.removals.push(agentId);
 		if (this.failRemove) throw new Error("paseo delete refused");
-		return this.running.delete(agentId);
+		return this.running.delete(agentId) || this.archived.delete(agentId);
 	}
 }
 

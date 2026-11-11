@@ -298,6 +298,36 @@ test("a listing that fails leaves every record unknown and closes nothing", asyn
 	await assert.rejects(asked.close(opened), /none closed/);
 	await assert.rejects(host.states(true), /could not ask Paseo for its agents/);
 	assert.equal(api.running.has(opened.id), true);
+	assert.deepEqual(api.removals, [], "a failed listing never deletes");
+});
+
+test("an archived agent reads gone but an explicit close still deletes its UUID", async () => {
+	const api = new FakePaseo();
+	const host = hostFor(api);
+	const opened = await host.openWindow(spec(flags()), "current", "");
+	// The daemon archived the row: it no longer lists it, but it still holds it.
+	api.running.delete(opened.id);
+	api.archived.add(opened.id);
+	const states = await host.states();
+	assert.equal(states.state(opened), "gone");
+	assert.equal(states.listed(opened), false);
+	assert.equal(await states.close(opened), true, "the recorded locator, not the listing, is authority");
+	assert.deepEqual(api.removals, [opened.id], "remove is asked for exactly the recorded UUID");
+	assert.equal(api.archived.has(opened.id), false, "the archived row is terminally deleted");
+	assert.equal(await (await host.states()).state(opened), "gone");
+	assert.equal(await (await host.states()).close(opened), false, "a second close finds nothing to delete");
+	assert.deepEqual(api.removals, [opened.id, opened.id], "the second close still asks the daemon");
+});
+
+test("an agent that does not exist closes false after one delete attempt", async () => {
+	const api = new FakePaseo();
+	const host = hostFor(api);
+	const opened = await host.openWindow(spec(flags()), "current", "");
+	api.running.delete(opened.id);
+	const states = await host.states();
+	assert.equal(states.state(opened), "gone");
+	assert.equal(await states.close(opened), false, "the daemon answers that nothing was deleted");
+	assert.deepEqual(api.removals, [opened.id]);
 });
 
 test("close refuses a foreign locator and never picks an agent by a presentation id", async () => {

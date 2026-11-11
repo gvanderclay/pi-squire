@@ -3,10 +3,13 @@
 // that id: the task mail, the recorded delegation and the identity record. A
 // host that keeps its delegates open also turns auto-exit off for them.
 import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 import { readIdentity } from "../src/identity.ts";
 import type { StartedRecorded } from "../src/results.ts";
-import { agentFile, cleanup, memorySession, resetRoot, writeAgent } from "./harness.ts";
+import { readTree, treePath } from "../src/tree-registry.ts";
+import { agentDir, agentFile, cleanup, memorySession, resetRoot, writeAgent } from "./harness.ts";
 import { MemoryHost } from "./memory-host.ts";
 
 /** A fixed UUID that no delegation id can collide with. */
@@ -70,6 +73,47 @@ test("a host that keeps its delegates open turns auto-exit off", async () => {
 		assert.equal(host.started.length, 1);
 		assert.equal(host.started[0].env.PI_DELEGATE_AUTO_EXIT, "0");
 	} finally {
+		await s.shutdown();
+	}
+});
+
+test("a confirmed open keeps its task, assigned id and locator when session accounting publication fails", async () => {
+	const host = new MemoryHost("pane-free");
+	host.assignSessionId = ASSIGNED;
+	const s = memorySession({ host });
+	const open = host.openWindow.bind(host);
+	let saved = "";
+	host.openWindow = async (...args) => {
+		const window = await open(...args);
+		saved = readFileSync(treePath(s.parent), "utf8");
+		writeFileSync(treePath(s.parent), "null");
+		return window;
+	};
+	try {
+		await s.toolCall("delegate", { agent: "scout", task: "look" });
+		const record = lastRecord(s);
+		assert.ok(record, "the delegation was recorded");
+		assert.equal(s.sendCalls.length, 1, "one task mail was sent");
+		assert.equal(s.sendCalls[0].to, ASSIGNED);
+		assert.equal(record.sessionId, ASSIGNED);
+		assert.deepEqual(record.locator, host.started[0].locator);
+		assert.equal(host.closed.length, 0, "the open agent was not closed");
+		assert.equal(host.terminals.size, 1, "the open agent still runs");
+		const warning = s.warnings.find((text) => /shared session publication failed/.test(text));
+		assert.ok(warning, "the failed session publication is reported");
+		assert.match(warning, new RegExp(`window ${host.started[0].id} opened as session ${ASSIGNED}`));
+		assert.match(warning, /invalid tree registry/);
+		assert.ok(readIdentity(ASSIGNED), "the assigned id keeps its identity record");
+		writeFileSync(treePath(s.parent), saved);
+		// A cap at the current known count makes the next admission reconcile the local record first.
+		writeFileSync(
+			join(agentDir, "squire", "settings.json"),
+			JSON.stringify({ maxDepth: 2, maxConcurrentDelegates: 1 }),
+		);
+		await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "over cap" }), /maxConcurrentDelegates/);
+		assert.equal(readTree(s.parent).entries.find((entry) => entry.id === record.id)?.phase, "started");
+	} finally {
+		if (saved !== "") writeFileSync(treePath(s.parent), saved);
 		await s.shutdown();
 	}
 });

@@ -354,11 +354,11 @@ export class DelegateStarter {
 		dispatchTree(token);
 		const spec = { name: input.name, cwd: workspace.cwd, argv: payload.args, env: payload.env };
 		const opened = await this.open(input, spec, token, ctx);
+		input.onWindowOpened?.();
 		if (opened.sessionId !== undefined) {
 			writeIdentity(opened.sessionId, own);
-			bindTree(token, { sessionId: opened.sessionId });
+			this.publishSession(input, opened, token, ctx, opened.sessionId);
 		}
-		input.onWindowOpened?.();
 		this.publishOpened(input, opened, token, ctx);
 		return opened;
 	}
@@ -386,6 +386,25 @@ export class DelegateStarter {
 		} catch (accounting) {
 			ctx.ui.notify(
 				`delegate: could not refund the pre-start reservation: ${String(accounting)}; it remains charged.`,
+				"warning",
+			);
+		}
+	}
+
+	/** A host-assigned session id is re-filed; a shared failure keeps the opened delegate local. */
+	private publishSession(
+		input: StartInput,
+		opened: OpenedWindow,
+		token: Reservation,
+		ctx: ExtensionContext,
+		sessionId: string,
+	): void {
+		try {
+			bindTree(token, { sessionId });
+		} catch (error) {
+			const noun = input.admission.client.windowNoun ?? "window";
+			ctx.ui.notify(
+				`delegate: ${noun} ${opened.id} opened as session ${sessionId}, but shared session publication failed: ${String(error)}. Local tracking continues; accounting reconciles before the next admission.`,
 				"warning",
 			);
 		}

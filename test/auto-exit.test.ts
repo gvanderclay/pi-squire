@@ -5,9 +5,16 @@
 // typed or stopped a run. `/auto-exit` inside the delegate turns it back on.
 
 import assert from "node:assert/strict";
-import { after, beforeEach, test } from "node:test";
-
-import { agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { after, beforeEach, type TestContext, test } from "node:test";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { readIdentity } from "../src/identity.ts";
+import { createPaseoHost } from "../src/paseo.ts";
+import { taskStatePath } from "../src/task-store.ts";
+import { agentDir, agentFile, cleanup, resetRoot, type SessionOptions, session, writeAgent } from "./harness.ts";
+import { HerdrWire } from "./herdr-adapter-fixture.ts";
+import { FakePaseo } from "./paseo-fixture.ts";
 
 beforeEach(() => resetRoot());
 after(() => cleanup());
@@ -227,6 +234,349 @@ test("/auto-exit works in a delegate started with auto-exit off", async () => {
 	await s.command("auto-exit");
 	await s.run("completed");
 	assert.equal(s.shutdowns(), 1);
+});
+
+// ---------------------------------------------------------------------------
+// Paseo uses the same completion gate but archives instead of shutting Pi down.
+
+const PASEO_AGENT = "42c2a464-e9de-45fd-961a-ef84ea1bf589";
+
+/** A real SDK client with only its daemon transport mocked, scoped to this test. */
+function paseo(t: TestContext, options: SessionOptions = {}) {
+	mkdirSync(".scratch/tmp", { recursive: true });
+	const home = mkdtempSync(join(process.cwd(), ".scratch/tmp/paseo-exit-"));
+	writeFileSync(join(home, "paseo.pid"), JSON.stringify({ listen: "127.0.0.1:1" }));
+	writeFileSync(join(home, "local-credential"), "not-a-real-credential");
+	const oldHome = process.env.PASEO_HOME;
+	process.env.PASEO_HOME = home;
+	process.env.PASEO_AGENT_ID = PASEO_AGENT;
+	const s = session({ parentEnv: "some-parent", autoExitEnv: "1", ...options });
+	const calls: string[] = [];
+	const replies: unknown[] = [];
+	s.events.on("message:reply", (data) => {
+		const payload = data as { envelope?: unknown };
+		replies.push(data);
+		payload.envelope = { id: "delivered-reply" };
+	});
+	t.mock.method(DaemonClient.prototype, "connect", async () => {
+		calls.push("connect");
+	});
+	t.mock.method(DaemonClient.prototype, "close", async () => {
+		calls.push("close");
+	});
+	t.mock.method(DaemonClient.prototype, "fetchAgent", async () => ({
+		agent: { id: PASEO_AGENT, labels: { "pi-squire": "1" }, runtimeInfo: { sessionId: s.parent } },
+	}));
+	t.mock.method(DaemonClient.prototype, "fetchAgents", async () => ({
+		entries: [],
+		pageInfo: { hasMore: false },
+	}));
+	t.mock.method(DaemonClient.prototype, "archiveAgent", async (id: string) => {
+		assert.equal(id, PASEO_AGENT);
+		assert.equal(replies.length, 1, "the final reply is durable before archive");
+		assert.deepEqual(JSON.parse(readFileSync(taskStatePath(s.parent), "utf8")).requests, []);
+		calls.push("archive");
+		return { archivedAt: "2026-01-01T00:00:00Z" };
+	});
+	t.after(async () => {
+		await s.shutdown();
+		delete process.env.PASEO_AGENT_ID;
+		if (oldHome === undefined) delete process.env.PASEO_HOME;
+		else process.env.PASEO_HOME = oldHome;
+		rmSync(home, { recursive: true, force: true });
+	});
+	const task = (id = "paseo-task"): void => {
+		s.events.emit("message:inbound", {
+			envelope: { id, from: "some-parent", kind: "request", body: "do the task" },
+			handled: false,
+		});
+	};
+	return { s, calls, replies, task };
+}
+
+for (const end of ["completed", "error"] as const) {
+	test(`Paseo archives once after its delivered ${end} result without calling ctx.shutdown`, async (t) => {
+		const { s, calls, replies, task } = paseo(t);
+		await s.start();
+		task();
+		await s.run(end);
+		await s.fire("agent_settled");
+		assert.deepEqual(calls, ["connect", "archive", "close"]);
+		assert.equal(replies.length, 1);
+		assert.equal((replies[0] as { status: string }).status, end === "completed" ? "done" : "failed");
+		assert.equal(s.shutdowns(), 0);
+	});
+}
+
+for (const control of ["off", "typed", "aborted", "stopped", "reply-failed"] as const) {
+	test(`Paseo stays open for ${control} even after another settle`, async (t) => {
+		const { s, calls, task } = paseo(t, { autoExitEnv: control === "off" ? "0" : "1" });
+		await s.start();
+		task();
+		if (control === "typed") await s.type("keep working");
+		if (control === "reply-failed")
+			s.events.on("message:reply", (data) => {
+				(data as { error?: string }).error = "delivery failed";
+			});
+		await s.run(control === "aborted" || control === "stopped" ? control : "completed");
+		await s.fire("agent_settled");
+		assert.deepEqual(calls, []);
+		assert.equal(s.shutdowns(), 0);
+	});
+}
+
+test("a Paseo root never archives and an invalid self id never connects or shuts down", async (t) => {
+	const root = paseo(t, { parentEnv: undefined });
+	await root.s.start();
+	await root.s.run();
+	assert.deepEqual(root.calls, []);
+	await root.s.shutdown();
+	const child = paseo(t);
+	await child.s.start();
+	child.task();
+	process.env.PASEO_AGENT_ID = "inherited-but-not-an-agent";
+	await child.s.run();
+	assert.deepEqual(child.calls, []);
+	assert.match(child.s.errors.join("\n"), /could not auto-archive.*not a UUID/);
+	assert.equal(child.s.shutdowns(), 0);
+});
+
+test("Paseo rearming cannot discard a held task after a failed run", async (t) => {
+	const { s, calls, replies, task } = paseo(t);
+	await s.start();
+	task();
+	await s.run("aborted");
+	await s.command("auto-exit");
+	await s.run("error");
+	assert.deepEqual(calls, []);
+	assert.equal(replies.length, 0);
+	await s.run();
+	assert.deepEqual(calls, ["connect", "archive", "close"]);
+});
+
+test("tmux and Herdr keep ctx.shutdown and never connect to the Paseo SDK", async (t) => {
+	let connects = 0;
+	t.mock.method(DaemonClient.prototype, "connect", async () => {
+		connects++;
+	});
+	const wire = new HerdrWire();
+	try {
+		for (const multiplexer of [undefined, wire.client]) {
+			const s = session({ parentEnv: "some-parent", autoExitEnv: "1", multiplexer });
+			await s.start();
+			await s.run();
+			assert.equal(s.shutdowns(), 1);
+			await s.shutdown();
+		}
+		assert.equal(connects, 0);
+	} finally {
+		wire.dispose();
+	}
+});
+
+test("a Paseo archive failure preserves the delivered result and never retries on duplicate settle", async (t) => {
+	const { s, calls, replies, task } = paseo(t);
+	t.mock.method(DaemonClient.prototype, "archiveAgent", async () => {
+		throw new Error("archive refused");
+	});
+	await s.start();
+	task();
+	await s.run();
+	await s.fire("agent_settled");
+	assert.deepEqual(calls, ["connect", "close"]);
+	assert.equal(replies.length, 1);
+	assert.match(s.errors.join("\n"), /could not auto-archive.*archive refused.*no automatic cleanup retry/);
+	assert.equal(s.shutdowns(), 0);
+});
+
+for (const race of [
+	"typed",
+	"extension-input",
+	"new-run",
+	"pending",
+	"busy",
+	"owner",
+	"reload",
+	"new-task",
+	"self-id",
+] as const) {
+	test(`Paseo revalidates ${race} after asynchronous connection`, async (t) => {
+		const { s, calls, task } = paseo(t);
+		const gate = Promise.withResolvers<void>();
+		const entered = Promise.withResolvers<void>();
+		t.mock.method(DaemonClient.prototype, "connect", async () => {
+			calls.push("connect");
+			entered.resolve();
+			await gate.promise;
+		});
+		await s.start();
+		task();
+		await s.run();
+		await entered.promise;
+		await s.fire("agent_settled"); // A replay while archive is pending must not start another one.
+		switch (race) {
+			case "typed":
+				await s.type("new work");
+				break;
+			case "extension-input":
+				await s.fire("input", { source: "extension", text: "new work" });
+				break;
+			case "new-run":
+				await s.fire("agent_start");
+				break;
+			case "pending":
+				s.context.hasPendingMessages = () => true;
+				break;
+			case "busy":
+				s.context.isIdle = () => false;
+				break;
+			case "owner":
+				await s.shutdown();
+				break;
+			case "reload":
+				await s.fire("session_start", { reason: "reload" });
+				break;
+			case "new-task":
+				task("next-task");
+				break;
+			case "self-id":
+				process.env.PASEO_AGENT_ID = "48284603-8618-4094-b198-70f57b65108d";
+				break;
+		}
+		gate.resolve();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(calls, ["connect", "close"]);
+		assert.equal(s.shutdowns(), 0);
+	});
+}
+
+for (const invalidate of [false, true]) {
+	test(`Paseo retains the newest completed generation during slow cleanup, canceled afterward=${invalidate}`, async (t) => {
+		const { s, calls, replies, task } = paseo(t);
+		const gate = Promise.withResolvers<void>();
+		const entered = Promise.withResolvers<void>();
+		let connections = 0;
+		t.mock.method(DaemonClient.prototype, "connect", async () => {
+			calls.push("connect");
+			if (++connections === 1) {
+				entered.resolve();
+				await gate.promise;
+			}
+		});
+		t.mock.method(DaemonClient.prototype, "archiveAgent", async () => {
+			assert.equal(replies.length, 3, "all three task results were delivered before cleanup");
+			calls.push("archive");
+			return { archivedAt: "2026-01-01T00:00:00Z" };
+		});
+		await s.start();
+		task();
+		await s.run();
+		await entered.promise;
+		for (const id of ["second", "newest"]) {
+			await s.fire("input", { source: "extension", text: "next task" });
+			task(id);
+			await s.run();
+		}
+		if (invalidate) await s.type("keep it open");
+		gate.resolve();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.equal(calls.filter((call) => call === "archive").length, invalidate ? 0 : 1);
+		assert.equal(connections, invalidate ? 1 : 2, "only the newest intent can open another connection");
+		assert.equal(s.shutdowns(), 0);
+	});
+}
+
+test("queued input before deferred Paseo cleanup prevents even a connection", async (t) => {
+	const { s, calls, task } = paseo(t);
+	await s.start();
+	task();
+	await s.fire("agent_end", {
+		messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "answer" }] }],
+	});
+	await s.fire("agent_settled");
+	await s.type("keep it open");
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.deepEqual(calls, []);
+});
+
+test("Paseo waits for nested task completion and a result-processing run, even for a kept-open child", async (t) => {
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ maxDepth: 2 }));
+	writeAgent("manager", agentFile({ ...SCOUT, allow_nested_delegation: "[keeper]" }));
+	writeAgent("keeper", agentFile({ ...SCOUT, auto_exit: "false" }));
+	const api = new FakePaseo();
+	const { s, calls, replies, task } = paseo(t, {
+		agentEnv: "manager",
+		multiplexer: createPaseoHost(api, { PASEO_AGENT_ID: PASEO_AGENT }),
+	});
+	await s.start();
+	task();
+	await s.toolCall("delegate", { agent: "keeper", task: "nested work" });
+	const record = s.entries.find((entry) => entry.customType === "delegate-start-v2")?.data;
+	assert.ok(record);
+	await s.run("error");
+	assert.deepEqual(calls, [], "an intermediate failure is not a final task result");
+	assert.equal(replies.length, 0);
+	s.events.emit("message:inbound", {
+		envelope: {
+			id: "nested-reply",
+			from: record.sessionId,
+			to: s.parent,
+			in_reply_to: [record.requestId],
+			status: "done",
+			ts: "2026-11-11T00:00:00.000Z",
+			body: "nested work finished",
+		},
+		path: join(agentDir, "nested-reply.json"),
+		requests: [],
+		handled: false,
+	});
+	await s.fire("agent_settled");
+	assert.deepEqual(calls, [], "arrival and another settle do not process a result");
+	await s.run();
+	assert.deepEqual(calls, ["connect", "archive", "close"]);
+	assert.equal(api.running.size, 1, "the keeper stays open after its task result");
+	assert.equal(readIdentity(String(record.sessionId))?.autoExit, false);
+});
+
+test("Paseo honors roster defaults and explicit auto_exit in launch env, identity, record and status", async () => {
+	writeAgent("keeper", agentFile({ ...SCOUT, auto_exit: "false" }));
+	writeAgent("scout", agentFile(SCOUT));
+	const api = new FakePaseo();
+	const s = session({ multiplexer: createPaseoHost(api, { PASEO_AGENT_ID: PASEO_AGENT }) });
+	await s.start();
+	try {
+		for (const [agent, auto_exit] of [
+			["scout", undefined],
+			["scout", false],
+			["keeper", true],
+			["keeper", undefined],
+		] as const)
+			await s.toolCall("delegate", { agent, task: "go", auto_exit });
+		assert.deepEqual(
+			api.created.map(({ env }) => env.PI_DELEGATE_AUTO_EXIT),
+			["1", "0", "1", "0"],
+		);
+		const records = s.entries.filter((entry) => entry.customType === "delegate-start-v2");
+		assert.deepEqual(
+			records.map(({ data }) => data.autoExit),
+			[true, false, true, false],
+		);
+		assert.deepEqual(
+			api.created.map(({ agentId }) => readIdentity(agentId)?.autoExit),
+			[true, false, true, false],
+		);
+		assert.deepEqual(
+			api.created.map(({ agentId }) => readIdentity(`paseo-session-${agentId}`)?.autoExit),
+			[true, false, true, false],
+		);
+		const status = (await s.toolCall("delegation_status", {})).content[0].text;
+		assert.match(status, /auto-exit: on — the Paseo agent is archived/);
+		assert.match(status, /auto-exit: off — the Paseo agent stays open/);
+	} finally {
+		await s.shutdown();
+	}
 });
 
 // ---------------------------------------------------------------------------

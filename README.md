@@ -498,9 +498,23 @@ and closing an agent run that command.
 - Resume and fork are refused for now, with the reason "Paseo cannot resume or
   fork a delegate yet": `delegation_resume`, `/delegate-resume` and
   `delegation_fork`. Start a new delegation instead.
-- A Paseo delegate starts with auto-exit off, ignoring the roster's and
-  call's `auto_exit`. It stays open and idle after its result; close it with
-  `delegation_close` or remove it in Paseo.
+- Paseo honors the roster's and call's `auto_exit` (default on). After the
+  final task reply is delivered and nested work is processed, auto-exit
+  archives the delegate. It leaves the active agent list, but its transcript
+  remains recoverable in Paseo. With `auto_exit: false`, after human takeover,
+  or after a stopped run, it stays open. `delegation_close` still deletes the
+  agent, including an archived one.
+- Before automatic archive, Squire detaches surviving publicly discoverable
+  native children so kept-open children are not archived by Paseo's parent cascade. Their
+  Squire parent/root identity is unchanged. Paseo's SDK does not offer an
+  atomic detach-and-archive operation: another client attaching a new child
+  during cleanup can still expose that child to native cascade. Private
+  native helper agents are outside public discovery. The supported listing can
+  also omit dormant stored agents whose provider is unavailable; this protection
+  does not cover them. A discovery, detach or archive failure is reported without
+  discarding the delivered result or
+  scheduling a cleanup retry. Squire does not archive a workspace or remove
+  its working directory.
 - The `"multiplexer"` setting is ignored, because a Paseo-hosted Pi always opens
   agents in Paseo.
 - A delegate has no terminal or pane to show. `windowId` is the agent id, and
@@ -1780,10 +1794,12 @@ The parent resolves each delegation's auto-exit from the call
 `auto_exit`, then on, and passes it to the child as `PI_DELEGATE_AUTO_EXIT`
 (`1` or `0`). Inside the delegate:
 
-- While it is on, a run that settles as a normal completion shuts the delegate
-  down (`ctx.shutdown()`) on the next event-loop turn, after the settle
-  reply has been sent, so its tmux window closes. The session file stays, and
+- While it is on, a run that settles as a normal completion closes the
+  delegate on the next event-loop turn, after its task reply has been sent.
+  In tmux and Herdr this uses `ctx.shutdown()`; the session file stays, and
   `pi --session <path>` reopens it (see [Reopening a delegate's session](#reopening-a-delegates-session)).
+  In Paseo it archives the agent and retains its transcript, rather than
+  deleting it (see [Paseo support](#paseo-support)).
 - A failed final run, such as one ending on a usage limit or another provider
   error after fallbacks are exhausted, exits like a normal completion; the parent still gets the failed
   reply and the session file stays. Only a run the user stopped never exits
@@ -1801,7 +1817,7 @@ The parent resolves each delegation's auto-exit from the call
   picked at random per session. Its status key is `delegate-self`; its own
   running-child count uses `delegate`, so the footers do not overwrite each other.
 
-There is no `subagent_done` tool: auto-exit off only means the window stays.
+There is no `subagent_done` tool: auto-exit off only means the delegate stays open.
 
 ## Results
 

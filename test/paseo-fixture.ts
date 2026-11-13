@@ -69,6 +69,14 @@ export class FakePaseo implements PaseoApi {
 		return `recent activity of ${agentId}\nSQUIRE-ADAPTER-SCREEN\n`;
 	}
 
+	async archive(agentId: string, _sessionId: string, eligible: () => boolean): Promise<boolean> {
+		this.use("archive");
+		if (!eligible()) return false;
+		if (!this.running.delete(agentId)) throw new Error(`no Paseo agent ${agentId}`);
+		this.archived.add(agentId);
+		return true;
+	}
+
 	async remove(agentId: string): Promise<boolean> {
 		this.use("remove");
 		this.removals.push(agentId);

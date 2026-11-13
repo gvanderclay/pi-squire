@@ -57,7 +57,6 @@ class PaseoHost implements DelegateHost {
 	readonly windowNoun = "agent";
 	readonly usesWindowPlacement = false;
 	readonly requiresSessionGuard = false;
-	readonly keepsDelegatesOpen = true;
 	readonly windowListRefusal = LIST_REFUSAL;
 	private readonly api: PaseoApi;
 	/** Read at every call: same process, and the router asks before any launch. */

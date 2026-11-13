@@ -510,6 +510,7 @@ export function session(options: SessionOptions = {}) {
 		hasUI: options.hasUI ?? true,
 		mode: options.mode ?? "json",
 		isIdle: () => signal === undefined,
+		hasPendingMessages: () => false,
 		isProjectTrusted: () => options.projectTrusted ?? false,
 		modelRegistry: registry,
 		get signal() {

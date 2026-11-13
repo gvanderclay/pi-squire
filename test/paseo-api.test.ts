@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { syncBuiltinESMExports } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { after, type TestContext, test } from "node:test";
@@ -159,6 +159,203 @@ test("a daemon that refuses the connection fails the call at once and is closed"
 	assert.ok(Date.now() - started < 5_000, "a refused connection must not wait on a retry");
 	assert.equal(closes, 1, "the client is closed after the connection fails");
 });
+
+const ARCHIVE_AGENT = "f3a5d640-238e-4ba5-9730-cf15599c7704";
+const CHILD_AGENT = "ea354d94-760b-4ef4-a93f-b33f64248688";
+const OTHER_CHILD = "d303b3ac-dd20-4847-b96d-586a6b64cc40";
+// Resolve the SDK's own protocol dependency, independently of Squire's literal.
+const protocolLabels = await import(
+	createRequire(import.meta.resolve("@getpaseo/client")).resolve("@getpaseo/protocol/agent-labels")
+);
+const PARENT_LABEL: string = protocolLabels.PARENT_AGENT_ID_LABEL;
+
+/** Real SDK handles over a fake transport; no CLI or daemon is reached. */
+function archiveWire(t: TestContext) {
+	const calls: string[] = [];
+	const agents = new Map<string, { id: string; labels: Record<string, string>; runtimeInfo: { sessionId: string } }>([
+		[ARCHIVE_AGENT, { id: ARCHIVE_AGENT, labels: { "pi-squire": "1" }, runtimeInfo: { sessionId: "own-session" } }],
+		[
+			CHILD_AGENT,
+			{ id: CHILD_AGENT, labels: { [PARENT_LABEL]: ARCHIVE_AGENT }, runtimeInfo: { sessionId: "kept-child" } },
+		],
+		[
+			OTHER_CHILD,
+			{ id: OTHER_CHILD, labels: { [PARENT_LABEL]: ARCHIVE_AGENT }, runtimeInfo: { sessionId: "other-child" } },
+		],
+	]);
+	t.mock.method(DaemonClient.prototype, "connect", async () => {
+		calls.push("connect");
+	});
+	t.mock.method(DaemonClient.prototype, "close", async () => {
+		calls.push("close");
+	});
+	t.mock.method(DaemonClient.prototype, "fetchAgent", async (input: { agentId: string }) => {
+		calls.push(`refresh:${input.agentId}`);
+		const agent = agents.get(input.agentId);
+		return agent ? { agent } : null;
+	});
+	t.mock.method(DaemonClient.prototype, "detachAgent", async (id: string) => {
+		calls.push(`detach:${id}`);
+		const agent = agents.get(id);
+		if (agent) agent.labels = {};
+	});
+	t.mock.method(DaemonClient.prototype, "archiveAgent", async (id: string) => {
+		calls.push(`archive:${id}`);
+		// Model the native cascade: any still-linked child would be lost.
+		for (const [key, agent] of agents) if (agent.labels[PARENT_LABEL] === id) agents.delete(key);
+		return { archivedAt: "2026-01-01T00:00:00Z" };
+	});
+	return { calls, agents, api: createPaseoApi(daemonHome()) };
+}
+
+test("archive protects all direct children across pages, including unlabelled background agents", async (t) => {
+	const wire = archiveWire(t);
+	const requests: (FetchAgentsOptions | undefined)[] = [];
+	t.mock.method(DaemonClient.prototype, "fetchAgents", async (options?: FetchAgentsOptions) => {
+		requests.push(options);
+		// The native directory returns no children for a misspelled parent-label key.
+		if (options?.filter?.labels?.[PARENT_LABEL] !== ARCHIVE_AGENT) return agentPage({ ids: [], hasMore: false });
+		const ids = requests.length === 1 ? [CHILD_AGENT] : [OTHER_CHILD];
+		const page = agentPage({ ids, hasMore: requests.length === 1, nextCursor: "page-2" });
+		page.entries = ids.map((id) => ({ agent: wire.agents.get(id) })) as unknown as AgentList["entries"];
+		return page;
+	});
+	assert.equal(await wire.api.archive(ARCHIVE_AGENT, "own-session", () => true), true);
+	assert.deepEqual(requests, [
+		{ filter: { labels: { [PARENT_LABEL]: ARCHIVE_AGENT }, includeBackground: true }, page: { limit: 200 } },
+		{
+			filter: { labels: { [PARENT_LABEL]: ARCHIVE_AGENT }, includeBackground: true },
+			page: { limit: 200, cursor: "page-2" },
+		},
+	]);
+	assert.deepEqual(
+		wire.calls.filter((call) => call.startsWith("detach:")),
+		[`detach:${CHILD_AGENT}`, `detach:${OTHER_CHILD}`],
+	);
+	assert.ok(wire.calls.indexOf(`detach:${OTHER_CHILD}`) < wire.calls.indexOf(`archive:${ARCHIVE_AGENT}`));
+	assert.equal(wire.calls.at(-1), "close");
+	assert.equal(wire.agents.get(CHILD_AGENT)?.runtimeInfo.sessionId, "kept-child");
+	assert.equal(wire.agents.get(OTHER_CHILD)?.runtimeInfo.sessionId, "other-child");
+});
+
+for (const failure of ["list", "detach", "archive", "cursor", "connect"] as const) {
+	test(`archive closes its connection and fails closed on ${failure} failure`, async (t) => {
+		const wire = archiveWire(t);
+		t.mock.method(DaemonClient.prototype, "fetchAgents", async () => {
+			if (failure === "list") throw new Error("list failed");
+			return {
+				...agentPage({ ids: [], hasMore: failure === "cursor" }),
+				entries: [{ agent: wire.agents.get(CHILD_AGENT) }],
+			} as unknown as AgentList;
+		});
+		if (failure === "connect")
+			t.mock.method(DaemonClient.prototype, "connect", async () => {
+				throw new Error("connect failed");
+			});
+		if (failure === "detach")
+			t.mock.method(DaemonClient.prototype, "detachAgent", async () => {
+				throw new Error("detach failed");
+			});
+		if (failure === "archive")
+			t.mock.method(DaemonClient.prototype, "archiveAgent", async () => {
+				throw new Error("archive failed");
+			});
+		await assert.rejects(
+			wire.api.archive(ARCHIVE_AGENT, "own-session", () => true),
+			failure === "cursor" ? /without a new cursor/ : new RegExp(`${failure} failed`),
+		);
+		assert.equal(wire.calls.at(-1), "close");
+		assert.ok(!wire.calls.includes(`archive:${ARCHIVE_AGENT}`));
+		assert.ok(wire.agents.has(CHILD_AGENT));
+	});
+}
+
+test("archive validates the UUID, exact Pi session and Squire label before any mutation", async (t) => {
+	const wire = archiveWire(t);
+	await assert.rejects(
+		wire.api.archive("inherited", "own-session", () => true),
+		/agent id/,
+	);
+	assert.equal(wire.calls.length, 0);
+	await assert.rejects(
+		wire.api.archive(ARCHIVE_AGENT, "different-session", () => true),
+		/session/,
+	);
+	assert.ok(!wire.calls.some((call) => call.startsWith("archive:")));
+	const target = wire.agents.get(ARCHIVE_AGENT);
+	assert.ok(target);
+	target.labels = {};
+	await assert.rejects(
+		wire.api.archive(ARCHIVE_AGENT, "own-session", () => true),
+		/session/,
+	);
+	wire.agents.delete(ARCHIVE_AGENT);
+	await assert.rejects(
+		wire.api.archive(ARCHIVE_AGENT, "own-session", () => true),
+		/session/,
+	);
+});
+
+test("archive discovers every page before any detach and rejects a failed later page or cursor cycle", async (t) => {
+	const wire = archiveWire(t);
+	for (const cycle of [false, true]) {
+		let pages = 0;
+		t.mock.method(DaemonClient.prototype, "fetchAgents", async () => {
+			if (++pages > 1 && !cycle) throw new Error("later page failed");
+			return {
+				...agentPage({ ids: [], hasMore: true, nextCursor: "repeated-page" }),
+				entries: [{ agent: wire.agents.get(CHILD_AGENT) }],
+			} as unknown as AgentList;
+		});
+		await assert.rejects(
+			wire.api.archive(ARCHIVE_AGENT, "own-session", () => true),
+			cycle ? /without a new cursor/ : /later page failed/,
+		);
+		assert.equal(pages, 2);
+		assert.ok(!wire.calls.some((call) => call.startsWith("detach:") || call.startsWith("archive:")));
+	}
+});
+
+test("archive leaves a child that was reparented during discovery alone", async (t) => {
+	const wire = archiveWire(t);
+	t.mock.method(DaemonClient.prototype, "fetchAgents", async () => {
+		const child = wire.agents.get(CHILD_AGENT);
+		assert.ok(child);
+		child.labels[PARENT_LABEL] = "another-parent";
+		return {
+			...agentPage({ ids: [], hasMore: false }),
+			entries: [{ agent: child }],
+		} as unknown as AgentList;
+	});
+	assert.equal(await wire.api.archive(ARCHIVE_AGENT, "own-session", () => true), true);
+	assert.ok(!wire.calls.includes(`detach:${CHILD_AGENT}`));
+	assert.ok(wire.agents.has(CHILD_AGENT));
+});
+
+for (const phase of ["connect", "list", "detach"] as const) {
+	test(`archive revalidates completion after asynchronous ${phase}`, async (t) => {
+		const wire = archiveWire(t);
+		let eligible = true;
+		t.mock.method(DaemonClient.prototype, "fetchAgents", async () => {
+			if (phase === "list") eligible = false;
+			return {
+				...agentPage({ ids: [], hasMore: false }),
+				entries: [{ agent: wire.agents.get(CHILD_AGENT) }],
+			} as unknown as AgentList;
+		});
+		if (phase === "connect")
+			t.mock.method(DaemonClient.prototype, "connect", async () => {
+				eligible = false;
+			});
+		if (phase === "detach")
+			t.mock.method(DaemonClient.prototype, "detachAgent", async () => {
+				eligible = false;
+			});
+		assert.equal(await wire.api.archive(ARCHIVE_AGENT, "own-session", () => eligible), false);
+		assert.ok(!wire.calls.includes(`archive:${ARCHIVE_AGENT}`));
+		assert.equal(wire.calls.at(-1), "close");
+	});
+}
 
 /** Run Git in `cwd` with an identity of its own, so no user configuration is read. */
 function git(cwd: string, ...args: string[]): void {

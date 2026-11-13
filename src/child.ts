@@ -27,6 +27,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Identity, writeIdentity } from "./identity.ts";
 import { activeMark, classify, type Response, recordLimit } from "./limits.ts";
+import { createPaseoApi } from "./paseo-api.ts";
+import { paseoAgentId } from "./paseo-child.ts";
 import { registerRoutingRuntime } from "./routing-runtime.ts";
 import type { TaskReplies } from "./task-replies.ts";
 
@@ -38,7 +40,7 @@ export const FALLBACK_ENV = "PI_DELEGATE_FALLBACK";
 export const AGENT_ENV = "PI_DELEGATE_AGENT";
 
 const OFF_NOTICE =
-	"delegate: auto-exit is off for this session because you took over here; the window stays open. /auto-exit turns it back on.";
+	"delegate: auto-exit is off for this session because you took over here; the delegate stays open. /auto-exit turns it back on.";
 const ON_NOTICE = "delegate: auto-exit is on; this delegate closes after its next normal completion.";
 
 type Message = { role?: string; stopReason?: unknown; errorMessage?: unknown; provider?: unknown; model?: unknown };
@@ -182,6 +184,100 @@ function registerChildFallback(
 	};
 }
 
+async function autoArchive(
+	ctx: ExtensionContext,
+	agentId: string | undefined,
+	sessionId: string,
+	eligible: () => boolean,
+	active: () => boolean,
+): Promise<void> {
+	try {
+		if (!eligible()) return;
+		if (agentId === undefined) throw new Error("PASEO_AGENT_ID is not a UUID");
+		await createPaseoApi().archive(agentId, sessionId, eligible);
+	} catch (error) {
+		if (active())
+			ctx.ui.notify(
+				`delegate: could not auto-archive the Paseo agent: ${String(error)}. Task reply state is unchanged; no automatic cleanup retry was scheduled.`,
+				"error",
+			);
+	}
+}
+
+/** Invalidate a pending archive on any input/run/session boundary, including reload. */
+function childExit(
+	pi: ExtensionAPI,
+	replies: TaskReplies,
+	identity: () => Identity | undefined,
+	active: () => boolean,
+	armed: () => boolean,
+): (ctx: ExtensionContext) => void {
+	let generation = 0;
+	let archiving = false;
+	let pending: (() => void) | undefined;
+	const invalidate = (): void => {
+		generation++;
+	};
+	pi.on("session_start", invalidate);
+	pi.on("session_shutdown", invalidate);
+	pi.on("input", invalidate);
+	pi.on("agent_start", invalidate);
+	return (ctx) => {
+		if (!(process.env.PASEO_AGENT_ID ?? "")) {
+			shutdownWhenActive(ctx, active);
+			return;
+		}
+		const settled = generation;
+		const own = identity();
+		const sessionId = ctx.sessionManager.getSessionId();
+		const agentId = paseoAgentId();
+		const eligible = (): boolean =>
+			active() &&
+			settled === generation &&
+			armed() &&
+			own !== undefined &&
+			identity() === own &&
+			ctx.sessionManager.getSessionId() === sessionId &&
+			paseoAgentId() === agentId &&
+			ctx.isIdle() &&
+			!ctx.hasPendingMessages() &&
+			replies.handled();
+		// Archive closes this runtime on the daemon side. Awaiting it inside
+		// agent_settled could keep the very run being closed from returning.
+		const launch = (): void => {
+			archiving = true;
+			setImmediate(async () => {
+				try {
+					await autoArchive(ctx, agentId, sessionId, eligible, active);
+				} finally {
+					archiving = false;
+					const next = pending;
+					pending = undefined;
+					next?.();
+				}
+			});
+		};
+		// A newer completed run can arrive while a canceled daemon call drains.
+		// Coalesce its own captured intent, never retry or recapture the old one.
+		if (archiving) pending = launch;
+		else launch();
+	};
+}
+
+function registerAutoExit(pi: ExtensionAPI, identity: () => Identity | undefined, arm: () => void): void {
+	pi.registerCommand("auto-exit", {
+		description: "Close this delegate after its next normal completion",
+		handler: async (_args, ctx) => {
+			const own = identity();
+			if (!own) return ctx.ui.notify("auto-exit is available inside a delegate session", "error");
+			arm();
+			writeIdentity(ctx.sessionManager.getSessionId(), { ...own, autoExit: true });
+			ctx.ui.notify(ON_NOTICE, "info");
+			showStatus(ctx, true, own.agent);
+		},
+	});
+}
+
 export function registerChild(
 	pi: ExtensionAPI,
 	replies: TaskReplies,
@@ -193,12 +289,18 @@ export function registerChild(
 	let armed = false;
 	/** Whether the run that just ended finished without the user stopping it. */
 	let completed = false;
+	const exit = childExit(pi, replies, identity, active, () => armed);
 
 	// Reload and session replacement clear extension statuses, then start again.
 	pi.on("session_start", async (_event, ctx) => {
+		completed = false;
 		const own = identity();
 		armed = own?.autoExit === true;
 		if (own) showStatus(ctx, armed, own.agent);
+	});
+
+	pi.on("session_shutdown", () => {
+		completed = false;
 	});
 
 	function disarm(ctx: ExtensionContext): void {
@@ -218,6 +320,7 @@ export function registerChild(
 	// The latest provider response of the current run; its headers may state the reset.
 	let response: Response | undefined;
 	pi.on("agent_start", async () => {
+		completed = false;
 		response = undefined;
 	});
 	pi.on("after_provider_response", async (event) => {
@@ -239,22 +342,12 @@ export function registerChild(
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
-		const exit = armed && completed && replies.handled();
+		const ready = armed && completed && replies.handled();
 		completed = false;
-		if (!exit) return;
-		// Task settlement and its synchronous reply write have succeeded.
-		shutdownWhenActive(ctx, active);
+		if (ready) exit(ctx);
 	});
 
-	pi.registerCommand("auto-exit", {
-		description: "Close this delegate after its next normal completion",
-		handler: async (_args, ctx) => {
-			if (!identity()) return ctx.ui.notify("auto-exit is available inside a delegate session", "error");
-			armed = true;
-			const own = identity();
-			if (own) writeIdentity(ctx.sessionManager.getSessionId(), { ...own, autoExit: true });
-			ctx.ui.notify(ON_NOTICE, "info");
-			showStatus(ctx, armed, identity()?.agent);
-		},
+	registerAutoExit(pi, identity, () => {
+		armed = true;
 	});
 }

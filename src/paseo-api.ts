@@ -40,11 +40,17 @@ export type PaseoApi = {
 	/** Agent ids that exist and are not archived. */
 	live(): Promise<Set<string>>;
 	activity(agentId: string): Promise<string>;
+	/** Archive this exact Pi session, preserving public native children; false when completion was canceled. */
+	archive(agentId: string, sessionId: string, eligible: () => boolean): Promise<boolean>;
 	/** Resolves false when the agent did not exist. */
 	remove(agentId: string): Promise<boolean>;
 };
 
 const pidFile = (home: string): string => join(home, "paseo.pid");
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// @getpaseo/protocol 0.15.4 dist/agent-labels.js: PARENT_AGENT_ID_LABEL.
+// The declared client dependency does not re-export this protocol constant.
+const PARENT_LABEL = "paseo.parent-agent-id";
 
 /** The daemon's `listen` address, or undefined when the pid file is missing or names none. */
 function daemonAddress(home: string): string | undefined {
@@ -110,6 +116,72 @@ async function listLive(client: PaseoClient): Promise<Set<string>> {
 		seen.add(next);
 		cursor = next;
 	}
+}
+
+/**
+ * Discover before detaching: detachment changes the directory and its cursors.
+ * Paseo 0.15.4 agent-manager.js cascadeArchiveChildren archives same-workspace
+ * native children, so Squire must detach them even when their tasks are done.
+ * Private internal helpers are excluded by the daemon's public directory.
+ */
+async function nativeChildren(
+	client: PaseoClient,
+	agentId: string,
+	eligible: () => boolean,
+): Promise<Set<string> | undefined> {
+	const children = new Set<string>();
+	const seen = new Set<string>();
+	let cursor: string | undefined;
+	for (;;) {
+		if (!eligible()) return undefined;
+		const { entries, pageInfo } = await client.agents.list({
+			filter: { labels: { [PARENT_LABEL]: agentId }, includeBackground: true },
+			page: { limit: AGENT_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }) },
+		});
+		for (const { agent } of entries) children.add(agent.id);
+		if (!pageInfo.hasMore) break;
+		const next = pageInfo.nextCursor ?? "";
+		if (next === "" || seen.has(next))
+			throw new Error("Paseo reported more children without a new cursor to read them");
+		seen.add(next);
+		cursor = next;
+	}
+	return children;
+}
+
+async function archiveChildren(client: PaseoClient, agentId: string, eligible: () => boolean): Promise<boolean> {
+	const children = await nativeChildren(client, agentId, eligible);
+	if (!children) return false;
+	for (const id of children) {
+		if (!eligible()) return false;
+		if (!UUID.test(id) || id === agentId) throw new Error("Paseo reported an invalid child agent id");
+		const child = client.agents.ref(id);
+		await child.refresh();
+		if (!eligible()) return false;
+		const current = child.current();
+		if (!current) throw new Error(`Paseo child ${id} could not be checked before archive`);
+		if (!current.archivedAt && current.labels[PARENT_LABEL] === agentId) await child.detach();
+	}
+	return eligible();
+}
+
+async function archiveOnClient(
+	client: PaseoClient,
+	agentId: string,
+	sessionId: string,
+	eligible: () => boolean,
+): Promise<boolean> {
+	if (!eligible()) return false;
+	const target = client.agents.ref(agentId);
+	await target.refresh();
+	if (!eligible()) return false;
+	if (target.runtimeInfo?.sessionId !== sessionId || target.current()?.labels["pi-squire"] !== "1")
+		throw new Error("Paseo archive refused: agent does not identify this Squire session");
+	if (target.archivedAt) return true;
+	if (!(await archiveChildren(client, agentId, eligible))) return false;
+	if (!eligible()) return false;
+	await target.archive();
+	return true;
 }
 
 /** `path` with symlinks resolved, or as given when it cannot be read. */
@@ -253,6 +325,11 @@ export function createPaseoApi(home: string = process.env.PASEO_HOME ?? join(hom
 			const { stdout, stderr, failure } = await runPaseo(home, ["logs", agentId, "--tail", "40"]);
 			if (failure !== undefined) throw new Error(`paseo logs ${agentId} failed: ${stderr.trim() || failure}`);
 			return stdout;
+		},
+		async archive(agentId: string, sessionId: string, eligible: () => boolean): Promise<boolean> {
+			if (!UUID.test(agentId)) throw new Error("Paseo archive requires a UUID agent id");
+			if (!eligible()) return false;
+			return withClient(home, (client) => archiveOnClient(client, agentId, sessionId, eligible));
 		},
 		async remove(agentId: string): Promise<boolean> {
 			const { stdout, stderr, failure } = await runPaseo(home, ["delete", agentId, "--json"]);

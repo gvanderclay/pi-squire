@@ -60,9 +60,11 @@ test("Paseo presentation and equality read the agent, never the title", () => {
 	assert.equal(facts.retainedAfterExit, false);
 	assert.equal(facts.requiresSessionGuard, false);
 	assert.equal(facts.ancestorReturnHint, false);
-	const open = "off — a Paseo delegate stays open until it is closed";
-	assert.equal(autoExitText({ locator: paseo }, true), open);
-	assert.equal(autoExitText({ locator: paseo }, false), open);
+	assert.equal(
+		autoExitText({ locator: paseo }, true),
+		"on — the Paseo agent is archived after its task reply and nested work are handled unless the user took over",
+	);
+	assert.equal(autoExitText({ locator: paseo }, false), "off — the Paseo agent stays open after the result");
 	assert.equal(paseoLocators.liveIsWindow, false);
 	assert.equal(paseoLocators.normalizeLive(paseo), undefined);
 	assert.equal(paseoLocators.runningLive(paseo), undefined);

@@ -44,7 +44,9 @@ export const paseoLocators: LocatorRules = {
 	paneTarget(): string | undefined {
 		return undefined;
 	},
-	autoExitText(): string {
-		return "off — a Paseo delegate stays open until it is closed";
+	autoExitText(on: boolean): string {
+		return on
+			? "on — the Paseo agent is archived after its task reply and nested work are handled unless the user took over"
+			: "off — the Paseo agent stays open after the result";
 	},
 };

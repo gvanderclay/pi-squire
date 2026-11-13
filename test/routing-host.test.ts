@@ -158,7 +158,7 @@ test("Paseo receives the admitted route and sends mail only to its assigned sess
 		assert.equal(created.thinking, route.candidates[0].effectiveThinking);
 		assert.equal(created.cwd, root);
 		assert.equal(created.parentAgentId, "coordinator", "native parentage does not replace the admitted route");
-		assert.equal(created.env.PI_DELEGATE_AUTO_EXIT, "0");
+		assert.equal(created.env.PI_DELEGATE_AUTO_EXIT, "1");
 		assert.equal(s.sendCalls[index].to, `paseo-session-${created.agentId}`);
 		const record = s.entries.find((entry) => entry.data.id === created.agentId)?.data as StartedRecorded;
 		assert.equal(record.sessionId, s.sendCalls[index].to);

@@ -6,6 +6,23 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- New Paseo delegates honor the roster's and call's `auto_exit` instead of
+  forcing it off. Once the final reply is delivered and nested obligations
+  are processed, auto-exit archives the agent while retaining its transcript.
+  Off, stopped and human-taken-over delegates stay open. Explicit close still
+  deletes archived agents. Automatic archive detaches surviving publicly
+  discoverable native children without changing their Squire identities. Dormant
+  stored agents whose provider is unavailable can be omitted by the supported
+  listing and are outside this protection. The SDK's separate list/detach/archive
+  calls cannot exclude a concurrent external child attach.
+  Status and README wording now describe the actual policy.
+  Deliberately changed `test/routing-host.test.ts`'s Paseo launch environment
+  expectation from `0` to `1`, and `test/paseo-locator.test.ts`'s always-off
+  wording expectation to on/off archive policy. Added API and child lifecycle
+  regressions; generic keeps-open host and terminal behavior are unchanged.
+
 ### Fixed
 
 - Widget characterization fixtures wait for each view's first publication before

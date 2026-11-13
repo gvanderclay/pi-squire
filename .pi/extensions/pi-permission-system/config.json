@@ -4,7 +4,10 @@
 			"pnpm lint": "allow",
 			"pnpm typecheck": "allow",
 			"pnpm test": "allow",
-			"pnpm check": "allow"
+			"pnpm check": "allow",
+			"node --test test/*": "allow",
+			"pnpm exec tsc -p .": "allow",
+			"mise exec node@22.19.0 -- node --test test/*": "allow"
 		}
 	}
 }

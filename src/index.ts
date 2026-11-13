@@ -383,8 +383,12 @@ export default function delegate(
 	/** The refusal for an empty roster. */
 	const noAgents = (): string => `no agents are defined; add ${whereAgentsGo(getAgentDir())}`;
 
-	/** The request as a start, or an error naming what to fix. */
-	async function validate(request: Parsed, roster: Roster, ctx: ExtensionContext): Promise<Start> {
+	/**
+	 * The request as a start, or an error naming what to fix. `byUser` marks the
+	 * `/delegate` command and form: there a model the user names, with no
+	 * routing metadata, launches a bound role outside its routing profile.
+	 */
+	async function validate(request: Parsed, roster: Roster, ctx: ExtensionContext, byUser = false): Promise<Start> {
 		admit(request.agent, roster);
 		results.checkStorage(true);
 		const disabled = disabledProblem(roster, request.agent);
@@ -404,8 +408,9 @@ export default function delegate(
 		const thinking = unlocked.request.thinking ?? defaultThinking;
 		if (request.routing !== undefined && !agent.routingProfile)
 			throw new Error("routing metadata requires an agent with routing_profile");
+		const userModel = byUser && request.routing === undefined && unlocked.request.model !== undefined;
 		const chosen: Awaited<ReturnType<typeof chooseModel>> & { routing?: RoutingRecord; thinking?: string } =
-			agent.routingProfile
+			agent.routingProfile && !userModel
 				? await routing.choose(agent, request.routing, ctx, {
 						model: agent.locked.includes("model") ? own[0] : unlocked.request.model,
 						thinking: isThinking(unlocked.request.thinking ?? "")
@@ -416,7 +421,11 @@ export default function delegate(
 					})
 				: await chooseModel(unlocked.request.model, agent, ctx.modelRegistry, proactive, own);
 		const { model, skipped, rest } = chosen;
-		const notices = unlocked.notice === undefined ? chosen.notices : [unlocked.notice, ...chosen.notices];
+		const unrouted =
+			agent.routingProfile && userModel
+				? [`${agent.name} runs on ${model}, the model you chose, outside routing profile ${agent.routingProfile}`]
+				: [];
+		const notices = [...(unlocked.notice === undefined ? [] : [unlocked.notice]), ...unrouted, ...chosen.notices];
 		const badThinking = thinkingProblem(thinking);
 		if (badThinking !== undefined) throw new Error(badThinking);
 		const badLabel = request.label === undefined ? undefined : labelProblem(request.label);
@@ -738,7 +747,12 @@ export default function delegate(
 			const worktree = normalizeWorkspaceValue(parsed.worktree, "--worktree");
 			if (worktree_source !== undefined && worktree === undefined)
 				throw new Error("--worktree-source requires --worktree");
-			const start = await validate({ ...parsed, cwd, worktree, worktree_base, worktree_source }, rosterFor(ctx), ctx);
+			const start = await validate(
+				{ ...parsed, cwd, worktree, worktree_base, worktree_source },
+				rosterFor(ctx),
+				ctx,
+				true,
+			);
 			const launched = await launch(start, ctx);
 			ctx.ui.notify(started(launched, start), "info");
 		} catch (err) {

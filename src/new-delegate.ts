@@ -458,8 +458,11 @@ async function submitForm(
 	request: NewRequest,
 ): Promise<void> {
 	try {
-		const routing: RoutingRequest | undefined = agent.routingProfile ? await promptRouting(ctx, agent.name) : undefined;
-		if (agent.routingProfile && !routing) return;
+		// A model the user picks launches a bound role outside its routing profile, so no routing JSON is asked.
+		const routed =
+			agent.routingProfile !== undefined && (request.model === undefined || agent.locked.includes("model"));
+		const routing: RoutingRequest | undefined = routed ? await promptRouting(ctx, agent.name) : undefined;
+		if (routed && !routing) return;
 		await deps.start({ ...request, ...(routing ? { routing } : {}) }, ctx);
 	} catch (error) {
 		ctx.ui.notify(`delegate: ${(error as Error).message}`, "error");

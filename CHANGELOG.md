@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-13
+
 ### Changed
 
 - New Paseo delegates honor the roster's and call's `auto_exit` instead of
@@ -1470,7 +1472,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.22.1...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/gvanderclay/pi-squire/compare/v0.22.1...v0.23.0
 [0.22.1]: https://github.com/gvanderclay/pi-squire/compare/v0.22.0...v0.22.1
 [0.22.0]: https://github.com/gvanderclay/pi-squire/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/gvanderclay/pi-squire/compare/v0.20.2...v0.21.0

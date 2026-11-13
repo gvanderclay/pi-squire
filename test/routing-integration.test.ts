@@ -8,7 +8,7 @@ import { type ProvenanceEntry, ROUTING_ATTEMPT, routingEvidence } from "../src/r
 import type { RoutingRecord, RoutingRequest } from "../src/routing-types.ts";
 import { FakeUsage, win } from "./fake-usage.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
-import { frozenRoute, MODEL_A, MODEL_B, MODELS, policy } from "./routing-fixtures.ts";
+import { frozenRoute, MODEL_A, MODEL_B, MODEL_D, MODELS, policy } from "./routing-fixtures.ts";
 
 beforeEach(() => {
 	resetRoot();
@@ -191,6 +191,43 @@ test("explicit model stays single-candidate, hard constraints/marks/virtual mode
 	);
 	const virtual = session({ extraModels: [{ ...MODELS[1], api: "pi-virtual" }] });
 	await assert.rejects(routed(virtual, { model: MODEL_B }), /virtual\/opaque/);
+});
+
+test("a model the user names in /delegate or the form launches a bound role outside its routing profile", async () => {
+	configure();
+	const s = session({ extraModels: MODELS });
+	// The model calling the tool still needs routing metadata, even with a model.
+	await assert.rejects(
+		s.toolCall("delegate", { agent: "role", task: "missing", model: MODEL_D }),
+		/category and data required/,
+	);
+	// The command with a model and no --routing: not a standard candidate, public-only, no route or fallbacks.
+	await s.delegate(`role --model ${MODEL_D} --thinking low inspect this fixture`);
+	assert.deepEqual(s.errors, []);
+	const unrouted = s.tmux.opened[0];
+	assert.equal(unrouted.argv[unrouted.argv.indexOf("--model") + 1], MODEL_D);
+	assert.equal(unrouted.env[ROUTING_ENV], undefined);
+	assert.equal(unrouted.env.PI_DELEGATE_FALLBACK, undefined);
+	assert.ok(s.notes.at(-1)?.includes(`role runs on ${MODEL_D}, the model you chose, outside routing profile worker`));
+	// The command without a model still routes; with --routing too, the model stays a policy candidate.
+	await s.delegate("role inspect this fixture");
+	assert.match(s.errors.at(-1) ?? "", /category and data required/);
+	const json = JSON.stringify(JSON.stringify(request));
+	await s.delegate(`role --model ${MODEL_D} --routing ${json} inspect this fixture`);
+	assert.match(s.errors.at(-1) ?? "", /no qualified route/);
+	await s.delegate(`role --model ${MODEL_B} --routing ${json} inspect this fixture`);
+	assert.equal(JSON.parse(s.tmux.opened[1].env[ROUTING_ENV]).selected, MODEL_B);
+	assert.equal(s.tmux.opened.length, 2);
+	// The form asks for routing JSON only when the model is left to the policy.
+	const form = session({
+		extraModels: MODELS,
+		ui: { select: ["role — role"], editor: ["ui task"], input: [""], custom: [{ model: MODEL_D }] },
+	});
+	await form.command("delegate");
+	assert.deepEqual(form.errors, []);
+	assert.equal(form.tmux.opened.length, 1);
+	assert.ok(!form.editors.some((editor) => editor.title.startsWith("Routing JSON")));
+	assert.equal(form.tmux.opened[0].env[ROUTING_ENV], undefined);
 });
 
 test("hook mutation is checked BEFORE mail-before-open delivery and does not consume a tie turn", async () => {

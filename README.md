@@ -1306,8 +1306,14 @@ widen a routed profile.
 `routing` object while the current roster contains an opted-in role. A legacy-only
 roster keeps the compact legacy tool schema; startup and each run refresh the
 routing schema from the roster. Command users pass the same object as
-`--routing "<JSON>"`. When the interactive form selects a bound role, it asks
-for this JSON. A bound call must provide `category` (`narrow`, `bounded`,
+`--routing "<JSON>"`. When the interactive form selects a bound role and leaves
+the model to the policy, it asks for this JSON. A model the user names in
+`/delegate` (`--model`) or the form, with no `--routing`, launches the bound role
+outside its routing profile, like a legacy agent with an explicit model: no
+route, candidate check, data or review constraint, or fallbacks, and a notice
+says so. Adding `--routing` keeps the model a policy candidate. The `delegate`
+tool always routes a bound role, because there a model, not the user, chooses.
+Resume and fork of such a delegation still need routing metadata. A bound call must provide `category` (`narrow`, `bounded`,
 `standard` or `deep`) and `data` (`private`, `public` or `unknown`). For
 example, these are illustrative request objects:
 
@@ -1503,8 +1509,10 @@ runner that starts Pi unattended can set it too. Anything else the
 parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
 reaches the child only through a `session:launch` contributor. `--model` and
 `--thinking` override the agent's defaults for one call, unless the agent
-locks them (see [Agents](#agents)); for a bound role they override only within
-the eligible route (see [Role/task routing](#role-task-routing-unreleased)).
+locks them (see [Agents](#agents)). For a bound role, `--model` without
+`--routing` launches it outside its routing profile; with `--routing`, the
+overrides apply only within the eligible route (see
+[Role/task routing](#role-task-routing-unreleased)).
 An unknown value is refused with close matches, and so is a model with no
 configured credentials. An API key that exists only as an environment variable in the
 parent's shell does not reach the delegate, so log in through Pi or make the

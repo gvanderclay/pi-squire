@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A model the user names in `/delegate` (`--model`) or the new-delegate form,
+  with no `--routing`, now launches a bound role outside its routing profile,
+  with a notice, instead of requiring routing JSON and refusing any model that
+  is not a candidate of the chosen category's route. The form no longer asks
+  for routing JSON once a model is picked. The `delegate` tool, resume and
+  fork still route bound roles as before.
+
 ## [0.23.0] - 2026-11-13
 
 ### Changed

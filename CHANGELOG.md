@@ -6,8 +6,6 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.24.0] - 2026-11-13
-
 ### Changed
 
 - A routed delegation's served-model line, in the result, `delegation_status`
@@ -16,18 +14,23 @@ follows [Semantic Versioning](https://semver.org/).
   names its model once instead of repeating it on every assistant turn; a
   mid-run fallback still appears in order. `details.routingEvidence.served`
   is unchanged.
-- A model the user names in `/delegate` (`--model`) or the new-delegate form,
-  with no `--routing`, now launches a bound role outside its routing profile,
-  with a notice, instead of requiring routing JSON and refusing any model that
-  is not a candidate of the chosen category's route. The form no longer asks
-  for routing JSON once a model is picked. The `delegate` tool, resume and
-  fork still route bound roles as before.
 - A delegate's per-run guidance now asks for a short, conclusion-first report
   with long detail in a named file, a file re-read only if it changed or
   its needed contents are no longer in context, and a status check repeated
   only after waiting. Deliberately changed
   `test/delegate-composition.test.ts`'s pinned `parentTrust` string; the
   three existing sentences are unchanged.
+
+## [0.24.0] - 2026-11-13
+
+### Changed
+
+- A model the user names in `/delegate` (`--model`) or the new-delegate form,
+  with no `--routing`, now launches a bound role outside its routing profile,
+  with a notice, instead of requiring routing JSON and refusing any model that
+  is not a candidate of the chosen category's route. The form no longer asks
+  for routing JSON once a model is picked. The `delegate` tool, resume and
+  fork still route bound roles as before.
 
 ## [0.23.0] - 2026-11-13
 

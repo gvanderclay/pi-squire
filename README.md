@@ -1891,9 +1891,12 @@ Delegate session: <session file or id>
   these are not per-attempt or tree totals, and the line then ends `Counts the
   whole session, including work before this delegation.`
   No readable usage means no line. The result saves the totals; the expanded
-  result and full `delegation_status` blocks show them too. Running status reads
-  live usage; settled list rows keep it in structured details without adding a
-  text line.
+  result and full `delegation_status` blocks show them too. A full status block
+  reads live usage when no result saved it, so a running delegation and one that
+  ended without a result both show it; settled list rows keep it in structured
+  details without adding a text line. A delegation that ends without a result
+  carries the same `Usage:` line in the message the parent receives, read from
+  its session file then.
 - That text is what the parent model reads. The user sees the delegation as
   one tool call that changes state, in the style of
   [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents):

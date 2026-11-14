@@ -159,7 +159,7 @@ export function forkTool(deps: ForkDeps, includeRouting = true): ForkTool {
 		// Deferred keeps its declaration, about 1,200 tokens, out of requests until it is activated; it stays callable.
 		exposure: "deferred",
 		description:
-			"Start a new direct child from a copy of an existing child's session context, with a new task, session id and window. The original child is untouched and may still be running. Runs in its working folder, or a new managed worktree from that folder's checkout. Results arrive as messages like other delegations.",
+			"Start a new direct child from a copy of an existing child's session context, with a new task, session id and window. The original child is untouched and may still be running. Runs in its working folder, or a new managed worktree from that folder's checkout.",
 		parameters: forkParameters(includeRouting),
 		outputSchema: Type.Object({ ...deps.delegateSchema.properties, forkedFrom: Type.String() }),
 		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },

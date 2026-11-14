@@ -12,6 +12,11 @@ const BUDGET = 12_400;
 // tool_search active) starts without it declared, so what such a parent pays in
 // every request is the other four. Activating it later declares it.
 const DECLARED_BUDGET = 10_300;
+// The routing request is one schema embedded in `delegate`, `delegation_resume`
+// and `delegation_fork`, so a routed roster pays for it in three tools at once.
+const ROUTED_BUDGET = 12_900;
+// The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
+const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 
 function sizes(s: ReturnType<typeof session>, names: readonly string[]): Record<string, number> {
 	return Object.fromEntries(
@@ -43,18 +48,32 @@ test("the delegation tools' model-facing metadata stays within its budget", asyn
 
 test("the tools a parent with codemode starts with declared stay within their budget", async (t) => {
 	writeAgent("scout", agentFile({ description: "Looks things up" }));
-	const four = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
-	// The loadout Pi gives such a parent: a deferred tool starts inactive.
-	const s = session({ activeTools: ["read", "bash", "codemode", ...four] });
+	const s = session({ activeTools: ["read", "bash", "codemode", ...DECLARED] });
 	await s.start();
 	// Measure what is active, not what is registered deferred: an active deferred tool is declared.
 	const active = s.pi.getActiveTools();
 	const declared = DELEGATION_TOOLS.filter((name) => active.includes(name));
-	assert.deepEqual(declared, four);
+	assert.deepEqual(declared, DECLARED);
 	const measured = sizes(s, declared);
 	t.diagnostic(`declared tool metadata: ${total(measured)} characters; ${JSON.stringify(measured)}`);
 	assert.ok(
 		total(measured) <= DECLARED_BUDGET,
 		`${total(measured)} characters over a budget of ${DECLARED_BUDGET}: ${JSON.stringify(measured)}`,
+	);
+});
+
+test("a routed roster's declared tools stay within their budget", async (t) => {
+	// The same agent as above, now routed: the roster line gains the routing profile.
+	writeAgent("scout", agentFile({ description: "Looks things up", routing_profile: "worker" }));
+	const s = session({ activeTools: ["read", "bash", "codemode", ...DECLARED] });
+	await s.start();
+	const active = s.pi.getActiveTools();
+	const declared = DELEGATION_TOOLS.filter((name) => active.includes(name));
+	assert.deepEqual(declared, DECLARED);
+	const measured = sizes(s, declared);
+	t.diagnostic(`routed declared tool metadata: ${total(measured)} characters; ${JSON.stringify(measured)}`);
+	assert.ok(
+		total(measured) <= ROUTED_BUDGET,
+		`${total(measured)} characters over a budget of ${ROUTED_BUDGET}: ${JSON.stringify(measured)}`,
 	);
 });

@@ -99,10 +99,9 @@ test("delegate guidance is visible only when selected and not hidden", () => {
 });
 
 test("roster descriptions preserve defaults, display names, locks and tool details", () => {
-	assert.equal(
-		rosterLine(testAgent()),
-		"- worker — Test worker (default this session's model, thinking this session's)",
-	);
+	// An agent that overrides nothing prints no parenthetical at all.
+	assert.equal(rosterLine(testAgent()), "- worker — Test worker");
+	assert.equal(rosterLine(testAgent({ thinking: "low" })), "- worker — Test worker (thinking low)");
 	assert.deepEqual(toolsDetail(testAgent()), []);
 	assert.deepEqual(toolsDetail(testAgent({ tools: [] })), ["no tools"]);
 	assert.deepEqual(toolsDetail(testAgent({ toolsExcept: ["write", "mcp__*"] })), [
@@ -136,7 +135,7 @@ test("tool descriptions include the same roster and empty-roster guidance", () =
 			intro,
 			"",
 			"Agents:",
-			"- worker — Test worker (default this session's model, thinking this session's)",
+			"- worker — Test worker",
 			"",
 			"The delegate sees only the task and its agent prompt. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",
 		].join("\n"),

@@ -43,7 +43,7 @@ export const RoutingRequestSchema = Type.Object(
 	},
 	{
 		additionalProperties: false,
-		description: "Required for routing_profile roles, including resume/fork. Unbound roles reject routing metadata.",
+		description: "Required for an agent with a routing profile; others reject routing metadata.",
 	},
 );
 export const RoutingRecordSchema = Type.Record(Type.String(), Type.Unknown());

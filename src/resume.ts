@@ -362,7 +362,7 @@ function resumeTool(deps: ResumeDeps, includeRouting: boolean): ToolDef {
 		name: "delegation_resume",
 		label: "Resume delegation",
 		description:
-			"Continue an exited direct child in its own session, so it keeps the context it built, with a follow-up task in a new window. It is recorded as a new delegation whose result arrives as a message. For unrelated work, use delegate. delegation_fork copies a child's context into a new child; find it with tool search. Refuses a running delegation (mail it instead), an open window, an older link of a resumed chain (it names the newest) and a missing working directory.",
+			"Continue an exited direct child in its own session, so it keeps the context it built, with a follow-up task in a new window. It is recorded as a new delegation. For unrelated work, use delegate. delegation_fork copies a child's context into a new child; find it with tool search. Refuses a running delegation (mail it instead), an open window, an older link of a resumed chain (it names the newest) and a missing working directory.",
 		parameters: Type.Object({
 			id: Type.String({ description: "The newest delegation id of the child." }),
 			...(includeRouting ? { routing: Type.Optional(RoutingRequestSchema) } : {}),

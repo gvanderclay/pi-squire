@@ -6,6 +6,44 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The `delegate` tool's roster line prints a parenthetical only for what the
+  agent sets. An agent with no `model`, `fallback` or `thinking` now reads
+  `- scout — Looks things up` instead of repeating
+  `(default this session's model, thinking this session's)` on every such
+  line, and an agent that sets only one of them prints only that one. The
+  routing profile, `auto-exit off`, tools and locked details are unchanged, so
+  the lines that name a model stand out. `test/delegate-composition.test.ts`
+  and `test/agent-files.test.ts` now expect the shorter line.
+
+- `delegation_resume` and `delegation_fork` no longer repeat that a result
+  arrives as a message. `delegate`'s description states it for every
+  delegation in the same request, and the resume tool's own result text
+  repeats it right after the call. `delegation_resume` still says the run is
+  recorded as a new delegation, and `delegation_fork` still says the original
+  child is untouched.
+
+- `delegation_status`'s description drops "An open window does not mean
+  unfinished; only a result means done", which every state line already says
+  for the record it applies to (`running — the window is open and no result has
+  arrived`, `done — result status: …`). The late-reply caveat stays, reworded
+  as "A gone or window-closed record can still turn done on a late reply",
+  because the `window-closed` state line does not carry it.
+
+- The routing request's description uses the term the roster shows. "Required
+  for an agent with a routing profile; others reject routing metadata" replaces
+  the `routing_profile` wording, the undefined word "unbound" and the
+  `resume/fork` cross-reference, which meant nothing in the two tools where
+  the same schema is embedded. No parameter is renamed, removed or made
+  stricter.
+
+- `test/context-budget.test.ts` measures a routed roster as well: the routing
+  request is one schema embedded in `delegate`, `delegation_resume` and
+  `delegation_fork`, so a routed parent pays it three times. Its budget is
+  12,900 characters against 12,857 measured; the two unrouted budgets are
+  unchanged.
+
 ## [0.25.0] - 2026-11-14
 
 ### Added

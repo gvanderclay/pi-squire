@@ -1528,7 +1528,7 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 | Tool | Parameters | What it does |
 | --- | --- | --- |
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
-| `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
+| `delegation_status` | optional `id`, `all` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
 | `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
 | `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
@@ -1560,7 +1560,11 @@ starts. The roster itself is still read at call time, and an
 unknown agent, model or thinking level is refused with close matches and
 nothing starts.
 
-`delegation_status` reports one state per delegation:
+`delegation_status` reports one state per delegation. Without an `id` it lists
+every running delegation and unfinished workspace attempt, plus the 5 most
+recently settled records. When it leaves older records out, the heading says
+how many and points to `all` and `id`; `all: true` lists every record, and an
+`id` selects one, including one the default leaves out.
 
 ```text
 2 delegations:
@@ -1613,7 +1617,9 @@ nothing starts.
   none.
 - **Checkout now** is a fresh [snapshot](#checkout-snapshots) of that
   checkout, taken by this call; the details carry it as `workspaceSnapshot`.
-  A failure is unknown for that delegation alone.
+  The text shows the summary line and, when paths changed, a count; the full
+  path categories are in the details. A failure is unknown for that delegation
+  alone.
 - **Session** is the delegate's session file, searched for in the storage
   directory recorded at launch. Once found, its path is kept, so a later
   status or result uses it without searching again. Before the delegate has

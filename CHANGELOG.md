@@ -8,6 +8,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `delegation_status` lists every running delegation and unfinished workspace
+  attempt plus the 5 most recently settled records by default; `all: true`
+  lists every record, and an `id` still selects one, including one the default
+  leaves out. Its text prints one checkout summary line and a changed-path
+  count instead of every path category; the structured result keeps the full
+  snapshot. The status-text tests now expect the count line instead of the
+  path categories.
 - A routed delegation's served-model line, in the result, `delegation_status`
   and the expanded view, collapses consecutive entries for the same model and
   effort into one `model:effort ×N` run. A 100-turn single-model attempt now

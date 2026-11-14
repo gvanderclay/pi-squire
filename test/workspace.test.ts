@@ -947,8 +947,10 @@ test("status separates clean committed changes from pending conflicts", async ()
 	assert.equal(detachedSnap.workingState, "clean");
 	// The launch facts stay as recorded beside the fresh observation.
 	assert.deepEqual(itemFor(items, launchRecord).workspace, launchRecord.workspace);
-	assert.ok(text.includes('"conflict.txt"'), text);
-	assert.ok(text.includes('"untracked.txt"'), text);
+	assert.match(text, /^ {4}\d+ changed paths?; details in the structured result$/m);
+	assert.ok(text.includes("6 changed paths; details in the structured result"), text);
+	assert.ok(text.includes("1 changed path; details in the structured result"), text);
+	assert.doesNotMatch(text, /committed since launch:|staged:|unstaged:|untracked:|conflicted:/);
 	for (const [record, snapshot, position] of [
 		[cleanRecord, cleanSnap, "branch main"],
 		[launchRecord, snap, "branch main"],
@@ -1001,7 +1003,8 @@ test("completion snapshot stays historical while fresh status changes", async ()
 	assert.doesNotMatch(resultMessage.content, /committed since launch:|staged:|unstaged:|untracked:|conflicted:/);
 	assert.equal(resultMessage.content.includes("late.txt"), false);
 	assert.ok(resultMessage.content.includes(historical.head), resultMessage.content);
-	assert.ok(text.includes('"late.txt"'), text);
+	assert.ok(text.includes("2 changed paths; details in the structured result"), text);
+	assert.equal(text.includes("late.txt"), false);
 	const expanded = expandedView(resultMessage);
 	assert.ok(expanded.includes('"first.txt"'), expanded);
 	assert.ok(expanded.includes(`cwd ${main}`), expanded);

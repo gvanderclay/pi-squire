@@ -150,6 +150,9 @@ type View = {
 	canResume: boolean;
 };
 
+/** One row in the status result: a started delegation's view or an unstarted attempt. */
+type StatusItem = View | WorkspaceAttempt;
+
 /** The view of a delegation: its state and the fields the text and details share. */
 function view(
 	record: StartedRecorded,
@@ -184,6 +187,27 @@ function view(
 	};
 }
 
+/** How many path entries a Git snapshot's category lines would print. */
+function changedPathCount(snapshot: WorkspaceSnapshot): number {
+	if (snapshot.kind !== "git") return 0;
+	const { committed, pending } = snapshot;
+	return (
+		committed.total + pending.staged.total + pending.unstaged.total + pending.untracked.total + pending.conflicted.total
+	);
+}
+
+/** The checkout summary line and, when paths changed, the count that replaces the category lines. */
+function checkoutLines(snapshot: WorkspaceSnapshot): string[] {
+	const [checkout] = snapshotLines(snapshot);
+	const changed = changedPathCount(snapshot);
+	return [
+		`  checkout now: ${checkout}`,
+		...(changed === 0
+			? []
+			: [`    ${changed} changed path${changed === 1 ? "" : "s"}; details in the structured result`]),
+	];
+}
+
 /** The text block for one delegation. */
 function viewText({
 	record,
@@ -196,7 +220,6 @@ function viewText({
 	windowSession,
 	routingEvidence,
 }: View): string {
-	const [checkout, ...categories] = snapshotLines(snapshot);
 	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
 	const lines = [
 		`${record.id} ${record.agent} (${modelLabel(record.model, record.result?.finishedModel)}, thinking ${record.thinking})`,
@@ -216,8 +239,7 @@ function viewText({
 		`  ${recordedLocation(record, windowSession)}`,
 		`  cwd: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
-		`  checkout now: ${checkout}`,
-		...categories.map((line) => `    ${line}`),
+		...checkoutLines(snapshot),
 		`  auto-exit: ${autoExitLine(record)}`,
 		`  session: ${sessionPath ?? `${sessionIdOf(record)} (no session file yet)`}`,
 	];
@@ -272,6 +294,16 @@ function viewDetails({
 	};
 }
 
+/** The text block for one status row. */
+function itemText(item: StatusItem): string {
+	return "record" in item ? viewText(item) : attemptText(item);
+}
+
+/** The structured details for one status row. */
+function itemDetails(item: StatusItem): Record<string, unknown> {
+	return "record" in item ? viewDetails(item) : { ...item, state: item.attempt.phase };
+}
+
 /** One unstarted attempt as the status text words it. */
 function attemptText(record: WorkspaceAttempt): string {
 	return [
@@ -295,6 +327,9 @@ function activeMarks(): { scope: string; source: Mark["source"]; reason: string;
 		}));
 }
 
+/** How many settled records the default status view keeps, newest first. */
+const RECENT_SETTLED = 5;
+
 /** Every delegation, or the one named; throws when a named id is unknown. */
 function selectRecords(results: Results, id: string | undefined): Recorded[] {
 	const all = results.list();
@@ -307,56 +342,85 @@ function selectRecords(results: Results, id: string | undefined): Recorded[] {
 	return records;
 }
 
+/**
+ * The default status selection: every running delegation and unfinished
+ * workspace attempt, plus the newest settled records. Order stays as recorded.
+ */
+function recentRecords(records: Recorded[], windows: WindowStates): Recorded[] {
+	const active = (record: Recorded): boolean =>
+		isStarted(record)
+			? deriveState(record, windows.state(record)) === "running"
+			: record.attempt.phase !== "rolled-back";
+	const chosen = new Set(records.filter(active).map((record) => record.id));
+	for (const record of records.filter((item) => !chosen.has(item.id)).slice(-RECENT_SETTLED)) chosen.add(record.id);
+	return records.filter((record) => chosen.has(record.id));
+}
+
+/** The records this call shows: one named, every one with all, or the default recent set. */
+function statusSelection(
+	records: Recorded[],
+	params: { id?: string; all?: boolean },
+	windows: WindowStates,
+): { all: Recorded[]; selected: Recorded[]; omitted: number } {
+	const selected = params.id === undefined && params.all !== true ? recentRecords(records, windows) : records;
+	return { all: records, selected, omitted: records.length - selected.length };
+}
+
+/** The usage-limit block, or nothing when there is neither a mark nor a reading error. */
+function statusBlock(
+	marks: { scope: string; source: Mark["source"]; reason: string; clearsAt: string }[],
+	errors: ReadingError[],
+): string[] {
+	if (marks.length === 0 && errors.length === 0) return [];
+	return [
+		[
+			"Usage-limit marks:",
+			...marks.map((m) => `- ${m.scope} (${m.source}) until ${m.clearsAt}: ${m.reason}`),
+			...errors.map((e) => `- could not read ${e.provider} quota at ${e.at}: ${e.reason}`),
+		].join("\n"),
+	];
+}
+
+/** The heading: the shown count, or the total with how many running and older records were left out. */
+function statusHeading(all: Recorded[], views: StatusItem[], omitted: number): string {
+	if (omitted === 0) return `${views.length} delegation${views.length === 1 ? "" : "s"}:`;
+	const running = views.filter((item) => "record" in item && item.state === "running").length;
+	return `${all.length} delegation${all.length === 1 ? "" : "s"} (${running} running, ${omitted} older omitted; pass all or an id for those):`;
+}
+
 /** The `delegation_status` tool. */
 function statusTool(results: Results, tmux: DelegateHost, readingErrors: () => ReadingError[]): ToolDef {
 	return {
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"Report this session's descendant delegations, or one by id: state, window, model, paths and workspace. Results arrive as messages on their own, so call it only for a delegation that seems stuck or to find its files. An open window does not mean the task is unfinished; only a result means done. gone and window-closed turn done if a late reply arrives.",
-		parameters: Type.Object({ id: Type.Optional(Type.String()) }),
+			"Report this session's delegations: state, window, model, paths, workspace. Without an id: running and unfinished attempts plus the 5 newest settled; all lists every one; id selects one. Results arrive on their own; call it only for a stuck delegation or its files. An open window does not mean unfinished; only a result means done. gone and window-closed turn done if a late reply arrives.",
+		parameters: Type.Object({ id: Type.Optional(Type.String()), all: Type.Optional(Type.Boolean()) }),
 		outputSchema: StatusSchema,
 		annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...CLOSED_WORLD },
 		async execute(
 			_toolCallId: string,
-			params: { id?: string },
+			params: { id?: string; all?: boolean },
 			_signal: unknown,
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
 			const records = selectRecords(results, params.id);
 			const windows = await askWindowStates(tmux);
+			const { all, selected, omitted } = statusSelection(records, params, windows);
 			const resumedAs = (id: string) => results.list().find((item) => isStarted(item) && item.resumedFrom === id)?.id;
-			const views = records.map((record) =>
+			const views = selected.map((record) =>
 				isStarted(record) ? view(record, windows, ctx, resumedAs(record.id)) : record,
 			);
 			const marks = activeMarks();
 			const errors = readingErrors();
-			const details = {
-				delegations: views.map((item) =>
-					"record" in item ? viewDetails(item) : { ...item, state: item.attempt.phase },
-				),
-				marks,
-				readingErrors: errors,
-			};
-			const block =
-				marks.length === 0 && errors.length === 0
-					? []
-					: [
-							[
-								"Usage-limit marks:",
-								...marks.map((m) => `- ${m.scope} (${m.source}) until ${m.clearsAt}: ${m.reason}`),
-								...errors.map((e) => `- could not read ${e.provider} quota at ${e.at}: ${e.reason}`),
-							].join("\n"),
-						];
-			const heading = `${views.length} delegation${views.length === 1 ? "" : "s"}:`;
+			const details = { delegations: views.map(itemDetails), marks, readingErrors: errors };
+			const block = statusBlock(marks, errors);
+			const heading = statusHeading(all, views, omitted);
 			const parts =
 				views.length === 0
 					? ["No delegations are recorded in this session.", ...block]
-					: [
-							`${heading}\n\n${views.map((item) => ("record" in item ? viewText(item) : attemptText(item))).join("\n\n")}`,
-							...block,
-						];
+					: [`${heading}\n\n${views.map(itemText).join("\n\n")}`, ...block];
 			return toolResult(parts.join("\n\n"), details);
 		},
 	};

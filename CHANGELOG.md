@@ -43,11 +43,11 @@ follows [Semantic Versioning](https://semver.org/).
 - Reopening a nested coordinator after aborting its child-result processing run
   no longer injects an already-delivered result a second time. Saved outcomes
   still wake processing, and a result missing from the restored transcript is
-  supplied to each model request until then; only a non-aborted settle acknowledges it.
+  supplied to each model request until a non-aborted settle acknowledges it.
   Deliberately updated `test/nested-lifecycle.test.ts` case “pending child facts
   and identity restore with no launch env or transcript; late outcomes are
-  replayed” to assert recovery through the request context instead of a full-result resend,
-  preserving its recovery and completion guarantee.
+  replayed” to assert recovery through the request context instead of a
+  full-result resend, preserving its recovery and completion guarantee.
 
 ## [0.26.0] - 2026-11-14
 

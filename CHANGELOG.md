@@ -16,6 +16,28 @@ follows [Semantic Versioning](https://semver.org/).
   session file means no line, never an error; compact status rows, the stored
   result schema and the tool output schemas are unchanged.
 
+### Changed
+
+- A delegate's result body budget is back to 32 KiB by default — the first
+  8 KiB and the last 24 KiB — so a substantive reply between 16 and 32 KiB
+  reaches the parent whole again instead of losing its middle. The
+  `resultBodyKiB` setting, its 4 to 64 KiB validation and the UTF-8-safe
+  head/tail cut are unchanged. A reply over the budget now says so before the
+  body, outside any Markdown fence the reply opens: `[delegate] Incomplete
+  reply: <N> UTF-8 bytes omitted from the middle. Before acting on this report
+  or treating it as complete, read the "body" field of the JSON envelope at
+  <envelope path>; findings, conditions, or required steps may be missing.`
+  The line at the cut still names the dropped KiB and the envelope path; a
+  reply within the budget gets no notice. The envelope is the provider's JSON
+  file, whose `body` field is the full reply. Deliberately changed tests:
+  `test/delegate.test.ts` (the 16 KiB marker, body-cap and multibyte
+  assertions and the invalid-setting fixture, plus new whole-delivery and
+  notice tests), `test/settings.test.ts` (the default), `test/result-view.test.ts`
+  (the long-result fixture grows from 30,000 to 40,000 bytes so it stays over
+  the new default, and the whole-result comment and no-notice assertion), and
+  `test/result-double-injection.test.ts` (the 33 KB fixture comment and
+  assertion).
+
 ## [0.26.0] - 2026-11-14
 
 ### Added

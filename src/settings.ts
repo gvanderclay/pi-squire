@@ -264,8 +264,8 @@ export function worktreeSettings(agentDir: string): WorktreeSettings {
 
 // --- result body size ---
 
-/** The default result body budget: 16 KiB, the first 4 KiB and the last 12 KiB. */
-export const DEFAULT_RESULT_BODY_BYTES = 16 * 1024;
+/** The default result body budget: 32 KiB, the first 8 KiB and the last 24 KiB. */
+export const DEFAULT_RESULT_BODY_BYTES = 32 * 1024;
 
 /**
  * `resultBodyKiB`: the UTF-8 byte budget for a delegate's reply in the result

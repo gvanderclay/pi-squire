@@ -123,12 +123,13 @@ test("result usage stays in the header outside the body budget; full status read
 			USAGE,
 		);
 	}
-	const body = `START-${"x".repeat(30_000)}-END`;
+	const body = `START-${"x".repeat(40_000)}-END`;
 	deliver(s, "done", body);
 	const message = resultMessage(s);
 	assert.equal(message.content.split("\n")[2], USAGE_LINE);
 	assert.deepEqual(message.details?.usage, USAGE);
 	assert.match(message.content, /KiB omitted here/);
+	assert.match(message.content, /Incomplete reply: 7242 UTF-8 bytes omitted from the middle/);
 	assert.ok(message.content.endsWith("-END"));
 	const stored = readChildRecords(s.parent)[0];
 	assert.ok("result" in stored);
@@ -303,7 +304,7 @@ test("emitted completion messages preserve long results and errors without quoti
 			const s = await started();
 			const file = writeDelegateSession(s, [assistant("alpha", "fast-model")]);
 			const task = "Inspect every checkout and report the failing command.\n".repeat(80);
-			// 120 findings is about 11.7 KB, inside the 16 KiB result body budget, so the body arrives whole.
+			// 120 findings is about 11.7 KB, inside the 32 KiB result body budget, so the body arrives whole.
 			const body = [
 				"# Checkout findings",
 				...Array.from(
@@ -317,6 +318,7 @@ test("emitted completion messages preserve long results and errors without quoti
 			const message = resultMessage(s);
 			assert.equal(message.content.split("\n\n").slice(1).join("\n\n"), body);
 			assert.equal(message.details?.body, body);
+			assert.doesNotMatch(message.content, /Incomplete reply/);
 			assert.match(message.content, new RegExp(`^Status: ${status}$`, "m"));
 			assert.match(message.content, /^Task: \/mail\/sent\/task.json$/m);
 			assert.doesNotMatch(message.content, /Task, quoted|> Inspect|Task cut|^Workspace:/m);

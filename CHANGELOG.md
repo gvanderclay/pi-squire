@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-14
+
 ### Added
 
 - A resume or fork whose source's last successful request reported 50k context
@@ -1641,7 +1643,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/gvanderclay/pi-squire/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/gvanderclay/pi-squire/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/gvanderclay/pi-squire/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/gvanderclay/pi-squire/compare/v0.22.1...v0.23.0

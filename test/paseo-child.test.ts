@@ -11,7 +11,7 @@ import {
 	readIdentity,
 	writeIdentity,
 } from "../src/identity.ts";
-import { PASEO_TOOLS_ENV, PASEO_TRUST_ENV, registerPaseoChild } from "../src/paseo-child.ts";
+import { PASEO_TOOLS_ENV, PASEO_TRUST_ENV, PASEO_TURN_COMMAND, registerPaseoChild } from "../src/paseo-child.ts";
 import { sessionIsOwned } from "../src/session-owner.ts";
 import { cleanup, memorySession, resetRoot } from "./harness.ts";
 
@@ -119,11 +119,13 @@ function child(active: readonly string[] = STARTED) {
 	type Handler = (event: unknown) => unknown;
 	const handlers: Record<string, Handler[]> = {};
 	const writes: string[][] = [];
+	const commands = new Map<string, { handler: () => Promise<void> }>();
 	let activeTools = [...active];
 	const pi = {
 		on: (name: string, handler: Handler) => {
 			(handlers[name] ??= []).push(handler);
 		},
+		registerCommand: (name: string, command: { handler: () => Promise<void> }) => commands.set(name, command),
 		getAllTools: () => INVENTORY.map((name) => ({ name })),
 		getActiveTools: () => [...activeTools],
 		setActiveTools: (names: string[]) => {
@@ -136,6 +138,7 @@ function child(active: readonly string[] = STARTED) {
 	return {
 		/** Every `pi.setActiveTools` call, in order. */
 		writes,
+		commands,
 		active: (): string[] => [...activeTools],
 		/** Another extension adding a tool back after `session_start`, as the measured Paseo child does. */
 		restore: (name: string): void => {
@@ -187,6 +190,70 @@ test("a child whose PASEO_AGENT_ID is not a UUID reads no agent record", () => {
 	s.begin(SESSION);
 	assert.equal(s.identity.current(), undefined);
 	assert.equal(readIdentity(SESSION), undefined);
+});
+
+test("the Paseo startup command waits for the mailed run, not its completion, and is one-shot", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env[PASEO_TOOLS_ENV] = "read";
+	const c = child();
+	const command = c.commands.get(PASEO_TURN_COMMAND);
+	assert.ok(command);
+	assert.equal(c.commands.size, 1, "the kick is a command, not a model tool or message");
+	let acknowledged = false;
+	const waiting = command.handler().then(() => {
+		acknowledged = true;
+	});
+	await Promise.resolve();
+	assert.equal(acknowledged, false);
+	await command.handler(); // Duplicate input cannot replace the pending waiter.
+	assert.equal(acknowledged, false);
+	await c.fire("agent_start");
+	await waiting;
+	assert.equal(acknowledged, true, "agent_start releases the handler while the run is still active");
+	await command.handler();
+	assert.deepEqual(c.writes, [], "the command adds no context or tool-list change");
+});
+
+test("the Paseo startup command times out without failing and never arms again", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env[PASEO_TOOLS_ENV] = "";
+	const command = child().commands.get(PASEO_TURN_COMMAND);
+	assert.ok(command);
+	let acknowledged = false;
+	const waiting = command.handler().then(() => {
+		acknowledged = true;
+	});
+	t.mock.timers.tick(9_999);
+	await Promise.resolve();
+	assert.equal(acknowledged, false);
+	t.mock.timers.tick(1);
+	await waiting;
+	await command.handler();
+	assert.equal(acknowledged, true);
+});
+
+test("shutdown releases a pending Paseo startup command", async () => {
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env[PASEO_TOOLS_ENV] = "read";
+	const c = child();
+	const waiting = c.commands.get(PASEO_TURN_COMMAND)?.handler();
+	await c.fire("session_shutdown");
+	await waiting;
+});
+
+test("the Paseo startup command does nothing outside a delegate or after its first run started", async () => {
+	await child().commands.get(PASEO_TURN_COMMAND)?.handler();
+	process.env[PASEO_TOOLS_ENV] = "read";
+	await child().commands.get(PASEO_TURN_COMMAND)?.handler();
+	put(PASEO_TOOLS_ENV, undefined);
+	process.env.PASEO_AGENT_ID = AGENT;
+	await child().commands.get(PASEO_TURN_COMMAND)?.handler();
+	process.env[PASEO_TOOLS_ENV] = "read";
+	const c = child();
+	await c.fire("agent_start");
+	await c.commands.get(PASEO_TURN_COMMAND)?.handler();
 });
 
 test("a Paseo child keeps the listed tools and the delegation tools it already had", async () => {
@@ -327,6 +394,22 @@ test("a child without PASEO_AGENT_ID leaves the trust decision to Pi", async () 
 // Pi asks for project trust before `session_start`, and this extension answers
 // selection and tools only after that start elects the exact-session owner. These
 // cases register the whole extension, not one hook on a bare fake, so the gate is real.
+test("the whole extension releases the startup command after ownership and agent_start", async () => {
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env[PASEO_TOOLS_ENV] = "read";
+	const s = memorySession();
+	await s.start();
+	let acknowledged = false;
+	const waiting = s.command(PASEO_TURN_COMMAND).then(() => {
+		acknowledged = true;
+	});
+	await Promise.resolve();
+	assert.equal(acknowledged, false);
+	await s.fire("agent_start");
+	await waiting;
+	assert.equal(acknowledged, true);
+});
+
 test("the whole extension answers project trust before session ownership is elected", async () => {
 	const { real } = folder();
 	process.env.PASEO_AGENT_ID = AGENT;

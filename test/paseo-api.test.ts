@@ -521,15 +521,15 @@ test("a main checkout and a folder outside Git are opened by their folder", asyn
 	assert.deepEqual(seen.created, []);
 });
 
-test("a parent link is sent with explicit workspace and cwd, never implicit parent placement", async (t) => {
+test("a startup command and native parent label are sent without a caller envelope or implicit placement", async (t) => {
 	const { main, worktree } = repositoryWithWorktree();
 	const seen = await placement(t, worktree, { [main]: "prj_main" });
 	assert.deepEqual(seen.agents, [
 		{
 			agentId: "agent-1",
 			env: {},
-			labels: { "pi-squire": "1" },
-			callerAgentId: "paseo-parent-agent",
+			labels: { "pi-squire": "1", [PARENT_LABEL]: "paseo-parent-agent" },
+			initialPrompt: "/delegate-turn",
 			workspaceId: "wks_0000000000000000",
 			config: {
 				provider: "pi",
@@ -541,6 +541,53 @@ test("a parent link is sent with explicit workspace and cwd, never implicit pare
 			},
 		},
 	]);
+});
+
+test("create returns the host-assigned session while the startup turn is still pending", async (t) => {
+	const cwd = emptyHome();
+	let closes = 0;
+	let request: Record<string, unknown> | undefined;
+	t.mock.method(DaemonClient.prototype, "connect", async () => {});
+	t.mock.method(DaemonClient.prototype, "close", async () => {
+		closes++;
+	});
+	t.mock.method(DaemonClient.prototype, "openProject", async () => ({
+		workspace: { id: "workspace", workspaceDirectory: cwd },
+		error: null,
+	}));
+	t.mock.method(DaemonClient.prototype, "createAgent", async (options: Record<string, unknown>) => {
+		request = options;
+		return { id: "agent" } as unknown as Awaited<ReturnType<DaemonClient["createAgent"]>>;
+	});
+	t.mock.method(
+		DaemonClient.prototype,
+		"fetchAgent",
+		async () =>
+			({
+				agent: {
+					id: "agent",
+					status: "running",
+					activeTurn: { id: "startup-turn" },
+					runtimeInfo: { sessionId: "host-assigned-session" },
+				},
+			}) as unknown as Awaited<ReturnType<DaemonClient["fetchAgent"]>>,
+	);
+	assert.deepEqual(
+		await createPaseoApi(daemonHome()).create({
+			agentId: "agent",
+			parentAgentId: ARCHIVE_AGENT,
+			title: "worker",
+			cwd,
+			model: "p/m",
+			thinking: "low",
+			systemPrompt: "instructions",
+			env: {},
+		}),
+		{ sessionId: "host-assigned-session" },
+	);
+	assert.equal(request?.initialPrompt, "/delegate-turn");
+	assert.equal(request?.callerAgentId, undefined, "the command must reach Pi without a parent-message envelope");
+	assert.equal(closes, 1);
 });
 
 test("activity and remove ask the CLI for the same home the daemon was read from", async (t) => {

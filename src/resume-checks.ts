@@ -6,7 +6,12 @@
 
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionContext,
+	type ModelRegistry,
+	type ModelRuntime,
+	resolveCliModel,
+} from "@earendil-works/pi-coding-agent";
 import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
 import type { DelegateHost } from "./host.ts";
 import { windowFacts, windowPresentation, windowTerms } from "./locators.ts";
@@ -16,7 +21,7 @@ import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { assertRoutingSource } from "./routing-inheritance.ts";
 import { parseRoutingRequest } from "./routing-policy.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
-import { sessionUsage } from "./session-usage.ts";
+import { sessionContext } from "./session-usage.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowStates } from "./window-state.ts";
 
@@ -120,20 +125,12 @@ function lastThinking(record: StartedRecorded, sessionPath: string): string {
 	return level !== undefined && isThinking(level) ? level : record.thinking;
 }
 
-/**
- * The model the delegate's session last ran on: the model of its last answer,
- * else the model recorded when it started. A resume or fork that runs on
- * another one re-reads the session's context without its cache.
- */
+/** Last assistant model, or the recorded one, used for cache advice only when no usable request was reported. */
 export function sessionModel(record: StartedRecorded, sessionPath: string): string {
 	return finishedModel(sessionPath) ?? record.result?.finishedModel ?? record.model;
 }
 
-/**
- * The context size from which reopening a session says what it costs. The
- * sample behind this notice: 47 resumes crossed 60 context boundaries at about
- * 115k tokens each, and the worst wrote 536.5k tokens to a new cache in one turn.
- */
+/** The last successful request's reported input at which cost advice is useful. */
 const LARGE_CONTEXT_TOKENS = 50_000;
 
 /** A token count as the notices print it: 115k. */
@@ -141,30 +138,50 @@ function thousands(tokens: number): string {
 	return `about ${Math.round(tokens / 1000)}k`;
 }
 
-/**
- * Whether a resume or fork runs on the model the session's context was cached
- * for. A bare id or alias is passed to Pi unchanged and resolved there, so it
- * is never called a different model here.
- */
-function sameModel(chosen: string, source: string): boolean {
-	return chosen === source || !chosen.includes("/") || !source.includes("/");
+/** Pi's CLI identity, as in child.ts; fabricated custom ids are not established identities. */
+function resolvedModel(registry: ModelRegistry, entry: string | undefined): string | undefined {
+	if (entry === undefined) return undefined;
+	try {
+		// Pi 1.5.0's resolveCliModel reads only these two runtime methods.
+		const runtime = {
+			getModels: () => registry.getAll(),
+			hasConfiguredAuth: (provider: string) =>
+				registry.getAll().some((model) => model.provider === provider && registry.hasConfiguredAuth(model)),
+		} as unknown as ModelRuntime;
+		const { model } = resolveCliModel({ cliModel: entry, modelRuntime: runtime });
+		if (model === undefined || registry.find(model.provider, model.id) === undefined) return undefined;
+		return `${model.provider}/${model.id}`;
+	} catch {
+		return undefined; // Advice must not turn an already successful launch into an error.
+	}
 }
 
 /**
- * What reopening a session's context costs, as result notices shared by resume
- * and fork: another model writes the copied context to a new cache, and a large
- * same-model context may be cheaper to replace with a fresh delegate and a
- * written summary. A session whose usage cannot be read gives no size notice,
- * and no notice ever refuses a launch.
+ * Observations, not a snapshot of the child's copied/projected context: usage
+ * and its model come from one usable request in one read. Pi may reload less
+ * after compaction or a branch switch, and a live fork source may advance.
+ * Without a usable request, preserve cache-only advice from the last assistant
+ * model (or recorded model), rather than issuing a blanket unknown-usage notice.
  */
-export function contextNotice(sessionPath: string, sourceModel: string, chosenModel: string): string[] {
-	const size = sessionUsage(sessionPath)?.contextTokens;
-	const known = size !== undefined && size > 0;
-	const copied = known ? `${thousands(size)} copied tokens` : "copied tokens";
-	if (!sameModel(chosenModel, sourceModel))
-		return [`${chosenModel} differs from the source's ${sourceModel}: ${copied} will be written to a new cache.`];
-	if (!known || size < LARGE_CONTEXT_TOKENS) return [];
-	return [`reopens ${thousands(size)} tokens of context; a fresh delegate with a written summary may be cheaper.`];
+export function contextNotice(
+	sessionPath: string,
+	sourceModel: string,
+	chosenModel: string,
+	registry: ModelRegistry,
+): string[] {
+	const usage = sessionContext(sessionPath);
+	const source = resolvedModel(registry, usage === undefined ? sourceModel : usage.model);
+	const chosen = resolvedModel(registry, chosenModel);
+	const notices: string[] = [];
+	if (source === undefined || chosen === undefined)
+		notices.push(`The source's cache may not carry over to ${chosenModel}: model identity could not be established.`);
+	else if (chosen !== source)
+		notices.push(`${chosen} differs from the source's ${source}: reloaded context will be written to a new cache.`);
+	if (usage !== undefined && usage.contextTokens >= LARGE_CONTEXT_TOKENS)
+		notices.push(
+			`The source's last successful request sent ${thousands(usage.contextTokens)} tokens of context; the child reloads the session, so if this task does not need that context, a fresh delegate with a written summary may be cheaper.`,
+		);
+	return notices;
 }
 
 export function assertNoOwner(record: StartedRecorded): void {

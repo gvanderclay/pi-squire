@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
-import { type SessionUsage, sessionUsage, usageText, validateSessionUsage } from "../src/session-usage.ts";
-import { cleanup, resetRoot, root } from "./harness.ts";
+import { contextNotice } from "../src/resume-checks.ts";
+import {
+	type SessionUsage,
+	sessionContext,
+	sessionUsage,
+	usageText,
+	validateSessionUsage,
+} from "../src/session-usage.ts";
+import { cleanup, resetRoot, root, session } from "./harness.ts";
 
 beforeEach(resetRoot);
 after(cleanup);
@@ -77,6 +84,57 @@ test("a failed or aborted last request does not reset context at finish", () => 
 	// A zero-usage message with no stop reason is skipped for context too.
 	write([assistant(last), assistant(zero)]);
 	assert.equal(sessionUsage(file)?.contextTokens, 181_000);
+});
+
+test("sessionContext pairs input and model without changing the stored usage shape", () => {
+	const good = { type: "message", message: { role: "assistant", provider: "alpha", model: "fast-model", usage: last } };
+	for (const stopReason of ["error", "aborted", undefined]) {
+		write([
+			good,
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					provider: "beta",
+					model: "other-model",
+					stopReason,
+					usage: { ...last, input: 0, cacheRead: 0, cacheWrite: 0 },
+				},
+			},
+		]);
+		assert.equal(sessionUsage(file)?.contextTokens, 181_000);
+		assert.deepEqual(sessionContext(file), { contextTokens: 181_000, model: "alpha/fast-model" });
+		assert.equal(Object.hasOwn(sessionUsage(file)!, "model"), false);
+		assert.equal(Object.hasOwn(sessionUsage(file)!, "contextModel"), false);
+	}
+	write([good, assistant(last)]);
+	assert.equal(sessionContext(file)?.model, undefined, "a usable request without a model cannot inherit one");
+	assert.equal(sessionUsage(file)?.contextTokens, 181_000);
+	const registry = session().context.modelRegistry;
+	assert.match(
+		contextNotice(file, "alpha/fast-model", "alpha/fast-model", registry as never)[0]!,
+		/may not carry over/,
+	);
+	write([{ type: "compaction", usage: last, provider: "beta", model: "other-model" }]);
+	assert.equal(sessionContext(file), undefined);
+});
+
+test("context notices tolerate actual read failures and resolver errors", () => {
+	const registry = session().context.modelRegistry;
+	for (const path of [join(root, "missing.jsonl"), root]) {
+		const notices = contextNotice(path, "alpha/fast-model", "alpha/fast-model", registry as never);
+		assert.deepEqual(notices, []);
+		assert.equal(sessionContext(path), undefined);
+	}
+	write([{ type: "message", message: { role: "assistant", provider: "alpha", model: "fast-model", usage: last } }]);
+	const broken = {
+		getAll: () => {
+			throw new Error("registry read failed");
+		},
+	};
+	const notices = contextNotice(file, "alpha/fast-model", "alpha/fast-model", broken as never);
+	assert.match(notices[0]!, /may not carry over/);
+	assert.match(notices[1]!, /last successful request sent about 181k tokens/);
 });
 
 test("usage text rounds across units, marks tiny costs and names earlier work", () => {

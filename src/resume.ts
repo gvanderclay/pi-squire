@@ -241,7 +241,9 @@ async function startResume(
 		ctx,
 	);
 	const resumed = resumedResult({ id, resumedFrom: record.id, name, plan, sessionDir: session.dir, opened });
-	resumed.notices.push(...contextNotice(session.path, sessionModel(record, session.path), resumed.model));
+	resumed.notices.push(
+		...contextNotice(session.path, sessionModel(record, session.path), resumed.model, ctx.modelRegistry),
+	);
 	return resumed;
 }
 

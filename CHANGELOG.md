@@ -8,17 +8,40 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- A resume or fork of a session whose last request reported 50k tokens of
-  context or more now says how much context it reopens and suggests that a
-  fresh delegate with a written summary may be cheaper. A resume on a model
-  other than the one the session last ran on warns that the copied context is
-  written to a new cache, as a fork already did. Both are notices in the result
-  text and `details.notices`; neither refuses the launch, and a session whose
-  usage cannot be read gives no size notice. The size comes from
-  `sessionUsage`, so the second reader, `sessionInputTokens`, is gone.
-  `test/resume.test.ts` deliberately expects the cache notice on three resumes
-  that now run on a model other than the source's: two locked to another model
-  and one moved to a fallback.
+- A resume or fork whose source's last successful request reported 50k context
+  tokens or more (input plus cache reads and writes) reports that historical
+  size, not a measurement of what the child reloads after compaction or a branch
+  switch. If the task does not need that context, the notice suggests a fresh
+  delegate with a written summary. Cache advice uses the model of that same
+  request, skipping trailing errors and aborts; without usable usage, it keeps
+  the last assistant model as its fallback. Pi's resolver establishes
+  alias identities: different models warn of a new cache write; unknown
+  identities say the cache may not carry over, without claiming a difference.
+  Both notices appear in result text and `details.notices` and never refuse a
+  launch. Missing usage gives no size estimate. Resume model defaults are
+  unchanged. `sessionContext` shares `sessionUsage`'s accounting scan, keeping
+  size and model together without changing stored usage or its output schema;
+  the old `sessionInputTokens` reader is gone.
+  `test/resume.test.ts` and `test/fork.test.ts` deliberately replace the old
+  "reopens"/"copied tokens" estimates with last-successful-request wording and
+  conditional cost advice. The existing locked-model and fallback resume cases
+  retain cache advice without a size when usage is missing; a usable request
+  without a model gets unknown-cache wording. The same-model fork fixture now
+  has valid usage and asserts a size notice without a cache notice.
+
+### Changed
+
+- A routed result's `Independent review:` line prints the caller caveat only
+  when a review was requested. `verified` and `unverified` results keep the
+  full sentence and its reasons; a `not-required` result (an explorer or
+  implementer run with no review in the request) now reads
+  `Independent review: not-required.` with any reasons. The caveat qualifies a review
+  verdict, so with no verdict it told the parent to identify author sources and
+  keep a candidate stable for a review that was never asked for, on every
+  result, which teaches it to skim the line it most needs on a real review.
+  The line's reasons (unreadable or out-of-route provenance) are kept.
+  Structured details, the expanded view and `delegation_status` text are
+  unchanged.
 
 ## [0.25.0] - 2026-11-14
 

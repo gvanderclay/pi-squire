@@ -1417,12 +1417,15 @@ launch before mail or window side effects.
 Squire records physical assistant `provider/id` and effective thinking for each
 attempt, with explicit attempt boundaries. The result and `delegation_status`
 show actual served models/efforts and whether independent family history was
-verified. Review evidence covers exactly the attempt after its marker, so an
-intermediate out-of-route model substitution makes that attempt unverified; an
-unknown or incomplete history is also unverified. Author exclusions are
-conservative across each source's full active branch, not just the edits to the
-current artifact. Keep the candidate stable while it is reviewed and identify
-every author source.
+verified. The result's `Independent review:` line carries its caller caveat
+only when the request asked for a review: `verified` and `unverified` results
+print it, and a `not-required` result (an explorer or implementer run with no
+review asked) prints the verdict and any reasons without it. Review evidence covers exactly the
+attempt after its marker, so an intermediate out-of-route model substitution
+makes that attempt unverified; an unknown or incomplete history is also
+unverified. Author exclusions are conservative across each source's full active
+branch, not just the edits to the current artifact. Keep the candidate stable
+while it is reviewed and identify every author source.
 
 `family` is operator-supplied physical model lineage, not an endpoint-provider
 inference or cryptographic/backend attestation. An active branch is not an
@@ -2028,12 +2031,15 @@ and it resumes as the command does.
   and the recorded `--session-dir`, in a new window named like the first. The
   delegate keeps everything it read and decided; Pi appends to the same file.
   Opening it yourself is `pi --session <path>`, outside this tool.
-- Reopening a large context costs what it costs: when the session's last
-  request reported 50k tokens of context or more, the result says how much it
-  reopens and that a fresh delegate with a written summary may be cheaper. A
-  resume on a model other than the one the session last ran on also warns that
-  the copied context is written to a new cache. Both are notices, never
-  refusals.
+- When the source's last successful request reported 50k tokens of context or
+  more (input plus cache reads and writes), the result reports that historical
+  size, not the context Pi will reload after compaction or a branch switch;
+  if the task does not need that context, a fresh delegate with a written
+  summary may be cheaper. Cache advice compares the effective model with the
+  model of that same request, resolving aliases through Pi: a different model
+  warns of a new cache write, and an unknown identity says the cache may not
+  carry over. Without usable usage, cache advice falls back to the last
+  assistant model, without a size estimate. These are notices, never refusals.
 - The resume is recorded as a **new delegation** with its own id and a
   `resumedFrom` naming the old one. Its task goes to the old session's mail
   address, and its result arrives as a `[delegate]` message that names
@@ -2124,14 +2130,18 @@ folder must exist, its agent must still be enabled, and current nesting grants,
 depth, capacity and trust checks apply. Copied history does not transfer
 ownership of the original child's descendants. Model, thinking and auto-exit
 default to the source's last settings with the same locks and fallbacks as a
-resume; the current roster supplies the prompt and tools. A different effective
-model re-reads the copied context without the source's cache; the result warns
-about the new cache write, estimating copied tokens when source usage is
-available. A source whose last request reported 50k tokens of context or more
-says how much the fork reopens. Keep the source's model unless the task needs
-another role. A
-fork from a routed role requires fresh `routing` metadata and cannot carry
-forward a public-context attestation. `session:launch` is emitted with the
+resume; the current roster supplies the prompt and tools. Cache advice compares
+the effective model with the source's last successful request's model using
+Pi's alias resolver: a different model warns of a new cache write, and an
+unknown identity says the cache may not carry over. Without usable usage, it
+falls back to the last assistant model without a size estimate. At 50k context
+tokens or more (input plus cache reads and writes), the result reports what that request
+sent, not how much context the fork copies or reloads; if the task does not
+need that context, a fresh delegate with a written summary may be cheaper.
+A running source can advance before the notice is read, and compaction or a
+branch switch can reduce the context Pi reloads. Keep the source's model unless
+the task needs another role. A fork from a routed role requires fresh
+`routing` metadata and cannot carry forward a public-context attestation. `session:launch` is emitted with the
 `delegation_fork` tool call id.
 
 ## Hooks

@@ -199,7 +199,12 @@ export function forkTool(deps: ForkDeps, includeRouting = true): ForkTool {
 				toolCallId,
 			);
 			details.notices.push(
-				...contextNotice(source.sessionPath, sessionModel(record, source.sessionPath), details.model),
+				...contextNotice(
+					source.sessionPath,
+					sessionModel(record, source.sessionPath),
+					details.model,
+					ctx.modelRegistry,
+				),
 			);
 			const line = launchText(record.id, details, chosen);
 			ctx.ui.notify(`delegate: ${line}`, "info");

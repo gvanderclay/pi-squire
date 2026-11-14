@@ -4,7 +4,7 @@ import { windowFields } from "./window-record.ts";
 // mailbox are the harness's fakes.
 
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
@@ -63,7 +63,7 @@ function writeSession(file: string, id: string, cwd: string, model?: string, usa
 			content: [],
 			...(usage === undefined ? {} : { usage }),
 		};
-		lines.push(JSON.stringify({ type: "message", message }));
+		lines.push(JSON.stringify({ type: "message", id: "answer", parentId: null, message }));
 	}
 	writeFileSync(file, `${lines.join("\n")}\n`);
 }
@@ -902,9 +902,9 @@ test("locked after the launch, a resume with nothing passed runs on the file's c
 	const result = await resume(d.s, { id: d.id, task: "again" });
 	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
 	assert.equal(argOf(d.s, 1, "--thinking"), "high");
-	// The locked model is not the one the session last ran on, so its context is cached anew.
+	// Without usable usage, cache advice falls back to the last assistant model.
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [
-		"alpha/deep-model differs from the source's alpha/fast-model: copied tokens will be written to a new cache.",
+		"alpha/deep-model differs from the source's alpha/fast-model: reloaded context will be written to a new cache.",
 	]);
 });
 
@@ -924,7 +924,7 @@ test("locked after the launch, a resume's other value is refused for the file's 
 	assert.equal(argOf(d.s, 1, "--thinking"), "high");
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [
 		"Agent scout locks model and thinking, so the model beta/other-model and thinking low given were not used.",
-		"alpha/deep-model differs from the source's alpha/fast-model: copied tokens will be written to a new cache.",
+		"alpha/deep-model differs from the source's alpha/fast-model: reloaded context will be written to a new cache.",
 	]);
 });
 
@@ -947,9 +947,9 @@ test("a resume passing a locked exact model back as given still moves on to its 
 		details.skipped.map((item) => item.model),
 		["alpha/fast-model"],
 	);
-	// The fallback is not the model the session last ran on, so its context is cached anew.
+	// Without usable usage, cache advice falls back to the last assistant model.
 	assert.deepEqual(details.notices, [
-		"beta/other-model differs from the source's alpha/fast-model: copied tokens will be written to a new cache.",
+		"beta/other-model differs from the source's alpha/fast-model: reloaded context will be written to a new cache.",
 	]);
 });
 
@@ -967,14 +967,18 @@ test("a locked field the file leaves unset resumes on the parent's current model
 
 /** A session whose last request reported `tokens` of context: input plus cache reads and writes. */
 const contextOf = (tokens: number): Usage => ({ input: tokens, output: 0, cacheRead: 0, cacheWrite: 0 });
+const sizeNotice = (k: number): string =>
+	`The source's last successful request sent about ${k}k tokens of context; the child reloads the session, so if this task does not need that context, a fresh delegate with a written summary may be cheaper.`;
+const unknownCache = (model: string): string =>
+	`The source's cache may not carry over to ${model}: model identity could not be established.`;
 
-test("a resume of a 50k-token context says what it reopens, without refusing the launch", async () => {
+test("a resume with a 50k-token last request reports that request without refusing the launch", async () => {
 	const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(50_000) });
 	const result = await resume(d.s, { id: d.id, task: "again" });
-	const notice = "reopens about 50k tokens of context; a fresh delegate with a written summary may be cheaper.";
+	const notice = sizeNotice(50);
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [notice]);
 	assert.ok(result.content[0].text.includes(notice));
-	assert.match(d.s.notes.join("\n"), /reopens about 50k tokens of context/);
+	assert.ok(d.s.notes.join("\n").includes(notice));
 	assert.equal(d.s.tmux.opened.length, 2, "the notice did not refuse the launch");
 	assert.equal(d.s.sendCalls.at(-1)?.body, "again");
 });
@@ -983,20 +987,95 @@ test("a resume just under 50k tokens says nothing about its size", async () => {
 	const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(49_999) });
 	const result = await resume(d.s, { id: d.id, task: "again" });
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
-	assert.doesNotMatch(result.content[0].text, /reopens/);
+	assert.doesNotMatch(result.content[0].text, /tokens of context/);
 });
 
-test("a resume of a session whose usage cannot be read says nothing about its size", async () => {
+test("a resume with missing usage on the same model gives no notice", async () => {
 	const d = await exitedDelegate({ model: "alpha/fast-model" });
 	const result = await resume(d.s, { id: d.id, task: "again" });
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+	assert.doesNotMatch(result.content[0].text, /tokens of context/);
 });
 
-test("a resume on another model warns about the new cache write with the size it copies", async () => {
+test("a resume on another model separates cache advice from historical request size", async () => {
 	const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(74_000) });
 	const result = await resume(d.s, { id: d.id, task: "again", model: "beta/other-model" });
+	const notices = [
+		"beta/other-model differs from the source's alpha/fast-model: reloaded context will be written to a new cache.",
+		sizeNotice(74),
+	];
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, notices);
+	for (const notice of notices) assert.ok(result.content[0].text.includes(notice));
+});
+
+test("resume cache advice resolves bare and provider-prefixed fuzzy aliases to the source identity", async () => {
+	for (const model of ["fast-model", "alpha/fast"]) {
+		const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(10_000) });
+		writeAgent("scout", agentFile({ ...AGENT, model, locked: "[model]" }));
+		const result = await resume(d.s, { id: d.id, task: "again" });
+		assert.equal(argOf(d.s, 1, "--model"), model);
+		assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+	}
+});
+
+test("resume cache advice warns when a locked alias resolves to another model, even below 50k", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(10_000) });
+	writeAgent("scout", agentFile({ ...AGENT, model: "deep-model", locked: "[model]" }));
+	const result = await resume(d.s, { id: d.id, task: "again" });
 	const notice =
-		"beta/other-model differs from the source's alpha/fast-model: about 74k copied tokens will be written to a new cache.";
+		"alpha/deep-model differs from the source's alpha/fast-model: reloaded context will be written to a new cache.";
+	assert.equal(argOf(d.s, 1, "--model"), "deep-model");
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [notice]);
 	assert.ok(result.content[0].text.includes(notice));
+});
+
+test("an unresolvable resume identifier, including a fabricated Pi custom id, gives conditional cache advice", async () => {
+	for (const model of ["unresolvable-identifier", "alpha/unresolvable-identifier"]) {
+		const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(74_000) });
+		writeAgent("scout", agentFile({ ...AGENT, model, locked: "[model]" }));
+		const result = await resume(d.s, { id: d.id, task: "again" });
+		assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [
+			unknownCache(model),
+			sizeNotice(74),
+		]);
+		assert.ok(result.content[0].text.includes(unknownCache(model)));
+		assert.doesNotMatch(result.content[0].text, /differs|new cache/);
+		assert.equal(d.s.tmux.opened.length, 2);
+	}
+});
+
+test("resume size notice describes the last request even after compaction or a branch switch", async () => {
+	for (const change of [
+		{ type: "compaction", id: "compacted", parentId: "answer", firstKeptEntryId: "compacted", tokensBefore: 115_000 },
+		{ type: "branch_summary", id: "branch", parentId: null, fromId: "answer" },
+	]) {
+		const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(115_000) });
+		appendFileSync(d.file, `${JSON.stringify({ ...change, summary: "short summary", usage: contextOf(1000) })}\n`);
+		const result = await resume(d.s, { id: d.id, task: "again" });
+		assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [sizeNotice(115)]);
+		assert.ok(result.content[0].text.includes(sizeNotice(115)));
+		assert.doesNotMatch(result.content[0].text, /reopens|copied tokens/);
+	}
+});
+
+test("resume cache comparison follows the usable request, but trailing error/abort model still supplies defaults", async () => {
+	for (const stopReason of ["error", "aborted"]) {
+		for (const model of [undefined, "alpha/fast-model"]) {
+			const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(74_000) });
+			appendFileSync(
+				d.file,
+				`${JSON.stringify({
+					type: "message",
+					message: { role: "assistant", provider: "beta", model: "other-model", stopReason, usage: contextOf(0) },
+				})}\n`,
+			);
+			const result = await resume(d.s, { id: d.id, task: "again", ...(model ? { model } : {}) });
+			const cache =
+				"beta/other-model differs from the source's alpha/fast-model: reloaded context will be written to a new cache.";
+			const notices = model === undefined ? [cache, sizeNotice(74)] : [sizeNotice(74)];
+			assert.deepEqual((result.structuredContent as { notices: string[] }).notices, notices);
+			for (const notice of notices) assert.ok(result.content[0].text.includes(notice));
+			assert.equal(argOf(d.s, 1, "--model"), model ?? "beta/other-model", "resume defaults are unchanged");
+		}
+	}
 });

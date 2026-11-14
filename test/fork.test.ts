@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 import { parseArgs, SessionManager } from "@earendil-works/pi-coding-agent";
@@ -124,28 +124,34 @@ function sourceUsage(file: string, usage: unknown): void {
 	writeFileSync(file, `${lines.join("\n")}\n`);
 }
 
-test("fork warns about a different model's cache write using the latest source input usage", async () => {
+test("fork warns about a different model's cache and separately reports historical request size", async () => {
 	const d = await source();
 	sourceUsage(d.file, { input: 4000, cacheRead: 60000, cacheWrite: 10000, output: 9999 });
 	const result = await fork(d.s, d.id, { model: "beta/other-model" });
-	const notice =
-		"beta/other-model differs from the source's alpha/deep-model: about 74k copied tokens will be written to a new cache.";
-	assert.ok((result.structuredContent as { notices: string[] }).notices.includes(notice));
-	assert.ok(result.content[0].text.includes(notice));
+	const notices = [
+		"beta/other-model differs from the source's alpha/deep-model: reloaded context will be written to a new cache.",
+		sizeNotice(74),
+	];
+	for (const notice of notices) {
+		assert.ok((result.structuredContent as { notices: string[] }).notices.includes(notice));
+		assert.ok(result.content[0].text.includes(notice));
+	}
 });
 
 test("same-model forks have no cache notice, whether defaulted or explicit", async () => {
 	const d = await source();
-	sourceUsage(d.file, { input: 74000, cacheRead: 0, cacheWrite: 0 });
+	sourceUsage(d.file, { input: 74000, output: 0, cacheRead: 0, cacheWrite: 0 });
 	for (const more of [{}, { model: "alpha/deep-model" }]) {
 		const result = await fork(d.s, d.id, more);
-		assert.ok(
-			!(result.structuredContent as { notices: string[] }).notices.some((notice) => notice.includes("new cache")),
-		);
+		const notices = (result.structuredContent as { notices: string[] }).notices;
+		assert.ok(notices.includes(sizeNotice(74)));
+		assert.ok(result.content[0].text.includes(sizeNotice(74)));
+		assert.ok(!notices.some((notice) => notice.includes("cache")));
+		assert.doesNotMatch(result.content[0].text, /cache/);
 	}
 });
 
-test("different-model forks omit the estimate when latest source usage is unavailable or invalid", async () => {
+test("different-model forks omit the size estimate when source usage is unavailable or invalid", async () => {
 	const d = await source();
 	for (const usage of [
 		undefined,
@@ -157,13 +163,16 @@ test("different-model forks omit the estimate when latest source usage is unavai
 		const result = await fork(d.s, d.id, { model: "beta/other-model" });
 		assert.ok(
 			(result.structuredContent as { notices: string[] }).notices.includes(
-				"beta/other-model differs from the source's alpha/deep-model: copied tokens will be written to a new cache.",
+				"beta/other-model differs from the source's alpha/deep-model: reloaded context will be written to a new cache.",
 			),
 		);
 	}
 });
 
 /** A session whose last request reported `tokens` of context: input plus cache reads and writes. */
+const sizeNotice = (k: number): string =>
+	`The source's last successful request sent about ${k}k tokens of context; the child reloads the session, so if this task does not need that context, a fresh delegate with a written summary may be cheaper.`;
+
 const contextOf = (tokens: number): { input: number; output: number; cacheRead: number; cacheWrite: number } => ({
 	input: tokens,
 	output: 0,
@@ -171,23 +180,86 @@ const contextOf = (tokens: number): { input: number; output: number; cacheRead: 
 	cacheWrite: 0,
 });
 
-test("a fork of a 50k-token context says what it reopens", async () => {
+test("a fork with a 50k-token last request reports that request, not the reloaded size", async () => {
 	const d = await source();
 	sourceUsage(d.file, contextOf(50_000));
 	const result = await fork(d.s, d.id);
-	const notice = "reopens about 50k tokens of context; a fresh delegate with a written summary may be cheaper.";
+	const notice = sizeNotice(50);
 	assert.ok((result.structuredContent as { notices: string[] }).notices.includes(notice));
 	assert.ok(result.content[0].text.includes(notice));
 });
 
-test("a fork just under 50k tokens, or of a session whose usage cannot be read, says nothing about its size", async () => {
+test("a fork just under 50k tokens, or with missing usage, says nothing about its size", async () => {
 	for (const usage of [contextOf(49_999), undefined]) {
 		const d = await source();
 		sourceUsage(d.file, usage);
 		const result = await fork(d.s, d.id);
 		assert.ok(
-			!(result.structuredContent as { notices: string[] }).notices.some((notice) => notice.includes("reopens")),
+			!(result.structuredContent as { notices: string[] }).notices.some((notice) =>
+				notice.includes("tokens of context"),
+			),
 		);
+	}
+});
+
+test("fork size notice describes the last request even after compaction or a branch switch", async () => {
+	for (const change of [
+		{ type: "compaction", id: "compacted", parentId: "answer", firstKeptEntryId: "compacted", tokensBefore: 115_000 },
+		{ type: "branch_summary", id: "branch", parentId: null, fromId: "answer" },
+	]) {
+		const d = await source();
+		sourceUsage(d.file, contextOf(115_000));
+		appendFileSync(d.file, `${JSON.stringify({ ...change, summary: "short summary", usage: contextOf(1000) })}\n`);
+		const result = await fork(d.s, d.id);
+		const notices = (result.structuredContent as { notices: string[] }).notices;
+		assert.ok(notices.includes(sizeNotice(115)));
+		assert.ok(result.content[0].text.includes(sizeNotice(115)));
+		assert.doesNotMatch(result.content[0].text, /reopens|copied tokens/);
+	}
+});
+
+test("fork cache advice resolves aliases and qualifies unknown identities", async () => {
+	for (const model of ["deep-model", "alpha/deep", "fast-model", "unresolvable-identifier"]) {
+		const d = await source();
+		sourceUsage(d.file, contextOf(10_000));
+		writeAgent("scout", agentFile({ model, locked: "[model]" }));
+		const result = await fork(d.s, d.id);
+		const notices = (result.structuredContent as { notices: string[] }).notices;
+		const cache = notices.filter((notice) => notice.includes("cache"));
+		if (model === "fast-model")
+			assert.deepEqual(cache, [
+				"alpha/fast-model differs from the source's alpha/deep-model: reloaded context will be written to a new cache.",
+			]);
+		else if (model === "unresolvable-identifier") {
+			assert.deepEqual(cache, [
+				"The source's cache may not carry over to unresolvable-identifier: model identity could not be established.",
+			]);
+			assert.doesNotMatch(result.content[0].text, /differs/);
+		} else assert.deepEqual(cache, []);
+		for (const notice of cache) assert.ok(result.content[0].text.includes(notice));
+	}
+});
+
+test("fork cache comparison uses the request supplying size rather than a trailing error or abort", async () => {
+	for (const stopReason of ["error", "aborted"]) {
+		const d = await source();
+		sourceUsage(d.file, contextOf(74_000));
+		appendFileSync(
+			d.file,
+			`${JSON.stringify({
+				type: "message",
+				message: { role: "assistant", provider: "beta", model: "other-model", stopReason, usage: contextOf(0) },
+			})}\n`,
+		);
+		for (const model of ["alpha/deep-model", "beta/other-model"]) {
+			const result = await fork(d.s, d.id, { model });
+			const notices = (result.structuredContent as { notices: string[] }).notices;
+			assert.ok(notices.includes(sizeNotice(74)));
+			assert.equal(
+				notices.some((notice) => notice.includes("new cache")),
+				model === "beta/other-model",
+			);
+		}
 	}
 });
 

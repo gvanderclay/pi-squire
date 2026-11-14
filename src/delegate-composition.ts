@@ -59,9 +59,9 @@ export function whereAgentsGo(agentDir: string): string {
 
 /**
  * One roster line for the `delegate` tool's description. The parenthetical
- * lists only what differs from the session: a model, fallback or thinking
- * level the agent does not set is the session's, and saying so again would
- * bury the agents that do set one.
+ * lists only what the agent sets: a model, fallback or thinking level it does
+ * not set is the session's, which the roster heading says once for every line
+ * instead of each line repeating it and burying the agents that do set one.
  */
 export function rosterLine(agent: Agent): string {
 	const models = [agent.model ?? "this session's model", ...agent.fallback.map((model) => `fallback ${model}`)];
@@ -147,7 +147,7 @@ export function toolDescription(agents: readonly Agent[], agentDir: string): str
 	return [
 		intro,
 		"",
-		"Agents:",
+		"Agents (outside a routing profile, a model or thinking level a line does not name is this session's, also when locked):",
 		...agents.map(rosterLine),
 		"",
 		"The delegate sees only the task and its agent prompt. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",

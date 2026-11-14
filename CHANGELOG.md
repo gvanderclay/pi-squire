@@ -12,17 +12,12 @@ follows [Semantic Versioning](https://semver.org/).
   agent sets. An agent with no `model`, `fallback` or `thinking` now reads
   `- scout — Looks things up` instead of repeating
   `(default this session's model, thinking this session's)` on every such
-  line, and an agent that sets only one of them prints only that one. The
-  routing profile, `auto-exit off`, tools and locked details are unchanged, so
-  the lines that name a model stand out. `test/delegate-composition.test.ts`
-  and `test/agent-files.test.ts` now expect the shorter line.
-
-- `delegation_resume` and `delegation_fork` no longer repeat that a result
-  arrives as a message. `delegate`'s description states it for every
-  delegation in the same request, and the resume tool's own result text
-  repeats it right after the call. `delegation_resume` still says the run is
-  recorded as a new delegation, and `delegation_fork` still says the original
-  child is untouched.
+  line, and an agent that sets only one of them prints only that one, so the
+  lines that name a model stand out. The roster heading states the rule once:
+  outside a routing profile, a model or thinking level a line does not name is
+  this session's, also when locked. The routing profile, `auto-exit off`, tools
+  and locked details are unchanged. `test/delegate-composition.test.ts` and
+  `test/agent-files.test.ts` now expect the shorter line and the heading.
 
 - `delegation_status`'s description drops "An open window does not mean
   unfinished; only a result means done", which every state line already says
@@ -38,10 +33,22 @@ follows [Semantic Versioning](https://semver.org/).
   the same schema is embedded. No parameter is renamed, removed or made
   stricter.
 
-- `test/context-budget.test.ts` measures a routed roster as well: the routing
-  request is one schema embedded in `delegate`, `delegation_resume` and
-  `delegation_fork`, so a routed parent pays it three times. Its budget is
-  12,900 characters against 12,857 measured; the two unrouted budgets are
+- `test/context-budget.test.ts` measures a routed roster as well: the four
+  tools declared at the start, two of which (`delegate` and
+  `delegation_resume`) embed the routing request. Its budget is 13,100
+  characters against 13,003 measured; the two unrouted budgets are
+  unchanged.
+
+- A routed result's `Independent review:` line prints the caller caveat only
+  when a review was requested. `verified` and `unverified` results keep the
+  full sentence and its reasons; a `not-required` result (an explorer or
+  implementer run with no review in the request) now reads
+  `Independent review: not-required.` with any reasons. The caveat qualifies a review
+  verdict, so with no verdict it told the parent to identify author sources and
+  keep a candidate stable for a review that was never asked for, on every
+  result, which teaches it to skim the line it most needs on a real review.
+  The line's reasons (unreadable or out-of-route provenance) are kept.
+  Structured details, the expanded view and `delegation_status` text are
   unchanged.
 
 ## [0.25.0] - 2026-11-14

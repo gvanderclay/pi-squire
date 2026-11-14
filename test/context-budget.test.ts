@@ -13,8 +13,9 @@ const BUDGET = 12_400;
 // every request is the other four. Activating it later declares it.
 const DECLARED_BUDGET = 10_300;
 // The routing request is one schema embedded in `delegate`, `delegation_resume`
-// and `delegation_fork`, so a routed roster pays for it in three tools at once.
-const ROUTED_BUDGET = 12_900;
+// and `delegation_fork`. This case measures the four tools declared at the
+// start, so it counts two copies; a declared fork adds the third.
+const ROUTED_BUDGET = 13_100;
 // The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
 const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 

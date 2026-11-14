@@ -1417,12 +1417,15 @@ launch before mail or window side effects.
 Squire records physical assistant `provider/id` and effective thinking for each
 attempt, with explicit attempt boundaries. The result and `delegation_status`
 show actual served models/efforts and whether independent family history was
-verified. Review evidence covers exactly the attempt after its marker, so an
-intermediate out-of-route model substitution makes that attempt unverified; an
-unknown or incomplete history is also unverified. Author exclusions are
-conservative across each source's full active branch, not just the edits to the
-current artifact. Keep the candidate stable while it is reviewed and identify
-every author source.
+verified. The result's `Independent review:` line carries its caller caveat
+only when the request asked for a review: `verified` and `unverified` results
+print it, and a `not-required` result (an explorer or implementer run with no
+review asked) prints the verdict and any reasons without it. Review evidence covers exactly the
+attempt after its marker, so an intermediate out-of-route model substitution
+makes that attempt unverified; an unknown or incomplete history is also
+unverified. Author exclusions are conservative across each source's full active
+branch, not just the edits to the current artifact. Keep the candidate stable
+while it is reviewed and identify every author source.
 
 `family` is operator-supplied physical model lineage, not an endpoint-provider
 inference or cryptographic/backend attestation. An active branch is not an
@@ -1542,11 +1545,12 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 
 The `delegate` tool's description lists the current roster, one line per agent:
 its name and any display name, description, then a parenthetical with what the
-agent sets that differs from the session — a default model and fallbacks,
-thinking, auto-exit when it is off, its tools (`no tools` for an empty `tools`
-field, `this session's except …` for `-name` entries) and the fields it locks.
-An agent that overrides nothing prints no parenthetical, so the lines that do
-name a model stand out.
+agent explicitly sets: a default model and fallbacks, thinking, auto-exit when
+it is off, its tools (`no tools` for an empty `tools` field,
+`this session's except …` for `-name` entries) and the fields it locks. An
+agent that sets none of these prints no parenthetical, so the lines that do
+name a model stand out; the roster heading says once that a model or thinking
+level a line does not name is this session's.
 
 ```text
 - scout "Recon" — Read-only recon (default provider/model-id, thinking low, auto-exit off, tools: read/grep, locked: model)

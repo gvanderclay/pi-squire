@@ -134,7 +134,7 @@ test("tool descriptions include the same roster and empty-roster guidance", () =
 		[
 			intro,
 			"",
-			"Agents:",
+			"Agents (outside a routing profile, a model or thinking level a line does not name is this session's, also when locked):",
 			"- worker — Test worker",
 			"",
 			"The delegate sees only the task and its agent prompt. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",

@@ -4,7 +4,13 @@ import { join, sep } from "node:path";
 import { type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readChildRecords } from "./child-tasks.ts";
-import { type CleanupGitDeps, type CleanupOutcome, type CleanupResource, cleanGit } from "./cleanup-git.ts";
+import {
+	type CleanupGitDeps,
+	type CleanupOutcome,
+	type CleanupResource,
+	cleanGit,
+	cleanupRemains,
+} from "./cleanup-git.ts";
 import { readIdentity } from "./identity.ts";
 import { paseoLocator } from "./paseo-locator.ts";
 import { findSession, sessionHeaderCwd } from "./result-sessions.ts";
@@ -121,7 +127,7 @@ function trees(): TreeState[] {
 		.map((name) => readTreeDisplay(decodeURIComponent(name.slice(0, -5))));
 }
 function checkEntry(entry: TreeEntry, group: Candidate, actor: string): void {
-	if (group.ids.includes(entry.id) || entry.sessionId === actor) return;
+	if (entry.sessionId === actor) return;
 	const path: string = group.resource.destination;
 	if (
 		["reserved", "dispatched"].includes(entry.phase) &&
@@ -129,6 +135,7 @@ function checkEntry(entry: TreeEntry, group: Candidate, actor: string): void {
 		(entry.cwd === undefined || overlap(entry.cwd, path, true))
 	)
 		throw new Error("live pending delegation reservation");
+	if (group.ids.includes(entry.id)) return;
 	if (
 		sessionIsOwned(entry.sessionId) &&
 		[entry.cwd, entry.workspace?.cwd].some((cwd) => cwd !== undefined && overlap(cwd, path, true))
@@ -175,9 +182,7 @@ function kept(id: string, reason: string, candidate?: Candidate): CleanupItem {
 		id,
 		outcome: "kept",
 		reason,
-		remains: candidate
-			? [`worktree: ${candidate.resource.destination}`, `branch: refs/heads/${candidate.resource.branch}`]
-			: [],
+		remains: candidate ? cleanupRemains(candidate.resource) : [],
 	};
 }
 function validate(request: Request): void {
@@ -213,14 +218,28 @@ async function processGroup(
 	deps: CleanupDeps,
 	ctx: ExtensionContext,
 	actor: string,
-	windows: WindowStates,
+	root: string,
 	signal?: AbortSignal,
 ): Promise<CleanupOutcome> {
-	const reason: string | undefined = preflight(group, windows);
-	if (reason) return kept("", reason, group);
-	return inQueue(group.resource.source.commonDir, signal, async () =>
-		cleanGit(group.resource, () => cleanupLiveCheck(group, actor, ctx), deps),
-	);
+	return inQueue(group.resource.source.commonDir, signal, async () => {
+		try {
+			const windows: WindowStates = await askWindowStates(deps.host);
+			// A queued launch may have replaced a created attempt with a running start.
+			const current: Candidate | undefined = discover(readTree(root), actor).groups.find(
+				(candidate) =>
+					candidate.resource.source.commonDir === group.resource.source.commonDir &&
+					candidate.resource.destination === group.resource.destination &&
+					candidate.resource.branch === group.resource.branch &&
+					group.ids.every((id) => candidate.ids.includes(id)),
+			);
+			if (!current) return kept("", "worktree records changed since selection; nothing removed", group);
+			const reason: string | undefined = preflight(current, windows);
+			if (reason) return kept("", reason, current);
+			return cleanGit(current.resource, () => cleanupLiveCheck(current, actor, ctx), deps);
+		} catch (error) {
+			return kept("", (error as Error).message, group);
+		}
+	});
 }
 
 /** Selection is authorized in full before any mutation, so a bad id never permits a partial request. */
@@ -237,7 +256,6 @@ export async function cleanup(
 	const state: TreeState = readTree(root);
 	const found: Discovery = discover(state, actor);
 	const selected: Selection = select(found, request, state, actor);
-	const windows: WindowStates = await askWindowStates(deps.host);
 	const results: Map<string, CleanupItem> = new Map();
 	const omitted: Candidate[] = [];
 	const start: number = Date.now();
@@ -247,7 +265,7 @@ export async function cleanup(
 			omitted.push(group);
 			continue;
 		}
-		const result: CleanupOutcome = await processGroup(group, deps, ctx, actor, windows, signal);
+		const result: CleanupOutcome = await processGroup(group, deps, ctx, actor, root, signal);
 		processed++;
 		for (const id of group.ids) results.set(id, { ...result, id });
 	}

@@ -24,7 +24,8 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   owns root control lifecycle and `trust-wire.ts` carries bounded loopback requests,
   `snapshot.ts` observes that checkout read-only for results and status,
   `git.ts` contains read-only Git identity and path parsing, `worktree.ts`
-  plans/creates/rolls back managed worktrees; `cleanup.ts` discovers and cleans descendant managed worktrees through\n  the deferred `delegation_cleanup` tool, `cleanup-git.ts` proves their Git identity, cleanliness and merge before non-forced removal; `worktree-placement.ts` resolves
+  plans/creates/rolls back managed worktrees; `cleanup.ts` discovers and cleans descendant managed worktrees through
+  the deferred `delegation_cleanup` tool, `cleanup-git.ts` proves their Git identity, cleanliness and merge before non-forced removal; `worktree-placement.ts` resolves
   call-time placement settings, `tool-names.ts` holds tool-name matching and
   the parent's available tools, `tool-bundles.ts` reads the `toolBundles`
   setting, and `tmux.ts` talks to tmux (`tmux-locator.ts` owns its opaque locator encoding and matching,

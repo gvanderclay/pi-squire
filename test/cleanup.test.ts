@@ -317,6 +317,92 @@ test("other-root owned overlap, pending reservations and unreadable registries k
 		});
 	}
 });
+test("own created attempt with a live reserved or dispatched entry keeps its worktree and branch", async (t) => {
+	for (const phase of ["reserved", "dispatched"] as const) {
+		await t.test(phase, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const f = fixture();
+			const record: StartedRecorded = started(f, s.parent);
+			const attempt: WorkspaceAttempt = {
+				kind: "workspace-attempt",
+				id: record.id,
+				parentId: s.parent,
+				agent: record.agent,
+				model: record.model,
+				thinking: record.thinking,
+				sessionDir,
+				plan: f.plan,
+				attempt: {
+					phase: "created",
+					resources: { kind: "worktree", cwd: f.cwd, branch: "topic", head: f.plan.baseCommit },
+				},
+			};
+			save(s.parent, [attempt]);
+			treeTransaction(s.parent, (state) => state.entries.push({ ...entry(record), phase }));
+			const before: string = git(f.source, "worktree", "list", "--porcelain");
+			const branches: string = git(f.source, "show-ref", "--heads");
+			const result: CleanupResult = await invoke(s);
+			assert.equal(result.items[0].outcome, "kept");
+			assert.equal(result.items[0].reason, "live pending delegation reservation");
+			assert.equal(git(f.source, "worktree", "list", "--porcelain"), before);
+			assert.equal(git(f.source, "show-ref", "--heads"), branches);
+			assert.equal(existsSync(f.cwd), true);
+		});
+	}
+});
+test("parallel managed launch and cleanup re-read created attempts and windows after the launch queue", async () => {
+	const f = fixture();
+	const s = instance(f.source);
+	await s.start();
+	let opening: () => void = () => {};
+	const reached = new Promise<void>((resolve) => {
+		opening = resolve;
+	});
+	let release: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const open = s.tmux.openWindow.bind(s.tmux);
+	s.tmux.openWindow = async (spec, placement, companion) => {
+		opening();
+		await held;
+		return open(spec, placement, companion);
+	};
+	const launching = s.toolCall("delegate", { agent: "scout", task: "work", worktree: "parallel" });
+	await reached;
+	const pending = readChildRecords(s.parent).find((record) => "kind" in record);
+	assert.ok(pending && "kind" in pending && pending.attempt.phase === "created");
+	const before: string = git(f.source, "worktree", "list", "--porcelain");
+	const branches: string = git(f.source, "show-ref", "--heads");
+	const cleaning = runCleanup({ all: true }, deps(s), context(s));
+	release();
+	await launching;
+	const result: CleanupResult = await cleaning;
+	assert.equal(result.items[0].id, pending.id);
+	assert.equal(result.items[0].outcome, "kept");
+	assert.match(result.items[0].reason, /running delegation window/);
+	assert.equal(git(f.source, "worktree", "list", "--porcelain"), before);
+	assert.equal(git(f.source, "show-ref", "--heads"), branches);
+	assert.equal(existsSync(pending.plan.destination), true);
+});
+test("preflight remains lists only observed worktrees and branches", async () => {
+	const s = instance();
+	await s.start();
+	const f = fixture();
+	publish(s.parent, [started(f, s.parent)]);
+	s.tmux.windows.set("@77", { name: "scout-fixture", exited: false, session: "work" });
+	git(f.source, "update-ref", "-d", "refs/heads/topic");
+	assert.deepEqual((await invoke(s)).items[0].remains, [`worktree: ${f.cwd}`]);
+	git(f.source, "update-ref", "refs/heads/topic", f.plan.baseCommit);
+	git(f.source, "worktree", "remove", f.cwd);
+	const branchOnly: CleanupResult = await invoke(s);
+	assert.equal(branchOnly.items[0].outcome, "kept");
+	assert.deepEqual(branchOnly.items[0].remains, ["branch: refs/heads/topic"]);
+	git(f.source, "update-ref", "-d", "refs/heads/topic");
+	assert.deepEqual((await invoke(s)).items[0].remains, []);
+});
 test("final synchronous registry check catches a late reservation", async () => {
 	const s = instance();
 	await s.start();

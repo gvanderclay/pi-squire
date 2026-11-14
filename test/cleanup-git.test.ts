@@ -50,6 +50,10 @@ test("gh squash proof requires exact tip, same repo and matching local base ance
 		"cross repo",
 		"base mismatch",
 		"nonlocal commit",
+		"revision instead of oid",
+		"option instead of oid",
+		"short oid",
+		"nonlocal sha256 oid",
 		"20 results",
 		"absent",
 		"timeout",
@@ -70,6 +74,10 @@ test("gh squash proof requires exact tip, same repo and matching local base ance
 			if (kind === "cross repo") pr.isCrossRepository = true;
 			if (kind === "base mismatch") pr.baseRefName = "wrong";
 			if (kind === "nonlocal commit") pr.mergeCommit.oid = "a".repeat(40);
+			if (kind === "revision instead of oid") pr.mergeCommit.oid = "HEAD";
+			if (kind === "option instead of oid") pr.mergeCommit.oid = "--all";
+			if (kind === "short oid") pr.mergeCommit.oid = pr.mergeCommit.oid.slice(0, 12);
+			if (kind === "nonlocal sha256 oid") pr.mergeCommit.oid = "a".repeat(64);
 			const gh: GhRunner = (cwd: string, args: string[]) => {
 				assert.equal(cwd, f.source);
 				assert.deepEqual(args, [
@@ -127,6 +135,8 @@ const blockers: Record<string, Blocker> = {
 		git(f.cwd, "update-index", "--add", "--cacheinfo", `160000,${f.plan.baseCommit},sub`);
 		git(f.cwd, "commit", "-qm", "gitlink");
 		git(f.source, "merge", "--ff-only", "topic");
+		mkdirSync(join(f.cwd, "sub"));
+		assert.equal(git(f.cwd, "status", "--porcelain=v1", "--ignore-submodules=none"), "");
 	},
 	"wrong branch": (f) => {
 		git(f.cwd, "checkout", "-qb", "other");
@@ -145,18 +155,35 @@ const blockers: Record<string, Blocker> = {
 	},
 	"gone upstream": (f) => {
 		commit(f.cwd);
+		git(f.source, "merge", "--squash", "topic");
+		git(f.source, "commit", "-qm", "squashed topic");
+		assert.equal(git(f.cwd, "diff", "main"), "");
 		git(f.source, "remote", "add", "origin", "https://example.invalid/repo");
 		git(f.source, "update-ref", "refs/remotes/origin/topic", "HEAD");
 		git(f.cwd, "branch", "--set-upstream-to=origin/topic");
 		git(f.source, "update-ref", "-d", "refs/remotes/origin/topic");
 	},
 };
+const blockerReasons: Record<string, RegExp> = {
+	"untracked file": /^uncommitted or untracked changes$/,
+	staged: /^uncommitted or untracked changes$/,
+	unstaged: /^uncommitted or untracked changes$/,
+	conflict: /^uncommitted or untracked changes$/,
+	"rebase in progress": /^Git operation in progress: rebase-merge$/,
+	gitlink: /^gitlink in index$/,
+	"wrong branch": /^branch checked out elsewhere$/,
+	detached: /^branch checked out elsewhere$/,
+	locked: /^worktree unregistered, locked or prunable$/,
+	"unmerged tip": /^merge not proved \(gh absent\); fetch and retry$/,
+	"nested ignored repository": /^nested repository in ignored content$/,
+	"gone upstream": /^upstream branch deleted but merge not proved; fetch and retry$/,
+};
 test("unsafe worktrees retain files, branch and registration unchanged", async (t) => {
 	for (const [name, setup] of Object.entries(blockers))
 		await t.test(name, () => {
 			const f = fixture();
 			setup(f);
-			unchanged(f);
+			assert.match(unchanged(f).reason, blockerReasons[name]);
 		});
 });
 test("ignored directory walk cap, deadline and device mismatch retain", () => {
@@ -212,6 +239,44 @@ test("branch recreation after removal is partial and never deletes checked-out b
 	assert.ok(result.remains.includes("branch: refs/heads/topic"));
 	assert.equal(git(f.cwd, "rev-parse", "HEAD"), f.plan.baseCommit);
 });
+test("final synchronous clean check catches an untracked file before Git remove", () => {
+	const f = fixture();
+	let removed = false;
+	const result: CleanupOutcome = run(f, {
+		beforeRemove: () => writeFileSync(join(f.cwd, "late"), "keep"),
+		git: (cwd, args, limits) => {
+			if (args[0] === "worktree") removed = true;
+			return askGit(cwd, args, limits);
+		},
+	});
+	assert.equal(result.outcome, "kept");
+	assert.equal(result.reason, "uncommitted or untracked changes");
+	assert.equal(removed, false);
+	assert.equal(existsSync(join(f.cwd, "late")), true);
+	assert.equal(git(f.source, "rev-parse", "refs/heads/topic"), f.plan.baseCommit);
+});
+test("failed Git removal with a surviving directory is partial, not a promise that nothing was deleted", async (t) => {
+	for (const kind of ["partial ignored deletion", "timeout", "permission error"]) {
+		await t.test(kind, () => {
+			const f = fixture();
+			mkdirSync(join(f.cwd, ".scratch"));
+			writeFileSync(join(f.cwd, ".scratch", "data"), "ignored");
+			const result: CleanupOutcome = run(f, {
+				git: (cwd, args, limits) => {
+					if (args[0] !== "worktree") return askGit(cwd, args, limits);
+					if (kind === "partial ignored deletion") rmSync(join(f.cwd, ".scratch", "data"));
+					return { ok: false, status: kind === "timeout" ? null : 1, bytes: 0, message: kind };
+				},
+			});
+			assert.equal(result.outcome, "partial");
+			assert.match(result.reason, /removal may be incomplete/);
+			assert.deepEqual(result.remains, [`worktree: ${f.cwd}`, "branch: refs/heads/topic"]);
+			assert.equal(result.ignoredRemoved, undefined);
+			assert.equal(existsSync(join(f.cwd, ".scratch", "data")), kind !== "partial ignored deletion");
+			assert.equal(git(f.source, "rev-parse", "refs/heads/topic"), f.plan.baseCommit);
+		});
+	}
+});
 test("untracked file appears at Git remove: refusal with nothing removed is kept", () => {
 	const f = fixture();
 	const result: CleanupOutcome = run(f, {
@@ -223,6 +288,19 @@ test("untracked file appears at Git remove: refusal with nothing removed is kept
 	assert.equal(result.outcome, "kept");
 	assert.match(result.reason, /remove refused/);
 	assert.equal(existsSync(join(f.cwd, "late")), true);
+});
+test("modified tracked file appears at Git remove: Git's clean refusal is kept", () => {
+	const f = fixture();
+	const result: CleanupOutcome = run(f, {
+		git: (cwd, args, limits) => {
+			if (args[0] === "worktree") writeFileSync(join(f.cwd, "tracked"), "late tracked change");
+			return askGit(cwd, args, limits);
+		},
+	});
+	assert.equal(result.outcome, "kept");
+	assert.match(result.reason, /remove refused/);
+	assert.equal(readFileSync(join(f.cwd, "tracked"), "utf8"), "late tracked change");
+	assert.equal(git(f.source, "rev-parse", "refs/heads/topic"), f.plan.baseCommit);
 });
 test("CAS deletion fails after removal: partial; retry branch-only deletes proved tip", () => {
 	const f = fixture();

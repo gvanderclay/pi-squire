@@ -951,7 +951,8 @@ it can prove it created and that remain pristine; it never uses force. Changed,
 ignored, untracked or uncertain resources are retained and reported with
 recovery facts. A timeout or other ambiguous tmux failure retains the worktree.
 Once tmux returns a window id, the worktree and branch are kept through later
-failure, completion and close. After merging, use `delegation_cleanup` to remove\nproved-safe managed worktrees and local branches (see [Cleanup](#cleanup)).
+failure, completion and close. After merging, use `delegation_cleanup` to remove
+proved-safe managed worktrees and local branches (see [Cleanup](#cleanup)).
 Worktrees isolate checkouts, not delegate permissions or filesystem access.
 
 ### Cleanup
@@ -993,15 +994,19 @@ after the last push, look the same as a merge. There is no discard/force option
 or interactive cleanup command in this release. Remote branches are untouched.
 
 The result carries `items`, `counts` and, for `all`, `selection`. An item is
-`removed`, `kept`, `partial` (something removed, something left) or
-`already-clean`, with a reason and explicit `remains`. Removed ignored entries
-have a bounded `ignoredRemoved` path summary. Kept text groups reasons and
-shows at most ten ids per group. Calls process at most 50 worktree groups,
-and stop starting new worktrees after about 120 s; the rest are listed in\n`selection.omittedIds`. A group already in progress finishes with its own\nGit-command timeouts. Pass those ids next so kept groups cannot starve them.
+`removed`, `kept`, `partial` (resources remain after removal, or a failed
+removal may have deleted some content) or `already-clean`, with a reason and
+observed `remains`. Completed worktree removals have a bounded `ignoredRemoved`
+path summary; an incomplete directory removal does not claim an ignored count.
+Kept text groups reasons and shows at most ten ids per group. Calls process at most 50 worktree groups,
+and stop starting new worktrees after about 120 s; the rest are listed in
+`selection.omittedIds`. A group already in progress finishes with its own
+Git-command timeouts. Pass those ids next so kept groups cannot starve them.
 Partial removal or failed selection sets the tool error flag. Retry re-derives
 the facts from Git, including a branch left after worktree removal.
 
-Cleanup serializes with managed launches in this process and synchronously
+Cleanup serializes with managed launches in this process, refreshes the
+records and window states after entering that queue, and synchronously
 rechecks identity, registries/owners and Git status/state just before
 `git worktree remove` (never forced). It checks for a recreated checkout
 before deleting the local branch at the proved tip using compare-and-swap.
@@ -1621,7 +1626,8 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id`, `all` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. By default it lists running, unfinished and the 5 newest settled records; `all: true` lists every record. |
 | `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
-| `delegation_cleanup` | `ids` (1–50 unique ids) or `all: true` | Removes merged, unused, clean Squire-created worktrees and their local branches; ignored files are deleted too. Unproved items are kept with reasons (see [Cleanup](#cleanup)). |\n| `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
+| `delegation_cleanup` | `ids` (1–50 unique ids) or `all: true` | Removes merged, unused, clean Squire-created worktrees and their local branches; ignored files are deleted too. Unproved items are kept with reasons (see [Cleanup](#cleanup)). |
+| `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
 | `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
 
 The `delegate` tool's description lists the current roster, one line per agent:

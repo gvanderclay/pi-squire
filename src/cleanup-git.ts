@@ -193,6 +193,7 @@ function squash(resource: CleanupResource, tip: string, local: Target[], run: Gh
 			pr.headRefOid === tip &&
 			pr.isCrossRepository === false &&
 			typeof pr.mergeCommit?.oid === "string" &&
+			/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(pr.mergeCommit.oid) &&
 			local.some(
 				(target) =>
 					target.name === pr.baseRefName && ancestor(resource.source.mainRoot, pr.mergeCommit?.oid ?? "", target.ref),
@@ -214,23 +215,25 @@ export function proveMerged(resource: CleanupResource, tip: string, run: GhRunne
 	if (track === "[gone]") throw new Error("upstream branch deleted but merge not proved; fetch and retry");
 	throw new Error(`merge not proved (${why}); fetch and retry`);
 }
-function remains(resource: CleanupResource): string[] {
+/** List only observed resources, not guessed remnants when an observation fails. */
+export function cleanupRemains(resource: CleanupResource): string[] {
 	const left: string[] = [];
+	let listed = false;
+	try {
+		listed = registered(resource.source.mainRoot).some((entry) => canonical(entry.path) === resource.destination);
+	} catch {
+		// The directory can still be observed independently of Git registration.
+	}
+	if (exists(resource.destination) || listed) left.push(`worktree: ${resource.destination}`);
 	if (
-		exists(resource.destination) ||
-		registered(resource.source.mainRoot).some((entry) => canonical(entry.path) === resource.destination)
+		askGit(resource.source.mainRoot, ["symbolic-ref", "-q", ref(resource)]).ok ||
+		askGit(resource.source.mainRoot, ["show-ref", "--verify", "--quiet", ref(resource)]).ok
 	)
-		left.push(`worktree: ${resource.destination}`);
-	if (tipAt(resource) !== null) left.push(`branch: ${ref(resource)}`);
+		left.push(`branch: ${ref(resource)}`);
 	return left;
 }
 function outcome(resource: CleanupResource, changed: boolean, reason: string, summary?: PathSummary): CleanupOutcome {
-	let left: string[];
-	try {
-		left = remains(resource);
-	} catch {
-		left = [`worktree: ${resource.destination}`, `branch: ${ref(resource)}`];
-	}
+	const left: string[] = cleanupRemains(resource);
 	return {
 		outcome: changed ? "partial" : "kept",
 		reason,
@@ -247,6 +250,24 @@ function deleteBranch(resource: CleanupResource, tip: string, deps: CleanupGitDe
 		MUTATE,
 	);
 	if (!answer.ok) throw new Error(`branch delete refused: ${answer.message}`);
+}
+function removalFailure(
+	resource: CleanupResource,
+	answer: Extract<GitAnswer, { ok: false }>,
+	directoryGone: boolean,
+	summary?: PathSummary,
+): CleanupOutcome {
+	const cleanRefusal: boolean =
+		answer.status === 128 &&
+		answer.message ===
+			`fatal: '${resource.destination}' contains modified or untracked files, use --force to delete it`;
+	// Only Git's clean refusal proves no deletion; timeouts/IO errors may leave a partial directory.
+	return outcome(
+		resource,
+		directoryGone || !cleanRefusal,
+		`git worktree remove ${cleanRefusal ? "refused" : "failed; removal may be incomplete"}: ${answer.message}`,
+		directoryGone ? summary : undefined,
+	);
 }
 /** No awaits from final identity/live/clean proof through removal and compare-and-swap deletion. */
 export function cleanGit(resource: CleanupResource, liveCheck: () => void, deps: CleanupGitDeps = {}): CleanupOutcome {
@@ -276,13 +297,13 @@ export function cleanGit(resource: CleanupResource, liveCheck: () => void, deps:
 				MUTATE,
 			);
 			changed = !exists(resource.destination);
-			if (!answer.ok) return outcome(resource, changed, `git worktree remove refused: ${answer.message}`, summary);
+			if (!answer.ok) return removalFailure(resource, answer, changed, summary);
 			changed = true;
 			deps.afterRemove?.();
 		}
 		deleteBranch(resource, before.tip, deps);
 		changed = true;
-		const left: string[] = remains(resource);
+		const left: string[] = cleanupRemains(resource);
 		if (left.length) return outcome(resource, true, "resources remain after removal", summary);
 		return {
 			outcome: "removed",

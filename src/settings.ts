@@ -10,10 +10,12 @@
 // | `multiplexer`, `windowPlacement`, `companionSuffix`, `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`, `worktreeRoot`, `worktreeRootByRepo` | refuses, naming the file | refuses, naming the file |
 // | `maxDepth` when only deciding whether to expose the delegation tools | depth 1: no nesting | refuses, naming the file |
 // | `toolBundles` | disables each agent that uses a bundle, naming the file | the same |
+// | `resultBodyKiB` | throws; the result warns and uses the default | the same |
 // | `delegateWidgetPlacement`, `delegateWidgetMaxEntries` | throws; the widget warns once and uses defaults | the same |
 //
-// Worktree keys are read only for managed worktree creation; the widget keys
-// only by the widget.
+// Worktree keys are read only for managed worktree creation; `resultBodyKiB`
+// when a result arrives, where a refusal warns and uses the default because a
+// claimed reply must still be handled; the widget keys only by the widget.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -258,6 +260,27 @@ export function worktreeSettings(agentDir: string): WorktreeSettings {
 		overrides.push([key, template]);
 	}
 	return { file, ...(typeof worktreeRoot === "string" ? { worktreeRoot } : {}), worktreeRootByRepo: overrides };
+}
+
+// --- result body size ---
+
+/** The default result body budget: 16 KiB, the first 4 KiB and the last 12 KiB. */
+export const DEFAULT_RESULT_BODY_BYTES = 16 * 1024;
+
+/**
+ * `resultBodyKiB`: the UTF-8 byte budget for a delegate's reply in the result
+ * message, a whole number of KiB from 4 to 64. Refuses an invalid value,
+ * naming the file.
+ */
+export function resultBodyBytes(agentDir: string): number {
+	const { file, settings } = read(agentDir);
+	const value = settings.resultBodyKiB;
+	if (value === undefined) return DEFAULT_RESULT_BODY_BYTES;
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 4 || value > 64)
+		throw new Error(
+			`invalid resultBodyKiB in ${file}: expected a whole number of KiB from 4 to 64, not ${JSON.stringify(value)}`,
+		);
+	return value * 1024;
 }
 
 // --- widget (cosmetic) ---

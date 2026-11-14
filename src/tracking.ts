@@ -303,7 +303,7 @@ function statusTool(results: Results, tmux: DelegateHost, readingErrors: () => R
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"Report delegations: default running, unfinished attempts + 5 most recently settled; all lists all; id gives one full block. Results arrive on their own; check only for stuck work or files. An open window does not mean unfinished; only a result means done. gone/window-closed can turn done on a late reply.",
+			"Report delegations: default running, unfinished attempts + 5 most recently settled; all lists all; id gives one full block. Results arrive on their own; check only for stuck work or files. A gone or window-closed record can still turn done on a late reply.",
 		parameters: Type.Object({ id: Type.Optional(Type.String()), all: Type.Optional(Type.Boolean()) }),
 		outputSchema: StatusSchema,
 		annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...CLOSED_WORLD },

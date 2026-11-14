@@ -57,19 +57,28 @@ export function whereAgentsGo(agentDir: string): string {
 	return `${join(globalAgentsDir(agentDir), "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, fallback, auto_exit, skills, context_files, prompt_mode, display_name, locked and enabled`;
 }
 
-/** One roster line for the `delegate` tool's description. */
+/**
+ * One roster line for the `delegate` tool's description. The parenthetical
+ * lists only what the agent sets: a model, fallback or thinking level it does
+ * not set is the session's, which the roster heading says once for every line
+ * instead of each line repeating it and burying the agents that do set one.
+ */
 export function rosterLine(agent: Agent): string {
 	const models = [agent.model ?? "this session's model", ...agent.fallback.map((model) => `fallback ${model}`)];
 	const details = [
 		...(agent.routingProfile
 			? [`routing profile ${agent.routingProfile}: category/data required, per-candidate thinking`]
-			: [`default ${models.join(", ")}`, `thinking ${agent.thinking ?? "this session's"}`]),
+			: [
+					...(agent.model === undefined && agent.fallback.length === 0 ? [] : [`default ${models.join(", ")}`]),
+					...(agent.thinking === undefined ? [] : [`thinking ${agent.thinking}`]),
+				]),
 		...(agent.autoExit ? [] : ["auto-exit off"]),
 		...toolsDetail(agent),
 		...(agent.locked.length > 0 ? [`locked: ${agent.locked.join("/")}`] : []),
 	];
 	const shown = agent.displayName === undefined ? "" : ` "${agent.displayName}"`;
-	return `- ${agent.name}${shown} — ${agent.description} (${details.join(", ")})`;
+	const parenthetical = details.length === 0 ? "" : ` (${details.join(", ")})`;
+	return `- ${agent.name}${shown} — ${agent.description}${parenthetical}`;
 }
 
 /**
@@ -138,7 +147,7 @@ export function toolDescription(agents: readonly Agent[], agentDir: string): str
 	return [
 		intro,
 		"",
-		"Agents:",
+		"Agents (outside a routing profile, a model or thinking level a line does not name is this session's, also when locked):",
 		...agents.map(rosterLine),
 		"",
 		"The delegate sees only the task and its agent prompt. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",

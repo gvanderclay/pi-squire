@@ -1944,14 +1944,22 @@ Delegate session: <session file or id>
   delegate's session path is found by the delegation id in the session
   directory recorded at launch (the parent's current one for older records),
   and the id alone is shown when no file exists yet.
-- The body keeps its first 4 KiB and its last 12 KiB, 16 KiB in all, with one
-  line between them naming how many KiB were dropped and the envelope path:
-  `[delegate] 24 KiB omitted here; the full reply is <envelope path>`. A reply
-  within the budget is kept whole. The budget is the `resultBodyKiB` setting,
-  a whole number of KiB from 4 to 64; the head is one quarter of it and the
-  tail the rest. Both cuts fall on UTF-8 character boundaries. An invalid
-  value warns and the result uses the default, since a claimed reply must
-  still be delivered.
+- The body keeps its first 8 KiB and its last 24 KiB, 32 KiB in all. A reply
+  within the budget is kept whole. A longer reply is cut, and before the body,
+  outside any Markdown fence the reply opens, the result says so and names the
+  whole reply:
+
+  ```
+  [delegate] Incomplete reply: <N> UTF-8 bytes omitted from the middle. Before acting on this report or treating it as complete, read the "body" field of the JSON envelope at <envelope path>; findings, conditions, or required steps may be missing.
+  ```
+
+  The envelope is the provider's JSON file; its `body` field holds the whole
+  reply. One line at the cut names how many KiB were dropped and the envelope
+  path: `[delegate] 24 KiB omitted here; the full reply is <envelope path>`.
+  The budget is the `resultBodyKiB` setting, a whole number of KiB from 4 to 64;
+  the head is one quarter of it and the tail the rest. Both cuts fall on UTF-8
+  character boundaries. An invalid value warns and the result uses the
+  default, since a claimed reply must still be delivered.
 - The message is sent as a `steer` with `triggerTurn`: a result starts a
   turn when the parent is idle, and when it is mid-turn arrives after the
   current tool calls, before the next model call. A follow-up would wait

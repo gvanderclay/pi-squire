@@ -72,7 +72,7 @@ test("a missing file gives every default", () => {
 	assert.deepEqual(delegateTools(agentDir), []);
 	assert.deepEqual(toolBundles(agentDir), { file, names: new Map() });
 	assert.deepEqual(worktreeSettings(agentDir), { file, worktreeRootByRepo: [] });
-	assert.equal(resultBodyBytes(agentDir), 16 * 1024);
+	assert.equal(resultBodyBytes(agentDir), 32 * 1024);
 	assert.deepEqual(widgetSettings(agentDir), { placement: "aboveEditor", maxEntries: 3 });
 });
 

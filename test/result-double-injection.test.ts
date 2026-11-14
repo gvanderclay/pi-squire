@@ -37,7 +37,7 @@ type Session = ReturnType<typeof session>;
 
 /** A distinctive prefix, so a capped body is still recognisable in a request. */
 const MARK = "spike-12-result-marker";
-/** About 33 KB, the size the dynamic report named; `resultDetails` cuts a body to the 16 KiB default budget. */
+/** About 33 KB, the size the dynamic report named; `resultDetails` cuts a body to the 32 KiB default budget. */
 const BODY = `${MARK} ${"x".repeat(33_000)}`;
 
 /** One message as `context.messages` carries it; `details` rides along untyped. */
@@ -124,8 +124,8 @@ test("a reply that arrives while the parent is idle reaches the next request onc
 	const carriedCopy = copies(next);
 	assert.equal(carriedCopy.count, 1);
 	assert.ok(
-		carriedCopy.bytes > 16 * 1024,
-		`the one copy is the result body cut to the 16 KiB budget: ${carriedCopy.bytes} bytes`,
+		carriedCopy.bytes > 32 * 1024,
+		`the one copy is the result body cut to the 32 KiB budget: ${carriedCopy.bytes} bytes`,
 	);
 	assert.equal(s.sent.length, 1, "the result was sent once");
 });

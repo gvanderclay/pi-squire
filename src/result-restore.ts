@@ -2,7 +2,14 @@
 // Any incomplete authoritative read latches a failure until a fresh restore.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildTasks } from "./child-tasks.ts";
-import { isStarted, isV2Start, type Recorded, START_TYPE, type WorkspaceAttempt } from "./result-types.ts";
+import {
+	isStarted,
+	isV2Start,
+	type Recorded,
+	START_TYPE,
+	validateSettledAt,
+	type WorkspaceAttempt,
+} from "./result-types.ts";
 import type { Delegation, Result } from "./results.ts";
 import { validateRoutingMetadata } from "./routing-restore.ts";
 import { locatedRecord } from "./tmux.ts";
@@ -41,7 +48,10 @@ export function restoreRecords(ctx: ExtensionContext, tasks: ChildTasks): Record
 }
 function accept(record: Recorded, ctx: ExtensionContext, tasks: ChildTasks, local: boolean): boolean {
 	try {
-		if (isStarted(record)) validateRoutingMetadata(record);
+		if (isStarted(record)) {
+			validateRoutingMetadata(record);
+			validateSettledAt(record);
+		}
 		return belongsTo(record, ctx);
 	} catch (error) {
 		tasks.blockRestore(error);
@@ -55,7 +65,7 @@ function transcript(ctx: ExtensionContext, tasks: ChildTasks, byId: Map<string, 
 	for (const entry of ctx.sessionManager.getEntries()) {
 		if (entry.type !== "custom" || !["delegate", START_TYPE].includes(entry.customType)) continue;
 		const data = entry.data as
-			| Partial<Delegation & { kind: string; result: Result; closed: boolean; gone: boolean }>
+			| Partial<Delegation & { kind: string; result: Result; closed: boolean; gone: boolean; settledAt: number }>
 			| undefined;
 		if (entry.customType === START_TYPE && !isV2Start(data)) {
 			tasks.blockRestore(new Error("invalid v2 delegate start; restoration blocked"));
@@ -83,9 +93,10 @@ function restoreStart(record: Recorded, ctx: ExtensionContext, tasks: ChildTasks
 }
 function applyTerminal(
 	record: Recorded | undefined,
-	data: Partial<Delegation & { result: Result; closed: boolean; gone: boolean }>,
+	data: Partial<Delegation & { result: Result; closed: boolean; gone: boolean; settledAt: number }>,
 ): void {
 	if (!record || !isStarted(record)) return;
+	validateSettledAt(data);
 	if (typeof data.result?.replyId === "string") {
 		validateRoutingMetadata({ ...record, result: data.result });
 		record.result = data.result;
@@ -94,6 +105,7 @@ function applyTerminal(
 		record.gone = true;
 		if (typeof data.sessionPath === "string") record.sessionPath = data.sessionPath;
 	}
+	if (data.settledAt !== undefined) record.settledAt = data.settledAt;
 }
 function interrupt(records: Recorded[]): void {
 	for (const record of records) {

@@ -18,7 +18,21 @@ export function isV2Start(value: unknown): value is StartedRecorded {
 }
 
 /** One started delegation as it stands: what was recorded at its start, plus what came after. */
-export type StartedRecorded = Delegation & { result?: import("./results.ts").Result; closed?: boolean; gone?: boolean };
+export type StartedRecorded = Delegation & {
+	result?: import("./results.ts").Result;
+	closed?: boolean;
+	gone?: boolean;
+	/** When the latest result, close or disappearance was recorded (epoch ms); absent in older sessions. */
+	settledAt?: number;
+};
+
+export function validateSettledAt(record: { settledAt?: unknown }): void {
+	if (
+		record.settledAt !== undefined &&
+		(typeof record.settledAt !== "number" || !Number.isFinite(record.settledAt) || record.settledAt < 0)
+	)
+		throw new Error("invalid delegation settledAt; restoration blocked");
+}
 /** What is known to exist for an attempt; facts, not authorization to remove anything. */
 export type ResourceFacts =
 	| { kind: "none" }

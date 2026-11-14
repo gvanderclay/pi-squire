@@ -4,9 +4,12 @@
 // Pi session with a scripted `ctx.ui`, the fake tmux, `message:send` stubbed.
 
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { readChildRecords } from "../src/child-tasks.ts";
+import { inspectGit } from "../src/git.ts";
 import { windowLocator } from "../src/tmux.ts";
 import { placementProject } from "../src/window-placement.ts";
 
@@ -503,8 +506,7 @@ test("two concurrent delegate calls each start a delegation and return their own
 type Delegation = { id: string; agent: string; model: string; requestId: string };
 
 /** A reply to `delegation`'s task, shaped like `mailbox`'s envelope. */
-function reply(parent: string, delegation: Delegation, status = "done") {
-	const replyId = `reply-${delegation.agent}`;
+function reply(parent: string, delegation: Delegation, status = "done", replyId = `reply-${delegation.agent}`) {
 	return {
 		envelope: {
 			id: replyId,
@@ -518,6 +520,39 @@ function reply(parent: string, delegation: Delegation, status = "done") {
 		path: `/mailbox/${parent}/cur/000000000000002-${replyId}.json`,
 		requests: [],
 		handled: false,
+	};
+}
+
+/** One recorded delegation as a durable start entry, for status-selection tests. */
+function recordedDelegation(parent: string, index: number, options: { running?: boolean; cwd?: string } = {}) {
+	const id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+	const windowId = `@${100 + index}`;
+	const windowName = `scout-${id.slice(0, 8)}`;
+	return {
+		customType: "delegate",
+		data: {
+			id,
+			agent: "scout",
+			model: "alpha/fast-model",
+			thinking: "low",
+			autoExit: true,
+			windowId,
+			windowName,
+			requestId: `request-${index}`,
+			...(options.running ? {} : { settledAt: index + 1 }),
+			...(options.cwd === undefined
+				? {}
+				: { cwd: options.cwd, workspace: { mode: "existing", cwd: options.cwd, git: { kind: "non-git" } } }),
+			...(options.running
+				? {}
+				: {
+						result: {
+							status: "done",
+							replyId: `reply-${index}`,
+							envelopePath: `/mailbox/${parent}/cur/000000000000002-reply-${index}.json`,
+						},
+					}),
+		},
 	};
 }
 
@@ -552,13 +587,260 @@ test("delegation_status reports running, done and closed through the window and 
 	assert.ok(mixed.includes(`${first.id} scout`), mixed);
 	assert.match(mixed, /state: done — result status: done/);
 	assert.ok(mixed.includes(`envelope: /mailbox/${s.parent}/cur/000000000000002-reply-scout.json`), mixed);
-	assert.ok(mixed.includes(`window: researcher-${second.id.slice(0, 8)} (${w2.windowId})`), mixed);
+	assert.ok(!mixed.includes(`window: researcher-${second.id.slice(0, 8)} (${w2.windowId})`), mixed);
 	assert.match(mixed, /state: closed — the window is gone/);
 
 	const filtered = (await s.toolCall("delegation_status", { id: second.id })).content[0].text;
 	assert.match(filtered, /^1 delegation:/);
 	assert.ok(filtered.includes(second.id), filtered);
 	assert.ok(!filtered.includes(first.id), filtered);
+});
+
+test("delegation_status defaults to running plus the 5 newest settled records", async () => {
+	const s = session();
+	const entries = Array.from({ length: 10 }, (_, index) =>
+		recordedDelegation(s.parent, index, { running: index >= 8 }),
+	);
+	for (const entry of entries) {
+		const { windowId, windowName, result } = entry.data as {
+			windowId: string;
+			windowName: string;
+			result?: unknown;
+		};
+		if (result === undefined) s.tmux.addWindow(windowId, windowName);
+	}
+	s.entries.push(...entries);
+	await s.start();
+	const delegations = entries.map((entry) => entry.data as Delegation);
+
+	const result = await s.toolCall("delegation_status", {});
+	const text = result.content[0].text;
+	const details = result.structuredContent as { delegations: { id: string; state: string }[] };
+	assert.match(text, /^10 delegations \(2 running, 3 older omitted; pass all or an id for those\):/);
+	assert.deepEqual(
+		details.delegations.map((item) => item.id),
+		delegations.slice(3).map((item) => item.id),
+	);
+	assert.equal(text.match(/^ {2}state: /gm)?.length, 7);
+	assert.equal(details.delegations.length, 7);
+	for (const omitted of delegations.slice(0, 3)) assert.equal(text.includes(omitted.id), false, text);
+
+	const all = await s.toolCall("delegation_status", { all: true });
+	const allText = all.content[0].text;
+	assert.match(allText, /^10 delegations:/);
+	assert.equal((all.structuredContent as { delegations: unknown[] }).delegations.length, 10);
+	for (const delegation of delegations) assert.ok(allText.includes(delegation.id), allText);
+
+	const omitted = await s.toolCall("delegation_status", { id: delegations[0].id });
+	assert.match(omitted.content[0].text, /^1 delegation:/);
+	assert.ok(omitted.content[0].text.includes(delegations[0].id), omitted.content[0].text);
+	assert.equal((omitted.structuredContent as { delegations: unknown[] }).delegations.length, 1);
+});
+
+test("delegation_status compact current-format Git rows stay under 2560 bytes", async (t) => {
+	const cwd = join(root, "Users", "me", "src", "project");
+	mkdirSync(cwd, { recursive: true });
+	const git = (...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" });
+	git("init", "-b", "main");
+	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial");
+	const workspace = { mode: "existing" as const, cwd, git: inspectGit(cwd) };
+	const s = session({ parent: "55555555-5555-4555-8555-555555555555", cwd });
+	for (let index = 0; index < 5; index += 1) {
+		const entry = recordedDelegation(s.parent, index);
+		const id = entry.data.id;
+		s.entries.push({
+			customType: "delegate-start-v2",
+			data: {
+				...entry.data,
+				locator: windowLocator({ id: entry.data.windowId, name: entry.data.windowName }),
+				identity: {
+					parent: s.parent,
+					root: s.parent,
+					rootPlacement: companion,
+					depth: 1,
+					agent: "scout",
+					chain: ["scout"],
+					autoExit: true,
+				},
+				cwd,
+				workspace,
+				sessionPath: `/Users/me/.pi/agent/sessions/--Users-me-src-project--/2026-11-13T12-00-00_${id}.jsonl`,
+				result: {
+					...entry.data.result,
+					envelopePath: `/Users/me/.local/state/pi-session-mail/${s.parent}/cur/001794617841555-${id}.json`,
+				},
+			},
+		});
+	}
+	await s.start();
+	const result = await s.toolCall("delegation_status", {});
+	const text = result.content[0].text;
+	const size = Buffer.byteLength(text, "utf8");
+	t.diagnostic(`representative default status: ${size} UTF-8 bytes`);
+	assert.ok(size < 2560, `default status text is ${size} bytes\n${text}`);
+	const rows = (
+		result.structuredContent as {
+			delegations: { id: string; workspaceSnapshot: { kind: string; workingState: string } }[];
+		}
+	).delegations;
+	assert.equal(rows.length, 5);
+	for (const block of text.split("\n\n").slice(1, -1)) assert.equal(block.split("\n").length, 5, block);
+	for (const row of rows) {
+		assert.equal(row.workspaceSnapshot.kind, "git");
+		assert.equal(row.workspaceSnapshot.workingState, "clean");
+		const full = await s.toolCall("delegation_status", { id: row.id });
+		assert.deepEqual((full.structuredContent as { delegations: unknown[] }).delegations[0], row);
+		assert.match(full.content[0].text, /identity: session/);
+		assert.ok(full.content[0].text.split("\n").length > 5);
+	}
+	assert.match(text, /Pass id for a delegation's full block/);
+	assert.ok(s.tool("delegation_status").description.length <= 352);
+});
+
+test("compact settled blocks keep every resume and fork relationship", async () => {
+	const s = session();
+	const first = recordedDelegation(s.parent, 0);
+	const next = recordedDelegation(s.parent, 1);
+	s.entries.push(
+		{ ...first, data: { ...first.data, resumedFrom: "previous-launch", forkedFrom: "fork-source" } },
+		{ ...next, data: { ...next.data, resumedFrom: first.data.id } },
+	);
+	await s.start();
+	const text = (await s.toolCall("delegation_status", {})).content[0].text;
+	const blocks = text.split("\n\n").slice(1, -1);
+	assert.equal(blocks[0].split("\n").length, 8);
+	assert.match(blocks[0], / {2}resumed from previous-launch\n/);
+	assert.match(blocks[0], / {2}forked from fork-source\n/);
+	assert.ok(blocks[0].includes(`  resumed as ${next.data.id}\n`));
+	assert.equal(blocks[1].split("\n").length, 6);
+	assert.ok(blocks[1].includes(`  resumed from ${first.data.id}\n`));
+});
+
+test("delegation_status includes the first launch when it settles last, including after restore", async (t) => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	const launched: Delegation[] = [];
+	for (let index = 0; index < 7; index += 1) {
+		await s.toolCall("delegate", { agent: "scout", task: "work" });
+		launched.push(s.entries.at(-1)!.data as Delegation);
+	}
+	let now = Date.now();
+	t.mock.method(Date, "now", () => now);
+	for (const delegation of [...launched.slice(1), launched[0]]) {
+		now += 1000;
+		s.events.emit("message:inbound", reply(s.parent, delegation, "done", `reply-${delegation.id}`));
+	}
+	const expected = [launched[0], ...launched.slice(3)].map((record) => record.id);
+	const ids = async (value: ReturnType<typeof session>) =>
+		(
+			(await value.toolCall("delegation_status", {})).structuredContent as { delegations: { id: string }[] }
+		).delegations.map((record) => record.id);
+	assert.deepEqual(await ids(s), expected);
+	const stored = readChildRecords(s.parent);
+	assert.ok(stored.every((record) => "settledAt" in record && typeof record.settledAt === "number"));
+	await s.shutdown();
+	const local = session({ parent: s.parent, tmux: s.tmux });
+	await local.start();
+	assert.deepEqual(await ids(local), expected);
+	await local.shutdown();
+	rmSync(join(agentDir, "squire", "child-tasks", `${s.parent}.json`));
+	const transcript = session({ parent: s.parent, tmux: s.tmux, entries: structuredClone(s.entries) });
+	await transcript.start();
+	assert.deepEqual(await ids(transcript), expected);
+});
+
+test("closing a finished delegation does not make it the most recently settled", async (t) => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	const launched: Delegation[] = [];
+	for (let index = 0; index < 7; index += 1) {
+		await s.toolCall("delegate", { agent: "scout", task: "work" });
+		launched.push(s.entries.at(-1)!.data as Delegation);
+	}
+	let now = Date.now();
+	t.mock.method(Date, "now", () => now);
+	for (const delegation of launched) {
+		now += 1000;
+		s.events.emit("message:inbound", reply(s.parent, delegation, "done", `reply-${delegation.id}`));
+	}
+	now += 1000;
+	await s.toolCall("delegation_close", { id: launched[0].id });
+	const rows = ((await s.toolCall("delegation_status", {})).structuredContent as { delegations: { id: string }[] })
+		.delegations;
+	assert.deepEqual(
+		rows.map((record) => record.id),
+		launched.slice(2).map((record) => record.id),
+	);
+});
+
+test("legacy settled records rank below timed ones, later-recorded first", async () => {
+	const s = session();
+	const entries = Array.from({ length: 7 }, (_, index) => recordedDelegation(s.parent, index));
+	for (const entry of entries) delete (entry.data as { settledAt?: number }).settledAt;
+	entries[6].data.settledAt = 100;
+	s.entries.push(...entries);
+	await s.start();
+	const rows = ((await s.toolCall("delegation_status", {})).structuredContent as { delegations: { id: string }[] })
+		.delegations;
+	assert.deepEqual(
+		rows.map((record) => record.id),
+		entries.slice(2).map((entry) => entry.data.id),
+	);
+});
+
+for (const source of ["local", "transcript"] as const) {
+	for (const invalid of ["yesterday", null, -1]) {
+		test(`malformed ${source} settledAt ${JSON.stringify(invalid)} blocks restoration`, async () => {
+			writeAgent("scout", SCOUT);
+			const s = session();
+			await s.start();
+			await s.toolCall("delegate", { agent: "scout", task: "work" });
+			const entry = s.entries[0];
+			await s.shutdown();
+			const path = join(agentDir, "squire", "child-tasks", `${s.parent}.json`);
+			const entries = structuredClone(s.entries);
+			if (source === "local") {
+				const saved = JSON.parse(readFileSync(path, "utf8"));
+				saved.state.records[0].settledAt = invalid;
+				writeFileSync(path, JSON.stringify(saved));
+			} else {
+				rmSync(path);
+				entries.push({ customType: "delegate", data: { id: entry.data.id, closed: true, settledAt: invalid } });
+			}
+			const reopened = session({ parent: s.parent, entries, tmux: s.tmux });
+			await reopened.start();
+			assert.ok(
+				reopened.errors.some((error) => error.includes("invalid delegation settledAt")),
+				reopened.errors.join("\n"),
+			);
+			await assert.rejects(reopened.toolCall("delegate", { agent: "scout", task: "new work" }), /restoration failed/);
+			await reopened.shutdown();
+		});
+	}
+}
+
+test("gone and late result facts persist their settlement time", async (t) => {
+	writeAgent("scout", SCOUT);
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	const s = session();
+	await s.start();
+	await s.toolCall("delegate", { agent: "scout", task: "work" });
+	const record = s.entries[0].data as Delegation;
+	s.tmux.windows.clear();
+	t.mock.timers.tick(5000);
+	for (let turn = 0; turn < 6; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+	const gone = s.entries.find((entry) => entry.data.gone === true);
+	assert.equal(typeof gone?.data.settledAt, "number");
+	assert.equal((readChildRecords(s.parent)[0] as { settledAt?: number }).settledAt, gone?.data.settledAt);
+	const later = Number(gone?.data.settledAt) + 1000;
+	t.mock.method(Date, "now", () => later);
+	s.events.emit("message:inbound", reply(s.parent, record));
+	assert.equal(s.entries.at(-1)?.data.settledAt, later);
+	assert.equal((readChildRecords(s.parent)[0] as { settledAt?: number }).settledAt, later);
+	assert.match((await s.toolCall("delegation_status", {})).content[0].text, /state: done/);
+	await s.shutdown();
 });
 
 test("delegation_status shows when a running delegate's session file was last written", async () => {
@@ -740,7 +1022,11 @@ test("delegation_close kills the window and records the close without a message 
 
 	const closed = await s.toolCall("delegation_close", { id });
 	assert.deepEqual(s.tmux.killed, [windowId]);
-	assert.deepEqual(s.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
+	assert.deepEqual(s.entries.at(-1), {
+		customType: "delegate",
+		data: { id, closed: true, settledAt: s.entries.at(-1)?.data.settledAt },
+	});
+	assert.equal(typeof s.entries.at(-1)?.data.settledAt, "number");
 	assert.match(
 		closed.content[0].text,
 		new RegExp(`Closed delegation subtree ${id}.*\\n- ${id}: killed scout-${id.slice(0, 8)} \\(${windowId}\\)`),
@@ -804,7 +1090,11 @@ test("delegation_close kills nothing when the recorded id belongs to another win
 	const result = await resumed.toolCall("delegation_close", { id });
 	assert.match(result.content[0].text, /: absent/);
 	assert.deepEqual(resumed.tmux.killed, []);
-	assert.deepEqual(resumed.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
+	assert.deepEqual(resumed.entries.at(-1), {
+		customType: "delegate",
+		data: { id, closed: true, settledAt: resumed.entries.at(-1)?.data.settledAt },
+	});
+	assert.equal(typeof resumed.entries.at(-1)?.data.settledAt, "number");
 });
 
 test("delegation_close and delegation_status each ask tmux once", async () => {
@@ -849,7 +1139,11 @@ test("delegation_close records a close when the window is already gone", async (
 	const result = await s.toolCall("delegation_close", { id });
 	assert.match(result.content[0].text, /: absent scout-/);
 	assert.deepEqual(s.tmux.killed, []);
-	assert.deepEqual(s.entries.at(-1), { customType: "delegate", data: { id, closed: true } });
+	assert.deepEqual(s.entries.at(-1), {
+		customType: "delegate",
+		data: { id, closed: true, settledAt: s.entries.at(-1)?.data.settledAt },
+	});
+	assert.equal(typeof s.entries.at(-1)?.data.settledAt, "number");
 });
 
 test("delegation_close refuses an unknown id and kills nothing", async () => {

@@ -9,12 +9,9 @@ import { Type } from "typebox";
 import type { DelegateHost } from "./host.ts";
 import { readIdentity } from "./identity.ts";
 import { type Mark, readMarks } from "./limits.ts";
-import { recordedLocation } from "./location.ts";
 import { windowPresentation } from "./locators.ts";
 import { createPoll } from "./poll.ts";
-import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
-	type DelegationState,
 	deriveState,
 	isStarted,
 	locateSession,
@@ -25,12 +22,11 @@ import {
 	sessionIdOf,
 	type WorkspaceAttempt,
 } from "./results.ts";
-import { routingEvidence, servedSummary } from "./routing-provenance.ts";
+import { routingEvidence } from "./routing-provenance.ts";
 import { RoutingEvidenceSchema, RoutingRecordSchema } from "./routing-schema.ts";
-import type { RoutingEvidence } from "./routing-types.ts";
-import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
+import { inspectWorkspace, WorkspaceSnapshotSchema } from "./snapshot.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
-import { ago, autoExitLine, stateLine } from "./tracking-text.ts";
+import { attemptText, compactText, type View, viewText } from "./tracking-text.ts";
 import { type CloseResult, CloseSchema, closeTree } from "./tree-close.ts";
 import { accountingFor } from "./tree-view.ts";
 import type { ReadingError } from "./usage.ts";
@@ -132,23 +128,8 @@ export type ToolDef = {
 	execute: (...args: never[]) => Promise<ReturnType<typeof toolResult>>;
 };
 
-/** One delegation as `delegation_status` reports it; its text and details both read from this. */
-type View = {
-	routingEvidence?: RoutingEvidence;
-	record: StartedRecorded;
-	state: DelegationState;
-	name: string;
-	sessionPath: string | undefined;
-	/** When the session file was last written; set only for a running delegation with a file. */
-	lastActive: Date | undefined;
-	/** The checkout observed for this status call; the recorded result keeps its own. */
-	snapshot: WorkspaceSnapshot;
-	/** The delegation that resumed this one, if any. */
-	resumedAs: string | undefined;
-	/** The session its window is in now, looked up; undefined when the window is gone or unknown. */
-	windowSession: string | undefined;
-	canResume: boolean;
-};
+/** One row in the status result: a started delegation's view or an unstarted attempt. */
+type StatusItem = View | WorkspaceAttempt;
 
 /** The view of a delegation: its state and the fields the text and details share. */
 function view(
@@ -182,47 +163,6 @@ function view(
 		windowSession,
 		canResume: (record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId(),
 	};
-}
-
-/** The text block for one delegation. */
-function viewText({
-	record,
-	state,
-	name,
-	sessionPath,
-	lastActive,
-	snapshot,
-	resumedAs,
-	windowSession,
-	routingEvidence,
-}: View): string {
-	const [checkout, ...categories] = snapshotLines(snapshot);
-	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
-	const lines = [
-		`${record.id} ${record.agent} (${modelLabel(record.model, record.result?.finishedModel)}, thinking ${record.thinking})`,
-		`  name: ${name}`,
-		...(record.routing
-			? [
-					`  routing: ${record.routing.profile}/${record.routing.request.category}; policy v${record.routing.policyVersion}; ${record.routing.reason}`,
-					`  served this attempt: ${servedSummary(routingEvidence?.served)}; independent family history: ${routingEvidence?.independent ?? "unverified"}`,
-				]
-			: []),
-		`  identity: session ${sessionIdOf(record)} · parent ${record.identity?.parent ?? "this session"} · root ${record.identity?.root ?? "this session"} · depth ${record.identity?.depth ?? 1}`,
-		...(accountingFor(record) ? [`  shared accounting: ${accountingFor(record)} (not result processing)`] : []),
-		...(record.resumedFrom === undefined ? [] : [`  resumed from ${record.resumedFrom}`]),
-		...(record.forkedFrom === undefined ? [] : [`  forked from ${record.forkedFrom}`]),
-		...(resumedAs === undefined ? [] : [`  resumed as ${resumedAs}`]),
-		`  state: ${stateLine(state, record)}${seen}`,
-		`  ${recordedLocation(record, windowSession)}`,
-		`  cwd: ${cwdLine(record.cwd)}`,
-		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),
-		`  checkout now: ${checkout}`,
-		...categories.map((line) => `    ${line}`),
-		`  auto-exit: ${autoExitLine(record)}`,
-		`  session: ${sessionPath ?? `${sessionIdOf(record)} (no session file yet)`}`,
-	];
-	if (record.result !== undefined) lines.push(`  envelope: ${record.result.envelopePath}`);
-	return lines.join("\n");
 }
 
 /** The structured details for one delegation. */
@@ -272,14 +212,9 @@ function viewDetails({
 	};
 }
 
-/** One unstarted attempt as the status text words it. */
-function attemptText(record: WorkspaceAttempt): string {
-	return [
-		`${record.id} ${record.agent} (${modelLabel(record.model, undefined)}, thinking ${record.thinking})`,
-		`  name: ${recordedName(record)}`,
-		`  state: ${record.attempt.phase} — no window id/start was recorded; a window may still exist (close requires a verified window id)`,
-		...attemptLines(record).map((line) => `  ${line}`),
-	].join("\n");
+/** The structured details for one status row. */
+function itemDetails(item: StatusItem): Record<string, unknown> {
+	return "record" in item ? viewDetails(item) : { ...item, state: item.attempt.phase };
 }
 
 /** The usage-limit marks in force now, as `delegation_status` reports them. */
@@ -295,6 +230,9 @@ function activeMarks(): { scope: string; source: Mark["source"]; reason: string;
 		}));
 }
 
+/** How many settled records the default status view keeps, newest first. */
+const RECENT_SETTLED = 5;
+
 /** Every delegation, or the one named; throws when a named id is unknown. */
 function selectRecords(results: Results, id: string | undefined): Recorded[] {
 	const all = results.list();
@@ -307,54 +245,93 @@ function selectRecords(results: Results, id: string | undefined): Recorded[] {
 	return records;
 }
 
+/**
+ * The default status selection: every running delegation and unfinished
+ * workspace attempt, plus the most recently settled records. A started record
+ * with no result, close or gone fact whose state is unknown (the host could not
+ * be asked) counts as unfinished too. Records from before settlement times rank
+ * below timed ones, later-recorded first. Render order stays hierarchical.
+ */
+function recentRecords(records: Recorded[], windows: WindowStates): Recorded[] {
+	const unfinished = (record: StartedRecorded): boolean => {
+		const state = deriveState(record, windows.state(record));
+		if (state === "running") return true;
+		const settled = record.result !== undefined || record.gone === true || record.closed === true;
+		return state === "unknown" && !settled && record.accountingOnly !== true;
+	};
+	const active = (record: Recorded): boolean =>
+		isStarted(record) ? unfinished(record) : record.attempt.phase !== "rolled-back";
+	const chosen = new Set(records.filter(active).map((record) => record.id));
+	const position = new Map(records.map((record, index) => [record.id, index]));
+	const time = (record: Recorded): number => (isStarted(record) ? (record.settledAt ?? -1) : -1);
+	const settled = records.filter((item) => !chosen.has(item.id));
+	settled.sort((a, b) => time(b) - time(a) || (position.get(b.id) ?? 0) - (position.get(a.id) ?? 0));
+	for (const record of settled.slice(0, RECENT_SETTLED)) chosen.add(record.id);
+	return records.filter((record) => chosen.has(record.id));
+}
+
+/** The usage-limit block, or nothing when there is neither a mark nor a reading error. */
+function statusBlock(
+	marks: { scope: string; source: Mark["source"]; reason: string; clearsAt: string }[],
+	errors: ReadingError[],
+): string[] {
+	if (marks.length === 0 && errors.length === 0) return [];
+	return [
+		[
+			"Usage-limit marks:",
+			...marks.map((m) => `- ${m.scope} (${m.source}) until ${m.clearsAt}: ${m.reason}`),
+			...errors.map((e) => `- could not read ${e.provider} quota at ${e.at}: ${e.reason}`),
+		].join("\n"),
+	];
+}
+
+/** The heading: the shown count, or the total with how many running and older records were left out. */
+function statusHeading(all: Recorded[], views: StatusItem[], omitted: number): string {
+	if (omitted === 0) return `${views.length} delegation${views.length === 1 ? "" : "s"}:`;
+	const running = views.filter((item) => "record" in item && item.state === "running").length;
+	return `${all.length} delegation${all.length === 1 ? "" : "s"} (${running} running, ${omitted} older omitted; pass all or an id for those):`;
+}
+
 /** The `delegation_status` tool. */
 function statusTool(results: Results, tmux: DelegateHost, readingErrors: () => ReadingError[]): ToolDef {
 	return {
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"Report this session's descendant delegations, or one by id: state, window, model, paths and workspace. Results arrive as messages on their own, so call it only for a delegation that seems stuck or to find its files. An open window does not mean the task is unfinished; only a result means done. gone and window-closed turn done if a late reply arrives.",
-		parameters: Type.Object({ id: Type.Optional(Type.String()) }),
+			"Report delegations: default running, unfinished attempts + 5 most recently settled; all lists all; id gives one full block. Results arrive on their own; check only for stuck work or files. An open window does not mean unfinished; only a result means done. gone/window-closed can turn done on a late reply.",
+		parameters: Type.Object({ id: Type.Optional(Type.String()), all: Type.Optional(Type.Boolean()) }),
 		outputSchema: StatusSchema,
 		annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...CLOSED_WORLD },
 		async execute(
 			_toolCallId: string,
-			params: { id?: string },
+			params: { id?: string; all?: boolean },
 			_signal: unknown,
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		): Promise<ReturnType<typeof toolResult>> {
 			const records = selectRecords(results, params.id);
 			const windows = await askWindowStates(tmux);
+			const selected = params.id === undefined && params.all !== true ? recentRecords(records, windows) : records;
 			const resumedAs = (id: string) => results.list().find((item) => isStarted(item) && item.resumedFrom === id)?.id;
-			const views = records.map((record) =>
+			const views = selected.map((record) =>
 				isStarted(record) ? view(record, windows, ctx, resumedAs(record.id)) : record,
 			);
 			const marks = activeMarks();
 			const errors = readingErrors();
-			const details = {
-				delegations: views.map((item) =>
-					"record" in item ? viewDetails(item) : { ...item, state: item.attempt.phase },
-				),
-				marks,
-				readingErrors: errors,
-			};
-			const block =
-				marks.length === 0 && errors.length === 0
-					? []
-					: [
-							[
-								"Usage-limit marks:",
-								...marks.map((m) => `- ${m.scope} (${m.source}) until ${m.clearsAt}: ${m.reason}`),
-								...errors.map((e) => `- could not read ${e.provider} quota at ${e.at}: ${e.reason}`),
-							].join("\n"),
-						];
-			const heading = `${views.length} delegation${views.length === 1 ? "" : "s"}:`;
+			const details = { delegations: views.map(itemDetails), marks, readingErrors: errors };
+			const block = statusBlock(marks, errors);
+			const heading = statusHeading(records, views, records.length - selected.length);
+			const text = views
+				.map((item) => {
+					if (!("record" in item)) return attemptText(item);
+					return params.id === undefined && item.state !== "running" ? compactText(item) : viewText(item);
+				})
+				.join("\n\n");
 			const parts =
 				views.length === 0
 					? ["No delegations are recorded in this session.", ...block]
 					: [
-							`${heading}\n\n${views.map((item) => ("record" in item ? viewText(item) : attemptText(item))).join("\n\n")}`,
+							`${heading}\n\n${text}${params.id === undefined ? "\n\nPass id for a delegation's full block." : ""}`,
 							...block,
 						];
 			return toolResult(parts.join("\n\n"), details);

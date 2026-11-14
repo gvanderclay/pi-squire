@@ -22,6 +22,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `delegation_status` lists every running delegation and unfinished workspace
+  attempt plus the 5 most recently settled records by default; `all: true`
+  lists every record, and an `id` still selects one, including one the default
+  leaves out. Recency uses persisted settlement times across descendants,
+  preserving hierarchy display order; legacy records without a time rank
+  below timed ones, later-recorded first, and closing a finished delegation
+  keeps its earlier time. Unfinished delegations whose state is unknown stay listed.
+  Settled list rows use at most five base lines with a short checkout summary
+  and changed-path count, plus any resume/fork relationships; running rows,
+  attempts and `id` keep full blocks. Structured
+  details keep the full snapshot. Status-text tests deliberately replace path
+  categories and full settled list blocks with these compact projections;
+  result- and close-journal tests deliberately require the new numeric settlement time.
 - A routed delegation's served-model line, in the result, `delegation_status`
   and the expanded view, collapses consecutive entries for the same model and
   effort into one `model:effort ×N` run. A 100-turn single-model attempt now

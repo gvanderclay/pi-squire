@@ -1535,7 +1535,7 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 | Tool | Parameters | What it does |
 | --- | --- | --- |
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
-| `delegation_status` | optional `id` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
+| `delegation_status` | optional `id`, `all` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
 | `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
 | `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
 | `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
@@ -1567,7 +1567,22 @@ starts. The roster itself is still read at call time, and an
 unknown agent, model or thinking level is refused with close matches and
 nothing starts.
 
-`delegation_status` reports one state per delegation:
+`delegation_status` reports one state per delegation. Without an `id` it lists
+every running delegation and unfinished workspace attempt, plus the 5 most
+recently settled records. When it leaves older records out, the heading says
+how many and points to `all` and `id`; `all: true` lists every record, and an
+`id` selects one, including one the default leaves out. List responses use a
+compact block of five base lines at most for settled delegations: id/agent/model/thinking,
+state, checkout summary (with a changed-path count when non-zero), session path,
+and envelope path when present. Resume/fork relationships add their existing
+`resumed from`, `forked from` and `resumed as` lines when present, so the newest
+id in a resume chain remains visible. Running delegations and workspace attempts keep
+their full blocks; `id` gives a delegation's full block. Structured details are
+unchanged. Settlement order uses the recorded settlement time; older sessions
+without one rank below timed records, later-recorded first. Closing a
+delegation that already has a result keeps its earlier settlement time. A
+started delegation with no result whose state is unknown, because the host
+could not be asked, is listed like a running one.
 
 ```text
 2 delegations:
@@ -1579,23 +1594,17 @@ nothing starts.
   cwd: <the directory its window opened in>
   workspace: existing directory; Git checkout <main root> (linked worktree <checkout>), branch <name>, launch commit <sha>
   checkout now: branch <name>, head <sha>, launch commit <sha>, 1 commit since launch, working tree dirty
-    committed since launch: 1 path: "src/a.ts"
-    staged: none
-    unstaged: 1 path: "README.md"
-    untracked: none
-    conflicted: none
+    2 changed paths; details in the structured result
   auto-exit: on — the delegate closes its window after a normal completion unless the user took over there
   session: <the delegate's session file, or its id when there is none yet>
 
 <id> researcher (provider/other, thinking high)
-  name: researcher-<first 8 of the id>
-  state: done — result status: done; the result reaches this session as a [delegate] message on its own
-  window: researcher-<first 8 of the id> (@2)
-  cwd: unknown (not recorded)
+  state: done — result status: done
   checkout now: Git state unknown (this delegation was recorded before its launch checkout was kept)
-  auto-exit: off — the window stays open after the result
   session: <session file>
   envelope: <the reply's path in the parent's cur/>
+
+Pass id for a delegation's full block.
 ```
 
 - **Name** is the delegate's Pi session name, its agent and the first 8
@@ -1620,7 +1629,9 @@ nothing starts.
   none.
 - **Checkout now** is a fresh [snapshot](#checkout-snapshots) of that
   checkout, taken by this call; the details carry it as `workspaceSnapshot`.
-  A failure is unknown for that delegation alone.
+  The text shows the summary line and, when paths changed, a count; the full
+  path categories are in the details. A failure is unknown for that delegation
+  alone.
 - **Session** is the delegate's session file, searched for in the storage
   directory recorded at launch. Once found, its path is kept, so a later
   status or result uses it without searching again. Before the delegate has

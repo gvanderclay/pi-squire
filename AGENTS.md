@@ -14,7 +14,7 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   semantic records fail-closed), `render.ts` draws the
   delegate messages, `current-window.ts` answers which window a delegation
   is in now for the navigator and widget, `tracking.ts` holds the status and close
-  tools, `poll.ts` the poll (with `window-state.ts`, which answers and closes a delegation's window), `navigator.ts`
+  tools, `tracking-text.ts` their full and compact status text, `poll.ts` the poll (with `window-state.ts`, which answers and closes a delegation's window), `navigator.ts`
   `/delegate-open` and the compact widget close action, `new-delegate.ts` the new-delegate
   form, `delegate-start.ts` owns the shared launch/resume/fork start sequence,
   `host-admission.ts` freezes the call-time host and placement,

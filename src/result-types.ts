@@ -42,6 +42,8 @@ export type MessageDetails =
 			task: TaskQuote;
 			/** The reply body, capped. */
 			body: string;
+			/** How many UTF-8 bytes the cap dropped from the middle; absent when the reply fits. */
+			bodyOmitted?: number;
 			/** The checkout when the result arrived, the same value as the recorded result's; absent in older messages. */
 			workspaceSnapshot?: WorkspaceSnapshot;
 	  })

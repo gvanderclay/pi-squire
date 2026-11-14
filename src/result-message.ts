@@ -58,6 +58,29 @@ function omittedKiB(bytes: number): number {
 	return Math.ceil(bytes / 1024);
 }
 
+/** Where the whole reply is, or that its path is unknown. */
+function fullReply(envelopePath: string | undefined): string {
+	return typeof envelopePath === "string" && envelopePath !== ""
+		? `the full reply is ${envelopePath}`
+		: "the full reply's path is unknown";
+}
+
+/**
+ * The notice before a cut body. The head and tail can keep a verdict while
+ * dropping the finding, condition or required step behind it, so the notice
+ * says the preview is incomplete and names the whole reply. It precedes the
+ * body, so a Markdown fence the reply opens cannot swallow it. The provider
+ * writes the envelope as JSON with the whole reply in its `body` field
+ * (`pi-session-mail`'s `readEnvelope`), so the notice can name that field.
+ */
+function incompleteNotice(omitted: number, envelopePath: string | undefined): string {
+	const read =
+		typeof envelopePath === "string" && envelopePath !== ""
+			? `read the "body" field of the JSON envelope at ${envelopePath}`
+			: "read the full reply, whose envelope path is unknown";
+	return `[delegate] Incomplete reply: ${omitted} UTF-8 bytes omitted from the middle. Before acting on this report or treating it as complete, ${read}; findings, conditions, or required steps may be missing.`;
+}
+
 /**
  * The result body budget. A refused setting warns and uses the default: a
  * claimed reply must still be handled, and losing it is worse than a warning.
@@ -66,7 +89,7 @@ export function resultBodyBudget(warn: (text: string) => void): number {
 	try {
 		return resultBodyBytes(getAgentDir());
 	} catch (error) {
-		warn(`delegate: ${String(error)}; this result keeps the default 16 KiB.`);
+		warn(`delegate: ${String(error)}; this result keeps the default 32 KiB.`);
 		return DEFAULT_RESULT_BODY_BYTES;
 	}
 }
@@ -123,7 +146,7 @@ export function resultDetails(
 	const body =
 		cut === undefined
 			? reply.body
-			: `${cut.head}\n[delegate] ${omittedKiB(cut.omitted)} KiB omitted here; the full reply is ${payload.path}\n${cut.tail}`;
+			: `${cut.head}\n[delegate] ${omittedKiB(cut.omitted)} KiB omitted here; ${fullReply(payload.path)}\n${cut.tail}`;
 	const limit = reply.status === "stopped" ? undefined : limitLine(sessionIdOf(delegation), reply.status);
 	return {
 		kind: "result",
@@ -145,6 +168,7 @@ export function resultDetails(
 		...(limit === undefined ? {} : { limit }),
 		task,
 		body,
+		...(cut === undefined ? {} : { bodyOmitted: cut.omitted }),
 		workspaceSnapshot: snapshot,
 	};
 }
@@ -190,6 +214,7 @@ export function resultText(details: ResultDetails): string {
 		`Envelope: ${details.envelopePath}`,
 		`Delegate session: ${details.sessionPath ?? details.sessionId ?? details.id}`,
 		"",
+		...(details.bodyOmitted === undefined ? [] : [incompleteNotice(details.bodyOmitted, details.envelopePath)]),
 		details.body,
 	].join("\n");
 }

@@ -729,10 +729,15 @@ test("task details keep a 2 KiB preview while model text keeps only its path and
 	assert.ok(!content.includes("Task cut at 2 KiB"));
 	assert.ok(details.body.startsWith("HEAD-MARKER\n"), "the head is kept");
 	assert.ok(details.body.endsWith("\nCONCLUSION-MARKER"), "the conclusion is kept");
-	assert.match(details.body, /\[delegate\] 25 KiB omitted here; the full reply is /);
+	assert.match(details.body, /\[delegate\] 9 KiB omitted here; the full reply is /);
 	assert.ok(details.body.includes(payload.path));
-	assert.ok(Buffer.byteLength(details.body) <= 16 * 1024 + 200, "the body is the budget plus the notice");
+	assert.ok(Buffer.byteLength(details.body) <= 32 * 1024 + 200, "the body is the budget plus the notice");
 	assert.ok(content.endsWith("CONCLUSION-MARKER"), "the model-facing text keeps the conclusion");
+	assert.ok(
+		content.includes(
+			`[delegate] Incomplete reply: 8222 UTF-8 bytes omitted from the middle. Before acting on this report or treating it as complete, read the "body" field of the JSON envelope at ${payload.path}; findings, conditions, or required steps may be missing.`,
+		),
+	);
 });
 
 test("a body within the budget is kept whole", async () => {
@@ -743,6 +748,54 @@ test("a body within the budget is kept whole", async () => {
 	const { details } = s.sent[0].message as unknown as { details: { body: string } };
 	assert.equal(details.body, body);
 	assert.ok(!String(s.sent[0].message.content).includes("omitted here"));
+	assert.ok(!String(s.sent[0].message.content).includes("Incomplete reply"));
+});
+
+test("a reply between 16 and 32 KiB is delivered whole under the default budget", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const body = `WHOLE-HEAD\n${"w".repeat(24 * 1024)}\nWHOLE-TAIL`;
+	assert.ok(Buffer.byteLength(body) > 16 * 1024 && Buffer.byteLength(body) < 32 * 1024);
+	s.events.emit("message:inbound", inbound(s.parent, delegation, { body }));
+	const content = String(s.sent[0].message.content);
+	const { details } = s.sent[0].message as unknown as { details: { body: string } };
+	assert.equal(details.body, body);
+	assert.ok(content.endsWith(body));
+	assert.ok(!content.includes("omitted here"));
+	assert.ok(!content.includes("Incomplete reply"));
+});
+
+test("a cut reply says so before the body, outside the fence it opens, and names the envelope", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const body = `\`\`\`text\n${"x".repeat(40 * 1024 - 12)}\n\`\`\``;
+	const payload = inbound(s.parent, delegation, { body });
+	s.events.emit("message:inbound", payload);
+	const content = String(s.sent[0].message.content);
+	const { details } = s.sent[0].message as unknown as { details: { body: string } };
+	const omitted = Buffer.byteLength(body) - 32 * 1024;
+	const notice = `[delegate] Incomplete reply: ${omitted} UTF-8 bytes omitted from the middle. Before acting on this report or treating it as complete, read the "body" field of the JSON envelope at ${payload.path}; findings, conditions, or required steps may be missing.`;
+	assert.equal(omitted, 8192);
+	assert.ok(content.includes(notice), content);
+	assert.ok(content.indexOf(notice) < content.indexOf(details.body), "the notice is before the body");
+	assert.ok(content.indexOf(notice) < content.indexOf("```text"), "the notice is outside the fence");
+	assert.equal(content.split("Incomplete reply").length, 2, "the notice appears once");
+	assert.match(details.body, /\[delegate\] 8 KiB omitted here; the full reply is /);
+	assert.ok(details.body.startsWith("```text\n"));
+	assert.ok(details.body.endsWith("\n```"));
+});
+
+test("a cut reply with no envelope path does not claim one", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const payload = inbound(s.parent, delegation, { body: "x".repeat(40 * 1024) });
+	payload.path = "";
+	s.events.emit("message:inbound", payload);
+	const content = String(s.sent[0].message.content);
+	assert.ok(content.includes("Incomplete reply: 8192 UTF-8 bytes omitted from the middle."));
+	assert.ok(content.includes("read the full reply, whose envelope path is unknown"));
+	assert.ok(!content.includes("JSON envelope at ;"));
+	assert.match(content, /\[delegate\] 8 KiB omitted here; the full reply's path is unknown/);
 });
 
 test("the result body budget is the resultBodyKiB setting, a quarter head and the rest tail", async () => {
@@ -756,6 +809,7 @@ test("the result body budget is the resultBodyKiB setting, a quarter head and th
 	assert.equal(Buffer.byteLength(head), 1024, "the head is a quarter of 4 KiB");
 	assert.equal(Buffer.byteLength(tail), 3 * 1024, "the tail keeps the rest");
 	assert.match(details.body, /\[delegate\] 4 KiB omitted here/);
+	assert.match(String(s.sent[0].message.content), /Incomplete reply: 4096 UTF-8 bytes omitted from the middle/);
 });
 
 test("a head and tail cut never splits a multi-byte character", async () => {
@@ -766,18 +820,19 @@ test("a head and tail cut never splits a multi-byte character", async () => {
 	const { details } = s.sent[0].message as unknown as { details: { body: string } };
 	const [head, , tail] = details.body.split("\n");
 	assert.ok(!details.body.includes("\uFFFD"), "no character is split");
-	assert.equal(Buffer.byteLength(head), 4095, "the head backs off the split character");
-	assert.equal(Buffer.byteLength(tail), 12286, "the tail steps over the split character");
+	assert.equal(Buffer.byteLength(head), 8190, "the head backs off the split character");
+	assert.equal(Buffer.byteLength(tail), 24574, "the tail steps over the split character");
 	assert.ok(body.startsWith(head) && body.endsWith(tail));
+	assert.match(String(s.sent[0].message.content), /Incomplete reply: 28677 UTF-8 bytes omitted from the middle/);
 });
 
 test("an invalid resultBodyKiB warns and keeps the default budget", async () => {
 	const s = await scoutSession();
 	const delegation = s.entries[0].data as Delegation;
 	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ resultBodyKiB: 2 }));
-	s.events.emit("message:inbound", inbound(s.parent, delegation, { body: "b".repeat(20 * 1024) }));
+	s.events.emit("message:inbound", inbound(s.parent, delegation, { body: "b".repeat(40 * 1024) }));
 	const { details } = s.sent[0].message as unknown as { details: { body: string } };
-	assert.match(details.body, /\[delegate\] 4 KiB omitted here/, "20 KiB cut to the default 16 KiB");
+	assert.match(details.body, /\[delegate\] 8 KiB omitted here/, "40 KiB cut to the default 32 KiB");
 	assert.equal(s.errors.length, 1);
 	assert.ok(s.errors[0].includes(join(agentDir, "squire", "settings.json")), s.errors[0]);
 	assert.match(s.errors[0], /resultBodyKiB/);

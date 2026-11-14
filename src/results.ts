@@ -17,6 +17,7 @@ import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts"
 import {
 	type AttemptState,
 	isStarted,
+	type MessageDetails,
 	type Recorded,
 	recordedName,
 	START_TYPE,
@@ -30,7 +31,15 @@ import { locatedRecord, type WindowRecord, windowPresentation } from "./tmux.ts"
 import type { Workspace } from "./workspace.ts";
 
 export { findSession, finishedModel, sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
-export type { AttemptState, Recorded, ResourceFacts, StartedRecorded, WorkspaceAttempt } from "./result-types.ts";
+export type {
+	AttemptState,
+	MessageDetails,
+	Recorded,
+	ResourceFacts,
+	StartedRecorded,
+	TaskQuote,
+	WorkspaceAttempt,
+} from "./result-types.ts";
 export { isStarted, locateSession };
 
 /** The session entry type both delegation records and results use. */
@@ -109,47 +118,6 @@ export type Result = {
 	/** The checkout as observed when the result arrived; absent in results from before it was kept. */
 	workspaceSnapshot?: WorkspaceSnapshot;
 };
-
-/** What both delegate messages carry for their view, beside the text the model reads. */
-type CommonDetails = {
-	name: string;
-	agent: string;
-	/** The model the delegation was launched on. */
-	model: string;
-	finishedModel?: string;
-	routing?: import("./routing-types.ts").RoutingRecord;
-	routingEvidence?: import("./routing-types.ts").RoutingEvidence;
-	id: string;
-	/** The delegation this one resumed. */
-	resumedFrom?: string;
-	forkedFrom?: string;
-	/** The Pi session id when it is not `id`: a resumed delegation's. */
-	sessionId?: string;
-	requestId: string;
-	sessionPath?: string;
-	cwd?: string;
-	sessionDir?: string;
-	workspace?: Workspace;
-};
-
-/** The task as the result quotes it: its text and copy path, or why there is none. */
-export type TaskQuote = { text: string; path: string } | { note: string };
-
-/** The details of a delegate message; the renderer draws from these. */
-export type MessageDetails =
-	| (CommonDetails & {
-			kind: "result";
-			/** The envelope's status: `done`, `failed` or `stopped`. */
-			status: string;
-			envelopePath: string;
-			limit?: string;
-			task: TaskQuote;
-			/** The reply body, capped. */
-			body: string;
-			/** The checkout when the result arrived, the same value as the recorded result's; absent in older messages. */
-			workspaceSnapshot?: WorkspaceSnapshot;
-	  })
-	| (CommonDetails & { kind: "gone"; windowName: string; reason?: "explicit-close" });
 
 /** The provider's payload on `message:inbound`. */
 export type Inbound = {

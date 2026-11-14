@@ -615,8 +615,14 @@ test("delegation_status defaults to running plus the 5 newest settled records", 
 
 	const result = await s.toolCall("delegation_status", {});
 	const text = result.content[0].text;
-	const details = result.structuredContent as { delegations: { id: string; state: string }[] };
-	assert.match(text, /^10 delegations \(2 running, 3 older omitted; pass all or an id for those\):/);
+	const details = result.structuredContent as {
+		delegations: { id: string; state: string }[];
+		selection: { scope: string; total: number; shown: number; omitted: number; notice?: string };
+	};
+	const notice =
+		"3 older settled records omitted; delegation_status with all:true gives the full inventory, id one delegation.";
+	assert.ok(text.startsWith(`10 delegations (2 running). ${notice}`), text);
+	assert.deepEqual(details.selection, { scope: "recent", total: 10, shown: 7, omitted: 3, notice });
 	assert.deepEqual(
 		details.delegations.map((item) => item.id),
 		delegations.slice(3).map((item) => item.id),
@@ -628,13 +634,51 @@ test("delegation_status defaults to running plus the 5 newest settled records", 
 	const all = await s.toolCall("delegation_status", { all: true });
 	const allText = all.content[0].text;
 	assert.match(allText, /^10 delegations:/);
-	assert.equal((all.structuredContent as { delegations: unknown[] }).delegations.length, 10);
+	const allDetails = all.structuredContent as { delegations: unknown[]; selection: unknown };
+	assert.equal(allDetails.delegations.length, 10);
+	assert.deepEqual(allDetails.selection, { scope: "all", total: 10, shown: 10, omitted: 0 });
 	for (const delegation of delegations) assert.ok(allText.includes(delegation.id), allText);
 
 	const omitted = await s.toolCall("delegation_status", { id: delegations[0].id });
 	assert.match(omitted.content[0].text, /^1 delegation:/);
 	assert.ok(omitted.content[0].text.includes(delegations[0].id), omitted.content[0].text);
-	assert.equal((omitted.structuredContent as { delegations: unknown[] }).delegations.length, 1);
+	const omittedDetails = omitted.structuredContent as { delegations: unknown[]; selection: unknown };
+	assert.equal(omittedDetails.delegations.length, 1);
+	assert.deepEqual(omittedDetails.selection, { scope: "id", total: 1, shown: 1, omitted: 0 });
+});
+
+test("a cleanup script over the structured result reaches an old settled record with all:true", async () => {
+	const s = session();
+	const entries = Array.from({ length: 9 }, (_, index) => recordedDelegation(s.parent, index));
+	s.entries.push(...entries);
+	await s.start();
+	const oldest = (entries[0].data as Delegation).id;
+
+	// A codemode script receives only structuredContent, never the text heading.
+	const first = (await s.toolCall("delegation_status", {})).structuredContent as {
+		delegations: { id: string; state: string }[];
+		selection: { scope: string; total: number; shown: number; omitted: number; notice?: string };
+	};
+	assert.equal(first.selection.scope, "recent");
+	assert.equal(first.selection.total, 9);
+	assert.equal(first.selection.shown, 5);
+	assert.equal(first.selection.omitted, 4);
+	assert.match(first.selection.notice ?? "", /^4 older settled records omitted;/);
+	assert.equal(
+		first.delegations.some((row) => row.id === oldest),
+		false,
+	);
+
+	const full = (await s.toolCall("delegation_status", { all: true })).structuredContent as {
+		delegations: { id: string; state: string }[];
+		selection: { omitted: number };
+	};
+	assert.equal(full.selection.omitted, 0);
+	const toClose = full.delegations.filter((row) => row.state !== "running");
+	assert.ok(
+		toClose.some((row) => row.id === oldest),
+		JSON.stringify(toClose.map((row) => row.id)),
+	);
 });
 
 test("delegation_status compact current-format Git rows stay under 2560 bytes", async (t) => {

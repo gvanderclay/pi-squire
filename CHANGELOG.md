@@ -38,6 +38,24 @@ follows [Semantic Versioning](https://semver.org/).
   `test/result-double-injection.test.ts` (the 33 KB fixture comment and
   assertion).
 
+- `delegation_status` reports what its list selected, so a codemode script can
+  tell a partial default list from a complete one. Every call's structured
+  result gains `selection`: `scope` (`recent`, `all` or `id`), `total` (every
+  record in the session, unfinished attempts included; 1 for an `id`), `shown`,
+  `omitted`, and, when records were left out, a `notice` naming the count of older settled
+  records (rolled-back workspace attempts included) and the recovery call. The text heading carries the same notice sentence, so the
+  two channels cannot drift. The description says the default list is partial
+  and `all: true` is for an exhaustive inventory or cleanup. The 5-record
+  default and compact rows are unchanged. `test/tools.test.ts` deliberately
+  replaces the old heading assertion ("3 older omitted; pass all or an id for
+  those") with the new notice and asserts `selection` for the default, `all`
+  and `id`, plus a cleanup-style enumeration that reaches an old settled record
+  through `all: true`. `test/context-budget.test.ts` deliberately raises its
+  caps for the added schema and description text: the total cap from 12,400 to
+  12,850 against 12,821 measured (12,375 before), the codemode-declared cap
+  from 10,300 to 10,700 against 10,684 (10,238 before), and the routed cap from
+  13,100 to 13,480 against 13,449 (13,003 before).
+
 ### Fixed
 
 - Reopening a nested coordinator after aborting its child-result processing run

@@ -1417,12 +1417,15 @@ launch before mail or window side effects.
 Squire records physical assistant `provider/id` and effective thinking for each
 attempt, with explicit attempt boundaries. The result and `delegation_status`
 show actual served models/efforts and whether independent family history was
-verified. Review evidence covers exactly the attempt after its marker, so an
-intermediate out-of-route model substitution makes that attempt unverified; an
-unknown or incomplete history is also unverified. Author exclusions are
-conservative across each source's full active branch, not just the edits to the
-current artifact. Keep the candidate stable while it is reviewed and identify
-every author source.
+verified. The result's `Independent review:` line carries its caller caveat
+only when the request asked for a review: `verified` and `unverified` results
+print it, and a `not-required` result (an explorer or implementer run with no
+review asked) prints the verdict alone. Review evidence covers exactly the
+attempt after its marker, so an intermediate out-of-route model substitution
+makes that attempt unverified; an unknown or incomplete history is also
+unverified. Author exclusions are conservative across each source's full active
+branch, not just the edits to the current artifact. Keep the candidate stable
+while it is reviewed and identify every author source.
 
 `family` is operator-supplied physical model lineage, not an endpoint-provider
 inference or cryptographic/backend attestation. An active branch is not an

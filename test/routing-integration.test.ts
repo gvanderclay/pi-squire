@@ -54,6 +54,37 @@ function sessionFile(id: string, route: RoutingRecord, models = [MODEL_A]): stri
 	writeFileSync(path, entries.map((entry) => JSON.stringify(entry)).join("\n"));
 	return path;
 }
+/** The routing record a routed call recorded for its start. */
+function recordedRoute(s: ReturnType<typeof session>, id: string): RoutingRecord {
+	return (s.entries.find((entry) => entry.data.id === id)!.data as { routing: RoutingRecord }).routing;
+}
+/** Deliver a delegate's reply for a routed call, as the mail provider would. */
+function deliver(s: ReturnType<typeof session>, id: string): void {
+	const requestId = (s.entries.find((entry) => entry.data.id === id)!.data as { requestId: string }).requestId;
+	s.events.emit("message:inbound", {
+		envelope: {
+			id: `reply-${id}`,
+			from: id,
+			to: s.parent,
+			in_reply_to: [requestId],
+			status: "done",
+			ts: "",
+			body: "the answer",
+		},
+		path: "/mail/cur/reply.json",
+		requests: [],
+		handled: false,
+	});
+}
+/** The result text sent for one delegation. */
+function resultFor(s: ReturnType<typeof session>, id: string): string {
+	const found = s.sent.find((message) => String(message.message.content).includes(`delegation ${id},`));
+	assert.ok(found, "a result message was sent");
+	return String(found.message.content);
+}
+const reviewLineOf = (content: string) => content.split("\n").find((line) => line.startsWith("Independent review:"));
+const REVIEW_CAVEAT =
+	"Caller must identify all author sources and keep the candidate stable; this verifies family disjointness relative to supplied active-branch histories, not exhaustive artifact attribution, error independence, review quality or isolation.";
 
 test("unbound roles ignore optional policy files; bound roles require valid policy and fresh metadata", async () => {
 	writeAgent("legacy", agentFile({}));
@@ -374,6 +405,49 @@ test("a multi-turn routed result and status collapse each served-model run to on
 		`served this attempt: ${MODEL_A}:high ×100, ${MODEL_B}:high ×2; independent family history: not-required`,
 	);
 });
+
+test("a not-required routed result prints the review verdict without the caveat", async () => {
+	configure();
+	const s = session({ extraModels: MODELS });
+	const readable = await routed(s);
+	sessionFile(readable.id, recordedRoute(s, readable.id));
+	deliver(s, readable.id);
+	assert.equal(reviewLineOf(resultFor(s, readable.id)), "Independent review: not-required.");
+	// Unreadable provenance keeps the verdict and, with the caveat, drops its reason.
+	const unknown = await routed(s);
+	const evidence = routingEvidence(recordedRoute(s, unknown.id), undefined);
+	assert.equal(evidence.independent, "not-required");
+	assert.match(evidence.reasons.join(), /attempt session/);
+	deliver(s, unknown.id);
+	assert.equal(reviewLineOf(resultFor(s, unknown.id)), "Independent review: not-required.");
+	assert.doesNotMatch(resultFor(s, unknown.id), /Caller must|attempt session/);
+});
+
+test("verified and unverified review results keep the full review sentence and its reasons", async () => {
+	configure("reviewer");
+	const branch: ProvenanceEntry[] = [
+		{
+			type: "message",
+			id: "lead",
+			parentId: null,
+			message: { role: "assistant", provider: "alpha", model: "route-a" },
+		},
+	];
+	const s = session({ extraModels: MODELS, parentModel: MODEL_B, branch });
+	const review = { ...request, review: { authors: ["self"] } };
+	const verified = await routed(s, { routing: review });
+	sessionFile(verified.id, recordedRoute(s, verified.id), [MODEL_B]);
+	deliver(s, verified.id);
+	assert.equal(reviewLineOf(resultFor(s, verified.id)), `Independent review: verified. ${REVIEW_CAVEAT}`);
+	const unverified = await routed(s, { routing: review });
+	sessionFile(unverified.id, recordedRoute(s, unverified.id), [MODEL_A]);
+	deliver(s, unverified.id);
+	assert.equal(
+		reviewLineOf(resultFor(s, unverified.id)),
+		`Independent review: unverified (actual model ${MODEL_A} was outside the frozen route). ${REVIEW_CAVEAT}`,
+	);
+});
+
 test("full review attempt evidence catches intermediate same-family substitutions, not inherited fork history", () => {
 	const route = frozenRoute();
 	route.independentReview = true;

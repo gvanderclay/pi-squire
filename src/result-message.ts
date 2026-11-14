@@ -154,6 +154,17 @@ function checkoutText(snapshot: WorkspaceSnapshot): string[] {
 	return [`Checkout when the result arrived: ${first}`];
 }
 
+/**
+ * The independent-review line. Its caveat qualifies a verdict, so a run that
+ * asked for no review prints the verdict alone instead of advice that cannot apply.
+ */
+function reviewLine(evidence: RoutingEvidence | undefined): string {
+	const verdict = evidence?.independent ?? "unverified";
+	if (verdict === "not-required") return `Independent review: ${verdict}.`;
+	const reasons = evidence?.reasons.length ? ` (${evidence.reasons.join("; ")})` : "";
+	return `Independent review: ${verdict}${reasons}. Caller must identify all author sources and keep the candidate stable; this verifies family disjointness relative to supplied active-branch histories, not exhaustive artifact attribution, error independence, review quality or isolation.`;
+}
+
 /** The one message the parent model reads for a settled delegation. */
 export function resultText(details: ResultDetails): string {
 	const { task } = details;
@@ -165,7 +176,7 @@ export function resultText(details: ResultDetails): string {
 			? [
 					`Routing: ${details.routing.profile}/${details.routing.request.category}, policy v${details.routing.policyVersion} ${details.routing.policyDigest}; ${details.routing.reason}.`,
 					`Actual served models/efforts: ${servedSummary(details.routingEvidence?.served)}.`,
-					`Independent review: ${details.routingEvidence?.independent ?? "unverified"}${details.routingEvidence?.reasons.length ? ` (${details.routingEvidence.reasons.join("; ")})` : ""}. Caller must identify all author sources and keep the candidate stable; this verifies family disjointness relative to supplied active-branch histories, not exhaustive artifact attribution, error independence, review quality or isolation.`,
+					reviewLine(details.routingEvidence),
 				]
 			: []),
 		...(details.limit === undefined ? [] : [details.limit]),

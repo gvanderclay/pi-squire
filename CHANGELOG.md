@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A routed result's `Independent review:` line prints the caller caveat only
+  when a review was requested. `verified` and `unverified` results keep the
+  full sentence and its reasons; a `not-required` result (an explorer or
+  implementer run with no review in the request) now reads
+  `Independent review: not-required.` alone. The caveat qualifies a review
+  verdict, so with no verdict it told the parent to identify author sources and
+  keep a candidate stable for a review that was never asked for, on every
+  result, which teaches it to skim the line it most needs on a real review.
+  The line's reasons are dropped with it on a `not-required` run, where they
+  describe incomplete provenance rather than a review outcome; the
+  `Actual served models/efforts` line still reports what was observed.
+  Structured details, the expanded view and `delegation_status` text are
+  unchanged.
+
 ## [0.25.0] - 2026-11-14
 
 ### Added

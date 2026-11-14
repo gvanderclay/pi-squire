@@ -16,6 +16,17 @@ follows [Semantic Versioning](https://semver.org/).
   session file means no line, never an error; compact status rows, the stored
   result schema and the tool output schemas are unchanged.
 
+### Fixed
+
+- Reopening a nested coordinator after aborting its child-result processing run
+  no longer injects an already-delivered result a second time. Saved outcomes
+  still wake processing, and a result missing from the restored transcript is
+  supplied to the next model request; only a non-aborted settle acknowledges it.
+  Deliberately updated `test/nested-lifecycle.test.ts` case “pending child facts
+  and identity restore with no launch env or transcript; late outcomes are
+  replayed” to assert next-request recovery instead of a full-result resend,
+  preserving its recovery and completion guarantee.
+
 ## [0.26.0] - 2026-11-14
 
 ### Added

@@ -17,7 +17,7 @@ export type ChildOutcome = {
 	key: string;
 	content: string;
 	details: MessageDetails;
-	/** Root display was queued; processing still waits for a model request/settle. */
+	/** Display was queued; processing still waits for a model request/settle. */
 	delivered?: boolean;
 };
 type State = { records: Recorded[]; outcomes: ChildOutcome[]; paused?: boolean };
@@ -127,7 +127,9 @@ export class ChildTasks {
 		if (!this.wakeAllowed(coordinator)) return;
 		let wake = false;
 		for (const outcome of this.outcomes) {
-			if (!coordinator && outcome.delivered) {
+			// Queued is not necessarily persisted: wake processing without adding
+			// another transcript copy; context() supplies any missing result.
+			if (outcome.delivered) {
 				wake = true;
 				continue;
 			}

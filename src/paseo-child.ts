@@ -73,6 +73,7 @@ export function registerPaseoChild(pi: ExtensionAPI, trustApi: ExtensionAPI): vo
 	});
 	pi.on("session_shutdown", () => release?.());
 	pi.registerCommand(PASEO_TURN_COMMAND, {
+		description: "Internal: sent by pi-squire to a Paseo delegate at launch; does nothing elsewhere",
 		handler: async () => {
 			if (!hosted() || toolList() === undefined || started || attempted) return;
 			attempted = true;

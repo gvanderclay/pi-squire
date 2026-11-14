@@ -234,7 +234,10 @@ test("the Paseo startup command times out without failing and never arms again",
 	assert.equal(acknowledged, true);
 });
 
-test("shutdown releases a pending Paseo startup command", async () => {
+// Timers are faked and never ticked in the next two tests, so a handler that
+// waited on its timeout would hang the test instead of passing slowly.
+test("shutdown releases a pending Paseo startup command", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
 	process.env.PASEO_AGENT_ID = AGENT;
 	process.env[PASEO_TOOLS_ENV] = "read";
 	const c = child();
@@ -243,7 +246,8 @@ test("shutdown releases a pending Paseo startup command", async () => {
 	await waiting;
 });
 
-test("the Paseo startup command does nothing outside a delegate or after its first run started", async () => {
+test("the Paseo startup command does nothing outside a delegate or after its first run started", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
 	await child().commands.get(PASEO_TURN_COMMAND)?.handler();
 	process.env[PASEO_TOOLS_ENV] = "read";
 	await child().commands.get(PASEO_TURN_COMMAND)?.handler();

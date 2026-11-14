@@ -502,6 +502,12 @@ and closing an agent run that command.
   show the command in its timeline. Later autonomous runs (follow-up mail or
   a nested child's result) refresh usage when they finish, not live while
   running. No prompt is sent into a delegate that is already running.
+  This relies on Paseo 0.15.4 behaviour: a parent given as the
+  `paseo.parent-agent-id` label keeps the parent link without Paseo wrapping
+  the launch prompt, and Paseo keeps a slash-command turn open while the
+  session is streaming. A Paseo that stops doing the second only loses the
+  live display; one that wraps the prompt again would show `/delegate-turn`
+  to the delegate's model as text.
   Paseo 0.15.4 drops its native usage display when an agent is archived;
   use `auto_exit: false` to keep it open and retain the final display, or
   read Squire's result/status usage after archive.

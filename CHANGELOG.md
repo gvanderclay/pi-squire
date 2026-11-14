@@ -6,8 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-13
+
 ### Changed
 
+- A routed delegation's served-model line, in the result, `delegation_status`
+  and the expanded view, collapses consecutive entries for the same model and
+  effort into one `model:effort ×N` run. A 100-turn single-model attempt now
+  names its model once instead of repeating it on every assistant turn; a
+  mid-run fallback still appears in order. `details.routingEvidence.served`
+  is unchanged.
 - A model the user names in `/delegate` (`--model`) or the new-delegate form,
   with no `--routing`, now launches a bound role outside its routing profile,
   with a notice, instead of requiring routing JSON and refusing any model that
@@ -1487,7 +1495,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/gvanderclay/pi-squire/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/gvanderclay/pi-squire/compare/v0.22.1...v0.23.0
 [0.22.1]: https://github.com/gvanderclay/pi-squire/compare/v0.22.0...v0.22.1
 [0.22.0]: https://github.com/gvanderclay/pi-squire/compare/v0.21.0...v0.22.0

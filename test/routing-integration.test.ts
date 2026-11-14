@@ -332,6 +332,48 @@ test("routed runtime fallback is constrained, per-candidate, durable on reload a
 	assert.deepEqual(reopened.modelSets, []);
 });
 
+test("a multi-turn routed result and status collapse each served-model run to one entry", async () => {
+	configure();
+	const s = session({ extraModels: MODELS });
+	const started = await routed(s);
+	const record = s.entries.find((entry) => entry.data.id === started.id)!.data as {
+		routing: RoutingRecord;
+		requestId: string;
+	};
+	const path = sessionFile(started.id, record.routing, [
+		...Array.from({ length: 100 }, () => MODEL_A),
+		MODEL_B,
+		MODEL_B,
+	]);
+	assert.equal(routingEvidence(record.routing, path).complete, true);
+	s.events.emit("message:inbound", {
+		envelope: {
+			id: "reply-done",
+			from: started.id,
+			to: s.parent,
+			in_reply_to: [record.requestId],
+			status: "done",
+			ts: "",
+			body: "the answer",
+		},
+		path: "/mail/cur/reply.json",
+		requests: [],
+		handled: false,
+	});
+	const result = s.sent.find((message) => /^\[delegate\] Result from/.test(String(message.message.content)));
+	assert.ok(result, "a result message was sent");
+	const servedLine = String(result.message.content)
+		.split("\n")
+		.find((line) => line.startsWith("Actual served models/efforts:"));
+	assert.equal(servedLine, `Actual served models/efforts: ${MODEL_A}:high ×100, ${MODEL_B}:high ×2.`);
+	assert.ok(servedLine.length < 120, servedLine);
+	const status = await s.toolCall("delegation_status", { id: started.id });
+	const statusLine = status.content[0].text.split("\n").find((line) => line.includes("served this attempt:"));
+	assert.equal(
+		statusLine?.trim(),
+		`served this attempt: ${MODEL_A}:high ×100, ${MODEL_B}:high ×2; independent family history: not-required`,
+	);
+});
 test("full review attempt evidence catches intermediate same-family substitutions, not inherited fork history", () => {
 	const route = frozenRoute();
 	route.independentReview = true;

@@ -1878,9 +1878,12 @@ Delegate session: <session file or id>
   Tokens in include ordinary input plus cache reads and writes; `cached` means
   cache reads. Cost is shown only when every counted call has a total (billed
   when the provider supplies it, otherwise the catalog estimate); zero stays
-  zero. Context is the last assistant request's input plus cache reads and
-  writes, excluding its output. A resumed session includes its earlier spend;
-  a fork includes copied history, so these are not per-attempt or tree totals.
+  zero; a cost under half a cent reads `<$0.01`. Context is the input plus cache
+  reads and writes, excluding output, of the last assistant request that neither
+  failed nor was aborted, so a run ending on an error keeps its real size. A
+  resumed session includes its earlier spend; a fork includes copied history, so
+  these are not per-attempt or tree totals, and the line then ends `Counts the
+  whole session, including work before this delegation.`
   No readable usage means no line. The result saves the totals; the expanded
   result and full `delegation_status` blocks show them too. Running status reads
   live usage; settled list rows keep it in structured details without adding a

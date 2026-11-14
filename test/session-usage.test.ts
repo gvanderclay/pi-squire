@@ -64,6 +64,36 @@ test("sessionUsage counts compaction, branch summaries, standalone and separate 
 	});
 });
 
+test("a failed or aborted last request does not reset context at finish", () => {
+	const zero: Counts = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } };
+	for (const stopReason of ["error", "aborted"]) {
+		write([
+			assistant(first),
+			assistant(last),
+			{ type: "message", message: { role: "assistant", stopReason, usage: zero } },
+		]);
+		assert.deepEqual(sessionUsage(file), { ...total, turns: 3 });
+	}
+	// A zero-usage message with no stop reason is skipped for context too.
+	write([assistant(last), assistant(zero)]);
+	assert.equal(sessionUsage(file)?.contextTokens, 181_000);
+});
+
+test("usage text rounds across units, marks tiny costs and names earlier work", () => {
+	const base: SessionUsage = { turns: 1, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextTokens: 0 };
+	assert.match(usageText({ ...base, input: 999_949 }), /^1 turn, 999\.9k tokens in/);
+	assert.match(usageText({ ...base, input: 999_950 }), /^1 turn, 1M tokens in/);
+	assert.match(usageText({ ...base, input: 999.6 }), /^1 turn, 1k tokens in/);
+	assert.match(usageText({ ...base, input: 999 }), /^1 turn, 999 tokens in/);
+	assert.match(usageText({ ...base, cost: 0.002 }), /, <\$0\.01;/);
+	assert.match(usageText({ ...base, cost: 0 }), /, \$0\.00;/);
+	assert.match(usageText({ ...base, cost: 0.005 }), /, \$0\.01;/);
+	assert.equal(
+		usageText(total, true),
+		`${usageText(total)} Counts the whole session, including work before this delegation.`,
+	);
+});
+
 test("non-assistant billed entries give totals without inventing turns or context", () => {
 	write([{ type: "compaction", usage: last }]);
 	assert.deepEqual(sessionUsage(file), { turns: 0, ...last, cost: 0.19, contextTokens: 0 });

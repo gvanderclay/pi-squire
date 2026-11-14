@@ -39,7 +39,7 @@ export function validateSessionUsage(value: unknown): void {
 		throw new Error("invalid delegation usage; restoration blocked");
 }
 
-type Billed = { usage: TokenCounts & { cost?: { total?: unknown } }; assistant: boolean };
+type Billed = { usage: TokenCounts & { cost?: { total?: unknown } }; assistant: boolean; failed: boolean };
 const USAGE_ENTRIES: ReadonlySet<unknown> = new Set(["usage", "compaction", "branch_summary"]);
 
 /** Pi 1.5.0 docs/session-format.md: UsageEntry, CompactionEntry, BranchSummaryEntry;
@@ -50,7 +50,7 @@ function billed(line: string): Billed | undefined {
 	let entry: {
 		type?: unknown;
 		usage?: unknown;
-		message?: { role?: unknown; usage?: unknown };
+		message?: { role?: unknown; usage?: unknown; stopReason?: unknown };
 	};
 	try {
 		entry = JSON.parse(line);
@@ -62,13 +62,17 @@ function billed(line: string): Billed | undefined {
 	if (entry?.type === "message" && (assistant || entry.message?.role === "toolResult")) usage = entry.message?.usage;
 	else if (USAGE_ENTRIES.has(entry?.type)) usage = entry?.usage;
 	if (!tokenCounts(usage)) return undefined;
-	return { usage, assistant };
+	const stop: unknown = entry.message?.stopReason;
+	return { usage, assistant, failed: stop === "error" || stop === "aborted" };
 }
 
 /**
  * Whole-file sums across all branches measure spend, not active-branch context.
- * Turns count assistant messages with usable usage; context is the last such
- * request's input plus cache reads/writes, without output (zero if none exists).
+ * Turns count assistant messages with usable usage; context is the input plus
+ * cache reads/writes, without output, of the last assistant request that
+ * neither failed nor was aborted and reported tokens (zero if none exists).
+ * Pi writes error and aborted messages with all-zero usage and skips them the
+ * same way when it reads context (its compaction `getAssistantUsage`).
  * Missing files, malformed lines and files without billed usage give no report.
  */
 export function sessionUsage(sessionPath: string | undefined): SessionUsage | undefined {
@@ -88,15 +92,16 @@ function readUsage(sessionPath: string): SessionUsage | undefined {
 	for (const line of lines) {
 		const item = billed(line);
 		if (item === undefined) continue;
-		const { usage, assistant } = item;
+		const { usage, assistant, failed } = item;
 		const cost = usage.cost?.total;
+		const context: number = usage.input + usage.cacheRead + usage.cacheWrite;
 		const next: SessionUsage = {
 			turns: total.turns + Number(assistant),
 			input: total.input + usage.input,
 			output: total.output + usage.output,
 			cacheRead: total.cacheRead + usage.cacheRead,
 			cacheWrite: total.cacheWrite + usage.cacheWrite,
-			contextTokens: assistant ? usage.input + usage.cacheRead + usage.cacheWrite : total.contextTokens,
+			contextTokens: assistant && !failed && context > 0 ? context : total.contextTokens,
 			...(total.cost !== undefined && nonnegative(cost) ? { cost: total.cost + cost } : {}),
 		};
 		if (!Object.values(next).every(nonnegative)) continue;
@@ -107,14 +112,25 @@ function readUsage(sessionPath: string): SessionUsage | undefined {
 }
 
 function tokens(count: number): string {
-	if (count >= 1_000_000) return `${Number((count / 1_000_000).toFixed(1))}M`;
-	if (count >= 1000) return `${Number((count / 1000).toFixed(1))}k`;
-	return String(Math.round(count));
+	const whole: number = Math.round(count);
+	// 999,950 and up would print as "1000k": it rounds to a million.
+	if (whole >= 999_950) return `${Number((whole / 1_000_000).toFixed(1))}M`;
+	if (whole >= 1000) return `${Number((whole / 1000).toFixed(1))}k`;
+	return String(whole);
 }
 
-/** Shared wording, without a heading, for result headers, full status blocks and expanded results. */
-export function usageText(usage: SessionUsage): string {
+/** A known cost; under half a cent reads `<$0.01`, so it is not mistaken for free. */
+function dollars(cost: number): string {
+	return cost > 0 && cost < 0.005 ? "<$0.01" : `$${cost.toFixed(2)}`;
+}
+
+/**
+ * Shared wording, without a heading, for result headers, full status blocks and expanded results.
+ * `earlier` marks a resumed or forked delegation, whose session file also holds the work before it.
+ */
+export function usageText(usage: SessionUsage, earlier = false): string {
 	const input = tokens(usage.input + usage.cacheRead + usage.cacheWrite);
-	const cost = usage.cost === undefined ? "" : `, $${usage.cost.toFixed(2)}`;
-	return `${usage.turns} turn${usage.turns === 1 ? "" : "s"}, ${input} tokens in (${tokens(usage.cacheRead)} cached), ${tokens(usage.output)} out${cost}; context at finish ${tokens(usage.contextTokens)}.`;
+	const cost = usage.cost === undefined ? "" : `, ${dollars(usage.cost)}`;
+	const scope = earlier ? " Counts the whole session, including work before this delegation." : "";
+	return `${usage.turns} turn${usage.turns === 1 ? "" : "s"}, ${input} tokens in (${tokens(usage.cacheRead)} cached), ${tokens(usage.output)} out${cost}; context at finish ${tokens(usage.contextTokens)}.${scope}`;
 }

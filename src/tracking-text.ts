@@ -120,7 +120,9 @@ export function viewText({
 		...(record.forkedFrom === undefined ? [] : [`  forked from ${record.forkedFrom}`]),
 		...(resumedAs === undefined ? [] : [`  resumed as ${resumedAs}`]),
 		`  state: ${stateLine(state, record)}${seen}`,
-		...(usage === undefined ? [] : [`  usage: ${usageText(usage)}`]),
+		...(usage === undefined
+			? []
+			: [`  usage: ${usageText(usage, (record.resumedFrom ?? record.forkedFrom) !== undefined)}`]),
 		`  ${recordedLocation(record, windowSession)}`,
 		`  cwd: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),

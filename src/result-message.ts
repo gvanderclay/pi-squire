@@ -169,7 +169,9 @@ export function resultText(details: ResultDetails): string {
 				]
 			: []),
 		...(details.limit === undefined ? [] : [details.limit]),
-		...(details.usage === undefined ? [] : [`Usage: ${usageText(details.usage)}`]),
+		...(details.usage === undefined
+			? []
+			: [`Usage: ${usageText(details.usage, (details.resumedFrom ?? details.forkedFrom) !== undefined)}`]),
 		taskLine,
 		`Working directory: ${cwdLine(details.cwd)}`,
 		...(details.workspaceSnapshot === undefined ? [] : checkoutText(details.workspaceSnapshot)),

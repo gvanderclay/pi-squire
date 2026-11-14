@@ -14,7 +14,9 @@ follows [Semantic Versioning](https://semver.org/).
   after a result; compact settled rows keep usage in structured details only.
   Totals include billed assistant, compaction, branch-summary, standalone and
   nested tool model work across all session branches, including copied or
-  resumed history, not just the current attempt. Older records may omit usage;
+  resumed history, not just the current attempt, and the line says so for a
+  resumed or forked delegation. Context at finish skips a failed or aborted
+  last request. Older records may omit usage;
   malformed saved usage blocks restoration. New reader, result, restore and
   render tests cover the added fields without changing the compact status size
   budget. `test/context-budget.test.ts` deliberately raises its metadata budget

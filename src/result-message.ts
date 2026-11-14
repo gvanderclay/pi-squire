@@ -4,6 +4,7 @@ import { cwdLine, modelLabel, snapshotLines } from "./render.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import type { StartedRecorded } from "./result-types.ts";
 import type { Inbound, MessageDetails, TaskQuote } from "./results.ts";
+import { servedSummary } from "./routing-provenance.ts";
 import type { RoutingEvidence } from "./routing-types.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 
@@ -111,7 +112,7 @@ export function resultText(details: ResultDetails): string {
 		...(details.routing
 			? [
 					`Routing: ${details.routing.profile}/${details.routing.request.category}, policy v${details.routing.policyVersion} ${details.routing.policyDigest}; ${details.routing.reason}.`,
-					`Actual served models/efforts: ${details.routingEvidence?.served.map((item) => `${item.model}:${item.thinking ?? "unknown"}`).join(", ") || "unknown"}.`,
+					`Actual served models/efforts: ${servedSummary(details.routingEvidence?.served)}.`,
 					`Independent review: ${details.routingEvidence?.independent ?? "unverified"}${details.routingEvidence?.reasons.length ? ` (${details.routingEvidence.reasons.join("; ")})` : ""}. Caller must identify all author sources and keep the candidate stable; this verifies family disjointness relative to supplied active-branch histories, not exhaustive artifact attribution, error independence, review quality or isolation.`,
 				]
 			: []),

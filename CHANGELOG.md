@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A routed delegation's served-model line, in the result, `delegation_status`
+  and the expanded view, collapses consecutive entries for the same model and
+  effort into one `model:effort ×N` run. A 100-turn single-model attempt now
+  names its model once instead of repeating it on every assistant turn; a
+  mid-run fallback still appears in order. `details.routingEvidence.served`
+  is unchanged.
 - A model the user names in `/delegate` (`--model`) or the new-delegate form,
   with no `--routing`, now launches a bound role outside its routing profile,
   with a notice, instead of requiring routing JSON and refusing any model that

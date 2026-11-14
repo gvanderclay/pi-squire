@@ -4,9 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type { StartedRecorded } from "../src/results.ts";
-import { authorProof, ROUTING_ATTEMPT, readActiveBranch, routingEvidence } from "../src/routing-provenance.ts";
+import {
+	authorProof,
+	ROUTING_ATTEMPT,
+	readActiveBranch,
+	routingEvidence,
+	servedSummary,
+} from "../src/routing-provenance.ts";
 import { validateRoutingMetadata } from "../src/routing-restore.ts";
 import { parseRuntimeRouting } from "../src/routing-runtime.ts";
+import type { ServedModel } from "../src/routing-types.ts";
 import { frozenRoute, MODEL_A, MODEL_B, policy } from "./routing-fixtures.ts";
 
 const root = mkdtempSync(join(tmpdir(), "squire-provenance-"));
@@ -29,6 +36,29 @@ const assistant = (id: string, parentId: string | null, model: string) => ({
 		model: model.slice(model.indexOf("/") + 1),
 		thinkingLevel: "high",
 	},
+});
+const served = (model: string, thinking?: string): ServedModel => ({
+	model,
+	entryId: `${model}:${thinking ?? "none"}`,
+	...(thinking === undefined ? {} : { thinking }),
+});
+test("a served summary collapses consecutive runs and keeps a fallback mid-run visible", () => {
+	assert.equal(servedSummary(undefined), "unknown");
+	assert.equal(servedSummary([]), "unknown");
+	assert.equal(servedSummary([served(MODEL_A, "high")]), `${MODEL_A}:high`);
+	const run = Array.from({ length: 12 }, () => served(MODEL_A, "high"));
+	const fallback = Array.from({ length: 3 }, () => served(MODEL_B, "medium"));
+	assert.equal(servedSummary([...run, ...fallback]), `${MODEL_A}:high ×12, ${MODEL_B}:medium ×3`);
+	assert.equal(
+		servedSummary([
+			served(MODEL_A, "high"),
+			served(MODEL_B, "medium"),
+			served(MODEL_B, "medium"),
+			served(MODEL_A, "high"),
+		]),
+		`${MODEL_A}:high, ${MODEL_B}:medium ×2, ${MODEL_A}:high`,
+	);
+	assert.equal(servedSummary([served(MODEL_A), served(MODEL_A)]), `${MODEL_A}:unknown ×2`);
 });
 test("author provenance walks raw active ancestry before compaction, excludes abandoned siblings, and never rewrites", () => {
 	const path = file("author", [

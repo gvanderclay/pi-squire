@@ -15,8 +15,9 @@ export const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
  * session's address, whose messages are instructions; other sessions are
  * colleagues, and work they ask for that the parent did not is checked with
  * the parent first (spec Q37: distrust wording made models refuse all peer
- * mail). It names no provider, package or tool, so it holds for any
- * `message:*` provider.
+ * mail). It also asks for a short, conclusion-first report and for no
+ * unchanged re-reads or unwaited status repeats. It names no provider,
+ * package or tool, so it holds for any `message:*` provider.
  */
 export function parentTrust(parent: string, coordinator = false): string {
 	return [
@@ -25,6 +26,7 @@ export function parentTrust(parent: string, coordinator = false): string {
 		coordinator
 			? `Your final task report reaches your direct parent automatically after your children finish and you process their outcomes; intermediate runs send no task report. Message ${parent} before your final task report only with a question you cannot continue without.`
 			: `Your final message reaches the session that started you automatically and is all it sees, so make it self-contained. Message ${parent} before then only with a question you cannot continue without.`,
+		"Put the conclusion first and keep the report short; write long detail to a file and name it. Re-read a file only if it changed or the needed contents are not in context, and check the same status again only after waiting.",
 	].join(" ");
 }
 

@@ -3,7 +3,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readChildRecords } from "./child-tasks.ts";
 import { type Identity, maxDepth, readIdentity } from "./identity.ts";
-import { isV2Start, START_TYPE } from "./result-types.ts";
+import { isV2Start, START_TYPE, validateSettledAt } from "./result-types.ts";
 import { isStarted, type Recorded, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { sessionIsOwned } from "./session-owner.ts";
 import { locatedRecord, recordLocator } from "./tmux.ts";
@@ -177,7 +177,9 @@ function withCloses(records: Map<string, Recorded>, entries: TreeEntry[]): Recor
 }
 function parentRecords(parent: string, ctx: ExtensionContext, notify: boolean): Recorded[] {
 	try {
-		return readChildRecords(parent);
+		const records = readChildRecords(parent);
+		for (const record of records) if (isStarted(record)) validateSettledAt(record);
+		return records;
 	} catch (error) {
 		if (notify)
 			ctx.ui.notify(

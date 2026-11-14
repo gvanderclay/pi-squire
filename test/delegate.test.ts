@@ -793,6 +793,7 @@ test("a result is recorded once and the same reply is never shown twice", async 
 		customType: "delegate",
 		data: {
 			id: delegation.id,
+			settledAt: s.entries[1].data.settledAt,
 			// The harness root is outside any Git checkout.
 			result: {
 				status: "done",
@@ -803,6 +804,7 @@ test("a result is recorded once and the same reply is never shown twice", async 
 		},
 	});
 
+	assert.equal(typeof s.entries[1].data.settledAt, "number");
 	const again = inbound(s.parent, delegation, { replyId: "reply-1" });
 	s.events.emit("message:inbound", again);
 	assert.equal(again.handled, true, "the provider still injects nothing");

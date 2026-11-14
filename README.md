@@ -1225,9 +1225,12 @@ session's address. The delegate's task arrives as a message from that
 session, and that message and every later one from the same address are
 instructions to follow as given. Other sessions are colleagues: the delegate
 may answer them, but checks with the parent before doing work the parent did
-not ask for. Its final message reaches the parent on its own. The section names
-no provider, package or tool, so it holds whatever `message:*` provider
-delivers the task. `prompt_mode: replace` appends the body as written.
+not ask for. Its final message reaches the parent on its own. The section also
+asks for a short report that leads with the conclusion, long detail in a named
+file, a file re-read only if it changed or its needed contents are no longer
+in context, and a status check repeated only after waiting. It names no provider, package or tool, so it holds whatever
+`message:*` provider delivers the task. `prompt_mode: replace` appends the
+body as written.
 
 An agent file that cannot be used is invalid, and its agent is disabled:
 frontmatter that is not readable YAML or not a set of fields, an `enabled` or
@@ -1564,7 +1567,15 @@ nothing starts.
 every running delegation and unfinished workspace attempt, plus the 5 most
 recently settled records. When it leaves older records out, the heading says
 how many and points to `all` and `id`; `all: true` lists every record, and an
-`id` selects one, including one the default leaves out.
+`id` selects one, including one the default leaves out. List responses use a
+compact block of five base lines at most for settled delegations: id/agent/model/thinking,
+state, checkout summary (with a changed-path count when non-zero), session path,
+and envelope path when present. Resume/fork relationships add their existing
+`resumed from`, `forked from` and `resumed as` lines when present, so the newest
+id in a resume chain remains visible. Running delegations and workspace attempts keep
+their full blocks; `id` gives a delegation's full block. Structured details are
+unchanged. Settlement order uses the recorded settlement time; older sessions
+without one rank oldest, retaining their relative order.
 
 ```text
 2 delegations:
@@ -1576,23 +1587,17 @@ how many and points to `all` and `id`; `all: true` lists every record, and an
   cwd: <the directory its window opened in>
   workspace: existing directory; Git checkout <main root> (linked worktree <checkout>), branch <name>, launch commit <sha>
   checkout now: branch <name>, head <sha>, launch commit <sha>, 1 commit since launch, working tree dirty
-    committed since launch: 1 path: "src/a.ts"
-    staged: none
-    unstaged: 1 path: "README.md"
-    untracked: none
-    conflicted: none
+    2 changed paths; details in the structured result
   auto-exit: on — the delegate closes its window after a normal completion unless the user took over there
   session: <the delegate's session file, or its id when there is none yet>
 
 <id> researcher (provider/other, thinking high)
-  name: researcher-<first 8 of the id>
-  state: done — result status: done; the result reaches this session as a [delegate] message on its own
-  window: researcher-<first 8 of the id> (@2)
-  cwd: unknown (not recorded)
+  state: done — result status: done
   checkout now: Git state unknown (this delegation was recorded before its launch checkout was kept)
-  auto-exit: off — the window stays open after the result
   session: <session file>
   envelope: <the reply's path in the parent's cur/>
+
+Pass id for a delegation’s full block.
 ```
 
 - **Name** is the delegate's Pi session name, its agent and the first 8

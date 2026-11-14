@@ -91,6 +91,39 @@ test("registry views are subtree scoped and never inject grandchildren's raw rep
 	await assert.rejects(owner.toolCall("delegation_resume", { id: w.id, task: "again" }), /only direct parent/);
 	assert.equal(tmux.killed.length, before);
 });
+test("recent descendant selection uses settlement time across coordinators, not hierarchy order", async (t) => {
+	const tmux = new FakeTmux();
+	const owner = instance({ tmux });
+	await owner.start();
+	const a = await launch(owner, "coordinator");
+	const b = await launch(owner, "coordinator");
+	const first = instance({ parent: a.id, tmux });
+	const second = instance({ parent: b.id, tmux });
+	await first.start();
+	await second.start();
+	const settleWorkers = async (coordinator: Session): Promise<string[]> => {
+		const ids: string[] = [];
+		for (let index = 0; index < 5; index += 1) {
+			const record = await launch(coordinator, "worker");
+			const worker = instance({ parent: record.id, tmux });
+			await worker.start();
+			scan(worker);
+			await worker.run();
+			scan(coordinator);
+			ids.push(record.id);
+		}
+		return ids;
+	};
+	await settleWorkers(second);
+	let now = Date.now() + 1000;
+	t.mock.method(Date, "now", () => now++);
+	const newer = await settleWorkers(first);
+	assert.deepEqual(
+		(await status(owner)).map((record) => record.id),
+		[a.id, ...newer, b.id],
+	);
+	assert.equal(owner.sent.length, 0, "read-only descendant view never imports reports");
+});
 test("offline worker and coordinator replies restore same-id barriers and only direct reports upstream", async () => {
 	const { owner, coordinator, worker, c, tmux } = await tree();
 	await coordinator.shutdown();

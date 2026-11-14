@@ -141,6 +141,14 @@ function environment(input: StartInput): Record<string, string> {
 	return env;
 }
 
+/**
+ * The resource flags an agent's `skills` and `context_files` ask for: none by
+ * default, so a launch without those keys stays byte-identical.
+ */
+function resourceArgs(agent: Agent): string[] {
+	return [...(agent.skills ? [] : ["--no-skills"]), ...(agent.contextFiles ? [] : ["--no-context-files"])];
+}
+
 /** Preserve the README hook's mutable args/env and protected ancestry fields. */
 function launchPayload(input: StartInput): LaunchPayload {
 	const { start, identity: own } = input;
@@ -157,6 +165,7 @@ function launchPayload(input: StartInput): LaunchPayload {
 			"--thinking",
 			start.thinking,
 			...toolArgs(input.tools),
+			...resourceArgs(start.agent),
 			"--append-system-prompt",
 			prompt,
 		],

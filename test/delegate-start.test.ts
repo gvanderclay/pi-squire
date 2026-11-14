@@ -85,6 +85,42 @@ async function orders(client: DelegateHost, exit: (record: StartedRecorded) => v
 	}
 }
 
+test("an agent's skills and context_files reach launch, resume and fork as Pi's resource flags", async () => {
+	writeAgent(
+		"lean",
+		agentFile({ model: "alpha/fast-model", thinking: "low", skills: "false", context_files: "false" }),
+	);
+	const s = session();
+	try {
+		await s.start();
+		await s.toolCall("delegate", { agent: "lean", task: "first" });
+		const first = lastRecord(s);
+		sessionFile(first.id);
+		s.tmux.windows.delete((first.locator as { id: string }).id);
+		await s.toolCall("delegation_resume", { id: first.id, task: "second" });
+		await s.toolCall("delegation_fork", { id: lastRecord(s).id, task: "third" });
+		assert.equal(s.tmux.opened.length, 3);
+		for (const { argv } of s.tmux.opened) {
+			assert.ok(argv.includes("--no-skills"), argv.join(" "));
+			assert.ok(argv.includes("--no-context-files"), argv.join(" "));
+		}
+	} finally {
+		await s.shutdown();
+	}
+});
+
+test("an agent without skills or context_files passes neither resource flag", async () => {
+	const s = session();
+	try {
+		await s.start();
+		await s.toolCall("delegate", { agent: "scout", task: "go" });
+		const { argv } = s.tmux.opened[0];
+		assert.ok(!argv.includes("--no-skills") && !argv.includes("--no-context-files"), argv.join(" "));
+	} finally {
+		await s.shutdown();
+	}
+});
+
 test("tmux launch/resume/fork keep mail, identity, hook, dispatch, open and record order", async () => {
 	const host = new FakeTmux();
 	await orders(host, (record: StartedRecorded) => {

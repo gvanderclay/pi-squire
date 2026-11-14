@@ -52,7 +52,7 @@ export function delegateVisible(options: { selectedTools: string[]; hiddenTools:
 
 /** Where agent files go, for the messages that say how to add one. */
 export function whereAgentsGo(agentDir: string): string {
-	return `${join(globalAgentsDir(agentDir), "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, fallback, auto_exit, prompt_mode, display_name, locked and enabled`;
+	return `${join(globalAgentsDir(agentDir), "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, fallback, auto_exit, skills, context_files, prompt_mode, display_name, locked and enabled`;
 }
 
 /** One roster line for the `delegate` tool's description. */

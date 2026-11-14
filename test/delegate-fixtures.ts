@@ -6,6 +6,8 @@ export function testAgent(overrides: Partial<Agent> = {}): Agent {
 		name: "worker",
 		description: "Test worker",
 		autoExit: true,
+		skills: true,
+		contextFiles: true,
 		toolsExcept: [],
 		fallback: [],
 		locked: [],

@@ -2085,7 +2085,11 @@ and it resumes as the command does.
 ## Forking a delegation
 
 Call `delegation_fork({ id, task })` when new work needs a child's built context
-without continuing that child's session. It runs
+without continuing that child's session. The tool is deferred, so it is not in
+every request's tool list: find it with `tool_search`, or call it from a
+codemode script. When neither `tool_search` nor `codemode` is active,
+pi-squire declares the fork itself so it stays reachable; `delegation_resume`
+stays declared either way. It runs
 `pi --fork <child session file> --session-id <new id>` in a new tmux window.
 The source may still be running; its window, task and session file are untouched.
 Without `worktree`, both sessions share the working folder; the tool warns when

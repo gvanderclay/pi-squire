@@ -33,6 +33,7 @@ const exposures: Record<string, ToolExposure> = {
 	delegation_status: "direct",
 	delegation_close: "direct",
 	delegation_resume: "direct",
+	delegation_fork: "deferred",
 };
 const runtimes: Awaited<ReturnType<typeof runtime>>[] = [];
 const fakeSessions: ReturnType<typeof session>[] = [];
@@ -274,8 +275,24 @@ test("a granted nested child gets every delegation tool, whatever its parent has
 	parent.pi.setActiveTools(["probe_driver", "delegate"]);
 	await parent.toolCall("delegate", { agent: "worker", task: "probe" });
 	const names = selected(parent.tmux.opened[0].argv);
-	for (const name of ["delegate", "delegation_close", "delegation_status", "delegation_resume"])
+	for (const name of ["delegate", "delegation_close", "delegation_status", "delegation_resume", "delegation_fork"])
 		assert.ok(names.includes(name), name);
+});
+
+test("a coordinator's child reaches the deferred fork while a plain delegate cannot", async () => {
+	// A plain delegate's tool list leaves fork out, so Pi never registers it and no script can call it.
+	const plain = await coordinator();
+	await plain.parent.toolCall("delegate", { agent: "worker", task: "probe" });
+	const plainArgv = plain.parent.tmux.opened[0].argv;
+	assert.ok(!selected(plainArgv).includes("delegation_fork"), "a plain delegate's tool list leaves fork out");
+	assert.equal((await (await runtime(plainArgv)).probe()).outcomes.delegation_fork, false);
+	// An opted-in coordinator's list names it; deferred exposure keeps it callable without declaring it.
+	writeAgent("worker", agentFile({ allow_nested_delegation: "[worker]", model: "alpha/fast-model" }));
+	const nested = await coordinator();
+	await nested.parent.toolCall("delegate", { agent: "worker", task: "probe" });
+	const nestedArgv = nested.parent.tmux.opened[0].argv;
+	assert.ok(selected(nestedArgv).includes("delegation_fork"));
+	assert.equal((await (await runtime(nestedArgv)).probe()).outcomes.delegation_fork, true);
 });
 
 test("session:launch additions reach a nested child unchanged on launch and resume", async () => {

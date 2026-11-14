@@ -157,7 +157,8 @@ function view(
 		record,
 		...(record.routing ? { routingEvidence: routingEvidence(record.routing, sessionPath) } : {}),
 		state,
-		usage: record.result === undefined && state === "running" ? sessionUsage(sessionPath) : record.result?.usage,
+		// A result saves what it spent; every state without one (running, gone, window-closed, closed) reads its session file now.
+		usage: record.result?.usage ?? sessionUsage(sessionPath),
 		name: recordedName(record),
 		sessionPath,
 		lastActive,

@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A delegation that ends without a result — its window gone, its window closed,
+  or an explicit `delegation_close` — now reports what it spent. The full
+  `delegation_status` block (given an id) and the parent's closed-without-a-result
+  or canceled message carry the same `Usage:` line a result does, read from the
+  delegate's session file when no result saved it. A missing or unreadable
+  session file means no line, never an error; compact status rows, the stored
+  result schema and the tool output schemas are unchanged.
+
 ## [0.26.0] - 2026-11-14
 
 ### Added

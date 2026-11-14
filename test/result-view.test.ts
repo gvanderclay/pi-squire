@@ -428,3 +428,103 @@ test("result and gone messages name the recorded cwd, and a legacy record's cwd 
 	assert.ok(!message.content.includes(`Working directory: ${root}`), message.content);
 	assert.equal(message.details?.cwd, undefined);
 });
+
+/** The states a delegation reaches with no result: gone (poll), window-closed (status only) or closed (explicit close). */
+type NoResult = "gone" | "window-closed" | "closed";
+const NO_RESULT_STATES: NoResult[] = ["gone", "window-closed", "closed"];
+
+/** A started delegation driven to `state`, with its usage session file written or left missing. */
+async function noResult(t: TestContext, state: NoResult, file: "readable" | "missing") {
+	// The poll's interval must be a mock timer, so enable them before the launch starts it.
+	if (state === "gone") t.mock.timers.enable({ apis: ["setInterval"] });
+	const s = await started();
+	if (file === "readable") writeUsageSession(s);
+	const id = delegationId(s);
+	if (state === "closed") await s.toolCall("delegation_close", { id });
+	else {
+		s.tmux.windows.clear();
+		if (state === "gone") {
+			for (let i = 0; i < 4; i++) {
+				t.mock.timers.tick(5000);
+				for (let j = 0; j < 3; j++) await new Promise((resolve) => setImmediate(resolve));
+			}
+		}
+	}
+	return { s, id };
+}
+
+/** The no-result message the parent receives: the poll's gone message, or the explicit close's inbox outcome. */
+async function noResultMessage(s: Session): Promise<string | undefined> {
+	const sent = s.sent.find((m) => /closed without a result/.test(String(m.message.content)));
+	if (sent) return String(sent.message.content);
+	for (const result of await s.fire("context", { messages: [] })) {
+		const messages = (result as { messages?: { content: unknown }[] } | undefined)?.messages ?? [];
+		const found = messages.find((message) => /canceled by explicit close/.test(String(message.content)));
+		if (found) return String(found.content);
+	}
+	return undefined;
+}
+
+for (const state of NO_RESULT_STATES) {
+	test(`a ${state} delegation with a readable session file shows its usage in the full block only`, async (t) => {
+		const { s, id } = await noResult(t, state, "readable");
+		const full = await s.toolCall("delegation_status", { id });
+		assert.ok(full.content[0].text.includes(USAGE_STATUS), full.content[0].text);
+		const item = (full.structuredContent as { delegations: { state: string; usage?: SessionUsage }[] }).delegations[0];
+		assert.equal(item.state, state);
+		assert.deepEqual(item.usage, USAGE);
+		const compact = await statusTool(s);
+		assert.doesNotMatch(compact.content[0].text, / {2}usage:/);
+		await s.shutdown();
+	});
+
+	test(`a ${state} delegation with no session file reports no usage and no error`, async (t) => {
+		const { s, id } = await noResult(t, state, "missing");
+		const full = await s.toolCall("delegation_status", { id });
+		assert.doesNotMatch(full.content[0].text, / {2}usage:/);
+		const item = (full.structuredContent as { delegations: Record<string, unknown>[] }).delegations[0];
+		assert.equal(item.state, state);
+		assert.equal(Object.hasOwn(item, "usage"), false);
+		const content = await noResultMessage(s);
+		if (state === "window-closed")
+			assert.equal(content, undefined, "only the poll and an explicit close send a message");
+		else {
+			assert.ok(content);
+			assert.doesNotMatch(content, /^Usage:/m);
+		}
+		await s.shutdown();
+	});
+}
+
+for (const state of ["gone", "closed"] as const) {
+	test(`a ${state} message carries the usage read from the delegate's session file`, async (t) => {
+		const { s } = await noResult(t, state, "readable");
+		const content = await noResultMessage(s);
+		assert.ok(content);
+		assert.ok(content.split("\n").includes(USAGE_LINE), content);
+		await s.shutdown();
+	});
+}
+
+test("a no-result message for a resumed delegation says its usage counts the whole session", async (t) => {
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	const first = await started();
+	writeUsageSession(first);
+	const entries = structuredClone(first.entries);
+	entries[0].data.resumedFrom = "prior-delegation";
+	await first.shutdown();
+	rmSync(join(agentDir, "squire", "child-tasks", `${encodeURIComponent(first.parent)}.json`));
+	const resumed = await started(entries, first.parent);
+	resumed.tmux.windows.clear();
+	for (let i = 0; i < 4; i++) {
+		t.mock.timers.tick(5000);
+		for (let j = 0; j < 3; j++) await new Promise((resolve) => setImmediate(resolve));
+	}
+	const suffix = "Counts the whole session, including work before this delegation.";
+	const content = await noResultMessage(resumed);
+	assert.ok(content);
+	assert.ok(content.split("\n").includes(`${USAGE_LINE} ${suffix}`), content);
+	const full = await resumed.toolCall("delegation_status", { id: delegationId(resumed) });
+	assert.ok(full.content[0].text.includes(`${USAGE_STATUS} ${suffix}`), full.content[0].text);
+	await resumed.shutdown();
+});

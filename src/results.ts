@@ -9,15 +9,14 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { ChildTasks } from "./child-tasks.ts";
 import type { Identity } from "./identity.ts";
-import { cwdLine, modelLabel, renderMessage, workspaceLine } from "./render.ts";
-import { closeOutcome } from "./result-close.ts";
-import { resultBodyBudget, resultDetails, resultText, resumeDetails } from "./result-message.ts";
+import { renderMessage } from "./render.ts";
+import { closeOutcome, goneOutcome } from "./result-close.ts";
+import { resultBodyBudget, resultDetails, resultText } from "./result-message.ts";
 import { restoreRecords } from "./result-restore.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
 import {
 	type AttemptState,
 	isStarted,
-	type MessageDetails,
 	type Recorded,
 	recordedName,
 	START_TYPE,
@@ -28,7 +27,7 @@ import { ResultsPresentation } from "./results-presentation.ts";
 import { routingEvidence } from "./routing-provenance.ts";
 import { type SessionUsage, sessionUsage } from "./session-usage.ts";
 import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
-import { locatedRecord, type WindowRecord, windowPresentation } from "./tmux.ts";
+import { locatedRecord, type WindowRecord } from "./tmux.ts";
 import type { Workspace } from "./workspace.ts";
 
 export { findSession, finishedModel, sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
@@ -338,7 +337,6 @@ export function createResults(
 		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true)
 			return false;
 		const session = locateSession(record, ctx?.sessionManager.getSessionDir());
-		const finished = finishedModel(session);
 		const settledAt = Date.now();
 		pi.appendEntry(CUSTOM_TYPE, {
 			id,
@@ -348,36 +346,15 @@ export function createResults(
 		});
 		record.gone = true;
 		record.settledAt = settledAt;
-		const details: MessageDetails = {
-			kind: "gone",
-			name: recordedName(record),
-			agent: record.agent,
-			model: record.model,
-			...(finished === undefined ? {} : { finishedModel: finished }),
-			id: record.id,
-			...resumeDetails(record),
-			requestId: record.requestId,
-			...(session === undefined ? {} : { sessionPath: session }),
-			...(record.cwd === undefined ? {} : { cwd: record.cwd }),
-			...(record.sessionDir === undefined ? {} : { sessionDir: record.sessionDir }),
-			...(record.workspace === undefined ? {} : { workspace: record.workspace }),
-			windowName: windowPresentation(record).windowName,
-		};
-		const content = [
-			`[delegate] Delegation ${record.id}${record.resumedFrom === undefined ? "" : ` (resumed from ${record.resumedFrom})`}${record.forkedFrom === undefined ? "" : ` (forked from ${record.forkedFrom})`} (${record.agent}, ${modelLabel(record.model, finished)}), request ${record.requestId}, closed without a result: its window ${windowPresentation(record).windowName} is gone and no reply arrived.`,
-			`Working directory: ${cwdLine(record.cwd)}`,
-			...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
-			`Delegate session: ${session ?? sessionIdOf(record)}`,
-			"A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
-		].join("\n");
+		const outcome = goneOutcome(record, session);
 		tasks.paused = false; // A fresh outcome is new work, not replay of the stopped turn.
-		tasks.outcomes.push({ key: `gone:${record.id}`, content, details });
+		tasks.outcomes.push(outcome);
 		save();
 		pi.sendMessage(
-			{ customType: CUSTOM_TYPE, details, content, display: true },
+			{ customType: CUSTOM_TYPE, details: outcome.details, content: outcome.content, display: true },
 			{ triggerTurn: true, deliverAs: processesChildren() ? "steer" : "followUp" },
 		);
-		tasks.delivered(`gone:${record.id}`);
+		tasks.delivered(outcome.key);
 		save();
 		updateFooter();
 		return true;

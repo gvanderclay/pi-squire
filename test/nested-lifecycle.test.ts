@@ -188,7 +188,14 @@ test("pending child facts and identity restore with no launch env or transcript;
 	const again = instance({ parent: coordinator.parent });
 	await again.start();
 	await nextTurn();
-	assert.ok(again.sent.some(({ message }) => String(message.content).includes("answer")));
+	assert.ok(again.sent.some(({ message }) => message.customType === "delegate-recovery"));
+	assert.ok(!again.sent.some(({ message }) => String(message.content).includes("answer")));
+	// A queued display may be absent from the transcript. The recovery wake
+	// starts processing; the next request receives the saved outcome once.
+	const context = await again.fire("context", { messages: [] });
+	const recovered = context.find((value) => value !== undefined) as { messages: { content: unknown }[] };
+	assert.equal(recovered.messages.filter((message) => String(message.content).includes("answer")).length, 1);
+	assert.equal(finals(rootSession).length, 0, "recovery still waits for a successful processing run");
 	await again.run();
 	assert.equal(finals(rootSession).length, 1);
 	assert.equal(finals(rootSession)[0].from, coordinator.parent);

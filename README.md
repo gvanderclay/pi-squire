@@ -1579,7 +1579,8 @@ recently settled records, so the default list is partial. Every call's
 structured result carries `selection`, saying what it selected: `scope`
 (`recent`, `all` or `id`), `total` (every record in the session, unfinished
 attempts included; 1 for an `id`), `shown`, `omitted`, and, when records were
-left out, a `notice` saying how many older settled delegations were omitted
+left out, a `notice` saying how many older settled records (delegations and rolled-back
+workspace attempts) were omitted
 and that `delegation_status` with `all: true` gives the full inventory, `id`
 one delegation. The heading carries the same sentence. `all: true` lists
 every record, and an `id` selects one, including one the default leaves out.

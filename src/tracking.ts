@@ -260,7 +260,7 @@ type Selection = {
 
 /** The one sentence the text heading and the structured `notice` both carry, so they cannot drift. */
 function omissionNotice(omitted: number): string {
-	return `${omitted} older settled delegation${omitted === 1 ? "" : "s"} omitted; delegation_status with all:true gives the full inventory, id one delegation.`;
+	return `${omitted} older settled record${omitted === 1 ? "" : "s"} omitted; delegation_status with all:true gives the full inventory, id one delegation.`;
 }
 
 /** The scope a call selects: an id wins over all, which wins over the recent default. */

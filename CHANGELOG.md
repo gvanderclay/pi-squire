@@ -42,8 +42,8 @@ follows [Semantic Versioning](https://semver.org/).
   tell a partial default list from a complete one. Every call's structured
   result gains `selection`: `scope` (`recent`, `all` or `id`), `total` (every
   record in the session, unfinished attempts included; 1 for an `id`), `shown`,
-  `omitted`, and, when records were left out, a `notice` naming the count and
-  the recovery call. The text heading carries the same notice sentence, so the
+  `omitted`, and, when records were left out, a `notice` naming the count of older settled
+  records (rolled-back workspace attempts included) and the recovery call. The text heading carries the same notice sentence, so the
   two channels cannot drift. The description says the default list is partial
   and `all: true` is for an exhaustive inventory or cleanup. The 5-record
   default and compact rows are unchanged. `test/tools.test.ts` deliberately
@@ -55,6 +55,17 @@ follows [Semantic Versioning](https://semver.org/).
   12,850 against 12,821 measured (12,375 before), the codemode-declared cap
   from 10,300 to 10,700 against 10,684 (10,238 before), and the routed cap from
   13,100 to 13,480 against 13,449 (13,003 before).
+
+### Fixed
+
+- Reopening a nested coordinator after aborting its child-result processing run
+  no longer injects an already-delivered result a second time. Saved outcomes
+  still wake processing, and a result missing from the restored transcript is
+  supplied to each model request until a non-aborted settle acknowledges it.
+  Deliberately updated `test/nested-lifecycle.test.ts` case “pending child facts
+  and identity restore with no launch env or transcript; late outcomes are
+  replayed” to assert recovery through the request context instead of a
+  full-result resend, preserving its recovery and completion guarantee.
 
 ## [0.26.0] - 2026-11-14
 

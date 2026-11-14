@@ -148,6 +148,41 @@ test("known pre-window failure rolls back a pristine managed worktree", async ()
 	assert.equal("windowId" in attempt, false);
 });
 
+test("status counts omitted rolled-back attempts as records, not delegations", async () => {
+	resetRoot();
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const base = mkdtempSync(join(root, "rollback-selection-"));
+	const source = join(base, "repo");
+	mkdirSync(source);
+	git(source, "init", "-q", "-b", "main");
+	writeFileSync(join(source, "tracked.txt"), "committed\n");
+	git(source, "add", ".");
+	git(source, "commit", "-q", "-m", "base");
+	const s = session({ cwd: source });
+	await s.start();
+	s.tmux.failOpen = "known failure";
+	for (const n of [1, 2, 3, 4, 5, 6])
+		await assert.rejects(
+			s.toolCall("delegate", { agent: "scout", task: "inspect", worktree: `retry/topic-${n}` }),
+			/known failure/,
+		);
+	const status = await s.toolCall("delegation_status", {});
+	const selection = (status.structuredContent as Data).selection;
+	assert.deepEqual(selection, {
+		scope: "recent",
+		total: 6,
+		shown: 5,
+		omitted: 1,
+		notice:
+			"1 older settled record omitted; delegation_status with all:true gives the full inventory, id one delegation.",
+	});
+	assert.equal((status.structuredContent as Data).delegations.length, 5);
+	assert.ok(status.content[0].text.includes(selection.notice));
+	const all = (await s.toolCall("delegation_status", { all: true })).structuredContent as Data;
+	assert.equal(all.selection.omitted, 0);
+	assert.equal(all.delegations.length, 6);
+});
+
 test("ignored files created during launch prevent rollback", async () => {
 	resetRoot();
 	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));

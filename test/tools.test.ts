@@ -620,7 +620,7 @@ test("delegation_status defaults to running plus the 5 newest settled records", 
 		selection: { scope: string; total: number; shown: number; omitted: number; notice?: string };
 	};
 	const notice =
-		"3 older settled delegations omitted; delegation_status with all:true gives the full inventory, id one delegation.";
+		"3 older settled records omitted; delegation_status with all:true gives the full inventory, id one delegation.";
 	assert.ok(text.startsWith(`10 delegations (2 running). ${notice}`), text);
 	assert.deepEqual(details.selection, { scope: "recent", total: 10, shown: 7, omitted: 3, notice });
 	assert.deepEqual(
@@ -663,7 +663,7 @@ test("a cleanup script over the structured result reaches an old settled record 
 	assert.equal(first.selection.total, 9);
 	assert.equal(first.selection.shown, 5);
 	assert.equal(first.selection.omitted, 4);
-	assert.match(first.selection.notice ?? "", /^4 older settled delegations omitted;/);
+	assert.match(first.selection.notice ?? "", /^4 older settled records omitted;/);
 	assert.equal(
 		first.delegations.some((row) => row.id === oldest),
 		false,

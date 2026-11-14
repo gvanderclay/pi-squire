@@ -18,12 +18,14 @@ import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
 	assertNoOwner,
+	contextNotice,
 	guardSession,
 	inFlight,
 	passes,
 	preflight,
 	recordCheck,
 	type SessionFile,
+	sessionModel,
 	settleModel,
 	windowCheck,
 } from "./resume-checks.ts";
@@ -238,7 +240,11 @@ async function startResume(
 		},
 		ctx,
 	);
-	return resumedResult({ id, resumedFrom: record.id, name, plan, sessionDir: session.dir, opened });
+	const resumed = resumedResult({ id, resumedFrom: record.id, name, plan, sessionDir: session.dir, opened });
+	resumed.notices.push(
+		...contextNotice(session.path, sessionModel(record, session.path), resumed.model, ctx.modelRegistry),
+	);
+	return resumed;
 }
 
 /** What the command and the tool report about a started resume. */

@@ -4,6 +4,9 @@ import { Type } from "typebox";
 
 type TokenCounts = { input: number; output: number; cacheRead: number; cacheWrite: number };
 export type SessionUsage = TokenCounts & { turns: number; cost?: number; contextTokens: number };
+/** Historical input and identity of the same usable request, not persisted in result usage. */
+export type SessionContext = { contextTokens: number; model?: string };
+type UsageReport = { usage: SessionUsage; model?: string };
 
 export const SessionUsageSchema = Type.Object({
 	turns: Type.Integer({ minimum: 0 }),
@@ -39,7 +42,18 @@ export function validateSessionUsage(value: unknown): void {
 		throw new Error("invalid delegation usage; restoration blocked");
 }
 
-type Billed = { usage: TokenCounts & { cost?: { total?: unknown } }; assistant: boolean; failed: boolean };
+type Billed = {
+	usage: TokenCounts & { cost?: { total?: unknown } };
+	assistant: boolean;
+	failed: boolean;
+	model?: string;
+};
+
+function messageModel(message: { provider?: unknown; model?: unknown } | undefined): string | undefined {
+	if (typeof message?.provider !== "string" || !message.provider) return undefined;
+	if (typeof message.model !== "string" || !message.model) return undefined;
+	return `${message.provider}/${message.model}`;
+}
 const USAGE_ENTRIES: ReadonlySet<unknown> = new Set(["usage", "compaction", "branch_summary"]);
 
 /** Pi 1.5.0 docs/session-format.md: UsageEntry, CompactionEntry, BranchSummaryEntry;
@@ -50,7 +64,7 @@ function billed(line: string): Billed | undefined {
 	let entry: {
 		type?: unknown;
 		usage?: unknown;
-		message?: { role?: unknown; usage?: unknown; stopReason?: unknown };
+		message?: { role?: unknown; usage?: unknown; stopReason?: unknown; provider?: unknown; model?: unknown };
 	};
 	try {
 		entry = JSON.parse(line);
@@ -63,7 +77,7 @@ function billed(line: string): Billed | undefined {
 	else if (USAGE_ENTRIES.has(entry?.type)) usage = entry?.usage;
 	if (!tokenCounts(usage)) return undefined;
 	const stop: unknown = entry.message?.stopReason;
-	return { usage, assistant, failed: stop === "error" || stop === "aborted" };
+	return { usage, assistant, failed: stop === "error" || stop === "aborted", model: messageModel(entry.message) };
 }
 
 /**
@@ -71,44 +85,69 @@ function billed(line: string): Billed | undefined {
  * Turns count assistant messages with usable usage; context is the input plus
  * cache reads/writes, without output, of the last assistant request that
  * neither failed nor was aborted and reported tokens (zero if none exists).
+ * sessionContext exposes that same request's model without persisting it.
+ * This is historical usage, not the context Pi projects after compaction or
+ * branch navigation.
  * Pi writes error and aborted messages with all-zero usage and skips them the
  * same way when it reads context (its compaction `getAssistantUsage`).
  * Missing files, malformed lines and files without billed usage give no report.
  */
 export function sessionUsage(sessionPath: string | undefined): SessionUsage | undefined {
+	return usageReport(sessionPath)?.usage;
+}
+
+/** Last usable request's input and model, using the usage reader's same accounting scan. */
+export function sessionContext(sessionPath: string | undefined): SessionContext | undefined {
+	const report = usageReport(sessionPath);
+	if (report === undefined || report.usage.contextTokens === 0) return undefined;
+	return { contextTokens: report.usage.contextTokens, model: report.model };
+}
+
+function usageReport(sessionPath: string | undefined): UsageReport | undefined {
 	if (sessionPath === undefined) return undefined;
 	try {
 		return readUsage(sessionPath);
 	} catch {
-		// Reporting must never lose an already claimed reply.
+		// Reporting must never lose an already claimed reply or refuse a launch.
 		return undefined;
 	}
 }
 
-function readUsage(sessionPath: string): SessionUsage | undefined {
+function readUsage(sessionPath: string): UsageReport | undefined {
 	const lines: string[] = readFileSync(sessionPath, "utf8").split("\n");
-	let total: SessionUsage = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0 };
+	let total: UsageReport = {
+		usage: { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0 },
+	};
 	let counted = false;
 	for (const line of lines) {
 		const item = billed(line);
 		if (item === undefined) continue;
-		const { usage, assistant, failed } = item;
-		const cost = usage.cost?.total;
-		const context: number = usage.input + usage.cacheRead + usage.cacheWrite;
-		const next: SessionUsage = {
-			turns: total.turns + Number(assistant),
-			input: total.input + usage.input,
-			output: total.output + usage.output,
-			cacheRead: total.cacheRead + usage.cacheRead,
-			cacheWrite: total.cacheWrite + usage.cacheWrite,
-			contextTokens: assistant && !failed && context > 0 ? context : total.contextTokens,
-			...(total.cost !== undefined && nonnegative(cost) ? { cost: total.cost + cost } : {}),
-		};
-		if (!Object.values(next).every(nonnegative)) continue;
+		const next = addUsage(total, item);
+		if (next === undefined) continue;
 		total = next;
 		counted = true;
 	}
 	return counted ? total : undefined;
+}
+
+/** Validate numeric sums before attaching the model outside the persisted usage shape. */
+function addUsage(report: UsageReport, item: Billed): UsageReport | undefined {
+	const total = report.usage;
+	const { usage, assistant, failed } = item;
+	const cost = usage.cost?.total;
+	const context: number = usage.input + usage.cacheRead + usage.cacheWrite;
+	const usable: boolean = assistant && !failed && context > 0;
+	const next: SessionUsage = {
+		turns: total.turns + Number(assistant),
+		input: total.input + usage.input,
+		output: total.output + usage.output,
+		cacheRead: total.cacheRead + usage.cacheRead,
+		cacheWrite: total.cacheWrite + usage.cacheWrite,
+		contextTokens: usable ? context : total.contextTokens,
+		...(total.cost !== undefined && nonnegative(cost) ? { cost: total.cost + cost } : {}),
+	};
+	if (!Object.values(next).every(nonnegative)) return undefined;
+	return { usage: next, model: usable ? item.model : report.model };
 }
 
 function tokens(count: number): string {

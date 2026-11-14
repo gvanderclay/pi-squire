@@ -6,7 +6,12 @@
 
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionContext,
+	type ModelRegistry,
+	type ModelRuntime,
+	resolveCliModel,
+} from "@earendil-works/pi-coding-agent";
 import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
 import type { DelegateHost } from "./host.ts";
 import { windowFacts, windowPresentation, windowTerms } from "./locators.ts";
@@ -16,6 +21,7 @@ import type { ResumeDeps, ResumeRequest } from "./resume.ts";
 import { assertRoutingSource } from "./routing-inheritance.ts";
 import { parseRoutingRequest } from "./routing-policy.ts";
 import { ownerDetails, sessionIsOwned } from "./session-owner.ts";
+import { sessionContext } from "./session-usage.ts";
 import { assertResumeAuthority } from "./tree-view.ts";
 import type { WindowStates } from "./window-state.ts";
 
@@ -117,6 +123,68 @@ export function resumeDefaults(
 function lastThinking(record: StartedRecorded, sessionPath: string): string {
 	const level = sessionThinking(sessionPath);
 	return level !== undefined && isThinking(level) ? level : record.thinking;
+}
+
+/** Last assistant model, or the recorded one, used for cache advice only when no usable request was reported. */
+export function sessionModel(record: StartedRecorded, sessionPath: string): string {
+	return finishedModel(sessionPath) ?? record.result?.finishedModel ?? record.model;
+}
+
+/** The last successful request's reported input at which cost advice is useful. */
+const LARGE_CONTEXT_TOKENS = 50_000;
+
+/** A token count as the notices print it: 115k. */
+function thousands(tokens: number): string {
+	return `about ${Math.round(tokens / 1000)}k`;
+}
+
+/** Pi's CLI identity, as in child.ts; fabricated custom ids are not established identities. */
+function resolvedModel(registry: ModelRegistry, entry: string | undefined): string | undefined {
+	if (entry === undefined) return undefined;
+	try {
+		// Pi 1.5.0's resolveCliModel reads only these two runtime methods.
+		const runtime = {
+			getModels: () => registry.getAll(),
+			hasConfiguredAuth: (provider: string) =>
+				registry.getAll().some((model) => model.provider === provider && registry.hasConfiguredAuth(model)),
+		} as unknown as ModelRuntime;
+		const { model } = resolveCliModel({ cliModel: entry, modelRuntime: runtime });
+		if (model === undefined || registry.find(model.provider, model.id) === undefined) return undefined;
+		return `${model.provider}/${model.id}`;
+	} catch {
+		return undefined; // Advice must not turn an already successful launch into an error.
+	}
+}
+
+/**
+ * Observations, not a snapshot of the child's copied/projected context: usage
+ * and its model come from one usable request in one read. Pi may reload less
+ * after compaction or a branch switch, and a live fork source may advance.
+ * Without a usable request, preserve cache-only advice from the last assistant
+ * model (or recorded model), rather than issuing a blanket unknown-usage notice.
+ */
+export function contextNotice(
+	sessionPath: string,
+	sourceModel: string,
+	chosenModel: string,
+	registry: ModelRegistry,
+): string[] {
+	const usage = sessionContext(sessionPath);
+	const sourceEntry = usage === undefined ? sourceModel : usage.model;
+	const source = resolvedModel(registry, sourceEntry);
+	const chosen = resolvedModel(registry, chosenModel);
+	const notices: string[] = [];
+	// The same identifier launches the same model even when the registry does not know it (a custom id).
+	const same = sourceEntry === chosenModel || (source !== undefined && source === chosen);
+	if (!same && (source === undefined || chosen === undefined))
+		notices.push(`The source's cache may not carry over to ${chosenModel}: model identity could not be established.`);
+	else if (!same)
+		notices.push(`${chosen} differs from the source's ${source}: reloaded context will be written to a new cache.`);
+	if (usage !== undefined && usage.contextTokens >= LARGE_CONTEXT_TOKENS)
+		notices.push(
+			`The source's last successful request sent ${thousands(usage.contextTokens)} tokens of context; the child reloads the session, so if this task does not need that context, a fresh delegate with a written summary may be cheaper.`,
+		);
+	return notices;
 }
 
 export function assertNoOwner(record: StartedRecorded): void {

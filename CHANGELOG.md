@@ -6,7 +6,35 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A resume or fork whose source's last successful request reported 50k context
+  tokens or more (input plus cache reads and writes) says so in a notice: "The
+  source's last successful request sent about 74k tokens of context; the child
+  reloads the session, so if this task does not need that context, a fresh
+  delegate with a written summary may be cheaper." The figure is that request's
+  size, not a measurement of what the child reloads after a compaction or a
+  branch switch. A resume now also says when it runs on a model other than the
+  source's, as a fork already did. Notices appear in the result text and
+  `details.notices` and never refuse a launch; a source with no reported usage
+  gets no size notice. Three resume tests in `test/resume.test.ts` (two
+  locked-model cases and the locked-model fallback case) expected no notices
+  and now expect the different-model notice, because they resume on another
+  model.
+
 ### Changed
+
+- The fork's different-model notice no longer quotes a size. "… differs from
+  the source's …: about 74k copied tokens will be written to a new cache" is now
+  "… differs from the source's …: reloaded context will be written to a new
+  cache", because the figure was the last request's size, not what a fork
+  copies; the size has its own notice above. Models are compared after Pi
+  resolves aliases, using the model of the source's last successful request
+  (not a trailing failed or aborted one). When an identifier cannot be resolved
+  the notice says "The source's cache may not carry over to …: model identity
+  could not be established" instead of claiming a difference; the same
+  identifier is always the same model. `test/fork.test.ts` expects the new
+  wording, and its same-model fixture now has valid usage.
 
 - The `delegate` tool's roster line prints a parenthetical only for what the
   agent sets. An agent with no `model`, `fallback` or `thinking` now reads

@@ -46,17 +46,30 @@ type Exited = {
 
 const AGENT = { description: "Looks things up", model: "alpha/fast-model", thinking: "low" };
 
-/** Write a Pi session file: its header, then one assistant message from `model` when given. */
-function writeSession(file: string, id: string, cwd: string, model?: string): void {
+/**
+ * Write a Pi session file: its header, then one assistant message from `model`
+ * when given, carrying `usage` when given.
+ */
+function writeSession(file: string, id: string, cwd: string, model?: string, usage?: Usage): void {
 	mkdirSync(sessionDir, { recursive: true });
 	const header = { type: "session", version: 3, id, timestamp: "2026-10-26T00:00:00.000Z", cwd };
 	const lines = [JSON.stringify(header)];
 	if (model !== undefined) {
 		const [provider, name] = model.split("/");
-		lines.push(JSON.stringify({ type: "message", message: { role: "assistant", provider, model: name, content: [] } }));
+		const message = {
+			role: "assistant",
+			provider,
+			model: name,
+			content: [],
+			...(usage === undefined ? {} : { usage }),
+		};
+		lines.push(JSON.stringify({ type: "message", message }));
 	}
 	writeFileSync(file, `${lines.join("\n")}\n`);
 }
+
+/** One assistant request's token counts, as Pi records them on a message. */
+type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number };
 
 /**
  * Start a delegation through `/delegate`, write its session file and let its
@@ -66,6 +79,7 @@ async function exitedDelegate(
 	options: {
 		window?: "gone" | "exited" | "open";
 		model?: string;
+		usage?: Usage;
 		fallback?: string;
 		cwd?: string;
 		autoExit?: boolean;
@@ -85,7 +99,7 @@ async function exitedDelegate(
 	const entry = s.entries[0].data as { id: string; windowId: string; windowName: string; requestId: string };
 	const cwd = options.cwd ?? root;
 	const file = join(sessionDir, `20261026T000000_${entry.id}.jsonl`);
-	writeSession(file, entry.id, cwd, options.model);
+	writeSession(file, entry.id, cwd, options.model, options.usage);
 	if (options.window === "exited") s.tmux.exit(windowFields(entry).windowId);
 	else if (options.window !== "open") s.tmux.windows.delete(windowFields(entry).windowId);
 	return {
@@ -888,7 +902,10 @@ test("locked after the launch, a resume with nothing passed runs on the file's c
 	const result = await resume(d.s, { id: d.id, task: "again" });
 	assert.equal(argOf(d.s, 1, "--model"), "alpha/deep-model");
 	assert.equal(argOf(d.s, 1, "--thinking"), "high");
-	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+	// The locked model is not the one the session last ran on, so its context is cached anew.
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [
+		"alpha/deep-model differs from the source's alpha/fast-model: copied tokens will be written to a new cache.",
+	]);
 });
 
 test("a locked agent that switched to a fallback mid-run resumes on its model again, then the fallbacks", async () => {
@@ -907,6 +924,7 @@ test("locked after the launch, a resume's other value is refused for the file's 
 	assert.equal(argOf(d.s, 1, "--thinking"), "high");
 	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [
 		"Agent scout locks model and thinking, so the model beta/other-model and thinking low given were not used.",
+		"alpha/deep-model differs from the source's alpha/fast-model: copied tokens will be written to a new cache.",
 	]);
 });
 
@@ -929,7 +947,10 @@ test("a resume passing a locked exact model back as given still moves on to its 
 		details.skipped.map((item) => item.model),
 		["alpha/fast-model"],
 	);
-	assert.deepEqual(details.notices, []);
+	// The fallback is not the model the session last ran on, so its context is cached anew.
+	assert.deepEqual(details.notices, [
+		"beta/other-model differs from the source's alpha/fast-model: copied tokens will be written to a new cache.",
+	]);
 });
 
 test("a locked field the file leaves unset resumes on the parent's current model and level", async () => {
@@ -939,4 +960,43 @@ test("a locked field the file leaves unset resumes on the parent's current model
 	await resume(d.s, { id: d.id, task: "again", thinking: "high" });
 	assert.equal(argOf(d.s, 1, "--model"), "beta/other-model");
 	assert.equal(argOf(d.s, 1, "--thinking"), "medium");
+});
+
+// ---------------------------------------------------------------------------
+// Context-size notice on resume
+
+/** A session whose last request reported `tokens` of context: input plus cache reads and writes. */
+const contextOf = (tokens: number): Usage => ({ input: tokens, output: 0, cacheRead: 0, cacheWrite: 0 });
+
+test("a resume of a 50k-token context says what it reopens, without refusing the launch", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(50_000) });
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	const notice = "reopens about 50k tokens of context; a fresh delegate with a written summary may be cheaper.";
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [notice]);
+	assert.ok(result.content[0].text.includes(notice));
+	assert.match(d.s.notes.join("\n"), /reopens about 50k tokens of context/);
+	assert.equal(d.s.tmux.opened.length, 2, "the notice did not refuse the launch");
+	assert.equal(d.s.sendCalls.at(-1)?.body, "again");
+});
+
+test("a resume just under 50k tokens says nothing about its size", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(49_999) });
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+	assert.doesNotMatch(result.content[0].text, /reopens/);
+});
+
+test("a resume of a session whose usage cannot be read says nothing about its size", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model" });
+	const result = await resume(d.s, { id: d.id, task: "again" });
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, []);
+});
+
+test("a resume on another model warns about the new cache write with the size it copies", async () => {
+	const d = await exitedDelegate({ model: "alpha/fast-model", usage: contextOf(74_000) });
+	const result = await resume(d.s, { id: d.id, task: "again", model: "beta/other-model" });
+	const notice =
+		"beta/other-model differs from the source's alpha/fast-model: about 74k copied tokens will be written to a new cache.";
+	assert.deepEqual((result.structuredContent as { notices: string[] }).notices, [notice]);
+	assert.ok(result.content[0].text.includes(notice));
 });

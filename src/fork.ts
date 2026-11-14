@@ -5,10 +5,10 @@ import { disabledProblem, THINKING_LEVELS } from "./agents.ts";
 import { openedIn } from "./location.ts";
 import { fallbackNote } from "./model-choice.ts";
 import { dirtyNotice } from "./render.ts";
-import { finishedModel, sessionIdOf, sessionInputTokens } from "./result-sessions.ts";
+import { sessionIdOf } from "./result-sessions.ts";
 import { deriveState, isStarted, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, Resumed } from "./resume.ts";
-import { sessionFor, settleModel } from "./resume-checks.ts";
+import { contextNotice, sessionFor, sessionModel, settleModel } from "./resume-checks.ts";
 import { RoutingRequestSchema } from "./routing-schema.ts";
 import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
@@ -97,14 +97,6 @@ function forkSource(record: StartedRecorded, session: ReturnType<typeof sessionF
 async function sharedFolderNotice(deps: ForkDeps, record: StartedRecorded, worktree?: string): Promise<string[]> {
 	if (worktree || deriveState(record, (await askWindowStates(deps.tmux)).state(record)) !== "running") return [];
 	return [`shares a working folder with running delegation ${record.id}; pass worktree to isolate`];
-}
-
-function modelNotice(record: StartedRecorded, sessionPath: string, model: string): string[] {
-	const sourceModel = finishedModel(sessionPath) ?? record.result?.finishedModel ?? record.model;
-	if (model === sourceModel) return [];
-	const tokens = sessionInputTokens(sessionPath);
-	const estimate = tokens === undefined ? "copied tokens" : `about ${Math.round(tokens / 1000)}k copied tokens`;
-	return [`${model} differs from the source's ${sourceModel}: ${estimate} will be written to a new cache.`];
 }
 
 function launchText(id: string, details: Forked, chosen: Awaited<ReturnType<ResumeDeps["chooseModel"]>>): string {
@@ -206,7 +198,9 @@ export function forkTool(deps: ForkDeps, includeRouting = true): ForkTool {
 				signal,
 				toolCallId,
 			);
-			details.notices.push(...modelNotice(record, source.sessionPath, details.model));
+			details.notices.push(
+				...contextNotice(source.sessionPath, sessionModel(record, source.sessionPath), details.model),
+			);
 			const line = launchText(record.id, details, chosen);
 			ctx.ui.notify(`delegate: ${line}`, "info");
 			return toolResult(line, { outcome: "started", ...withoutLocation(details), forkedFrom: record.id });

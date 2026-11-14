@@ -6,6 +6,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A resume or fork of a session whose last request reported 50k tokens of
+  context or more now says how much context it reopens and suggests that a
+  fresh delegate with a written summary may be cheaper. A resume on a model
+  other than the one the session last ran on warns that the copied context is
+  written to a new cache, as a fork already did. Both are notices in the result
+  text and `details.notices`; neither refuses the launch, and a session whose
+  usage cannot be read gives no size notice. The size comes from
+  `sessionUsage`, so the second reader, `sessionInputTokens`, is gone.
+  `test/resume.test.ts` deliberately expects the cache notice on three resumes
+  that now run on a model other than the source's: two locked to another model
+  and one moved to a fallback.
+
 ## [0.25.0] - 2026-11-14
 
 ### Added

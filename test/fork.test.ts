@@ -163,6 +163,34 @@ test("different-model forks omit the estimate when latest source usage is unavai
 	}
 });
 
+/** A session whose last request reported `tokens` of context: input plus cache reads and writes. */
+const contextOf = (tokens: number): { input: number; output: number; cacheRead: number; cacheWrite: number } => ({
+	input: tokens,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+});
+
+test("a fork of a 50k-token context says what it reopens", async () => {
+	const d = await source();
+	sourceUsage(d.file, contextOf(50_000));
+	const result = await fork(d.s, d.id);
+	const notice = "reopens about 50k tokens of context; a fresh delegate with a written summary may be cheaper.";
+	assert.ok((result.structuredContent as { notices: string[] }).notices.includes(notice));
+	assert.ok(result.content[0].text.includes(notice));
+});
+
+test("a fork just under 50k tokens, or of a session whose usage cannot be read, says nothing about its size", async () => {
+	for (const usage of [contextOf(49_999), undefined]) {
+		const d = await source();
+		sourceUsage(d.file, usage);
+		const result = await fork(d.s, d.id);
+		assert.ok(
+			!(result.structuredContent as { notices: string[] }).notices.some((notice) => notice.includes("reopens")),
+		);
+	}
+});
+
 test("fork cache notice compares the effective locked model, not the requested model", async () => {
 	const d = await source();
 	writeAgent("scout", agentFile({ model: "alpha/deep-model", locked: "[model]" }));

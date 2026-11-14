@@ -2028,6 +2028,12 @@ and it resumes as the command does.
   and the recorded `--session-dir`, in a new window named like the first. The
   delegate keeps everything it read and decided; Pi appends to the same file.
   Opening it yourself is `pi --session <path>`, outside this tool.
+- Reopening a large context costs what it costs: when the session's last
+  request reported 50k tokens of context or more, the result says how much it
+  reopens and that a fresh delegate with a written summary may be cheaper. A
+  resume on a model other than the one the session last ran on also warns that
+  the copied context is written to a new cache. Both are notices, never
+  refusals.
 - The resume is recorded as a **new delegation** with its own id and a
   `resumedFrom` naming the old one. Its task goes to the old session's mail
   address, and its result arrives as a `[delegate]` message that names
@@ -2121,7 +2127,9 @@ default to the source's last settings with the same locks and fallbacks as a
 resume; the current roster supplies the prompt and tools. A different effective
 model re-reads the copied context without the source's cache; the result warns
 about the new cache write, estimating copied tokens when source usage is
-available. Keep the source's model unless the task needs another role. A
+available. A source whose last request reported 50k tokens of context or more
+says how much the fork reopens. Keep the source's model unless the task needs
+another role. A
 fork from a routed role requires fresh `routing` metadata and cannot carry
 forward a public-context attestation. `session:launch` is emitted with the
 `delegation_fork` tool call id.

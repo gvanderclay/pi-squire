@@ -8,6 +8,9 @@ import { DELEGATION_TOOLS, toolMatches } from "./delegate-composition.ts";
 export const PASEO_TOOLS_ENV = "PI_DELEGATE_PASEO_TOOLS";
 /** The delegate's project-trust answer, "yes" or "no", as `--approve` would have passed it. */
 export const PASEO_TRUST_ENV = "PI_DELEGATE_PASEO_TRUST";
+/** Internal startup command: no user/model message is added to Pi. */
+export const PASEO_TURN_COMMAND = "delegate-turn";
+const TURN_WAIT_MS = 10_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Whether Paseo started this Pi: it exports the agent id it chose. */
@@ -56,6 +59,35 @@ const listed = (name: string, patterns: readonly string[]): boolean =>
  * `trustApi`, which answers while `pi` still waits for the session owner.
  */
 export function registerPaseoChild(pi: ExtensionAPI, trustApi: ExtensionAPI): void {
+	// Paseo 0.15.4's PiUsagePoller starts only for a Paseo prompt. Its slash
+	// probe keeps that turn alive if agent_start arrived before the command's
+	// acknowledgement (bundled Pi provider, completePromptIfHandledWithoutTurn).
+	// Wait for the after-open task mail's run, not its completion. Pi executes
+	// commands outside the run queue, so waiting here does not block that mail.
+	let started = false;
+	let attempted = false;
+	let release: (() => void) | undefined;
+	pi.on("agent_start", () => {
+		started = true;
+		release?.();
+	});
+	pi.on("session_shutdown", () => release?.());
+	pi.registerCommand(PASEO_TURN_COMMAND, {
+		description: "Internal: sent by pi-squire to a Paseo delegate at launch; does nothing elsewhere",
+		handler: async () => {
+			if (!hosted() || toolList() === undefined || started || attempted) return;
+			attempted = true;
+			await new Promise<void>((resolve) => {
+				const finish = (): void => {
+					clearTimeout(timer);
+					release = undefined;
+					resolve();
+				};
+				const timer = setTimeout(finish, TURN_WAIT_MS);
+				release = finish;
+			});
+		},
+	});
 	const apply = (): void => {
 		const patterns = toolList();
 		if (patterns === undefined) return;

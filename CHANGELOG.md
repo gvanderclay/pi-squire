@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Paseo delegates now show live context-window usage during their first
+  mailed run, using a bounded internal startup command that adds nothing to
+  the model's context. Later autonomous runs still refresh usage only when
+  they finish. Task delivery and result correlation remain mail-based.
+  The parent-link transport test in `test/paseo-api.test.ts` now deliberately
+  expects a native parent label instead of `callerAgentId`, which would
+  wrap the startup command as a message to the model.
+
 ## [0.27.0] - 2026-11-14
 
 ### Added

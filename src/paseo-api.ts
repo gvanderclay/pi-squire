@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PaseoAgentHandle, PaseoClient, PaseoClientConfig, PaseoWorkspaceHandle } from "@getpaseo/client";
 import { inspectGit } from "./git.ts";
+import { PASEO_TURN_COMMAND } from "./paseo-child.ts";
 
 /** The label pi-squire puts on every agent it starts, so `live` sees its own. */
 const LABELS = { "pi-squire": "1" };
@@ -305,10 +306,14 @@ export function createPaseoApi(home: string = process.env.PASEO_HOME ?? join(hom
 				const workspace = await workspaceFor(client, input.cwd);
 				const handle = await workspace.agents.create({
 					agentId: input.agentId,
-					parent: input.parentAgentId,
 					title: input.title,
 					env: input.env,
-					labels: LABELS,
+					// Keep the native parent link without callerAgentId: Paseo 0.15.4
+					// otherwise wraps the initial slash command as an agent-message,
+					// bypassing Pi command dispatch and sending it to the model.
+					// resolveCreateAgentIntent retains explicit parent labels.
+					labels: { ...LABELS, [PARENT_LABEL]: input.parentAgentId },
+					prompt: `/${PASEO_TURN_COMMAND}`,
 					config: {
 						provider: `pi/${input.model}`,
 						thinkingOptionId: input.thinking,

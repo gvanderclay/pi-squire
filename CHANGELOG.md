@@ -6,6 +6,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Agent files take two optional boolean frontmatter keys, `skills` and
+  `context_files`, each default `true`. `skills: false` passes the child
+  `--no-skills` and `context_files: false` passes `--no-context-files`, for a
+  launch, a resume and a fork alike, so a role that needs neither stops paying
+  for every skill description and every `AGENTS.md` rule in its first request.
+  With both keys absent the launch is byte-identical to before. `context_files:
+  false` also removes your own `AGENTS.md` rules from the delegate, so keep
+  what it needs in the agent body. A Paseo delegate cannot take either flag:
+  Paseo has no field for them, so a launch that asks for one is refused before
+  anything starts. `test/delegate-composition.test.ts` now expects both names
+  in the agent-file guidance it pins.
+
 ### Changed
 
 - A routed delegation's served-model line, in the result, `delegation_status`

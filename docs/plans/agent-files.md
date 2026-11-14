@@ -47,6 +47,8 @@ longer read.
 | `display_name` | Shown on the delegate card, `/delegates` and the window title instead of the name. ASCII letters, digits, `-` and `_` only; any other value, empty included, makes the file invalid. | New. |
 | `fallback` | Models to try when `model` is usage-limited. Each entry is one model, like `model`; a `*` pattern makes the file invalid. | Entries no longer need to be `provider/id`. |
 | `auto-exit` | Unchanged. | — |
+| `skills` | `true` or `false`, default `true`. `false` passes the child `--no-skills`, so discovered and configured skills do not load and their descriptions leave the system prompt. | Added after this plan. |
+| `context_files` | `true` or `false`, default `true`. `false` passes the child `--no-context-files`, which removes `AGENTS.md` and `CLAUDE.md` discovery: the delegate gets none of the rules those files carry. | Added after this plan. |
 | `extensions` | Unchanged, except relative paths (see above). | — |
 | `max_turns`, `inherit_context`, `run_in_background` | Ignored, with no warning. | New: known and ignored. |
 | `exclude-tools` | Removed. Use `tools`, or leave a tool to a permission policy another extension applies. | Removed. |

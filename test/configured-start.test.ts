@@ -86,6 +86,30 @@ test("a pane-free host can open, configure, then mail for launch, resume and for
 	}
 });
 
+test("a pane-free host's launch carries an agent's skills and context_files flags", async () => {
+	writeAgent(
+		"lean",
+		agentFile({ model: "alpha/fast-model", thinking: "low", skills: "false", context_files: "false" }),
+	);
+	const calls: string[] = [];
+	const host = configuredHost(calls, []);
+	const argv: (readonly string[])[] = [];
+	const open = host.openWindow.bind(host);
+	host.openWindow = async (spec, placement, companion) => {
+		argv.push(spec.argv);
+		return open(spec, placement, companion);
+	};
+	const s = session({ multiplexer: host });
+	try {
+		await s.toolCall("delegate", { agent: "lean", task: "first" });
+		assert.equal(argv.length, 1);
+		assert.ok(argv[0].includes("--no-skills"), argv[0].join(" "));
+		assert.ok(argv[0].includes("--no-context-files"), argv[0].join(" "));
+	} finally {
+		await s.shutdown();
+	}
+});
+
 test("configuration failure before task mail rolls back through closeTaskless without recording a start", async () => {
 	const calls: string[] = [];
 	const host = configuredHost(calls, []);

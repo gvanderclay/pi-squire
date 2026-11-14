@@ -13,8 +13,10 @@
 // delegate's complete tool list; absent means the parent's tools, empty means
 // none; a list entry holding a comma makes the file invalid; a `$name` entry
 // stands for that `toolBundles` bundle's tools), `auto_exit` (default true),
-// `prompt_mode` (`append`, the default, or `replace`), `enabled` (false leaves
-// the agent out) and `locked` (true, or a list of `model` and `thinking`). Any
+// `skills` and `context_files` (each default true; false passes the child
+// `--no-skills` or `--no-context-files`), `prompt_mode` (`append`, the default,
+// or `replace`), `enabled` (false leaves the agent out) and `locked` (true, or
+// a list of `model` and `thinking`). Any
 // other key is ignored, left for whatever else reads the file. The body is the
 // delegate's instructions. A file that cannot be read as an agent is disabled:
 // left out, with a warning, and a call naming it is refused with the reason.
@@ -64,6 +66,10 @@ export type Agent = {
 	thinking?: Thinking;
 	/** Whether the delegate closes itself after a normal completion; `auto_exit`, default true. */
 	autoExit: boolean;
+	/** Whether the delegate loads discovered and configured skills; `skills`, default true. */
+	skills: boolean;
+	/** Whether the delegate loads `AGENTS.md` and `CLAUDE.md`; `context_files`, default true. */
+	contextFiles: boolean;
 	/** Current grant: true for the roster, or an explicit list of child identities. */
 	allowNested?: true | string[];
 	/** Presence of a permission map only; not a policy evaluation or privilege comparison. */
@@ -128,9 +134,8 @@ function parseAgent(name: string, path: string, text: string, bundles: Bundles):
 	if (enabled === null)
 		return { invalid: `${path} has enabled ${JSON.stringify(fields.enabled)}, not true or false`, notes: [] };
 	if (enabled === false) return { notes: [] };
-	const autoExit = flag(fields.auto_exit);
-	if (autoExit === null)
-		return { invalid: `${path} has auto_exit ${JSON.stringify(fields.auto_exit)}, not true or false`, notes: [] };
+	const booleans = booleanFields(path, fields);
+	if ("invalid" in booleans) return { ...booleans, notes: [] };
 	const nested = fields.allow_nested_delegation === false ? undefined : fields.allow_nested_delegation;
 	if (!validNested(nested))
 		return {
@@ -167,7 +172,7 @@ function parseAgent(name: string, path: string, text: string, bundles: Bundles):
 			description: field(fields, "description") ?? name,
 			...(model === undefined ? {} : { model }),
 			...(thinking === undefined ? {} : { thinking }),
-			autoExit: autoExit ?? true,
+			...booleans,
 			...(nested === undefined ? {} : { allowNested: nested === true ? true : [...new Set(nested as string[])] }),
 			hasPermission:
 				fields.permission !== null && typeof fields.permission === "object" && !Array.isArray(fields.permission),
@@ -228,6 +233,25 @@ function commaProblem(path: string, fallback: unknown): string | undefined {
 	return entry === undefined
 		? undefined
 		: `${path} has fallback entry ${JSON.stringify(entry)}, which holds a comma; name one model per entry, or write fallback as one comma-separated line`;
+}
+
+/**
+ * The `auto_exit`, `skills` and `context_files` switches, each default true,
+ * or why the file is invalid: each is `true` or `false`.
+ */
+function booleanFields(
+	path: string,
+	fields: Record<string, unknown>,
+): { autoExit: boolean; skills: boolean; contextFiles: boolean } | { invalid: string } {
+	const autoExit = flag(fields.auto_exit);
+	if (autoExit === null)
+		return { invalid: `${path} has auto_exit ${JSON.stringify(fields.auto_exit)}, not true or false` };
+	const skills = flag(fields.skills);
+	if (skills === null) return { invalid: `${path} has skills ${JSON.stringify(fields.skills)}, not true or false` };
+	const contextFiles = flag(fields.context_files);
+	if (contextFiles === null)
+		return { invalid: `${path} has context_files ${JSON.stringify(fields.context_files)}, not true or false` };
+	return { autoExit: autoExit ?? true, skills: skills ?? true, contextFiles: contextFiles ?? true };
 }
 
 /** The `thinking` field; an unknown level is dropped with a note, so the parent's level applies. */

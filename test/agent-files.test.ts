@@ -116,6 +116,65 @@ test("an enabled that is not true or false leaves the agent out with a warning",
 });
 
 // ---------------------------------------------------------------------------
+// skills and context_files
+
+test("skills and context_files default to true, and each false passes the child its Pi flag", async () => {
+	writeAgent("default", agentFile(SCOUT));
+	writeAgent("explicit", agentFile({ ...SCOUT, skills: "true", context_files: "true" }));
+	writeAgent("bare", agentFile({ ...SCOUT, skills: "false", context_files: "false" }));
+	writeAgent("skills", agentFile({ ...SCOUT, skills: "false" }));
+	writeAgent("context", agentFile({ ...SCOUT, context_files: "false" }));
+	const { agents, disabled, warnings } = readRoster(agentDir);
+	assert.deepEqual(disabled, []);
+	assert.deepEqual(warnings, []);
+	assert.deepEqual(
+		agents.map((agent) => [agent.name, agent.skills, agent.contextFiles]),
+		[
+			["bare", false, false],
+			["context", true, false],
+			["default", true, true],
+			["explicit", true, true],
+			["skills", false, true],
+		],
+	);
+	const s = session();
+	await s.start();
+	for (const name of ["default", "explicit", "bare", "skills", "context"]) await s.delegate(`${name} go`);
+	assert.deepEqual(s.errors, []);
+	assert.deepEqual(
+		s.tmux.opened.map(({ argv }) => [argv.includes("--no-skills"), argv.includes("--no-context-files")]),
+		[
+			[false, false],
+			[false, false],
+			[true, true],
+			[true, false],
+			[false, true],
+		],
+	);
+	// Neither key is a roster line entry: the delegate card says nothing about them.
+	const description = s.tool("delegate").description;
+	assert.ok(!description.includes("no-skills") && !description.includes("context_files"), description);
+});
+
+test("a skills or context_files that is not true or false disables the agent", async () => {
+	writeAgent("skills", agentFile({ ...SCOUT, skills: "sometimes" }));
+	writeAgent("context", agentFile({ ...SCOUT, context_files: "2" }));
+	const { agents, disabled } = readRoster(agentDir);
+	assert.deepEqual(agents, []);
+	const reasons = Object.fromEntries(disabled.map((item) => [item.name, item.reason]));
+	assert.equal(reasons.skills, `${join(rosterDir, "skills.md")} has skills "sometimes", not true or false`);
+	assert.equal(reasons.context, `${join(rosterDir, "context.md")} has context_files 2, not true or false`);
+	const s = session();
+	await s.start();
+	await s.delegate("skills go");
+	assert.deepEqual(s.tmux.opened, []);
+	assert.match(
+		s.errors[0],
+		/agent "skills" is disabled because its file is invalid: .*has skills "sometimes", not true or false/,
+	);
+});
+
+// ---------------------------------------------------------------------------
 // Invalid agent files are disabled
 
 test("an invalid agent file is disabled: out of the roster and the tool description, with a warning at session start", async () => {

@@ -1092,6 +1092,8 @@ optional, and the [first-use example](#first-use) is a complete agent file:
 | `tools` | The delegate's tools (see below): tool names and `$bundle` entries for exactly those, or only `-name` entries for the parent session's current tools less those. Absent means the parent session's current tools; empty (`tools:` or `tools: []`) means no tools except the `delegateTools` setting. MCP tools follow the selection like any other. |
 | `fallback` | For legacy agents, models to try in order when `model` is usage-limited (see [Usage limits](#usage-limits)). Routed roles use only their policy's frozen candidate list. Each entry is one model, like `model`; a `*` pattern, or a YAML list entry holding a comma, makes the file invalid. A comma-separated line (`fallback: a, b`) is two entries. |
 | `auto_exit` | `true` or `false`, default `true`; see [Auto-exit](#auto-exit). |
+| `skills` | `true` or `false`, default `true`. `false` passes the child `--no-skills`, which disables discovered and configured skills, so their names and descriptions leave the system prompt. A skill loaded by an explicit `--skill` path still loads; pi-squire passes none. |
+| `context_files` | `true` or `false`, default `true`. `false` passes the child `--no-context-files`, which disables `AGENTS.md` and `CLAUDE.md` discovery. The delegate then gets none of the rules those files carry, your project's and your global ones alike, so keep what it needs in the agent body. |
 | `allow_nested_delegation` | Unreleased: `true` or a YAML list of exact child agent names; grants nested delegation below `maxDepth` (see [Nested delegation](#nested-delegation-unreleased)). Absent, false or an empty list grants none. Malformed values disable the agent; unavailable names warn. |
 | `prompt_mode` | `append` (the default) wraps the body in `<agent_instructions>` and `</agent_instructions>` lines; `replace` adds the body unwrapped. An empty body adds nothing either way. |
 | `enabled` | `false` leaves the agent out. A project file with `enabled: false` hides a global agent of the same name in that project. |
@@ -1233,8 +1235,9 @@ in context, and a status check repeated only after waiting. It names no provider
 body as written.
 
 An agent file that cannot be used is invalid, and its agent is disabled:
-frontmatter that is not readable YAML or not a set of fields, an `enabled` or
-`auto_exit` that is not `true` or `false`, a `tools` value that is not a list,
+frontmatter that is not readable YAML or not a set of fields, an `enabled`,
+`auto_exit`, `skills` or `context_files` that is not `true` or `false`, a
+`tools` value that is not a list,
 a `tools` list with a `+name` entry or with tool names and `-name`
 entries mixed, a `tools` or `fallback` YAML list entry holding a comma, or a
 `model` or `fallback` entry with a `*` pattern. A disabled agent is left

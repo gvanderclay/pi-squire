@@ -149,14 +149,14 @@ function forkParameters(includeRouting: boolean): TObject {
 	});
 }
 
-/** The fork tool is deferred: `tool_search` loads it, so no request declares it. */
+/** The fork tool is deferred: it starts undeclared and `tool_search` or activation declares it. */
 export type ForkTool = ToolDef & { exposure: "deferred" };
 
 export function forkTool(deps: ForkDeps, includeRouting = true): ForkTool {
 	return {
 		name: "delegation_fork",
 		label: "Fork delegation",
-		// Deferred keeps its declaration, about 1,200 tokens, out of every request; it stays callable.
+		// Deferred keeps its declaration, about 1,200 tokens, out of requests until it is activated; it stays callable.
 		exposure: "deferred",
 		description:
 			"Start a new direct child from a copy of an existing child's session context, with a new task, session id and window. The original child is untouched and may still be running. Runs in its working folder, or a new managed worktree from that folder's checkout. Results arrive as messages like other delegations.",

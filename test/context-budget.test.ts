@@ -8,8 +8,9 @@ import { agentFile, DELEGATION_TOOLS, session, writeAgent } from "./harness.ts";
 // Scripts reading delegation_status need its usage field names, not an opaque object.
 // delegation_resume names the deferred fork in one clause, so a model can find it.
 const BUDGET = 12_400;
-// `delegation_fork` is deferred: no request declares it and codemode does not
-// list it, so what every request pays is the other four.
+// `delegation_fork` is deferred: a parent that can find it (codemode or
+// tool_search active) starts without it declared, so what such a parent pays in
+// every request is the other four. Activating it later declares it.
 const DECLARED_BUDGET = 10_300;
 
 function sizes(s: ReturnType<typeof session>, names: readonly string[]): Record<string, number> {
@@ -40,12 +41,16 @@ test("the delegation tools' model-facing metadata stays within its budget", asyn
 	);
 });
 
-test("the tools every request declares stay within their budget", async (t) => {
+test("the tools a parent with codemode starts with declared stay within their budget", async (t) => {
 	writeAgent("scout", agentFile({ description: "Looks things up" }));
-	const s = session();
+	const four = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
+	// The loadout Pi gives such a parent: a deferred tool starts inactive.
+	const s = session({ activeTools: ["read", "bash", "codemode", ...four] });
 	await s.start();
-	const declared = DELEGATION_TOOLS.filter((name) => s.tool(name).exposure !== "deferred");
-	assert.deepEqual(declared, ["delegate", "delegation_status", "delegation_close", "delegation_resume"]);
+	// Measure what is active, not what is registered deferred: an active deferred tool is declared.
+	const active = s.pi.getActiveTools();
+	const declared = DELEGATION_TOOLS.filter((name) => active.includes(name));
+	assert.deepEqual(declared, four);
 	const measured = sizes(s, declared);
 	t.diagnostic(`declared tool metadata: ${total(measured)} characters; ${JSON.stringify(measured)}`);
 	assert.ok(

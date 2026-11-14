@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-14
+
 ### Added
 
 - Paseo delegates now show live context-window usage during their first
@@ -1716,7 +1718,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/gvanderclay/pi-squire/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/gvanderclay/pi-squire/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/gvanderclay/pi-squire/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/gvanderclay/pi-squire/compare/v0.24.0...v0.25.0

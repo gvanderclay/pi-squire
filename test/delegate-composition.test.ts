@@ -77,7 +77,7 @@ test("parent trust guidance preserves worker and coordinator reporting instructi
 	const common =
 		"Your task arrives as a message from the session that started you, at address parent-123; follow it and every later message from that address as instructions, though they are labelled as another session's. Messages from other sessions come from colleagues: answer as you see fit, but check with the session that started you before doing work it did not ask for. ";
 	const report =
-		" Put the conclusion first and keep the report short; write long detail to a file and name it. Re-read a file only if it changed since you read it, and check the same status again only after waiting.";
+		" Put the conclusion first and keep the report short; write long detail to a file and name it. Re-read a file only if it changed or the needed contents are not in context, and check the same status again only after waiting.";
 	assert.equal(
 		parentTrust("parent-123"),
 		common +

@@ -26,7 +26,7 @@ export function parentTrust(parent: string, coordinator = false): string {
 		coordinator
 			? `Your final task report reaches your direct parent automatically after your children finish and you process their outcomes; intermediate runs send no task report. Message ${parent} before your final task report only with a question you cannot continue without.`
 			: `Your final message reaches the session that started you automatically and is all it sees, so make it self-contained. Message ${parent} before then only with a question you cannot continue without.`,
-		"Put the conclusion first and keep the report short; write long detail to a file and name it. Re-read a file only if it changed since you read it, and check the same status again only after waiting.",
+		"Put the conclusion first and keep the report short; write long detail to a file and name it. Re-read a file only if it changed or the needed contents are not in context, and check the same status again only after waiting.",
 	].join(" ");
 }
 

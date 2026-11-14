@@ -15,8 +15,9 @@ follows [Semantic Versioning](https://semver.org/).
   for routing JSON once a model is picked. The `delegate` tool, resume and
   fork still route bound roles as before.
 - A delegate's per-run guidance now asks for a short, conclusion-first report
-  with long detail in a named file, a file re-read only if it changed, and a
-  status check repeated only after waiting. Deliberately changed
+  with long detail in a named file, a file re-read only if it changed or
+  its needed contents are no longer in context, and a status check repeated
+  only after waiting. Deliberately changed
   `test/delegate-composition.test.ts`'s pinned `parentTrust` string; the
   three existing sentences are unchanged.
 

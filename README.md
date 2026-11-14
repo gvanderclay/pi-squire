@@ -1227,8 +1227,8 @@ instructions to follow as given. Other sessions are colleagues: the delegate
 may answer them, but checks with the parent before doing work the parent did
 not ask for. Its final message reaches the parent on its own. The section also
 asks for a short report that leads with the conclusion, long detail in a named
-file, a file re-read only if it changed, and a status check repeated only
-after waiting. It names no provider, package or tool, so it holds whatever
+file, a file re-read only if it changed or its needed contents are no longer
+in context, and a status check repeated only after waiting. It names no provider, package or tool, so it holds whatever
 `message:*` provider delivers the task. `prompt_mode: replace` appends the
 body as written.
 

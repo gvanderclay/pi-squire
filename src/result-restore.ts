@@ -12,6 +12,7 @@ import {
 } from "./result-types.ts";
 import type { Delegation, Result } from "./results.ts";
 import { validateRoutingMetadata } from "./routing-restore.ts";
+import { validateSessionUsage } from "./session-usage.ts";
 import { locatedRecord } from "./tmux.ts";
 import { belongsTo, restoredStarts } from "./tree-view.ts";
 
@@ -51,6 +52,7 @@ function accept(record: Recorded, ctx: ExtensionContext, tasks: ChildTasks, loca
 		if (isStarted(record)) {
 			validateRoutingMetadata(record);
 			validateSettledAt(record);
+			validateSessionUsage(record.result?.usage);
 		}
 		return belongsTo(record, ctx);
 	} catch (error) {
@@ -99,6 +101,7 @@ function applyTerminal(
 	validateSettledAt(data);
 	if (typeof data.result?.replyId === "string") {
 		validateRoutingMetadata({ ...record, result: data.result });
+		validateSessionUsage(data.result.usage);
 		record.result = data.result;
 	} else if (data.closed === true) record.closed = true;
 	else if (data.gone === true) {

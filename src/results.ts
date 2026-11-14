@@ -26,6 +26,7 @@ import {
 } from "./result-types.ts";
 import { ResultsPresentation } from "./results-presentation.ts";
 import { routingEvidence } from "./routing-provenance.ts";
+import { type SessionUsage, sessionUsage } from "./session-usage.ts";
 import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
 import { locatedRecord, type WindowRecord, windowPresentation } from "./tmux.ts";
 import type { Workspace } from "./workspace.ts";
@@ -104,6 +105,7 @@ export type RequestCopy = { envelope: Envelope; path: string };
 
 /** A result, appended to the session so it is shown once and survives a resume. */
 export type Result = {
+	usage?: SessionUsage;
 	routingEvidence?: import("./routing-types.ts").RoutingEvidence;
 	/** The envelope's status: `done`, `failed` or `stopped`. */
 	status: string;
@@ -398,14 +400,16 @@ export function createResults(
 		const delegation = pending.at(-1) as StartedRecorded;
 		shown.add(reply.id);
 		const session = locateSession(delegation, ctx?.sessionManager.getSessionDir());
+		const usage = sessionUsage(session);
 		const evidence = delegation.routing ? routingEvidence(delegation.routing, session) : undefined;
 		const finished = delegation.routing ? evidence?.served.at(-1)?.model : finishedModel(session);
 		// After the claim above, so a slow or failing inspection cannot let the provider or a duplicate deliver it too.
 		const snapshot = inspectWorkspace(delegation.workspace?.cwd, delegation.workspace?.git);
 		const name = recordedName(delegation);
 		const budget = resultBodyBudget((text) => ctx?.ui.notify(text, "error"));
-		const details = resultDetails(delegation, name, payload, session, finished, snapshot, evidence, budget);
+		const details = resultDetails(delegation, name, payload, session, finished, snapshot, evidence, budget, usage);
 		const result: Result = {
+			...(usage === undefined ? {} : { usage }),
 			...(evidence ? { routingEvidence: evidence } : {}),
 			status: reply.status,
 			replyId: reply.id,

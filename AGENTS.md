@@ -11,7 +11,7 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   loads; `child.ts` is what a delegate itself registers, `agents.ts` reads
   the roster and the `delegateTools` setting, `results.ts` handles replies and works out a delegation's
   state (`result-message.ts` words the result; `result-restore.ts` restores
-  semantic records fail-closed), `render.ts` draws the
+  semantic records fail-closed); `session-usage.ts` reads and formats session token/cost totals, `render.ts` draws the
   delegate messages, `current-window.ts` answers which window a delegation
   is in now for the navigator and widget, `tracking.ts` holds the status and close
   tools, `tracking-text.ts` their full and compact status text, `poll.ts` the poll (with `window-state.ts`, which answers and closes a delegation's window), `navigator.ts`

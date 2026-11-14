@@ -1,4 +1,5 @@
 import type { Delegation, DelegationState, WindowState } from "./results.ts";
+import type { SessionUsage } from "./session-usage.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 import { validWindowLocator } from "./tmux.ts";
 import type { Workspace } from "./workspace.ts";
@@ -33,6 +34,7 @@ export type TaskQuote = { text: string; path: string } | { note: string };
 export type MessageDetails =
 	| (CommonDetails & {
 			kind: "result";
+			usage?: SessionUsage;
 			/** The envelope's status: `done`, `failed` or `stopped`. */
 			status: string;
 			envelopePath: string;

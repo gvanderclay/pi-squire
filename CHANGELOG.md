@@ -8,6 +8,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Delegate result headers and expanded views report session turns, input,
+  cached input, output, cost when known, and context at finish. Full
+  `delegation_status` blocks show live usage while running and saved totals
+  after a result; compact settled rows keep usage in structured details only.
+  Totals include billed assistant, compaction, branch-summary, standalone and
+  nested tool model work across all session branches, including copied or
+  resumed history, not just the current attempt. Older records may omit usage;
+  malformed saved usage blocks restoration. New reader, result, restore and
+  render tests cover the added fields without changing the compact status size
+  budget. `test/context-budget.test.ts` deliberately raises its metadata budget
+  from 12,000 to 12,300 characters so scripts reading `delegation_status` get
+  the named usage fields instead of an opaque object.
+
 - Agent files take two optional boolean frontmatter keys, `skills` and
   `context_files`, each default `true`. `skills: false` passes the child
   `--no-skills` and `context_files: false` passes `--no-context-files`, for a

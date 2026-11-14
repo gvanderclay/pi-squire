@@ -1420,7 +1420,7 @@ show actual served models/efforts and whether independent family history was
 verified. The result's `Independent review:` line carries its caller caveat
 only when the request asked for a review: `verified` and `unverified` results
 print it, and a `not-required` result (an explorer or implementer run with no
-review asked) prints the verdict alone. Review evidence covers exactly the
+review asked) prints the verdict and any reasons without it. Review evidence covers exactly the
 attempt after its marker, so an intermediate out-of-route model substitution
 makes that attempt unverified; an unknown or incomplete history is also
 unverified. Author exclusions are conservative across each source's full active

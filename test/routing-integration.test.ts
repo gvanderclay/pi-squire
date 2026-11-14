@@ -413,14 +413,17 @@ test("a not-required routed result prints the review verdict without the caveat"
 	sessionFile(readable.id, recordedRoute(s, readable.id));
 	deliver(s, readable.id);
 	assert.equal(reviewLineOf(resultFor(s, readable.id)), "Independent review: not-required.");
-	// Unreadable provenance keeps the verdict and, with the caveat, drops its reason.
+	// Unreadable provenance keeps the verdict and its reason, without the caveat.
 	const unknown = await routed(s);
 	const evidence = routingEvidence(recordedRoute(s, unknown.id), undefined);
 	assert.equal(evidence.independent, "not-required");
 	assert.match(evidence.reasons.join(), /attempt session/);
 	deliver(s, unknown.id);
-	assert.equal(reviewLineOf(resultFor(s, unknown.id)), "Independent review: not-required.");
-	assert.doesNotMatch(resultFor(s, unknown.id), /Caller must|attempt session/);
+	assert.equal(
+		reviewLineOf(resultFor(s, unknown.id)),
+		`Independent review: not-required (${evidence.reasons.join("; ")}).`,
+	);
+	assert.doesNotMatch(resultFor(s, unknown.id), /Caller must/);
 });
 
 test("verified and unverified review results keep the full review sentence and its reasons", async () => {

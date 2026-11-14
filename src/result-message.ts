@@ -156,12 +156,13 @@ function checkoutText(snapshot: WorkspaceSnapshot): string[] {
 
 /**
  * The independent-review line. Its caveat qualifies a verdict, so a run that
- * asked for no review prints the verdict alone instead of advice that cannot apply.
+ * asked for no review prints the verdict without advice that cannot apply. Its
+ * reasons stay: they report unreadable or out-of-route provenance on any run.
  */
 function reviewLine(evidence: RoutingEvidence | undefined): string {
 	const verdict = evidence?.independent ?? "unverified";
-	if (verdict === "not-required") return `Independent review: ${verdict}.`;
 	const reasons = evidence?.reasons.length ? ` (${evidence.reasons.join("; ")})` : "";
+	if (verdict === "not-required") return `Independent review: ${verdict}${reasons}.`;
 	return `Independent review: ${verdict}${reasons}. Caller must identify all author sources and keep the candidate stable; this verifies family disjointness relative to supplied active-branch histories, not exhaustive artifact attribution, error independence, review quality or isolation.`;
 }
 

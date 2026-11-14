@@ -330,14 +330,19 @@ export function createResults(
 		const record = startedById(id);
 		if (record === undefined || record.closed === true) return;
 		record.closed = true;
-		record.settledAt = Date.now();
+		// A close after a result or a gone record is not a new settlement: keep the earlier time.
+		if (!record.result && !record.gone) record.settledAt = Date.now();
 		const outcome = record.result || record.gone ? undefined : closeOutcome(record, ctx);
 		if (outcome) {
 			tasks.outcomes.push(outcome);
 			if (wake) tasks.paused = false;
 		}
 		save(); // Close and its processing obligation persist together, before transcript/display effects.
-		pi.appendEntry(CUSTOM_TYPE, { id, closed: true, settledAt: record.settledAt });
+		pi.appendEntry(CUSTOM_TYPE, {
+			id,
+			closed: true,
+			...(record.settledAt === undefined ? {} : { settledAt: record.settledAt }),
+		});
 		if (outcome && wake) {
 			pi.sendMessage(
 				{ customType: CUSTOM_TYPE, content: outcome.content, details: outcome.details, display: true },

@@ -1575,7 +1575,10 @@ and envelope path when present. Resume/fork relationships add their existing
 id in a resume chain remains visible. Running delegations and workspace attempts keep
 their full blocks; `id` gives a delegation's full block. Structured details are
 unchanged. Settlement order uses the recorded settlement time; older sessions
-without one rank oldest, retaining their relative order.
+without one rank below timed records, later-recorded first. Closing a
+delegation that already has a result keeps its earlier settlement time. A
+started delegation with no result whose state is unknown, because the host
+could not be asked, is listed like a running one.
 
 ```text
 2 delegations:
@@ -1597,7 +1600,7 @@ without one rank oldest, retaining their relative order.
   session: <session file>
   envelope: <the reply's path in the parent's cur/>
 
-Pass id for a delegation’s full block.
+Pass id for a delegation's full block.
 ```
 
 - **Name** is the delegate's Pi session name, its agent and the first 8

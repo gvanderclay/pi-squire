@@ -247,16 +247,25 @@ function selectRecords(results: Results, id: string | undefined): Recorded[] {
 
 /**
  * The default status selection: every running delegation and unfinished
- * workspace attempt, plus the most recently settled records. Render order stays hierarchical.
+ * workspace attempt, plus the most recently settled records. A started record
+ * with no result, close or gone fact whose state is unknown (the host could not
+ * be asked) counts as unfinished too. Records from before settlement times rank
+ * below timed ones, later-recorded first. Render order stays hierarchical.
  */
 function recentRecords(records: Recorded[], windows: WindowStates): Recorded[] {
+	const unfinished = (record: StartedRecorded): boolean => {
+		const state = deriveState(record, windows.state(record));
+		if (state === "running") return true;
+		const settled = record.result !== undefined || record.gone === true || record.closed === true;
+		return state === "unknown" && !settled && record.accountingOnly !== true;
+	};
 	const active = (record: Recorded): boolean =>
-		isStarted(record)
-			? deriveState(record, windows.state(record)) === "running"
-			: record.attempt.phase !== "rolled-back";
+		isStarted(record) ? unfinished(record) : record.attempt.phase !== "rolled-back";
 	const chosen = new Set(records.filter(active).map((record) => record.id));
+	const position = new Map(records.map((record, index) => [record.id, index]));
+	const time = (record: Recorded): number => (isStarted(record) ? (record.settledAt ?? -1) : -1);
 	const settled = records.filter((item) => !chosen.has(item.id));
-	settled.sort((a, b) => (isStarted(b) ? (b.settledAt ?? -1) : -1) - (isStarted(a) ? (a.settledAt ?? -1) : -1));
+	settled.sort((a, b) => time(b) - time(a) || (position.get(b.id) ?? 0) - (position.get(a.id) ?? 0));
 	for (const record of settled.slice(0, RECENT_SETTLED)) chosen.add(record.id);
 	return records.filter((record) => chosen.has(record.id));
 }
@@ -322,7 +331,7 @@ function statusTool(results: Results, tmux: DelegateHost, readingErrors: () => R
 				views.length === 0
 					? ["No delegations are recorded in this session.", ...block]
 					: [
-							`${heading}\n\n${text}${params.id === undefined ? "\n\nPass id for a delegation’s full block." : ""}`,
+							`${heading}\n\n${text}${params.id === undefined ? "\n\nPass id for a delegation's full block." : ""}`,
 							...block,
 						];
 			return toolResult(parts.join("\n\n"), details);

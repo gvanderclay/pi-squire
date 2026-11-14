@@ -693,7 +693,7 @@ test("delegation_status compact current-format Git rows stay under 2560 bytes", 
 		assert.match(full.content[0].text, /identity: session/);
 		assert.ok(full.content[0].text.split("\n").length > 5);
 	}
-	assert.match(text, /Pass id for a delegation’s full block/);
+	assert.match(text, /Pass id for a delegation's full block/);
 	assert.ok(s.tool("delegation_status").description.length <= 352);
 });
 
@@ -750,7 +750,32 @@ test("delegation_status includes the first launch when it settles last, includin
 	assert.deepEqual(await ids(transcript), expected);
 });
 
-test("legacy settled records rank oldest with stable relative order", async () => {
+test("closing a finished delegation does not make it the most recently settled", async (t) => {
+	writeAgent("scout", SCOUT);
+	const s = session();
+	await s.start();
+	const launched: Delegation[] = [];
+	for (let index = 0; index < 7; index += 1) {
+		await s.toolCall("delegate", { agent: "scout", task: "work" });
+		launched.push(s.entries.at(-1)!.data as Delegation);
+	}
+	let now = Date.now();
+	t.mock.method(Date, "now", () => now);
+	for (const delegation of launched) {
+		now += 1000;
+		s.events.emit("message:inbound", reply(s.parent, delegation, "done", `reply-${delegation.id}`));
+	}
+	now += 1000;
+	await s.toolCall("delegation_close", { id: launched[0].id });
+	const rows = ((await s.toolCall("delegation_status", {})).structuredContent as { delegations: { id: string }[] })
+		.delegations;
+	assert.deepEqual(
+		rows.map((record) => record.id),
+		launched.slice(2).map((record) => record.id),
+	);
+});
+
+test("legacy settled records rank below timed ones, later-recorded first", async () => {
 	const s = session();
 	const entries = Array.from({ length: 7 }, (_, index) => recordedDelegation(s.parent, index));
 	for (const entry of entries) delete (entry.data as { settledAt?: number }).settledAt;
@@ -761,7 +786,7 @@ test("legacy settled records rank oldest with stable relative order", async () =
 		.delegations;
 	assert.deepEqual(
 		rows.map((record) => record.id),
-		[...entries.slice(0, 4), entries[6]].map((entry) => entry.data.id),
+		entries.slice(2).map((entry) => entry.data.id),
 	);
 });
 

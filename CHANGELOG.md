@@ -12,7 +12,9 @@ follows [Semantic Versioning](https://semver.org/).
   attempt plus the 5 most recently settled records by default; `all: true`
   lists every record, and an `id` still selects one, including one the default
   leaves out. Recency uses persisted settlement times across descendants,
-  preserving hierarchy display order; legacy records without a time rank oldest.
+  preserving hierarchy display order; legacy records without a time rank
+  below timed ones, later-recorded first, and closing a finished delegation
+  keeps its earlier time. Unfinished delegations whose state is unknown stay listed.
   Settled list rows use at most five base lines with a short checkout summary
   and changed-path count, plus any resume/fork relationships; running rows,
   attempts and `id` keep full blocks. Structured

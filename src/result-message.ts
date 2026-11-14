@@ -7,6 +7,7 @@ import type { StartedRecorded } from "./result-types.ts";
 import type { Inbound, MessageDetails, TaskQuote } from "./results.ts";
 import { servedSummary } from "./routing-provenance.ts";
 import type { RoutingEvidence } from "./routing-types.ts";
+import { type SessionUsage, usageText } from "./session-usage.ts";
 import { DEFAULT_RESULT_BODY_BYTES, resultBodyBytes } from "./settings.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 
@@ -105,6 +106,7 @@ export function resultDetails(
 	snapshot: WorkspaceSnapshot,
 	evidence?: RoutingEvidence,
 	bodyBytes: number = resultBodyBytes(getAgentDir()),
+	usage?: SessionUsage,
 ): ResultDetails {
 	const reply = payload.envelope;
 	const copy = payload.requests.find((request) => request.envelope?.id === delegation.requestId);
@@ -125,6 +127,7 @@ export function resultDetails(
 	const limit = reply.status === "stopped" ? undefined : limitLine(sessionIdOf(delegation), reply.status);
 	return {
 		kind: "result",
+		...(usage === undefined ? {} : { usage }),
 		...(delegation.routing ? { routing: delegation.routing, routingEvidence: evidence } : {}),
 		status: reply.status,
 		name,
@@ -166,6 +169,9 @@ export function resultText(details: ResultDetails): string {
 				]
 			: []),
 		...(details.limit === undefined ? [] : [details.limit]),
+		...(details.usage === undefined
+			? []
+			: [`Usage: ${usageText(details.usage, (details.resumedFrom ?? details.forkedFrom) !== undefined)}`]),
 		taskLine,
 		`Working directory: ${cwdLine(details.cwd)}`,
 		...(details.workspaceSnapshot === undefined ? [] : checkoutText(details.workspaceSnapshot)),

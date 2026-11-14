@@ -1,6 +1,51 @@
 import type { Delegation, DelegationState, WindowState } from "./results.ts";
+import type { SessionUsage } from "./session-usage.ts";
+import type { WorkspaceSnapshot } from "./snapshot.ts";
 import { validWindowLocator } from "./tmux.ts";
+import type { Workspace } from "./workspace.ts";
 import type { WorktreePlan } from "./worktree.ts";
+
+/** What both delegate messages carry for their view, beside the text the model reads. */
+type CommonDetails = {
+	name: string;
+	agent: string;
+	/** The model the delegation was launched on. */
+	model: string;
+	finishedModel?: string;
+	routing?: import("./routing-types.ts").RoutingRecord;
+	routingEvidence?: import("./routing-types.ts").RoutingEvidence;
+	id: string;
+	/** The delegation this one resumed. */
+	resumedFrom?: string;
+	forkedFrom?: string;
+	/** The Pi session id when it is not `id`: a resumed delegation's. */
+	sessionId?: string;
+	requestId: string;
+	sessionPath?: string;
+	cwd?: string;
+	sessionDir?: string;
+	workspace?: Workspace;
+};
+
+/** The task as the result quotes it: its text and copy path, or why there is none. */
+export type TaskQuote = { text: string; path: string } | { note: string };
+
+/** The details of a delegate message; the renderer draws from these. */
+export type MessageDetails =
+	| (CommonDetails & {
+			kind: "result";
+			usage?: SessionUsage;
+			/** The envelope's status: `done`, `failed` or `stopped`. */
+			status: string;
+			envelopePath: string;
+			limit?: string;
+			task: TaskQuote;
+			/** The reply body, capped. */
+			body: string;
+			/** The checkout when the result arrived, the same value as the recorded result's; absent in older messages. */
+			workspaceSnapshot?: WorkspaceSnapshot;
+	  })
+	| (CommonDetails & { kind: "gone"; windowName: string; reason?: "explicit-close" });
 
 /** Internal opaque-start journal namespace; released transcript readers ignore it. */
 export const START_TYPE = "delegate-start-v2";

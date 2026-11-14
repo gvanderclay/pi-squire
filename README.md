@@ -1854,6 +1854,7 @@ the parent one message labelled delegate output:
 ```
 [delegate] Result from scout (provider/model), delegation <id>, request <request id>.
 Status: done
+Usage: 24 turns, 1.8M tokens in (1.7M cached), 9.2k out, $0.39; context at finish 181k.
 Task: <sent/ copy>
 Working directory: <the directory its window opened in>
 Checkout when the result arrived: <branch, head, launch commit, commits since launch, clean or dirty>
@@ -1871,6 +1872,22 @@ Delegate session: <session file or id>
   or `/model` in its window), it reads `launched → finished`, for example
   `(anthropic/claude-haiku-5-5 → openai/gpt-6-luna)`. `delegation_status`
   reports the same.
+- `Usage:` reports whole-session token use across all branches, including
+  assistant calls, compaction, branch summaries, standalone billed operations
+  and nested model work reported by tools. Turns count assistant messages only.
+  Tokens in include ordinary input plus cache reads and writes; `cached` means
+  cache reads. Cost is shown only when every counted call has a total (billed
+  when the provider supplies it, otherwise the catalog estimate); zero stays
+  zero; a cost under half a cent reads `<$0.01`. Context is the input plus cache
+  reads and writes, excluding output, of the last assistant request that neither
+  failed nor was aborted, so a run ending on an error keeps its real size. A
+  resumed session includes its earlier spend; a fork includes copied history, so
+  these are not per-attempt or tree totals, and the line then ends `Counts the
+  whole session, including work before this delegation.`
+  No readable usage means no line. The result saves the totals; the expanded
+  result and full `delegation_status` blocks show them too. Running status reads
+  live usage; settled list rows keep it in structured details without adding a
+  text line.
 - That text is what the parent model reads. The user sees the delegation as
   one tool call that changes state, in the style of
   [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents):

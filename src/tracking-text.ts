@@ -12,6 +12,7 @@ import {
 } from "./results.ts";
 import { servedSummary } from "./routing-provenance.ts";
 import type { RoutingEvidence } from "./routing-types.ts";
+import { type SessionUsage, usageText } from "./session-usage.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 import { accountingFor } from "./tree-view.ts";
 
@@ -55,6 +56,7 @@ export function ago(ms: number): string {
 
 /** One delegation as `delegation_status` reports it; its text and details both read from this. */
 export type View = {
+	usage?: SessionUsage;
 	routingEvidence?: RoutingEvidence;
 	record: StartedRecorded;
 	state: DelegationState;
@@ -100,6 +102,7 @@ export function viewText({
 	resumedAs,
 	windowSession,
 	routingEvidence,
+	usage,
 }: View): string {
 	const seen = lastActive === undefined ? "" : ` (last active ${ago(Date.now() - lastActive.getTime())})`;
 	const lines = [
@@ -117,6 +120,9 @@ export function viewText({
 		...(record.forkedFrom === undefined ? [] : [`  forked from ${record.forkedFrom}`]),
 		...(resumedAs === undefined ? [] : [`  resumed as ${resumedAs}`]),
 		`  state: ${stateLine(state, record)}${seen}`,
+		...(usage === undefined
+			? []
+			: [`  usage: ${usageText(usage, (record.resumedFrom ?? record.forkedFrom) !== undefined)}`]),
 		`  ${recordedLocation(record, windowSession)}`,
 		`  cwd: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`  workspace: ${workspaceLine(record.workspace)}`]),

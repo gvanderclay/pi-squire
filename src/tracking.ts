@@ -24,6 +24,7 @@ import {
 } from "./results.ts";
 import { routingEvidence } from "./routing-provenance.ts";
 import { RoutingEvidenceSchema, RoutingRecordSchema } from "./routing-schema.ts";
+import { SessionUsageSchema, sessionUsage } from "./session-usage.ts";
 import { inspectWorkspace, WorkspaceSnapshotSchema } from "./snapshot.ts";
 import { AttemptSchema } from "./tracking-attempt.ts";
 import { attemptText, compactText, type View, viewText } from "./tracking-text.ts";
@@ -97,6 +98,7 @@ const StartedSchema = Type.Object({
 	closed: Type.Boolean(),
 	closedWithoutResult: Type.Boolean(),
 	status: Type.Optional(Type.String()),
+	usage: Type.Optional(SessionUsageSchema),
 	envelopePath: Type.Optional(Type.String()),
 	sessionPath: Type.Optional(Type.String()),
 	lastActiveAt: Type.Optional(Type.String()),
@@ -155,6 +157,7 @@ function view(
 		record,
 		...(record.routing ? { routingEvidence: routingEvidence(record.routing, sessionPath) } : {}),
 		state,
+		usage: record.result === undefined && state === "running" ? sessionUsage(sessionPath) : record.result?.usage,
 		name: recordedName(record),
 		sessionPath,
 		lastActive,
@@ -176,6 +179,7 @@ function viewDetails({
 	windowSession,
 	canResume,
 	routingEvidence,
+	usage,
 }: View): Record<string, unknown> {
 	return {
 		kind: "started",
@@ -206,6 +210,7 @@ function viewDetails({
 		closed: record.closed === true,
 		closedWithoutResult: record.gone === true && record.result === undefined && record.closed !== true,
 		status: record.result?.status,
+		...(usage === undefined ? {} : { usage }),
 		envelopePath: record.result?.envelopePath,
 		sessionPath,
 		...(lastActive === undefined ? {} : { lastActiveAt: lastActive.toISOString() }),

@@ -8,6 +8,8 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
+import { readChildRecords } from "../src/child-tasks.ts";
+import type { SessionUsage } from "../src/session-usage.ts";
 import { childState } from "./child-state.ts";
 
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
@@ -65,6 +67,145 @@ const resultMessage = (s: Session) => {
 };
 const firstLine = (s: Session) => resultMessage(s).content.split("\n")[0];
 const statusTool = (s: Session) => s.toolCall("delegation_status", {});
+
+const USAGE: SessionUsage = {
+	turns: 2,
+	input: 99_000,
+	output: 9200,
+	cacheRead: 1_700_000,
+	cacheWrite: 1000,
+	cost: 0.39,
+	contextTokens: 181_000,
+};
+const USAGE_LINE = "Usage: 2 turns, 1.8M tokens in (1.7M cached), 9.2k out, $0.39; context at finish 181k.";
+const USAGE_STATUS = `  usage: ${USAGE_LINE.slice("Usage: ".length)}`;
+
+function writeUsageSession(s: Session): string {
+	return writeDelegateSession(s, [
+		{
+			...assistant("alpha", "fast-model"),
+			message: {
+				role: "assistant",
+				usage: {
+					input: 89_000,
+					output: 4600,
+					cacheRead: 1_530_000,
+					cacheWrite: 0,
+					cost: { total: 0.2 },
+				},
+			},
+		},
+		{
+			...assistant("alpha", "fast-model"),
+			message: {
+				role: "assistant",
+				usage: {
+					input: 10_000,
+					output: 4600,
+					cacheRead: 170_000,
+					cacheWrite: 1000,
+					cost: { total: 0.19 },
+				},
+			},
+		},
+	]);
+}
+
+test("result usage stays in the header outside the body budget; full status reads live then keeps the settled value", async () => {
+	const s = await started();
+	const file = writeUsageSession(s);
+	const id = delegationId(s);
+	for (const params of [{}, { id }]) {
+		const live = await s.toolCall("delegation_status", params);
+		assert.ok(live.content[0].text.includes(USAGE_STATUS), live.content[0].text);
+		assert.deepEqual(
+			(live.structuredContent as { delegations: { usage?: SessionUsage }[] }).delegations[0].usage,
+			USAGE,
+		);
+	}
+	const body = `START-${"x".repeat(30_000)}-END`;
+	deliver(s, "done", body);
+	const message = resultMessage(s);
+	assert.equal(message.content.split("\n")[2], USAGE_LINE);
+	assert.deepEqual(message.details?.usage, USAGE);
+	assert.match(message.content, /KiB omitted here/);
+	assert.ok(message.content.endsWith("-END"));
+	const stored = readChildRecords(s.parent)[0];
+	assert.ok("result" in stored);
+	assert.deepEqual(stored.result?.usage, USAGE);
+	rmSync(file); // A settled file disappearing must not lose or recompute the saved usage.
+	const full = await s.toolCall("delegation_status", { id });
+	assert.ok(full.content[0].text.includes(USAGE_STATUS), full.content[0].text);
+	const compact = await statusTool(s);
+	assert.doesNotMatch(compact.content[0].text, / {2}usage:/);
+	for (const status of [full, compact])
+		assert.deepEqual(
+			(status.structuredContent as { delegations: { usage?: SessionUsage }[] }).delegations[0].usage,
+			USAGE,
+		);
+	await s.shutdown();
+});
+
+test("missing session usage adds neither a result line nor a full status line", async () => {
+	const s = await started();
+	deliver(s);
+	assert.doesNotMatch(resultMessage(s).content, /^Usage:/m);
+	assert.equal(Object.hasOwn(resultMessage(s).details ?? {}, "usage"), false);
+	const full = await s.toolCall("delegation_status", { id: delegationId(s) });
+	assert.doesNotMatch(full.content[0].text, / {2}usage:/);
+	await s.shutdown();
+});
+
+for (const source of ["local", "transcript"] as const) {
+	test(`stored usage survives ${source} restoration without reading the session again`, async () => {
+		const s = await started();
+		const file = writeUsageSession(s);
+		deliver(s);
+		await s.shutdown();
+		rmSync(file);
+		if (source === "transcript") rmSync(join(agentDir, "squire", "child-tasks", `${s.parent}.json`));
+		const reopened = await started(s.entries, s.parent);
+		const full = await reopened.toolCall("delegation_status", { id: delegationId(s) });
+		assert.ok(full.content[0].text.includes(USAGE_STATUS), full.content[0].text);
+		assert.deepEqual(
+			(full.structuredContent as { delegations: { usage?: SessionUsage }[] }).delegations[0].usage,
+			USAGE,
+		);
+		await reopened.shutdown();
+	});
+}
+
+for (const source of ["local", "terminal", "start"] as const) {
+	for (const usage of [null, "wrong", {}, { ...USAGE, turns: -1 }, { ...USAGE, cost: null }]) {
+		test(`malformed ${source} usage ${JSON.stringify(usage)} blocks restoration`, async () => {
+			const s = await started();
+			deliver(s);
+			await s.shutdown();
+			const path = join(agentDir, "squire", "child-tasks", `${s.parent}.json`);
+			const entries = structuredClone(s.entries);
+			if (source === "local") {
+				const saved = JSON.parse(readFileSync(path, "utf8"));
+				saved.state.records[0].result.usage = usage;
+				writeFileSync(path, JSON.stringify(saved));
+			} else {
+				rmSync(path);
+				const result = { ...(entries[1].data.result as Record<string, unknown>), usage };
+				if (source === "terminal") entries[1].data.result = result;
+				else {
+					entries[0].data.result = result;
+					entries.splice(1);
+				}
+			}
+			const reopened = await started(entries, s.parent);
+			assert.ok(
+				reopened.errors.some((error) => error.includes("invalid delegation usage")),
+				reopened.errors.join("\n"),
+			);
+			await assert.rejects(reopened.toolCall("delegate", { agent: "scout", task: "new work" }), /restoration failed/);
+			await reopened.shutdown();
+		});
+	}
+}
 
 test("a delegate that finished on another model is named launched → finished in the text, details and status", async () => {
 	const s = await started();

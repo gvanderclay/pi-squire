@@ -17,6 +17,7 @@ import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText }
 import { inSession, windowDetail } from "./location.ts";
 import type { Delegation, MessageDetails, ResourceFacts, WorkspaceAttempt } from "./results.ts";
 import { servedSummary } from "./routing-provenance.ts";
+import { usageText } from "./session-usage.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 import type { PathSummary, Workspace } from "./workspace.ts";
 
@@ -243,6 +244,7 @@ function expandedLines(details: MessageDetails, theme: Theme): Component[] {
 	const dim = (lines: string[]): Text => new Text(lines.map((line) => theme.fg("dim", line)).join("\n"), 0, 0);
 	const children: Component[] = [];
 	if (details.kind === "result") {
+		if (details.usage !== undefined) children.push(dim([`Usage: ${usageText(details.usage)}`]));
 		const { task } = details;
 		const quote = "note" in task ? [task.note] : [`Task (${tilde(task.path)}):`, ...task.text.split("\n")];
 		children.push(new Spacer(1), new Markdown(details.body, 0, 0, getMarkdownTheme()), new Spacer(1), dim(quote));

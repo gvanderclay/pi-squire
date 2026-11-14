@@ -146,6 +146,26 @@ test("a usage-limit line shows under the header, collapsed and expanded", () => 
 		assert.equal(render(result({ limit: "Usage limit: hit." }), expanded)?.[2], "<warning:Usage limit: hit.>");
 });
 
+test("usage appears only in the expanded result view, before the body", () => {
+	const details = result({
+		usage: {
+			turns: 2,
+			input: 99_000,
+			output: 9200,
+			cacheRead: 1_700_000,
+			cacheWrite: 1000,
+			cost: 0.39,
+			contextTokens: 181_000,
+		},
+	});
+	const expanded = (render(details, true, 400) ?? []).join("\n");
+	const line = "<dim:Usage: 2 turns, 1.8M tokens in (1.7M cached), 9.2k out, $0.39; context at finish 181k.>";
+	assert.ok(expanded.includes(line), expanded);
+	assert.ok(expanded.indexOf(line) < expanded.indexOf("first"), expanded);
+	assert.doesNotMatch((render(details, false) ?? []).join("\n"), /Usage:/);
+	assert.doesNotMatch((render(result(), true) ?? []).join("\n"), /Usage:/);
+});
+
 test("a collapsed header too long for the width stays one line", () => {
 	const lines = render(result({ name: "scout-roster-research", finishedModel: "openai/gpt-6-luna" }), false, 60) ?? [];
 	assert.equal(lines.length, 8, "padding, header, four preview lines, hint, padding");

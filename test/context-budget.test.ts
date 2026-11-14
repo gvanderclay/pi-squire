@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
-import { agentFile, DELEGATION_TOOLS, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, DELEGATION_TOOLS, session, writeAgent } from "./harness.ts";
 
 // Every byte here reaches the model of each session that loads pi-squire: the
 // description and parameters directly, the output schema through codemode's
@@ -8,7 +10,8 @@ import { agentFile, DELEGATION_TOOLS, session, writeAgent } from "./harness.ts";
 // Scripts reading delegation_status need its usage field names, not an opaque object,
 // and its selection counts, so a partial list is not mistaken for every record.
 // delegation_resume names the deferred fork in one clause, so a model can find it.
-const BUDGET = 12_850;
+// Cleanup adds 1,466 measured characters, deferred from a discoverable parent.
+const BUDGET = 14_287;
 // `delegation_fork` is deferred: a parent that can find it (codemode or
 // tool_search active) starts without it declared, so what such a parent pays in
 // every request is the other four. Activating it later declares it.
@@ -17,6 +20,8 @@ const DECLARED_BUDGET = 10_700;
 // and `delegation_fork`. This case measures the four tools declared at the
 // start, so it counts two copies; a declared fork adds the third.
 const ROUTED_BUDGET = 13_480;
+// Coordinators explicitly activate both deferred tools (two-agent roster below).
+const COORDINATOR_BUDGET = 14_315;
 // The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
 const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 
@@ -78,4 +83,24 @@ test("a routed roster's declared tools stay within their budget", async (t) => {
 		total(measured) <= ROUTED_BUDGET,
 		`${total(measured)} characters over a budget of ${ROUTED_BUDGET}: ${JSON.stringify(measured)}`,
 	);
+});
+
+test("a coordinator declares cleanup with its granted delegation tools within the measured budget", async (t) => {
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ maxDepth: 2 }));
+	writeAgent("scout", agentFile({ description: "Looks things up" }));
+	writeAgent("coordinator", agentFile({ allow_nested_delegation: "true" }));
+	const parent = session();
+	await parent.start();
+	const launched = await parent.toolCall("delegate", { agent: "coordinator", task: "coordinate" });
+	const id = (launched.structuredContent as { id: string }).id;
+	const child = session({ parent: id, activeTools: ["read", "bash", "codemode"] });
+	await child.start();
+	const declared = DELEGATION_TOOLS.filter((name) => child.pi.getActiveTools().includes(name));
+	assert.deepEqual(declared, DELEGATION_TOOLS);
+	const measured = sizes(child, declared);
+	t.diagnostic(`coordinator declared metadata: ${total(measured)} characters; ${JSON.stringify(measured)}`);
+	assert.ok(total(measured) <= COORDINATOR_BUDGET, JSON.stringify(measured));
+	await child.shutdown();
+	await parent.shutdown();
 });

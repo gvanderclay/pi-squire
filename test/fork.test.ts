@@ -452,6 +452,7 @@ test("fork requires direct-parent authority, depth/grant admission and shared ca
 test("delegation_fork is registered deferred, unrouted and routed, and the other four stay direct", async () => {
 	const plain = session();
 	assert.equal(plain.tool("delegation_fork").exposure, "deferred");
+	assert.equal(plain.tool("delegation_cleanup").exposure, "deferred");
 	for (const name of ["delegate", "delegation_status", "delegation_close", "delegation_resume"])
 		assert.equal(plain.tool(name).exposure, undefined, name);
 	// A routing profile re-registers resume and fork with the routing parameter; the exposure must survive.
@@ -463,6 +464,7 @@ test("delegation_fork is registered deferred, unrouted and routed, and the other
 		"the routed registration is in place",
 	);
 	assert.equal(routed.tool("delegation_fork").exposure, "deferred");
+	assert.equal(routed.tool("delegation_cleanup").exposure, "deferred");
 	for (const name of ["delegate", "delegation_status", "delegation_close", "delegation_resume"])
 		assert.equal(routed.tool(name).exposure, undefined, name);
 });
@@ -473,10 +475,13 @@ test("delegation_fork is declared when neither tool_search nor codemode can reac
 	await bare.start();
 	assert.ok(bare.pi.getActiveTools().includes("delegation_fork"), "nothing could find a deferred tool");
 	assert.equal(bare.tool("delegation_fork").exposure, "deferred");
+	assert.ok(bare.pi.getActiveTools().includes("delegation_cleanup"));
+	assert.equal(bare.tool("delegation_cleanup").exposure, "deferred");
 	for (const reach of ["codemode", "tool_search"]) {
 		const s = session({ activeTools: ["read", "bash", reach, "delegation_resume"] });
 		await s.start();
 		assert.ok(!s.pi.getActiveTools().includes("delegation_fork"), reach);
+		assert.ok(!s.pi.getActiveTools().includes("delegation_cleanup"), reach);
 	}
 });
 

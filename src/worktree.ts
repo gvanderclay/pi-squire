@@ -83,7 +83,7 @@ function applyRegistration(
 	return current;
 }
 
-function registered(cwd: string): Registered[] {
+export function registered(cwd: string): Registered[] {
 	const entries: Registered[] = [];
 	let current: Registered | undefined;
 	for (const line of must(cwd, ["worktree", "list", "--porcelain", "-z"]).split("\0"))
@@ -94,7 +94,7 @@ function registered(cwd: string): Registered[] {
 const exists = (path: string): boolean => lstatSync(path, { throwIfNoEntry: false }) !== undefined;
 
 /** `path` with its deepest existing ancestor resolved through symlinks; the rest stays as written. */
-function canonical(path: string): string {
+export function canonical(path: string): string {
 	const rest: string[] = [];
 	let current = resolve(path);
 	while (!exists(current) && dirname(current) !== current) {

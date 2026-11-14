@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Deferred `delegation_cleanup` removes descendants' Squire-created managed
+  worktrees and local branches only with identity, no-live-user, clean-state
+  and local ancestry or exact GitHub squash-merge proof. Ignored files inside
+  them are deleted too; uncertain resources and Paseo delegations are kept.
+  Pending launch/fork/resume reservations now record cwd; status shows
+  `workspace removed` and disables resume when the recorded directory is gone.
+  Tests deliberately extend the delegation-tool inventories and deferred
+  exposure assertions in `test/tools.test.ts`, `test/fork.test.ts` and
+  `test/harness.ts`; `test/context-budget.test.ts` raises only the total
+  metadata cap to the measured deferred addition (parent declarations unchanged).
+  The `test/fixtures/start-bytes.txt` registry-entry key order deliberately moves
+  `cwd` to reservation time; versions, child-task and start-v2 records are unchanged.
+
 ## [0.28.0] - 2026-11-14
 
 ### Added

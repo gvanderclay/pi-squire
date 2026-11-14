@@ -362,6 +362,7 @@ export const DELEGATION_TOOLS = [
 	"delegate",
 	"delegation_status",
 	"delegation_close",
+	"delegation_cleanup",
 	"delegation_resume",
 	"delegation_fork",
 ];

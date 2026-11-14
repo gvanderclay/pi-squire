@@ -275,6 +275,7 @@ export class DelegateStarter {
 				sessionId: sessionIdOf(record),
 				identity: own,
 				resumedFrom: record.id,
+				cwd: record.cwd,
 				sessionDir: record.sessionDir,
 			},
 			record.agent,

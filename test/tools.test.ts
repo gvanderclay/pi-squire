@@ -952,6 +952,13 @@ test("the tools declare all four annotations and stay direct", async () => {
 		idempotentHint: true,
 		...closedWorld,
 	});
+	assert.deepEqual(hints("delegation_cleanup"), {
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: true,
+		openWorldHint: true,
+	});
+	assert.equal(s.tool("delegation_cleanup").exposure, "deferred");
 	for (const name of ["delegate", "delegation_status", "delegation_close"]) {
 		assert.equal((s.tool(name) as { exposure?: string }).exposure, undefined);
 	}

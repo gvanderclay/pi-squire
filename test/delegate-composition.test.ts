@@ -36,7 +36,14 @@ test("tool selection inherits, subtracts wildcard patterns and adds extras once"
 
 test("delegation tools are stripped even when an agent or extras explicitly selects them", () => {
 	const all = [...DELEGATION_TOOLS];
-	assert.deepEqual(all, ["delegate", "delegation_status", "delegation_close", "delegation_resume", "delegation_fork"]);
+	assert.deepEqual(all, [
+		"delegate",
+		"delegation_status",
+		"delegation_close",
+		"delegation_cleanup",
+		"delegation_resume",
+		"delegation_fork",
+	]);
 	assert.deepEqual(toolSelection(testAgent({ tools: all }), ["read"], [...all, "read"]), ["read"]);
 });
 

@@ -24,7 +24,7 @@
 // An agent with no `model` or `thinking` runs
 // on the parent's.
 //
-// The model gets five tools. `delegate` takes agent, task and optional model
+// The model gets six tools. `delegate` takes agent, task and optional model
 // and thinking, validates them the way the command does, and starts the
 // delegation at once, opening no dialog, so parallel calls cannot block one
 // another; the one exception is a `cwd` whose project trust is unresolved,
@@ -36,6 +36,7 @@
 // (`resume.ts`) reopens an exited delegate's session in a new window with a
 // follow-up task, recorded as a new delegation. `delegation_fork` copies a
 // child's context into a new session, leaving the original untouched.
+// `delegation_cleanup` removes proved-safe merged managed worktrees and branches.
 // A delegate can launch children
 // only below maxDepth and with its current agent allow_nested_delegation grant.
 // Durable identity restores that boundary even on a manual session reopening.
@@ -65,6 +66,7 @@ import {
 	withoutLocked,
 } from "./agents.ts";
 import { registerChild } from "./child.ts";
+import { cleanupTool } from "./cleanup.ts";
 import { registerCompletionHost } from "./completion-holds.ts";
 import {
 	DELEGATION_TOOLS,
@@ -362,14 +364,14 @@ export default function delegate(
 	}
 
 	/**
-	 * Declare `delegation_fork` where nothing can find a deferred tool.
+	 * Declare fork and cleanup where nothing can find a deferred tool.
 	 * `tool_search` loads one and a codemode script calls one by name, and
 	 * their built-in extensions register both inactive, so a session with
-	 * neither active would never reach the fork. Activating a deferred tool
+	 * neither active would never reach either. Activating a deferred tool
 	 * declares it, which is how `tool_search` loads one. `exposeDelegation`
-	 * still takes it back from a plain delegate, which may not fork.
+	 * still takes it back from a plain delegate, which may not control descendants.
 	 */
-	function exposeFork(): void {
+	function exposeDeferred(): void {
 		let tools: ReturnType<typeof pi.getAllTools>;
 		try {
 			tools = pi.getAllTools();
@@ -377,11 +379,12 @@ export default function delegate(
 			return; // the runtime is not bound yet; session_start runs this again
 		}
 		const active = new Set(pi.getActiveTools());
-		if (active.has("delegation_fork")) return;
 		if (tools.some((tool) => (tool.name === "tool_search" || tool.name === "codemode") && active.has(tool.name)))
 			return;
-		if (!tools.some((tool) => tool.name === "delegation_fork")) return;
-		pi.setActiveTools([...pi.getActiveTools(), "delegation_fork"]);
+		const deferred = ["delegation_fork", "delegation_cleanup"].filter((name) =>
+			tools.some((tool) => tool.name === name),
+		);
+		pi.setActiveTools([...new Set([...pi.getActiveTools(), ...deferred])]);
 	}
 
 	/** Read the roster now, warning about every file left out. */
@@ -568,6 +571,7 @@ export default function delegate(
 					sessionId: id,
 					identity: own,
 					sessionDir,
+					cwd: plan?.destination ?? directory?.cwd,
 					...(fork ? { forkedFrom: fork.id } : {}),
 				},
 				start.agent.name,
@@ -979,7 +983,7 @@ export default function delegate(
 		announce(roster, ctx);
 		registerDelegate(toolDescription(roster.agents, getAgentDir()));
 		registerRoutingTools(roster);
-		exposeFork();
+		exposeDeferred();
 		exposeDelegation(roster);
 	});
 
@@ -1147,5 +1151,6 @@ export default function delegate(
 	}
 	registerDelegate(toolDescription(currentRoster().agents, getAgentDir()));
 	tracking.registerTools();
+	pi.registerTool(cleanupTool({ host: tmux, assertActive: () => owner.assert() }) as never);
 	registerRoutingTools(currentRoster());
 }

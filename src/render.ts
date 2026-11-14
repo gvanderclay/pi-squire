@@ -5,6 +5,7 @@
 // style follows amosblomqvist/pi-interactive-subagents (c3e8b53,
 // pi-extension/subagents/index.ts:1891-1944 and 2353-2460). Everything is
 // drawn from structured details; the text the parent model reads is separate.
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
 import {
@@ -48,7 +49,7 @@ export function cwdLine(cwd: string | undefined): string {
 export function workspaceLine(workspace: Workspace): string {
 	if (workspace.mode === "managed") {
 		const { createdBranch, requestedBase, baseCommit, source, cwd } = workspace;
-		return `managed worktree ${cwd}, new branch ${createdBranch} created from ${requestedBase} (${baseCommit}) of ${source.checkoutRoot}; ${dirtyNotice(workspace.sourceDirty)}`;
+		return `${existsSync(cwd) ? "managed worktree" : "workspace removed"} ${cwd}, new branch ${createdBranch} created from ${requestedBase} (${baseCommit}) of ${source.checkoutRoot}; ${dirtyNotice(workspace.sourceDirty)}`;
 	}
 	const { mode, git } = workspace;
 	const how = mode === "inherited" ? "the parent's directory" : "existing directory";

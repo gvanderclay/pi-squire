@@ -3,7 +3,7 @@
 // state comes from `results.ts` (`deriveState`); this module only asks tmux
 // about the window and words what it is told.
 
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { DelegateHost } from "./host.ts";
@@ -175,7 +175,9 @@ function view(
 		snapshot,
 		resumedAs,
 		windowSession,
-		canResume: (record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId(),
+		canResume:
+			(record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId() &&
+			(record.cwd === undefined || existsSync(record.cwd)),
 	};
 }
 

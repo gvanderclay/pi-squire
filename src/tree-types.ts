@@ -29,5 +29,8 @@ export type TreeClose = { id: string; target: string; entries: string[] };
 /** v2 fences released v1 writers before opaque routing identities are published. */
 export type TreeState = { version: 2; root: string; entries: TreeEntry[]; closes?: TreeClose[] };
 export type Reservation = { root: string; id: string };
-export type TreeIntent = Pick<TreeEntry, "id" | "sessionId" | "identity" | "resumedFrom" | "forkedFrom" | "sessionDir">;
+export type TreeIntent = Pick<
+	TreeEntry,
+	"id" | "sessionId" | "identity" | "resumedFrom" | "forkedFrom" | "sessionDir" | "cwd"
+>;
 export type TreeCounts = { concurrent: number; lifetime: number };

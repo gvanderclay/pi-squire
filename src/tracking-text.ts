@@ -1,5 +1,6 @@
 // Full and compact delegation_status blocks; structured details live in tracking.ts.
 
+import { existsSync } from "node:fs";
 import { locationTerms, recordedLocation } from "./location.ts";
 import { autoExitText } from "./locators.ts";
 import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
@@ -134,12 +135,14 @@ export function viewText({
 	return lines.join("\n");
 }
 
+function compactCheckout(record: StartedRecorded, snapshot: WorkspaceSnapshot): string {
+	if (record.workspace?.mode === "managed" && !existsSync(record.workspace.cwd)) return "workspace removed";
+	if (snapshot.kind !== "git") return snapshotLines(snapshot)[0];
+	return `${snapshot.position.detached ? "detached HEAD" : `branch ${snapshot.position.branch}`}, head ${snapshot.head.slice(0, 12)}, launch ${snapshot.baseline.slice(0, 12)}, +${snapshot.ahead} commits, ${snapshot.workingState}`;
+}
 /** Settled list rows omit launch/control facts; an id still gives the full block. */
 export function compactText({ record, state, snapshot, sessionPath, resumedAs }: View): string {
-	const checkout =
-		snapshot.kind === "git"
-			? `${snapshot.position.detached ? "detached HEAD" : `branch ${snapshot.position.branch}`}, head ${snapshot.head.slice(0, 12)}, launch ${snapshot.baseline.slice(0, 12)}, +${snapshot.ahead} commits, ${snapshot.workingState}`
-			: snapshotLines(snapshot)[0];
+	const checkout = compactCheckout(record, snapshot);
 	const changed = changedPathCount(snapshot);
 	return [
 		`${record.id} ${record.agent} (${modelLabel(record.model, record.result?.finishedModel)}, thinking ${record.thinking})`,

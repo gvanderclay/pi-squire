@@ -951,8 +951,78 @@ it can prove it created and that remain pristine; it never uses force. Changed,
 ignored, untracked or uncertain resources are retained and reported with
 recovery facts. A timeout or other ambiguous tmux failure retains the worktree.
 Once tmux returns a window id, the worktree and branch are kept through later
-failure, completion and close; remove them manually when no longer needed.
+failure, completion and close. After merging, use `delegation_cleanup` to remove
+proved-safe managed worktrees and local branches (see [Cleanup](#cleanup)).
 Worktrees isolate checkouts, not delegate permissions or filesystem access.
+
+### Cleanup
+
+Call `delegation_cleanup` after merging a delegate's work, not while you still
+need its checkout. Pass `ids: ["<delegation id>", ...]` or `all: true` (not
+both). Authority is limited to the caller's descendants. Discovery includes
+legacy managed starts and retained/interrupted-after-creation attempts, even
+a grandchild's. Inherited and existing directories are never candidates.
+Aliases of one worktree are checked once and each requested id gets an outcome.
+
+The tool is deferred, like `delegation_fork`: a parent with active
+`codemode` or `tool_search` can reach it without paying for its declaration
+until activation. Without either discovery tool it is declared at startup;
+opted-in coordinators get it with the other delegation tools.
+
+Cleanup requires the recorded repository, worktree registration and created
+branch still to match; a locked, prunable, detached or replaced checkout stays.
+It checks all Squire tree registries in this agent directory, live owners and
+session-header working directories, pending reservations and the caller's host's
+windows. Close running delegations with `delegation_close` first. Paseo-hosted
+delegations are kept with `Paseo workspace not recorded`; this release does
+not archive Paseo workspaces.
+
+Staged, unstaged, conflicted and non-ignored untracked files, in-progress Git
+operations and gitlinks all block cleanup. **Ignored files inside the worktree
+are deleted with it**: `node_modules/`, `.scratch/`, build output and a
+hand-made ignored `.env` are not backups. A nested repository or different
+filesystem inside an ignored directory blocks cleanup. The directory walk is
+bounded to 200,000 directories or 10 seconds; an incomplete check keeps the item.
+
+Merge proof is local: no commits beyond the recorded base, ancestry to the main
+checkout's branch or its upstream or `origin/HEAD`, or an exact merged `gh` PR
+head from this repository whose merge commit is in a matching local target.
+Squire never fetches. Missing/stale refs, absent/failing `gh`, or ambiguous
+evidence keep the item; fetch and retry. An upstream marked `[gone]` is not
+merge proof: a deleted branch after an unmerged closed PR, or local commits
+after the last push, look the same as a merge. There is no discard/force option
+or interactive cleanup command in this release. Remote branches are untouched.
+
+The result carries `items`, `counts` and, for `all`, `selection`. An item is
+`removed`, `kept`, `partial` (resources remain after removal, or a failed
+removal may have deleted some content) or `already-clean`, with a reason and
+observed `remains`. Completed worktree removals have a bounded `ignoredRemoved`
+path summary; an incomplete directory removal does not claim an ignored count.
+Kept text groups reasons and shows at most ten ids per group. Calls process at most 50 worktree groups,
+and stop starting new worktrees after about 120 s; the rest are listed in
+`selection.omittedIds`. A group already in progress finishes with its own
+Git-command timeouts. Pass those ids next so kept groups cannot starve them.
+Partial removal or failed selection sets the tool error flag. Retry re-derives
+the facts from Git, including a branch left after worktree removal.
+
+Cleanup serializes with managed launches in this process, refreshes the
+records and window states after entering that queue, and synchronously
+rechecks identity, registries/owners and Git status/state just before
+`git worktree remove` (never forced). It checks for a recreated checkout
+before deleting the local branch at the proved tip using compare-and-swap.
+No new durable cleanup record is written; missing managed directories show
+`workspace removed` in status and cannot resume.
+
+Concurrency limits: a launch/resume/fork reserving after the final check can
+open a window in the removed directory and fail loudly; non-ignored files it
+writes make Git refuse removal. Older Squire versions did not record cwd at
+reservation. External shells/editors, other agent directories, session files
+outside the scanned directories (or missing session headers), non-Squire Paseo
+agents and custom `worktreeRoot` without `{branch}` cannot be excluded. Window
+checks use only the caller's host and run in preflight. In the instant between
+the final worktree-list check and branch deletion, another process recreating
+the branch can lose its branch ref; its worktree keeps HEAD's commit. These
+checks reduce races, not exclude arbitrary external use.
 
 ### Checkout snapshots
 
@@ -1547,7 +1617,7 @@ agent's `auto_exit`.
 
 ## Tools
 
-The model gets five tools. They share the command's launch path and the
+The model gets six tools. They share the command's launch path and the
 session's delegation records. In a delegate they are active only for an
 opted-in coordinator below `maxDepth`; admission also checks every launch/resume.
 
@@ -1556,6 +1626,7 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id`, `all` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. By default it lists running, unfinished and the 5 newest settled records; `all: true` lists every record. |
 | `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
+| `delegation_cleanup` | `ids` (1–50 unique ids) or `all: true` | Removes merged, unused, clean Squire-created worktrees and their local branches; ignored files are deleted too. Unproved items are kept with reasons (see [Cleanup](#cleanup)). |
 | `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
 | `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
 

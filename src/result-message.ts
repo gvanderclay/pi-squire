@@ -1,4 +1,5 @@
 // The text and details of the one message the parent receives for a settled delegation.
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readMarks } from "./limits.ts";
 import { cwdLine, modelLabel, snapshotLines } from "./render.ts";
 import { sessionIdOf } from "./result-sessions.ts";
@@ -6,22 +7,67 @@ import type { StartedRecorded } from "./result-types.ts";
 import type { Inbound, MessageDetails, TaskQuote } from "./results.ts";
 import { servedSummary } from "./routing-provenance.ts";
 import type { RoutingEvidence } from "./routing-types.ts";
+import { DEFAULT_RESULT_BODY_BYTES, resultBodyBytes } from "./settings.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 
 /** A task quoted into the result header is cut at this many UTF-8 bytes. */
 const TASK_CAP = 2 * 1024;
-/** A result body is cut at this many UTF-8 bytes. */
-const BODY_CAP = 32 * 1024;
+/** The head is this fraction of a result body's budget; the tail keeps the rest. */
+const HEAD_SHARE = 4;
 
 type ResultDetails = Extract<MessageDetails, { kind: "result" }>;
+
+/** The offset of the first whole character at or before `end` in `bytes`. */
+function headEnd(bytes: Buffer, end: number): number {
+	let at = Math.min(end, bytes.length);
+	while (at > 0 && (bytes[at] & 0xc0) === 0x80) at--; // back off a split character
+	return at;
+}
+
+/** The offset of the first whole character at or after `start` in `bytes`. */
+function tailStart(bytes: Buffer, start: number): number {
+	let at = Math.max(start, 0);
+	while (at < bytes.length && (bytes[at] & 0xc0) === 0x80) at++; // step over a split character
+	return at;
+}
 
 /** Cut `text` to at most `max` UTF-8 bytes on a character boundary; undefined when it already fits. */
 function cap(text: string, max: number): string | undefined {
 	const bytes = Buffer.from(text, "utf8");
 	if (bytes.length <= max) return undefined;
-	let end = max;
-	while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--; // back off a split character
-	return bytes.subarray(0, end).toString("utf8");
+	return bytes.subarray(0, headEnd(bytes, max)).toString("utf8");
+}
+
+/** A body cut to a head and a tail around what it dropped; undefined when it already fits. */
+function headTail(text: string, max: number): { head: string; tail: string; omitted: number } | undefined {
+	const bytes = Buffer.from(text, "utf8");
+	if (bytes.length <= max) return undefined;
+	const headMax = Math.floor(max / HEAD_SHARE);
+	const end = headEnd(bytes, headMax);
+	const start = tailStart(bytes, bytes.length - (max - headMax));
+	return {
+		head: bytes.subarray(0, end).toString("utf8"),
+		tail: bytes.subarray(start).toString("utf8"),
+		omitted: start - end,
+	};
+}
+
+/** How many KiB a cut dropped, rounded up so a small omission never reads as none. */
+function omittedKiB(bytes: number): number {
+	return Math.ceil(bytes / 1024);
+}
+
+/**
+ * The result body budget. A refused setting warns and uses the default: a
+ * claimed reply must still be handled, and losing it is worse than a warning.
+ */
+export function resultBodyBudget(warn: (text: string) => void): number {
+	try {
+		return resultBodyBytes(getAgentDir());
+	} catch (error) {
+		warn(`delegate: ${String(error)}; this result keeps the default 16 KiB.`);
+		return DEFAULT_RESULT_BODY_BYTES;
+	}
 }
 
 /** The line naming a usage-limit mark this delegation recorded, if any; a `done` delegation finished on a fallback. */
@@ -58,6 +104,7 @@ export function resultDetails(
 	finished: string | undefined,
 	snapshot: WorkspaceSnapshot,
 	evidence?: RoutingEvidence,
+	bodyBytes: number = resultBodyBytes(getAgentDir()),
 ): ResultDetails {
 	const reply = payload.envelope;
 	const copy = payload.requests.find((request) => request.envelope?.id === delegation.requestId);
@@ -70,9 +117,11 @@ export function resultDetails(
 			cut === undefined ? copy.envelope.body : `${cut}\n[delegate] Task cut at 2 KiB; the full copy is ${copy.path}`;
 		task = { text, path: copy.path };
 	}
-	const cut = cap(reply.body, BODY_CAP);
+	const cut = headTail(reply.body, bodyBytes);
 	const body =
-		cut === undefined ? reply.body : `${cut}\n[delegate] Body cut at 32 KiB; the full envelope is ${payload.path}`;
+		cut === undefined
+			? reply.body
+			: `${cut.head}\n[delegate] ${omittedKiB(cut.omitted)} KiB omitted here; the full reply is ${payload.path}\n${cut.tail}`;
 	const limit = reply.status === "stopped" ? undefined : limitLine(sessionIdOf(delegation), reply.status);
 	return {
 		kind: "result",

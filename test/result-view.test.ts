@@ -162,10 +162,11 @@ test("emitted completion messages preserve long results and errors without quoti
 			const s = await started();
 			const file = writeDelegateSession(s, [assistant("alpha", "fast-model")]);
 			const task = "Inspect every checkout and report the failing command.\n".repeat(80);
+			// 120 findings is about 11.7 KB, inside the 16 KiB result body budget, so the body arrives whole.
 			const body = [
 				"# Checkout findings",
 				...Array.from(
-					{ length: 180 },
+					{ length: 120 },
 					(_, index) =>
 						`Finding ${index}: src/module-${index}.ts failed its assertion; retain the command output and repair advice.`,
 				),

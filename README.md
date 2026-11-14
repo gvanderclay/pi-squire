@@ -1460,7 +1460,7 @@ under [Usage limits](#usage-limits).
 `<agent dir>/squire/` holds the optional parent guidance file and
 `settings.json` (`multiplexer`, `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`,
 `windowPlacement`, `companionSuffix`, `worktreeRoot`, `worktreeRootByRepo`, `delegateTools`, `toolBundles`,
-`delegateWidgetPlacement` and `delegateWidgetMaxEntries`); `routing.json` is
+`resultBodyKiB`, `delegateWidgetPlacement` and `delegateWidgetMaxEntries`); `routing.json` is
 the separate optional v1 policy for agents with `routing_profile` (see
 [Role/task routing](#role-task-routing-unreleased)). The agents live in
 `<agent dir>/agents/` (see [Agents](#agents)).
@@ -1470,8 +1470,9 @@ cannot be read, is not JSON or is not an object refuses every launch, resume
 and fork with an error naming the file, as does an invalid value of a setting
 that affects launching or limits. The exceptions: deciding whether to expose
 the delegation tools treats such a file as `maxDepth` 1, `toolBundles`
-problems disable only the agents that use a bundle, and widget setting
-problems show one warning and use the widget defaults.
+problems disable only the agents that use a bundle, an invalid `resultBodyKiB`
+warns and the result uses the default budget, and widget setting problems show
+one warning and use the widget defaults.
 `delegation_prompt.md` is Markdown, inserted unchanged as the
 `squire_parent_delegation` system-prompt section before each new run, including
 a run started by an idle delegate result. It is not a conversation or user
@@ -1903,7 +1904,14 @@ Delegate session: <session file or id>
   delegate's session path is found by the delegation id in the session
   directory recorded at launch (the parent's current one for older records),
   and the id alone is shown when no file exists yet.
-- The body is cut at 32 KiB with the envelope path.
+- The body keeps its first 4 KiB and its last 12 KiB, 16 KiB in all, with one
+  line between them naming how many KiB were dropped and the envelope path:
+  `[delegate] 24 KiB omitted here; the full reply is <envelope path>`. A reply
+  within the budget is kept whole. The budget is the `resultBodyKiB` setting,
+  a whole number of KiB from 4 to 64; the head is one quarter of it and the
+  tail the rest. Both cuts fall on UTF-8 character boundaries. An invalid
+  value warns and the result uses the default, since a claimed reply must
+  still be delivered.
 - The message is sent as a `steer` with `triggerTurn`: a result starts a
   turn when the parent is idle, and when it is mid-turn arrives after the
   current tool calls, before the next model call. A follow-up would wait
@@ -2429,8 +2437,8 @@ Other extensions may rely on:
   `<cwd>/.pi/agents/<name>.md`; plus the v1 `<agent dir>/squire/routing.json`
   policy and per-call `routing` metadata contract;
 - the `maxDepth`, `maxConcurrentDelegates`, `maxDelegatesPerRoot`, `delegateTools`, `toolBundles`,
-  `multiplexer`, `windowPlacement`, `companionSuffix`, `worktreeRoot`, `delegateWidgetPlacement` and
-  `delegateWidgetMaxEntries` settings in
+  `multiplexer`, `windowPlacement`, `companionSuffix`, `worktreeRoot`, `resultBodyKiB`,
+  `delegateWidgetPlacement` and `delegateWidgetMaxEntries` settings in
   `<agent dir>/squire/settings.json`;
 - the optional `<agent dir>/squire/delegation_prompt.md` file and the
   `squire_parent_delegation` system-prompt section;

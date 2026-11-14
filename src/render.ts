@@ -16,6 +16,7 @@ import {
 import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { inSession, windowDetail } from "./location.ts";
 import type { Delegation, MessageDetails, ResourceFacts, WorkspaceAttempt } from "./results.ts";
+import { servedSummary } from "./routing-provenance.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 import type { PathSummary, Workspace } from "./workspace.ts";
 
@@ -167,7 +168,7 @@ function idLines(details: MessageDetails): string[] {
 		lines.push(
 			`routing ${details.routing.profile}/${details.routing.request.category}, policy v${details.routing.policyVersion}`,
 			`independent family history: ${details.routingEvidence?.independent ?? "unverified"}`,
-			`served models/efforts: ${details.routingEvidence?.served.map((item) => `${item.model}:${item.thinking ?? "unknown"}`).join(", ") || "unknown"}`,
+			`served models/efforts: ${servedSummary(details.routingEvidence?.served)}`,
 		);
 	if (details.resumedFrom !== undefined) lines.splice(1, 0, `resumed from ${details.resumedFrom}`);
 	if (details.forkedFrom !== undefined) lines.splice(1, 0, `forked from ${details.forkedFrom}`);

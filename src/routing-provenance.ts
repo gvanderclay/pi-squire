@@ -74,6 +74,17 @@ export function servedModels(entries: readonly ProvenanceEntry[]): ServedModel[]
 	}
 	return served;
 }
+/** `model:thinking` in served order, collapsing each consecutive run to `label ×N`, so a fallback stays visible. */
+export function servedSummary(served: readonly ServedModel[] | undefined): string {
+	const runs: { label: string; count: number }[] = [];
+	for (const item of served ?? []) {
+		const label = `${item.model}:${item.thinking ?? "unknown"}`;
+		const last = runs.at(-1);
+		if (last?.label === label) last.count += 1;
+		else runs.push({ label, count: 1 });
+	}
+	return runs.map(({ label, count }) => (count > 1 ? `${label} ×${count}` : label)).join(", ") || "unknown";
+}
 export function authorProof(source: string, branch: ActiveBranch, models: Record<string, ModelPolicy>): AuthorProof {
 	const served: ServedModel[] = servedModels(branch.entries);
 	if (!served.length) throw new Error(`author ${source} has no served assistant provenance`);

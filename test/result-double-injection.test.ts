@@ -123,7 +123,10 @@ test("a reply that arrives while the parent is idle reaches the next request onc
 	const next = await parent.request();
 	const carriedCopy = copies(next);
 	assert.equal(carriedCopy.count, 1);
-	assert.ok(carriedCopy.bytes > 16 * 1024, `the one copy is the result body cut to the 16 KiB budget: ${carriedCopy.bytes} bytes`);
+	assert.ok(
+		carriedCopy.bytes > 16 * 1024,
+		`the one copy is the result body cut to the 16 KiB budget: ${carriedCopy.bytes} bytes`,
+	);
 	assert.equal(s.sent.length, 1, "the result was sent once");
 });
 

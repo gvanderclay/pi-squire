@@ -11,7 +11,7 @@ import { ChildTasks } from "./child-tasks.ts";
 import type { Identity } from "./identity.ts";
 import { cwdLine, modelLabel, renderMessage, workspaceLine } from "./render.ts";
 import { closeOutcome } from "./result-close.ts";
-import { resultDetails, resultText, resumeDetails } from "./result-message.ts";
+import { resultBodyBudget, resultDetails, resultText, resumeDetails } from "./result-message.ts";
 import { restoreRecords } from "./result-restore.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
 import {
@@ -437,7 +437,9 @@ export function createResults(
 		const finished = delegation.routing ? evidence?.served.at(-1)?.model : finishedModel(session);
 		// After the claim above, so a slow or failing inspection cannot let the provider or a duplicate deliver it too.
 		const snapshot = inspectWorkspace(delegation.workspace?.cwd, delegation.workspace?.git);
-		const details = resultDetails(delegation, recordedName(delegation), payload, session, finished, snapshot, evidence);
+		const name = recordedName(delegation);
+		const budget = resultBodyBudget((text) => ctx?.ui.notify(text, "error"));
+		const details = resultDetails(delegation, name, payload, session, finished, snapshot, evidence, budget);
 		const result: Result = {
 			...(evidence ? { routingEvidence: evidence } : {}),
 			status: reply.status,

@@ -8,6 +8,7 @@ import {
 	exposedDepth,
 	maxDepth,
 	multiplexerSetting,
+	resultBodyBytes,
 	squireSettingsFile,
 	toolBundles,
 	treeCaps,
@@ -40,6 +41,7 @@ const refusing: Record<string, () => unknown> = {
 	"maxConcurrentDelegates and maxDelegatesPerRoot": () => treeCaps(agentDir),
 	delegateTools: () => delegateTools(agentDir),
 	"worktreeRoot and worktreeRootByRepo": () => worktreeSettings(agentDir),
+	resultBodyKiB: () => resultBodyBytes(agentDir),
 	// Cosmetic: the widget catches this, warns once and uses its defaults.
 	"delegateWidgetPlacement and delegateWidgetMaxEntries": () => widgetSettings(agentDir),
 };
@@ -70,7 +72,23 @@ test("a missing file gives every default", () => {
 	assert.deepEqual(delegateTools(agentDir), []);
 	assert.deepEqual(toolBundles(agentDir), { file, names: new Map() });
 	assert.deepEqual(worktreeSettings(agentDir), { file, worktreeRootByRepo: [] });
+	assert.equal(resultBodyBytes(agentDir), 16 * 1024);
 	assert.deepEqual(widgetSettings(agentDir), { placement: "aboveEditor", maxEntries: 3 });
+});
+
+test("resultBodyKiB is a whole number of KiB from 4 to 64, read at each call", () => {
+	writeFileSync(file, JSON.stringify({ resultBodyKiB: 4 }));
+	assert.equal(resultBodyBytes(agentDir), 4 * 1024);
+	writeFileSync(file, JSON.stringify({ resultBodyKiB: 64 }));
+	assert.equal(resultBodyBytes(agentDir), 64 * 1024);
+	for (const value of [3, 65, 8.5, "8", null, true]) {
+		writeFileSync(file, JSON.stringify({ resultBodyKiB: value }));
+		assert.throws(
+			() => resultBodyBytes(agentDir),
+			(error: Error) => error.message.includes(file) && error.message.includes("resultBodyKiB"),
+			String(value),
+		);
+	}
 });
 
 test("an invalid maxDepth refuses exposure too, naming the file", () => {

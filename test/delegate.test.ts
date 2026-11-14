@@ -708,15 +708,17 @@ test("a resumed parent rebuilds its records and still takes a later reply", asyn
 	assert.deepEqual(resumed.statuses.at(-1), { key: "delegate", text: undefined }, "the result clears the footer");
 });
 
-test("task details keep a 2 KiB preview while model text keeps only its path and the 32 KiB body", async () => {
+test("task details keep a 2 KiB preview while model text keeps only its path and a head + tail body", async () => {
 	const s = await scoutSession();
 	const delegation = s.entries[0].data as Delegation;
 	const task = "t".repeat(3 * 1024);
-	const body = "b".repeat(33 * 1024);
+	const body = `HEAD-MARKER\n${"b".repeat(40 * 1024)}\nCONCLUSION-MARKER`;
 	const payload = inbound(s.parent, delegation, { task, body });
 	s.events.emit("message:inbound", payload);
 	const content = String(s.sent[0].message.content);
-	const { details } = s.sent[0].message as unknown as { details: { task: { text: string; path: string } } };
+	const { details } = s.sent[0].message as unknown as {
+		details: { task: { text: string; path: string }; body: string };
+	};
 	assert.equal(
 		details.task.text,
 		`${task.slice(0, 2 * 1024)}\n[delegate] Task cut at 2 KiB; the full copy is ${payload.requests[0].path}`,
@@ -725,10 +727,60 @@ test("task details keep a 2 KiB preview while model text keeps only its path and
 	assert.ok(content.includes(`Task: ${payload.requests[0].path}`));
 	assert.ok(!content.includes(task.slice(0, 100)));
 	assert.ok(!content.includes("Task cut at 2 KiB"));
-	assert.ok(content.includes(body.slice(0, 32 * 1024)), "the result keeps 32 KiB");
-	assert.ok(!content.includes(body.slice(0, 32 * 1024 + 1)), "the body stops at 32 KiB");
-	assert.match(content, /Body cut at 32 KiB/);
-	assert.ok(content.includes(payload.path));
+	assert.ok(details.body.startsWith("HEAD-MARKER\n"), "the head is kept");
+	assert.ok(details.body.endsWith("\nCONCLUSION-MARKER"), "the conclusion is kept");
+	assert.match(details.body, /\[delegate\] 25 KiB omitted here; the full reply is /);
+	assert.ok(details.body.includes(payload.path));
+	assert.ok(Buffer.byteLength(details.body) <= 16 * 1024 + 200, "the body is the budget plus the notice");
+	assert.ok(content.endsWith("CONCLUSION-MARKER"), "the model-facing text keeps the conclusion");
+});
+
+test("a body within the budget is kept whole", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const body = "The answer.\nA second line.\n";
+	s.events.emit("message:inbound", inbound(s.parent, delegation, { body }));
+	const { details } = s.sent[0].message as unknown as { details: { body: string } };
+	assert.equal(details.body, body);
+	assert.ok(!String(s.sent[0].message.content).includes("omitted here"));
+});
+
+test("the result body budget is the resultBodyKiB setting, a quarter head and the rest tail", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ resultBodyKiB: 4 }));
+	const body = "b".repeat(8 * 1024);
+	s.events.emit("message:inbound", inbound(s.parent, delegation, { body }));
+	const { details } = s.sent[0].message as unknown as { details: { body: string } };
+	const [head, , tail] = details.body.split("\n");
+	assert.equal(Buffer.byteLength(head), 1024, "the head is a quarter of 4 KiB");
+	assert.equal(Buffer.byteLength(tail), 3 * 1024, "the tail keeps the rest");
+	assert.match(details.body, /\[delegate\] 4 KiB omitted here/);
+});
+
+test("a head and tail cut never splits a multi-byte character", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	const body = `${"€".repeat(20 * 1024)}x`; // 61 KiB: both cuts land inside a three-byte character
+	s.events.emit("message:inbound", inbound(s.parent, delegation, { body }));
+	const { details } = s.sent[0].message as unknown as { details: { body: string } };
+	const [head, , tail] = details.body.split("\n");
+	assert.ok(!details.body.includes("\uFFFD"), "no character is split");
+	assert.equal(Buffer.byteLength(head), 4095, "the head backs off the split character");
+	assert.equal(Buffer.byteLength(tail), 12286, "the tail steps over the split character");
+	assert.ok(body.startsWith(head) && body.endsWith(tail));
+});
+
+test("an invalid resultBodyKiB warns and keeps the default budget", async () => {
+	const s = await scoutSession();
+	const delegation = s.entries[0].data as Delegation;
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ resultBodyKiB: 2 }));
+	s.events.emit("message:inbound", inbound(s.parent, delegation, { body: "b".repeat(20 * 1024) }));
+	const { details } = s.sent[0].message as unknown as { details: { body: string } };
+	assert.match(details.body, /\[delegate\] 4 KiB omitted here/, "20 KiB cut to the default 16 KiB");
+	assert.equal(s.errors.length, 1);
+	assert.ok(s.errors[0].includes(join(agentDir, "squire", "settings.json")), s.errors[0]);
+	assert.match(s.errors[0], /resultBodyKiB/);
 });
 
 test("the caps count UTF-8 bytes, so a cut never splits a character", async () => {

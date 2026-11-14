@@ -33,6 +33,18 @@ follows [Semantic Versioning](https://semver.org/).
   only after waiting. Deliberately changed
   `test/delegate-composition.test.ts`'s pinned `parentTrust` string; the
   three existing sentences are unchanged.
+- A delegate's result body keeps its first 4 KiB and its last 12 KiB instead of
+  the first 32 KiB, so a long reply's conclusion reaches the parent. The two
+  parts are separated by one line naming how many KiB were dropped and the
+  envelope path, and both cuts fall on UTF-8 character boundaries. The default
+  budget is 16 KiB; `resultBodyKiB` in `<agent dir>/squire/settings.json` sets
+  it from 4 to 64 KiB, with the head a quarter of it. A reply within the budget
+  is unchanged, and an invalid value warns and uses the default. The old 32 KiB
+  head-only cut is deliberately replaced, so `test/delegate.test.ts`'s 32 KiB
+  assertions were rewritten for the head and tail cut, and
+  `test/result-view.test.ts`'s long-result fixture shrank from 180 findings
+  (17.5 KB) to 120 (11.7 KB) so it still proves a long result under the budget
+  arrives whole.
 
 ## [0.24.0] - 2026-11-13
 

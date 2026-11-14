@@ -38,6 +38,40 @@ export const delegationPromptPath = join(agentDir, "squire", "delegation_prompt.
 /** The session directory the fake `sessionManager` reports. */
 export const sessionDir = join(agentDir, "sessions");
 process.env.PI_CODING_AGENT_DIR = agentDir;
+
+/**
+ * The launch variables a delegate session exports: `environment()` in
+ * `src/delegate-start.ts` plus the ones a Paseo host sets. A suite run inside a
+ * delegate inherits them, and the code under test reads them as its own launch,
+ * so each test process starts without them. `PI_CODING_AGENT_DIR` is not here:
+ * this module sets it to `agentDir` above.
+ */
+const LAUNCH_ENV = [
+	"PI_SQUIRE_LIVE_LAUNCH",
+	"PI_DELEGATE_PARENT",
+	"PI_DELEGATE_ROOT",
+	"PI_DELEGATE_DEPTH",
+	"PI_DELEGATE_CHAIN",
+	"PI_DELEGATE_AUTO_EXIT",
+	"PI_DELEGATE_FALLBACK",
+	"PI_DELEGATE_AGENT",
+	"PI_DELEGATE_MULTIPLEXER",
+	"PI_DELEGATE_ROUTING",
+	"PI_UNATTENDED",
+	"PI_CODING_AGENT_SESSION_DIR",
+	// A Paseo delegate's own variables, inherited by the suite when it runs inside one.
+	"PASEO_AGENT_ID",
+	"PASEO_AGENT_CWD",
+	"PI_DELEGATE_PASEO_TOOLS",
+	"PI_DELEGATE_PASEO_TRUST",
+] as const;
+
+/** Delete every launch variable a delegate session exports. */
+function clearLaunchEnv(): void {
+	for (const name of LAUNCH_ENV) delete process.env[name];
+}
+// Before any test runs, so a test may still set one of these for its own session.
+clearLaunchEnv();
 // Retries cover late async writes from a test's sessions landing while the root is removed.
 export const cleanup = () => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 
@@ -65,25 +99,9 @@ export function resetRoot(): void {
 	rmSync(join(agentDir, "squire", "settings.json"), CLEAR);
 	rmSync(join(agentDir, "squire", "routing.json"), CLEAR);
 	rmSync(join(agentDir, "squire", "routing-state"), CLEAR);
-	delete process.env.PI_DELEGATE_ROUTING;
 	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles", "live-sessions", "owners"])
 		rmSync(join(agentDir, "squire", name), CLEAR);
-	delete process.env.PI_SQUIRE_LIVE_LAUNCH;
-	delete process.env.PI_DELEGATE_PARENT;
-	delete process.env.PI_DELEGATE_AUTO_EXIT;
-	delete process.env.PI_DELEGATE_FALLBACK;
-	delete process.env.PI_DELEGATE_AGENT;
-	delete process.env.PI_DELEGATE_ROOT;
-	delete process.env.PI_DELEGATE_DEPTH;
-	delete process.env.PI_DELEGATE_CHAIN;
-	delete process.env.PI_DELEGATE_MULTIPLEXER;
-	// A Paseo delegate's own variables, inherited by the suite when it runs inside one.
-	delete process.env.PASEO_AGENT_ID;
-	delete process.env.PASEO_AGENT_CWD;
-	delete process.env.PI_DELEGATE_PASEO_TOOLS;
-	delete process.env.PI_DELEGATE_PASEO_TRUST;
-	delete process.env.PI_UNATTENDED;
-	delete process.env.PI_CODING_AGENT_SESSION_DIR;
+	clearLaunchEnv();
 }
 
 /** Write `<agent dir>/agents/<name>.md`. */

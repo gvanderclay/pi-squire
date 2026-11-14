@@ -132,9 +132,13 @@ test("context notices tolerate actual read failures and resolver errors", () => 
 			throw new Error("registry read failed");
 		},
 	};
-	const notices = contextNotice(file, "alpha/fast-model", "alpha/fast-model", broken as never);
+	const notices = contextNotice(file, "alpha/fast-model", "alpha/deep-model", broken as never);
 	assert.match(notices[0]!, /may not carry over/);
 	assert.match(notices[1]!, /last successful request sent about 181k tokens/);
+	// The same identifier is the same model whatever the registry does, so only the size is reported.
+	const same = contextNotice(file, "alpha/fast-model", "alpha/fast-model", broken as never);
+	assert.equal(same.length, 1);
+	assert.match(same[0]!, /last successful request sent about 181k tokens/);
 });
 
 test("usage text rounds across units, marks tiny costs and names earlier work", () => {

@@ -25,7 +25,7 @@ import {
 	sessionIdOf,
 	type WorkspaceAttempt,
 } from "./results.ts";
-import { routingEvidence } from "./routing-provenance.ts";
+import { routingEvidence, servedSummary } from "./routing-provenance.ts";
 import { RoutingEvidenceSchema, RoutingRecordSchema } from "./routing-schema.ts";
 import type { RoutingEvidence } from "./routing-types.ts";
 import { inspectWorkspace, type WorkspaceSnapshot, WorkspaceSnapshotSchema } from "./snapshot.ts";
@@ -204,7 +204,7 @@ function viewText({
 		...(record.routing
 			? [
 					`  routing: ${record.routing.profile}/${record.routing.request.category}; policy v${record.routing.policyVersion}; ${record.routing.reason}`,
-					`  served this attempt: ${routingEvidence?.served.map((item) => `${item.model}:${item.thinking ?? "unknown"}`).join(", ") || "unknown"}; independent family history: ${routingEvidence?.independent ?? "unverified"}`,
+					`  served this attempt: ${servedSummary(routingEvidence?.served)}; independent family history: ${routingEvidence?.independent ?? "unverified"}`,
 				]
 			: []),
 		`  identity: session ${sessionIdOf(record)} · parent ${record.identity?.parent ?? "this session"} · root ${record.identity?.root ?? "this session"} · depth ${record.identity?.depth ?? 1}`,

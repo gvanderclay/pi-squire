@@ -31,6 +31,37 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The `delegate` tool's roster line prints a parenthetical only for what the
+  agent sets. An agent with no `model`, `fallback` or `thinking` now reads
+  `- scout — Looks things up` instead of repeating
+  `(default this session's model, thinking this session's)` on every such
+  line, and an agent that sets only one of them prints only that one, so the
+  lines that name a model stand out. The roster heading states the rule once:
+  outside a routing profile, a model or thinking level a line does not name is
+  this session's, also when locked. The routing profile, `auto-exit off`, tools
+  and locked details are unchanged. `test/delegate-composition.test.ts` and
+  `test/agent-files.test.ts` now expect the shorter line and the heading.
+
+- `delegation_status`'s description drops "An open window does not mean
+  unfinished; only a result means done", which every state line already says
+  for the record it applies to (`running — the window is open and no result has
+  arrived`, `done — result status: …`). The late-reply caveat stays, reworded
+  as "A gone or window-closed record can still turn done on a late reply",
+  because the `window-closed` state line does not carry it.
+
+- The routing request's description uses the term the roster shows. "Required
+  for an agent with a routing profile; others reject routing metadata" replaces
+  the `routing_profile` wording, the undefined word "unbound" and the
+  `resume/fork` cross-reference, which meant nothing in the two tools where
+  the same schema is embedded. No parameter is renamed, removed or made
+  stricter.
+
+- `test/context-budget.test.ts` measures a routed roster as well: the four
+  tools declared at the start, two of which (`delegate` and
+  `delegation_resume`) embed the routing request. Its budget is 13,100
+  characters against 13,003 measured; the two unrouted budgets are
+  unchanged.
+
 - A routed result's `Independent review:` line prints the caller caveat only
   when a review was requested. `verified` and `unverified` results keep the
   full sentence and its reasons; a `not-required` result (an explorer or

@@ -1544,10 +1544,13 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 | `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
 
 The `delegate` tool's description lists the current roster, one line per agent:
-its name and any display name, description, default model (or this session's)
-and fallbacks, thinking, auto-exit when it is off, its tools (`no tools` for
-an empty `tools` field, `this session's except …` for `-name` entries) and the
-fields it locks.
+its name and any display name, description, then a parenthetical with what the
+agent explicitly sets: a default model and fallbacks, thinking, auto-exit when
+it is off, its tools (`no tools` for an empty `tools` field,
+`this session's except …` for `-name` entries) and the fields it locks. An
+agent that sets none of these prints no parenthetical, so the lines that do
+name a model stand out; the roster heading says once that a model or thinking
+level a line does not name is this session's.
 
 ```text
 - scout "Recon" — Read-only recon (default provider/model-id, thinking low, auto-exit off, tools: read/grep, locked: model)

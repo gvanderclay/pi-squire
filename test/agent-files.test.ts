@@ -232,10 +232,7 @@ test("with no model or thinking the delegate runs on the parent's, and descripti
 	writeAgent("plain", "Just do it.\n");
 	const s = session({ parentModel: "beta/other-model", parentThinking: "high" });
 	await s.start();
-	assert.ok(
-		s.tool("delegate").description.includes("- plain — plain (default this session's model, thinking this session's)"),
-		s.tool("delegate").description,
-	);
+	assert.ok(s.tool("delegate").description.includes("- plain — plain\n"), s.tool("delegate").description);
 	const result = await s.toolCall("delegate", { agent: "plain", task: "go" });
 	const { argv } = s.tmux.opened[0];
 	assert.deepEqual(pair(argv, "--model"), ["--model", "beta/other-model"]);

@@ -361,6 +361,29 @@ export default function delegate(
 		pi.setActiveTools(enabled ? [...base, ...DELEGATION_TOOLS] : base);
 	}
 
+	/**
+	 * Declare `delegation_fork` where nothing can find a deferred tool.
+	 * `tool_search` loads one and a codemode script calls one by name, and
+	 * their built-in extensions register both inactive, so a session with
+	 * neither active would never reach the fork. Activating a deferred tool
+	 * declares it, which is how `tool_search` loads one. `exposeDelegation`
+	 * still takes it back from a plain delegate, which may not fork.
+	 */
+	function exposeFork(): void {
+		let tools: ReturnType<typeof pi.getAllTools>;
+		try {
+			tools = pi.getAllTools();
+		} catch {
+			return; // the runtime is not bound yet; session_start runs this again
+		}
+		const active = new Set(pi.getActiveTools());
+		if (active.has("delegation_fork")) return;
+		if (tools.some((tool) => (tool.name === "tool_search" || tool.name === "codemode") && active.has(tool.name)))
+			return;
+		if (!tools.some((tool) => tool.name === "delegation_fork")) return;
+		pi.setActiveTools([...pi.getActiveTools(), "delegation_fork"]);
+	}
+
 	/** Read the roster now, warning about every file left out. */
 	function rosterFor(ctx: ExtensionContext): Roster {
 		const roster = currentRoster(ctx);
@@ -956,6 +979,7 @@ export default function delegate(
 		announce(roster, ctx);
 		registerDelegate(toolDescription(roster.agents, getAgentDir()));
 		registerRoutingTools(roster);
+		exposeFork();
 		exposeDelegation(roster);
 	});
 

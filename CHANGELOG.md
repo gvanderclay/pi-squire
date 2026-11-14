@@ -37,6 +37,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `delegation_fork` is registered with `exposure: "deferred"`, in the unrouted
+  and the routed registration alike: a parent with `tool_search` or `codemode` active starts without its
+  tool definition declared (about 1,200 tokens with its rendered output type)
+  and codemode does not list it, so a parent finds it with `tool_search` or calls it from a codemode
+  script, and `delegation_resume`'s description says so in one clause. A
+  session with neither `tool_search` nor `codemode` active gets the fork
+  declared by pi-squire itself, since nothing there could find a deferred tool;
+  that is decided once, when the session starts. Loading it with `tool_search`
+  declares it from then on, and a coordinator delegate has it declared.
+  Grants are unchanged: a coordinator's tool list still names the fork and a
+  plain delegate's still leaves it out. `test/context-budget.test.ts`
+  deliberately raises its metadata budget from 12,300 to 12,400 characters for
+  that clause, and adds a second measurement of the four tools a parent with
+  codemode starts with declared.
 - `delegation_status` lists every running delegation and unfinished workspace
   attempt plus the 5 most recently settled records by default; `all: true`
   lists every record, and an `id` still selects one, including one the default

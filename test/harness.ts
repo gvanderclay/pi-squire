@@ -15,6 +15,7 @@ import {
 	type EventBus,
 	type ExtensionAPI,
 	type TerminalInputHandler,
+	type ToolExposure,
 } from "@earendil-works/pi-coding-agent";
 
 import type { TSchema } from "typebox";
@@ -151,6 +152,8 @@ export type ToolResult = { content: { type: string; text: string }[]; details: u
 /** One registered tool, as much of it as the tests drive. */
 export type Tool = {
 	name: string;
+	/** Absent for a tool registered without one, which Pi treats as `direct`. */
+	exposure?: ToolExposure;
 	description: string;
 	parameters: unknown;
 	outputSchema?: TSchema;

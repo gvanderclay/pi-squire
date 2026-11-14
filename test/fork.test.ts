@@ -349,6 +349,37 @@ test("fork requires direct-parent authority, depth/grant admission and shared ca
 	assert.ok(!child.pi.getActiveTools().includes("delegation_fork"), "ordinary children cannot fork delegates");
 });
 
+test("delegation_fork is registered deferred, unrouted and routed, and the other four stay direct", async () => {
+	const plain = session();
+	assert.equal(plain.tool("delegation_fork").exposure, "deferred");
+	for (const name of ["delegate", "delegation_status", "delegation_close", "delegation_resume"])
+		assert.equal(plain.tool(name).exposure, undefined, name);
+	// A routing profile re-registers resume and fork with the routing parameter; the exposure must survive.
+	writeAgent("role", agentFile({ routing_profile: "worker", model: "alpha/fast-model" }));
+	const routed = session();
+	await routed.prepare();
+	assert.ok(
+		JSON.stringify(routed.tool("delegation_fork").parameters).includes('"routing"'),
+		"the routed registration is in place",
+	);
+	assert.equal(routed.tool("delegation_fork").exposure, "deferred");
+	for (const name of ["delegate", "delegation_status", "delegation_close", "delegation_resume"])
+		assert.equal(routed.tool(name).exposure, undefined, name);
+});
+
+test("delegation_fork is declared when neither tool_search nor codemode can reach a deferred tool", async () => {
+	// Both built-ins register inactive, so a session can have neither declared.
+	const bare = session({ activeTools: ["read", "bash", "delegation_resume"] });
+	await bare.start();
+	assert.ok(bare.pi.getActiveTools().includes("delegation_fork"), "nothing could find a deferred tool");
+	assert.equal(bare.tool("delegation_fork").exposure, "deferred");
+	for (const reach of ["codemode", "tool_search"]) {
+		const s = session({ activeTools: ["read", "bash", reach, "delegation_resume"] });
+		await s.start();
+		assert.ok(!s.pi.getActiveTools().includes("delegation_fork"), reach);
+	}
+});
+
 test("fork rechecks a coordinator's grant and depth before launching", async () => {
 	settings({ maxDepth: 3 });
 	writeAgent("coordinator", agentFile({ model: "alpha/fast-model", allow_nested_delegation: "[scout]" }));

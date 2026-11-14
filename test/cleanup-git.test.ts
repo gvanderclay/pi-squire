@@ -3,7 +3,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { type CleanupGitDeps, type CleanupOutcome, checkIgnored, cleanGit, type GhRunner } from "../src/cleanup-git.ts";
+import {
+	type CleanupGitDeps,
+	type CleanupOutcome,
+	checkIgnored,
+	cleanGit,
+	cleanupRemains,
+	type GhRunner,
+} from "../src/cleanup-git.ts";
 import { askGit } from "../src/git.ts";
 import { commit, fixture, git } from "./cleanup-fixture.ts";
 import { cleanup } from "./harness.ts";
@@ -24,6 +31,15 @@ function unchanged(f: ReturnType<typeof fixture>, deps: CleanupGitDeps = {}): Cl
 	assert.deepEqual(readFileSync(join(f.cwd, "tracked")), files);
 	return result;
 }
+
+test("remains conservatively includes the branch when Git cannot observe the source", () => {
+	const f = fixture();
+	assert.deepEqual(cleanupRemains({ ...f.plan, source: { ...f.plan.source, mainRoot: join(f.source, "missing") } }), [
+		`worktree: ${f.cwd}`,
+		"branch: refs/heads/topic",
+	]);
+	assert.equal(git(f.source, "rev-parse", "refs/heads/topic"), f.plan.baseCommit);
+});
 
 test("merged clean worktree and tip branch removed; retry already-clean", () => {
 	const f = fixture();

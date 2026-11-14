@@ -23,12 +23,17 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Cleanup reports a live started delegation and keeps its worktree even before
+  its start record or session ownership is published, including a resume racing
+  cleanup. Only records read before the window snapshot can prove a start gone;
+  a newer start cannot reuse that proof.
 - Cleanup keeps a still-starting delegation's created worktree while its own
   launch reservation is live, and refreshes records/windows after waiting for
   same-process managed launches. Failed Git removals other than a clean-state
   refusal now report `partial` because content may already be deleted; ignored
   counts are reported only after the whole directory is gone. `remains` lists
-  observed resources, and GitHub squash evidence requires a full hexadecimal
+  observed resources (and keeps the branch listed when Git cannot prove its absence),
+  and GitHub squash evidence requires a full hexadecimal
   commit id. Blockers in `test/cleanup-git.test.ts` now assert their specific
   reasons, including a squash-merged branch whose upstream is gone; no unrelated existing test
   expectations changed. Repair literal newline escapes in the cleanup docs.

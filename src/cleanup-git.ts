@@ -215,7 +215,7 @@ export function proveMerged(resource: CleanupResource, tip: string, run: GhRunne
 	if (track === "[gone]") throw new Error("upstream branch deleted but merge not proved; fetch and retry");
 	throw new Error(`merge not proved (${why}); fetch and retry`);
 }
-/** List only observed resources, not guessed remnants when an observation fails. */
+/** Omit a branch only when Git proves it absent; a failed observation is not absence. */
 export function cleanupRemains(resource: CleanupResource): string[] {
 	const left: string[] = [];
 	let listed = false;
@@ -225,11 +225,11 @@ export function cleanupRemains(resource: CleanupResource): string[] {
 		// The directory can still be observed independently of Git registration.
 	}
 	if (exists(resource.destination) || listed) left.push(`worktree: ${resource.destination}`);
-	if (
-		askGit(resource.source.mainRoot, ["symbolic-ref", "-q", ref(resource)]).ok ||
-		askGit(resource.source.mainRoot, ["show-ref", "--verify", "--quiet", ref(resource)]).ok
-	)
+	try {
+		if (tipAt(resource) !== null) left.push(`branch: ${ref(resource)}`);
+	} catch {
 		left.push(`branch: ${ref(resource)}`);
+	}
 	return left;
 }
 function outcome(resource: CleanupResource, changed: boolean, reason: string, summary?: PathSummary): CleanupOutcome {

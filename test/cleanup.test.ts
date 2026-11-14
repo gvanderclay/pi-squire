@@ -70,7 +70,7 @@ function entry(record: StartedRecorded): TreeEntry {
 		workspace: record.workspace,
 		sessionDir: record.sessionDir,
 		locator: record.locator,
-		gone: true,
+		gone: record.gone,
 	};
 }
 function publish(parent: string, records: Recorded[]): void {
@@ -386,6 +386,179 @@ test("parallel managed launch and cleanup re-read created attempts and windows a
 	assert.equal(git(f.source, "worktree", "list", "--porcelain"), before);
 	assert.equal(git(f.source, "show-ref", "--heads"), branches);
 	assert.equal(existsSync(pending.plan.destination), true);
+});
+function created(f: ReturnType<typeof fixture>, parent: string, id = "child"): WorkspaceAttempt {
+	return {
+		kind: "workspace-attempt",
+		id,
+		parentId: parent,
+		agent: "scout",
+		model: "alpha/fast-model",
+		thinking: "low",
+		sessionDir,
+		plan: f.plan,
+		attempt: {
+			phase: "created",
+			resources: { kind: "worktree", cwd: f.cwd, branch: f.plan.branch, head: f.plan.baseCommit },
+		},
+	};
+}
+function unchangedWorktree(f: ReturnType<typeof fixture>): () => void {
+	const trees: string = git(f.source, "worktree", "list", "--porcelain");
+	const branches: string = git(f.source, "show-ref", "--heads");
+	return () => {
+		assert.equal(git(f.source, "worktree", "list", "--porcelain"), trees);
+		assert.equal(git(f.source, "show-ref", "--heads"), branches);
+		assert.equal(existsSync(f.cwd), true);
+	};
+}
+test("grandchild opens and records its start after the window snapshot: cleanup keeps it", async () => {
+	const s = instance();
+	await s.start();
+	const coordinator: StartedRecorded = started(fixture(), s.parent, "coordinator");
+	coordinator.workspace = { mode: "existing", cwd: root, git: { kind: "non-git" } };
+	publish(s.parent, [coordinator]);
+	const f = fixture();
+	const record: StartedRecorded = { ...started(f, coordinator.id, "grandchild", s.parent), gone: false };
+	save(coordinator.id, [created(f, coordinator.id, record.id)]);
+	treeTransaction(s.parent, (state) => state.entries.push({ ...entry(record), phase: "dispatched" }));
+	const check = unchangedWorktree(f);
+	const states = s.tmux.states.bind(s.tmux);
+	s.tmux.states = async () => {
+		const snapshot = await states();
+		// Another process finishes opening after this host's listing, before the caller resumes.
+		s.tmux.windows.set("@77", { name: "scout-fixture", exited: false, session: "work" });
+		save(coordinator.id, [record]);
+		treeTransaction(s.parent, (state) => {
+			const ownEntry = state.entries.find((item) => item.id === record.id);
+			assert.ok(ownEntry);
+			Object.assign(ownEntry, entry(record));
+		});
+		return snapshot;
+	};
+	const result: CleanupResult = await runCleanup({ ids: [record.id] }, deps(s), context(s));
+	assert.equal(result.items[0].outcome, "kept", result.items[0].reason);
+	assert.match(result.items[0].reason, /live started delegation/);
+	check();
+});
+test("own started registry entry without a durable start record keeps, including at the final recheck", async (t) => {
+	for (const timing of ["before snapshot", "before removal"]) {
+		await t.test(timing, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const f = fixture();
+			const record: StartedRecorded = { ...started(f, s.parent), gone: false };
+			save(s.parent, [created(f, s.parent)]);
+			treeTransaction(s.parent, (state) =>
+				state.entries.push({ ...entry(record), phase: timing === "before snapshot" ? "started" : "not-started" }),
+			);
+			s.tmux.windows.set("@77", { name: "scout-fixture", exited: false, session: "work" });
+			const check = unchangedWorktree(f);
+			const result: CleanupResult = await runCleanup(
+				{ all: true },
+				deps(s, {
+					beforeRemove: () => {
+						treeTransaction(s.parent, (state) => {
+							const ownEntry = state.entries.find((item) => item.id === record.id);
+							assert.ok(ownEntry);
+							ownEntry.phase = "started";
+						});
+					},
+				}),
+				context(s),
+			);
+			assert.equal(result.items[0].outcome, "kept", result.items[0].reason);
+			assert.match(result.items[0].reason, /live started delegation/);
+			assert.equal("kind" in readChildRecords(s.parent)[0], true);
+			check();
+		});
+	}
+});
+test("managed resume after cleanup's window snapshot keeps its worktree and branch", async () => {
+	const f = fixture();
+	const s = instance(f.source);
+	await s.start();
+	const launched = await s.toolCall("delegate", { agent: "scout", task: "work", worktree: "resuming" });
+	const id: string = (launched.structuredContent as { id: string }).id;
+	const record = readChildRecords(s.parent).find((item) => item.id === id);
+	assert.ok(record && !("kind" in record) && record.cwd);
+	mkdirSync(sessionDir, { recursive: true });
+	writeFileSync(join(sessionDir, `date_${id}.jsonl`), `${JSON.stringify({ type: "session", id, cwd: record.cwd })}\n`);
+	s.tmux.windows.clear();
+	const trees: string = git(f.source, "worktree", "list", "--porcelain");
+	const branches: string = git(f.source, "show-ref", "--heads");
+	const states = s.tmux.states.bind(s.tmux);
+	let resumed: string | undefined;
+	s.tmux.states = async (strict) => {
+		const snapshot = await states(strict);
+		// Resume uses the existing workspace, not the managed-launch queue cleanup holds.
+		s.tmux.states = states;
+		const result = await s.toolCall("delegation_resume", { id, task: "resume" });
+		resumed = (result.structuredContent as { id: string }).id;
+		return snapshot;
+	};
+	const result: CleanupResult = await runCleanup({ ids: [id] }, deps(s), context(s));
+	assert.ok(resumed);
+	assert.equal(readTree(s.parent).entries.find((item) => item.id === resumed)?.phase, "started");
+	assert.equal(result.items[0].outcome, "kept", result.items[0].reason);
+	assert.match(result.items[0].reason, /live started delegation/);
+	assert.equal(git(f.source, "worktree", "list", "--porcelain"), trees);
+	assert.equal(git(f.source, "show-ref", "--heads"), branches);
+	assert.equal(existsSync(record.cwd), true);
+});
+test("other-root unfinished started overlap is live even before session ownership", async () => {
+	const s = instance();
+	await s.start();
+	const f = fixture();
+	publish(s.parent, [started(f, s.parent)]);
+	treeTransaction("other", (state) =>
+		state.entries.push({ ...entry(started(f, "other", "starting")), cwd: join(f.cwd, "inside"), gone: false }),
+	);
+	const check = unchangedWorktree(f);
+	const result: CleanupResult = await invoke(s);
+	assert.equal(result.items[0].outcome, "kept", result.items[0].reason);
+	assert.match(result.items[0].reason, /live started delegation/);
+	check();
+});
+test("gone snapshot proof cannot exempt a same-id start with a newer window", async () => {
+	const s = instance();
+	await s.start();
+	const f = fixture();
+	publish(s.parent, [{ ...started(f, s.parent), gone: false }]);
+	const check = unchangedWorktree(f);
+	const result: CleanupResult = await runCleanup(
+		{ all: true },
+		deps(s, {
+			beforeRemove: () =>
+				treeTransaction(s.parent, (state) => {
+					state.entries[0].locator = windowLocator({ id: "@78", name: "reopened" });
+				}),
+		}),
+		context(s),
+	);
+	assert.equal(result.items[0].outcome, "kept", result.items[0].reason);
+	assert.match(result.items[0].reason, /live started delegation/);
+	check();
+});
+test("started entries with a gone snapshot, or already finished or closed, still remove", async (t) => {
+	for (const fact of ["snapshot gone", "finished", "closed"]) {
+		await t.test(fact, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const f = fixture();
+			publish(s.parent, [{ ...started(f, s.parent), gone: false }]);
+			if (fact !== "snapshot gone")
+				treeTransaction("other", (state) =>
+					state.entries.push({ ...entry(started(f, "other", fact)), gone: false, [fact]: true }),
+				);
+			const result: CleanupResult = await invoke(s);
+			assert.equal(result.items[0].outcome, "removed", result.items[0].reason);
+			assert.equal(existsSync(f.cwd), false);
+			assert.equal(git(f.source, "branch", "--list", "topic"), "");
+		});
+	}
 });
 test("preflight remains lists only observed worktrees and branches", async () => {
 	const s = instance();

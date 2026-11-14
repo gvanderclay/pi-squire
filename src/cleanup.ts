@@ -13,10 +13,10 @@ import {
 } from "./cleanup-git.ts";
 import { readIdentity } from "./identity.ts";
 import { paseoLocator } from "./paseo-locator.ts";
-import { findSession, sessionHeaderCwd } from "./result-sessions.ts";
-import { isStarted, type Recorded } from "./result-types.ts";
+import { findSession, sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
+import { isStarted, type Recorded, type StartedRecorded } from "./result-types.ts";
 import { sessionIsOwned } from "./session-owner.ts";
-import { type DelegateHost, recordLocator } from "./tmux.ts";
+import { type DelegateHost, recordLocator, sameWindowLocator } from "./tmux.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
 import { below } from "./tree-fence.ts";
 import { processAlive } from "./tree-lock.ts";
@@ -126,7 +126,8 @@ function trees(): TreeState[] {
 		.filter((name) => name.endsWith(".json"))
 		.map((name) => readTreeDisplay(decodeURIComponent(name.slice(0, -5))));
 }
-function checkEntry(entry: TreeEntry, group: Candidate, actor: string): void {
+type GoneStarts = ReadonlyMap<string, StartedRecorded>;
+function checkEntry(entry: TreeEntry, group: Candidate, actor: string, gone: GoneStarts): void {
 	if (entry.sessionId === actor) return;
 	const path: string = group.resource.destination;
 	if (
@@ -135,6 +136,21 @@ function checkEntry(entry: TreeEntry, group: Candidate, actor: string): void {
 		(entry.cwd === undefined || overlap(entry.cwd, path, true))
 	)
 		throw new Error("live pending delegation reservation");
+	const previous: StartedRecorded | undefined = gone.get(entry.id);
+	const judgedGone: boolean =
+		previous !== undefined &&
+		previous.identity?.root === entry.identity.root &&
+		sessionIdOf(previous) === entry.sessionId &&
+		sameWindowLocator(previous, entry);
+	if (
+		entry.phase === "started" &&
+		!entry.finished &&
+		!entry.closed &&
+		!entry.gone &&
+		!judgedGone &&
+		[entry.cwd, entry.workspace?.cwd].some((cwd) => cwd !== undefined && overlap(cwd, path, true))
+	)
+		throw new Error("live started delegation overlaps worktree; close it with delegation_close first");
 	if (group.ids.includes(entry.id)) return;
 	if (
 		sessionIsOwned(entry.sessionId) &&
@@ -152,9 +168,9 @@ function sessionDirs(entries: TreeEntry[], id: string, ctx: ExtensionContext): s
 	return [...new Set(dirs.filter((dir): dir is string => dir !== undefined))];
 }
 /** Synchronous registry/owner/header proof; repeated immediately before Git removal. */
-export function cleanupLiveCheck(group: Candidate, actor: string, ctx: ExtensionContext): void {
+export function cleanupLiveCheck(group: Candidate, actor: string, ctx: ExtensionContext, gone: GoneStarts): void {
 	const entries: TreeEntry[] = trees().flatMap((state) => state.entries);
-	for (const entry of entries) checkEntry(entry, group, actor);
+	for (const entry of entries) checkEntry(entry, group, actor, gone);
 	const owners: string = join(getAgentDir(), "squire", "owners");
 	for (const name of names(owners).filter((name) => name.endsWith(".json"))) {
 		const id: string = decodeURIComponent(name.slice(0, -5));
@@ -223,9 +239,10 @@ async function processGroup(
 ): Promise<CleanupOutcome> {
 	return inQueue(group.resource.source.commonDir, signal, async () => {
 		try {
-			const windows: WindowStates = await askWindowStates(deps.host);
-			// A queued launch may have replaced a created attempt with a running start.
-			const current: Candidate | undefined = discover(readTree(root), actor).groups.find(
+			// Snapshot records before windows: a later start cannot be judged by an old listing.
+			// Do both inside the queue so a queued managed launch has finished publishing first.
+			const found: Discovery = discover(readTree(root), actor);
+			const current: Candidate | undefined = found.groups.find(
 				(candidate) =>
 					candidate.resource.source.commonDir === group.resource.source.commonDir &&
 					candidate.resource.destination === group.resource.destination &&
@@ -233,9 +250,15 @@ async function processGroup(
 					group.ids.every((id) => candidate.ids.includes(id)),
 			);
 			if (!current) return kept("", "worktree records changed since selection; nothing removed", group);
+			const windows: WindowStates = await askWindowStates(deps.host);
 			const reason: string | undefined = preflight(current, windows);
 			if (reason) return kept("", reason, current);
-			return cleanGit(current.resource, () => cleanupLiveCheck(current, actor, ctx), deps);
+			// Only these pre-listing starts may be exempted by the synchronous live check.
+			// Bind the proof to the exact locator as well, so a same-id reopen cannot reuse it.
+			const gone: Map<string, StartedRecorded> = new Map();
+			for (const record of found.records.values())
+				if (isStarted(record) && windows.state(record) === "gone") gone.set(record.id, record);
+			return cleanGit(current.resource, () => cleanupLiveCheck(current, actor, ctx, gone), deps);
 		} catch (error) {
 			return kept("", (error as Error).message, group);
 		}

@@ -170,12 +170,15 @@ export function contextNotice(
 	registry: ModelRegistry,
 ): string[] {
 	const usage = sessionContext(sessionPath);
-	const source = resolvedModel(registry, usage === undefined ? sourceModel : usage.model);
+	const sourceEntry = usage === undefined ? sourceModel : usage.model;
+	const source = resolvedModel(registry, sourceEntry);
 	const chosen = resolvedModel(registry, chosenModel);
 	const notices: string[] = [];
-	if (source === undefined || chosen === undefined)
+	// The same identifier launches the same model even when the registry does not know it (a custom id).
+	const same = sourceEntry === chosenModel || (source !== undefined && source === chosen);
+	if (!same && (source === undefined || chosen === undefined))
 		notices.push(`The source's cache may not carry over to ${chosenModel}: model identity could not be established.`);
-	else if (chosen !== source)
+	else if (!same)
 		notices.push(`${chosen} differs from the source's ${source}: reloaded context will be written to a new cache.`);
 	if (usage !== undefined && usage.contextTokens >= LARGE_CONTEXT_TOKENS)
 		notices.push(

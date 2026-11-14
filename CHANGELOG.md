@@ -9,27 +9,32 @@ follows [Semantic Versioning](https://semver.org/).
 ### Added
 
 - A resume or fork whose source's last successful request reported 50k context
-  tokens or more (input plus cache reads and writes) reports that historical
-  size, not a measurement of what the child reloads after compaction or a branch
-  switch. If the task does not need that context, the notice suggests a fresh
-  delegate with a written summary. Cache advice uses the model of that same
-  request, skipping trailing errors and aborts; without usable usage, it keeps
-  the last assistant model as its fallback. Pi's resolver establishes
-  alias identities: different models warn of a new cache write; unknown
-  identities say the cache may not carry over, without claiming a difference.
-  Both notices appear in result text and `details.notices` and never refuse a
-  launch. Missing usage gives no size estimate. Resume model defaults are
-  unchanged. `sessionContext` shares `sessionUsage`'s accounting scan, keeping
-  size and model together without changing stored usage or its output schema;
-  the old `sessionInputTokens` reader is gone.
-  `test/resume.test.ts` and `test/fork.test.ts` deliberately replace the old
-  "reopens"/"copied tokens" estimates with last-successful-request wording and
-  conditional cost advice. The existing locked-model and fallback resume cases
-  retain cache advice without a size when usage is missing; a usable request
-  without a model gets unknown-cache wording. The same-model fork fixture now
-  has valid usage and asserts a size notice without a cache notice.
+  tokens or more (input plus cache reads and writes) says so in a notice: "The
+  source's last successful request sent about 74k tokens of context; the child
+  reloads the session, so if this task does not need that context, a fresh
+  delegate with a written summary may be cheaper." The figure is that request's
+  size, not a measurement of what the child reloads after a compaction or a
+  branch switch. A resume now also says when it runs on a model other than the
+  source's, as a fork already did. Notices appear in the result text and
+  `details.notices` and never refuse a launch; a source with no reported usage
+  gets no size notice. Three resume tests in `test/resume.test.ts` (two
+  locked-model cases and the locked-model fallback case) expected no notices
+  and now expect the different-model notice, because they resume on another
+  model.
 
 ### Changed
+
+- The fork's different-model notice no longer quotes a size. "… differs from
+  the source's …: about 74k copied tokens will be written to a new cache" is now
+  "… differs from the source's …: reloaded context will be written to a new
+  cache", because the figure was the last request's size, not what a fork
+  copies; the size has its own notice above. Models are compared after Pi
+  resolves aliases, using the model of the source's last successful request
+  (not a trailing failed or aborted one). When an identifier cannot be resolved
+  the notice says "The source's cache may not carry over to …: model identity
+  could not be established" instead of claiming a difference; the same
+  identifier is always the same model. `test/fork.test.ts` expects the new
+  wording, and its same-model fixture now has valid usage.
 
 - The `delegate` tool's roster line prints a parenthetical only for what the
   agent sets. An agent with no `model`, `fallback` or `thinking` now reads

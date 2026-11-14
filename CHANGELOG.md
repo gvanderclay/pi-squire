@@ -20,17 +20,6 @@ follows [Semantic Versioning](https://semver.org/).
   only after waiting. Deliberately changed
   `test/delegate-composition.test.ts`'s pinned `parentTrust` string; the
   three existing sentences are unchanged.
-
-## [0.24.0] - 2026-11-13
-
-### Changed
-
-- A model the user names in `/delegate` (`--model`) or the new-delegate form,
-  with no `--routing`, now launches a bound role outside its routing profile,
-  with a notice, instead of requiring routing JSON and refusing any model that
-  is not a candidate of the chosen category's route. The form no longer asks
-  for routing JSON once a model is picked. The `delegate` tool, resume and
-  fork still route bound roles as before.
 - A delegate's result body keeps its first 4 KiB and its last 12 KiB instead of
   the first 32 KiB, so a long reply's conclusion reaches the parent. The two
   parts are separated by one line naming how many KiB were dropped and the
@@ -43,6 +32,17 @@ follows [Semantic Versioning](https://semver.org/).
   `test/result-view.test.ts`'s long-result fixture shrank from 180 findings
   (17.5 KB) to 120 (11.7 KB) so it still proves a long result under the budget
   arrives whole.
+
+## [0.24.0] - 2026-11-13
+
+### Changed
+
+- A model the user names in `/delegate` (`--model`) or the new-delegate form,
+  with no `--routing`, now launches a bound role outside its routing profile,
+  with a notice, instead of requiring routing JSON and refusing any model that
+  is not a candidate of the chosen category's route. The form no longer asks
+  for routing JSON once a model is picked. The `delegate` tool, resume and
+  fork still route bound roles as before.
 
 ## [0.23.0] - 2026-11-13
 

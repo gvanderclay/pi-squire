@@ -106,8 +106,18 @@ const StartedSchema = Type.Object({
 
 const DelegationSchema = Type.Union([StartedSchema, AttemptSchema]);
 
+/** What a status call selected, so a script can tell a partial list from a complete one. */
+const SelectionSchema = Type.Object({
+	scope: Type.Enum(["recent", "all", "id"]),
+	total: Type.Number({ description: "Every record in the session, unfinished attempts included; 1 for an id." }),
+	shown: Type.Number(),
+	omitted: Type.Number(),
+	notice: Type.Optional(Type.String({ description: "Set when omitted > 0; says how to get the rest." })),
+});
+
 export const StatusSchema = Type.Object({
 	delegations: Type.Array(DelegationSchema),
+	selection: SelectionSchema,
 	marks: Type.Array(
 		Type.Object({
 			scope: Type.String(),
@@ -239,6 +249,38 @@ function activeMarks(): { scope: string; source: Mark["source"]; reason: string;
 /** How many settled records the default status view keeps, newest first. */
 const RECENT_SETTLED = 5;
 
+/** Which records a status call selected, and how many it left out. */
+type Selection = {
+	scope: "recent" | "all" | "id";
+	total: number;
+	shown: number;
+	omitted: number;
+	notice?: string;
+};
+
+/** The one sentence the text heading and the structured `notice` both carry, so they cannot drift. */
+function omissionNotice(omitted: number): string {
+	return `${omitted} older settled delegation${omitted === 1 ? "" : "s"} omitted; delegation_status with all:true gives the full inventory, id one delegation.`;
+}
+
+/** The scope a call selects: an id wins over all, which wins over the recent default. */
+function scopeOf(params: { id?: string; all?: boolean }): Selection["scope"] {
+	if (params.id !== undefined) return "id";
+	return params.all === true ? "all" : "recent";
+}
+
+/** What a call selected: `total` is every record it could select from, `shown` the ones it lists. */
+function selectionOf(scope: Selection["scope"], records: Recorded[], selected: Recorded[]): Selection {
+	const omitted = records.length - selected.length;
+	return {
+		scope,
+		total: records.length,
+		shown: selected.length,
+		omitted,
+		...(omitted === 0 ? {} : { notice: omissionNotice(omitted) }),
+	};
+}
+
 /** Every delegation, or the one named; throws when a named id is unknown. */
 function selectRecords(results: Results, id: string | undefined): Recorded[] {
 	const all = results.list();
@@ -291,11 +333,12 @@ function statusBlock(
 	];
 }
 
-/** The heading: the shown count, or the total with how many running and older records were left out. */
-function statusHeading(all: Recorded[], views: StatusItem[], omitted: number): string {
-	if (omitted === 0) return `${views.length} delegation${views.length === 1 ? "" : "s"}:`;
+/** The heading: the shown count, or the total with how many are running and the omission notice. */
+function statusHeading(selection: Selection, views: StatusItem[]): string {
+	const count = (n: number): string => `${n} delegation${n === 1 ? "" : "s"}`;
+	if (selection.omitted === 0) return `${count(selection.total)}:`;
 	const running = views.filter((item) => "record" in item && item.state === "running").length;
-	return `${all.length} delegation${all.length === 1 ? "" : "s"} (${running} running, ${omitted} older omitted; pass all or an id for those):`;
+	return `${count(selection.total)} (${running} running). ${omissionNotice(selection.omitted)}`;
 }
 
 /** The `delegation_status` tool. */
@@ -304,7 +347,7 @@ function statusTool(results: Results, tmux: DelegateHost, readingErrors: () => R
 		name: "delegation_status",
 		label: "Delegation status",
 		description:
-			"Report delegations: default running, unfinished attempts + 5 most recently settled; all lists all; id gives one full block. Results arrive on their own; check only for stuck work or files. A gone or window-closed record can still turn done on a late reply.",
+			"Report delegations: default running, unfinished attempts + 5 most recently settled (partial); all:true for an exhaustive inventory or cleanup; id gives one full block. Results arrive on their own; check only for stuck work or files. A gone or window-closed record can still turn done on a late reply.",
 		parameters: Type.Object({ id: Type.Optional(Type.String()), all: Type.Optional(Type.Boolean()) }),
 		outputSchema: StatusSchema,
 		annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, ...CLOSED_WORLD },
@@ -317,16 +360,18 @@ function statusTool(results: Results, tmux: DelegateHost, readingErrors: () => R
 		): Promise<ReturnType<typeof toolResult>> {
 			const records = selectRecords(results, params.id);
 			const windows = await askWindowStates(tmux);
-			const selected = params.id === undefined && params.all !== true ? recentRecords(records, windows) : records;
+			const scope = scopeOf(params);
+			const selected = scope === "recent" ? recentRecords(records, windows) : records;
 			const resumedAs = (id: string) => results.list().find((item) => isStarted(item) && item.resumedFrom === id)?.id;
 			const views = selected.map((record) =>
 				isStarted(record) ? view(record, windows, ctx, resumedAs(record.id)) : record,
 			);
 			const marks = activeMarks();
 			const errors = readingErrors();
-			const details = { delegations: views.map(itemDetails), marks, readingErrors: errors };
+			const selection = selectionOf(scope, records, selected);
+			const details = { delegations: views.map(itemDetails), selection, marks, readingErrors: errors };
 			const block = statusBlock(marks, errors);
-			const heading = statusHeading(records, views, records.length - selected.length);
+			const heading = statusHeading(selection, views);
 			const text = views
 				.map((item) => {
 					if (!("record" in item)) return attemptText(item);

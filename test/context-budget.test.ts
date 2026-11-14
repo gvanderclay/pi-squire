@@ -5,17 +5,18 @@ import { agentFile, DELEGATION_TOOLS, session, writeAgent } from "./harness.ts";
 // Every byte here reaches the model of each session that loads pi-squire: the
 // description and parameters directly, the output schema through codemode's
 // declarations. Raise a budget only for text a model needs.
-// Scripts reading delegation_status need its usage field names, not an opaque object.
+// Scripts reading delegation_status need its usage field names, not an opaque object,
+// and its selection counts, so a partial list is not mistaken for every record.
 // delegation_resume names the deferred fork in one clause, so a model can find it.
-const BUDGET = 12_400;
+const BUDGET = 12_850;
 // `delegation_fork` is deferred: a parent that can find it (codemode or
 // tool_search active) starts without it declared, so what such a parent pays in
 // every request is the other four. Activating it later declares it.
-const DECLARED_BUDGET = 10_300;
+const DECLARED_BUDGET = 10_700;
 // The routing request is one schema embedded in `delegate`, `delegation_resume`
 // and `delegation_fork`. This case measures the four tools declared at the
 // start, so it counts two copies; a declared fork adds the third.
-const ROUTED_BUDGET = 13_100;
+const ROUTED_BUDGET = 13_480;
 // The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
 const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 

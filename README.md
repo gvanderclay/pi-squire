@@ -1538,7 +1538,7 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 | Tool | Parameters | What it does |
 | --- | --- | --- |
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
-| `delegation_status` | optional `id`, `all` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. |
+| `delegation_status` | optional `id`, `all` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. By default it lists running, unfinished and the 5 newest settled records; `all: true` lists every record. |
 | `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
 | `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](#resuming-a-delegation)). |
 | `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](#forking-a-delegation)). |
@@ -1575,20 +1575,26 @@ nothing starts.
 
 `delegation_status` reports one state per delegation. Without an `id` it lists
 every running delegation and unfinished workspace attempt, plus the 5 most
-recently settled records. When it leaves older records out, the heading says
-how many and points to `all` and `id`; `all: true` lists every record, and an
-`id` selects one, including one the default leaves out. List responses use a
-compact block of five base lines at most for settled delegations: id/agent/model/thinking,
-state, checkout summary (with a changed-path count when non-zero), session path,
-and envelope path when present. Resume/fork relationships add their existing
-`resumed from`, `forked from` and `resumed as` lines when present, so the newest
-id in a resume chain remains visible. Running delegations and workspace attempts keep
-their full blocks; `id` gives a delegation's full block. Structured details are
-unchanged. Settlement order uses the recorded settlement time; older sessions
-without one rank below timed records, later-recorded first. Closing a
-delegation that already has a result keeps its earlier settlement time. A
-started delegation with no result whose state is unknown, because the host
-could not be asked, is listed like a running one.
+recently settled records, so the default list is partial. Every call's
+structured result carries `selection`, saying what it selected: `scope`
+(`recent`, `all` or `id`), `total` (every record in the session, unfinished
+attempts included; 1 for an `id`), `shown`, `omitted`, and, when records were
+left out, a `notice` saying how many older settled delegations were omitted
+and that `delegation_status` with `all: true` gives the full inventory, `id`
+one delegation. The heading carries the same sentence. `all: true` lists
+every record, and an `id` selects one, including one the default leaves out.
+List responses use a compact block of five base lines at most for settled
+delegations: id/agent/model/thinking, state, checkout summary (with a
+changed-path count when non-zero), session path, and envelope path when
+present. Resume/fork relationships add their existing `resumed from`,
+`forked from` and `resumed as` lines when present, so the newest id in a resume
+chain remains visible. Running delegations and workspace attempts keep their
+full blocks; `id` gives a delegation's full block. Structured details keep the
+full snapshot and the `selection` object. Settlement order uses the recorded
+settlement time; older sessions without one rank below timed records,
+later-recorded first. Closing a delegation that already has a result keeps its
+earlier settlement time. A started delegation with no result whose state is
+unknown, because the host could not be asked, is listed like a running one.
 
 ```text
 2 delegations:

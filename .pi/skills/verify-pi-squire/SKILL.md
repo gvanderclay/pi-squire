@@ -48,8 +48,12 @@ launching from a Paseo session (with `PASEO_AGENT_ID` and `PASEO_AGENT_CWD` set)
 This preserves all `PASEO_*` variables; the root still runs in the private tmux
 server, but its delegates use Paseo. Use `ask --tool delegate` rather than the
 helper's `delegate` command, whose notice parser expects a window or tab.
-Paseo delegates now receive the run's private `PI_SESSION_MAIL_ROOT`, so task
+Paseo delegates receive the run's private `PI_SESSION_MAIL_ROOT`, so task
 and reply mail stay in the run even when the daemon has a different mail root.
+They authenticate only from the Paseo daemon's environment: the helper does not
+pass `OPENCODE_API_KEY` to Paseo delegates, and the run's agent directory has no
+`auth.json` credentials. Ensure the daemon has the OpenCode key before launching;
+the key available to the private tmux server is not enough for a Paseo run.
 The helper's cleanup only kills the private tmux server: close the run's agents
 and archive only the Paseo workspaces created by this run, recording their ids.
 

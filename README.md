@@ -484,9 +484,10 @@ Paseo can host the coordinator Pi, and then pi-squire starts each delegate as a
 command must be installed with its daemon running: reading an agent's activity
 and closing an agent run that command.
 
-- Delegates receive the parent's `PI_CODING_AGENT_DIR` and, when set,
-  `PI_SESSION_MAIL_ROOT` and `XDG_STATE_HOME` so they share its mail and state
-  locations; no API keys or other credentials are copied from the parent.
+- As on tmux and Herdr, delegates receive the parent's `PI_CODING_AGENT_DIR`
+  and explicit `PI_SESSION_MAIL_ROOT` and `XDG_STATE_HOME` values (see
+  [Configuration](#configuration)). No API keys or other credentials are copied
+  from the parent into Paseo's persisted agent environment.
 - Each delegate is a Paseo child agent of its direct coordinator. A delegate
   in the coordinator's folder reuses that folder's existing workspace; a
   managed worktree keeps its own workspace and working directory without
@@ -1690,6 +1691,19 @@ server's environment plus `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`
   opened it (see [Choosing tmux or Herdr](#choosing-tmux-or-herdr) and
   [Paseo support](#paseo-support));
 - `PI_DELEGATE_FALLBACK`: remaining model candidates, when any.
+
+Every host copies `PI_SESSION_MAIL_ROOT` and `XDG_STATE_HOME` on new launches
+(and on resumes and forks where supported) when present in the launching Pi's
+environment, including empty or relative values; Squire does not resolve them
+or copy the whole environment.
+With pi-session-mail, only absolute values select a location: an absolute
+`PI_SESSION_MAIL_ROOT` wins, otherwise an absolute `XDG_STATE_HOME` selects its
+`pi-session-mail/` subdirectory, otherwise the provider uses its home default.
+Unset keys are not overridden in the host environment. If the tmux server or
+Paseo daemon has different defaults (including a different home directory),
+unset or non-absolute values can still split the mailboxes. Set an absolute
+`PI_SESSION_MAIL_ROOT` in the parent to keep mail in the same namespace;
+pi-session-mail 0.7.1 exposes no effective-root hook for Squire to query.
 
 It always gets `PI_UNATTENDED=1`.
 `PI_UNATTENDED=1` is a general signal, not specific to pi-squire: no human is

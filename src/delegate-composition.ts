@@ -2,8 +2,9 @@ import { basename, join } from "node:path";
 import { type Agent, globalAgentsDir } from "./agents.ts";
 
 /**
- * Paseo starts from the daemon's env; only copy location overrides, not secrets.
- * Paseo 0.15.4 agent-manager/projections/storage persist create env as launchEnv.
+ * Hosts may start from a server/daemon environment, not the launching Pi's.
+ * Copy only explicit location overrides, unchanged; the mail provider owns
+ * fallback semantics. Do not copy secrets (Paseo persists its create env).
  */
 export function parentStateEnvironment(): Record<string, string> {
 	const env: Record<string, string> = {};

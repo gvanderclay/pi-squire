@@ -14,7 +14,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
 import type { DelegateHost } from "./host.ts";
+import { assertHostOptions } from "./host-admission.ts";
 import { windowFacts, windowPresentation, windowTerms } from "./locators.ts";
+import { PASEO_SESSION_REFUSAL } from "./paseo-launch.ts";
+import { paseoLocator } from "./paseo-locator.ts";
 import { sessionHeaderCwd, sessionIdOf, sessionThinking } from "./result-sessions.ts";
 import { deriveState, finishedModel, locateSession, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, ResumeRequest } from "./resume.ts";
@@ -62,12 +65,18 @@ export function isDirectory(path: string): boolean {
 /** A delegate's session file, the directory its header says Pi runs it in, and the session directory to pass. */
 export type SessionFile = { path: string; cwd: string; dir: string };
 
+/** A Paseo source cannot become actionable by switching the coordinator to a terminal. */
+export function assertSessionHost(record: StartedRecorded): void {
+	if (paseoLocator(record.locator)) throw new Error(PASEO_SESSION_REFUSAL);
+}
+
 /** Step 5: the session file, and the directory its header says Pi will run it in. */
 export function sessionFor(
 	record: StartedRecorded,
 	ctx: ExtensionContext,
 	purpose: "resumable" | "forkable" = "resumable",
 ): SessionFile {
+	assertSessionHost(record);
 	const dir = record.sessionDir ?? ctx.sessionManager.getSessionDir();
 	const path = locateSession(record, ctx.sessionManager.getSessionDir());
 	if (path === undefined) {
@@ -281,8 +290,10 @@ export async function settleModel(
  * (frozen like a launch's), that backend usable, and a valid placement setting
  * (only for hosts that use window placement).
  */
-export function preflight(deps: ResumeDeps): ReturnType<ResumeDeps["admission"]["admit"]> {
-	return deps.admission.admit();
+export async function preflight(deps: ResumeDeps): ReturnType<ResumeDeps["admission"]["admit"]> {
+	const admission = await deps.admission.admit();
+	assertHostOptions(admission.client, { kind: "resume" });
+	return admission;
 }
 
 /** Before any side effect: no other live Pi (including a host-restored session) may already host the session. */
@@ -310,6 +321,7 @@ export async function passes(
 	models: Map<string, boolean>,
 ): Promise<boolean> {
 	try {
+		assertSessionHost(record);
 		windowCheck(record, windows);
 		const { session, agent } = recordCheck(deps, record, ctx);
 		// Source-dependent binding must be checked before the shared legacy model-availability cache.

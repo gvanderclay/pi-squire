@@ -93,7 +93,7 @@ import { DelegateSchema } from "./delegate-schema.ts";
 import { createDelegateStart } from "./delegate-start.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
 import { type DelegateHost, WindowOpenError } from "./host.ts";
-import { createHostAdmission } from "./host-admission.ts";
+import { assertHostOptions, createHostAdmission } from "./host-admission.ts";
 import { createIdentity, grantsNesting } from "./identity.ts";
 import { clearMarks, readMarks } from "./limits.ts";
 import { openedIn } from "./location.ts";
@@ -495,6 +495,7 @@ export default function delegate(
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
 		const admitted = await admission.admit();
+		assertHostOptions(admitted.client, { kind: fork ? "fork" : "launch", ...start.agent });
 		const { placement, companionSuffix } = admitted;
 		const parentIdentity = identity.current();
 		const project = parentIdentity

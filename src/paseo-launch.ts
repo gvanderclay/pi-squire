@@ -1,6 +1,6 @@
 // A Paseo delegate takes no Pi command line: its host reads the launch argv
 // as agent fields and environment variables instead.
-import { WindowOpenError, type WindowSpec } from "./host.ts";
+import { type StartOptions, WindowOpenError, type WindowSpec } from "./host.ts";
 import { PASEO_TOOLS_ENV, PASEO_TRUST_ENV } from "./paseo-child.ts";
 
 /** What the host creates a Paseo agent from, read from the argv `launchPayload` builds. */
@@ -12,6 +12,23 @@ export type PaseoLaunch = {
 	promptFile: string;
 	env: Record<string, string>;
 };
+
+export const PASEO_SESSION_REFUSAL = "Paseo cannot resume or fork a delegate yet; start a new delegation instead";
+
+/** Paseo 0.15.4 PiProviderOptionsSchema has no resource switches or per-agent argv.
+ * https://github.com/getpaseo/paseo/blob/v0.15.4/packages/server/src/server/agent/providers/pi/agent.ts
+ * Pi resources_discover adds paths; prompt edits cannot prevent resource loading.
+ */
+export function paseoStartProblem(options: StartOptions): string | undefined {
+	if (options.kind !== "launch") return PASEO_SESSION_REFUSAL;
+	const flags = [
+		...(options.skills === false ? ["skills: false (--no-skills)"] : []),
+		...(options.contextFiles === false ? ["context_files: false (--no-context-files)"] : []),
+	];
+	return flags.length
+		? `Paseo cannot disable Pi resources with ${flags.join(" and ")}; launch this agent from tmux or Herdr instead, or enable those resources in its agent file`
+		: undefined;
+}
 
 /** Flags whose value is the next argv entry. */
 const VALUE_FLAGS = new Set([
@@ -46,7 +63,13 @@ type ParsedFlag = { key: string; value: string; consumed: number };
 /** One flag, its marker key and value, and how many argv entries it used. */
 function flagAt(argv: readonly string[], index: number): ParsedFlag {
 	const arg = argv[index];
-	if (REFUSED_FLAGS.has(arg)) throw refuse("Paseo cannot resume or fork a delegate yet");
+	if (REFUSED_FLAGS.has(arg)) throw refuse(PASEO_SESSION_REFUSAL);
+	const resourceProblem = paseoStartProblem({
+		kind: "launch",
+		skills: arg !== "--no-skills",
+		contextFiles: arg !== "--no-context-files",
+	});
+	if (resourceProblem) throw refuse(resourceProblem);
 	if (!arg.startsWith("-")) throw refuse(`Paseo cannot pass this stray argument to a delegate: ${arg}`);
 	if (arg === "--no-tools") return { key: TOOLS, value: "", consumed: 1 };
 	if (arg === "--approve") return { key: TRUST, value: "yes", consumed: 1 };
@@ -54,7 +77,9 @@ function flagAt(argv: readonly string[], index: number): ParsedFlag {
 	if (arg === "--tools" || VALUE_FLAGS.has(arg)) {
 		return { key: arg === "--tools" ? TOOLS : arg, value: nextValue(argv, index), consumed: 2 };
 	}
-	throw refuse(`Paseo cannot pass the delegate flag ${arg}`);
+	throw refuse(
+		`Paseo cannot pass the delegate flag ${arg}; remove it from the session:launch hook or launch from tmux or Herdr instead`,
+	);
 }
 
 /** The flags of one delegate launch; the leading Pi command has no flag marker. */

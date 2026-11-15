@@ -132,7 +132,7 @@ test("roster descriptions preserve defaults, display names, locks and tool detai
 
 test("tool descriptions include the same roster and empty-roster guidance", () => {
 	const intro =
-		"Start a delegate Pi session on a self-contained task in a background terminal. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status or mail it just to wait.";
+		"Start a delegate Pi session on a self-contained task in the background. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status or mail it just to wait.";
 	const where = `${join("/agent-dir", "agents", "<name>.md")} (or .pi/agents/<name>.md in a trusted project), with the delegate's instructions as its body and optional frontmatter: description, model, thinking, tools, fallback, auto_exit, skills, context_files, prompt_mode, display_name, locked and enabled`;
 	assert.equal(whereAgentsGo("/agent-dir"), where);
 	assert.equal(toolDescription([], "/agent-dir"), `${intro}\n\nNo agents are defined yet. Add ${where}.`);
@@ -144,7 +144,7 @@ test("tool descriptions include the same roster and empty-roster guidance", () =
 			"Agents (outside a routing profile, a model or thinking level a line does not name is this session's, also when locked):",
 			"- worker — Test worker",
 			"",
-			"The delegate sees only the task and its agent prompt. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",
+			"Fresh delegates have no parent conversation; normal Pi skills/context files load unless disabled. Forks copy history. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",
 		].join("\n"),
 	);
 });

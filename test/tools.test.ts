@@ -109,7 +109,10 @@ test("the delegate tool explains self-contained tasks, automatic results, and su
 	writeAgent("scout", SCOUT);
 	const s = session();
 	const description = s.tool("delegate").description;
-	assert.match(description, /sees only the task and its agent prompt/);
+	assert.match(description, /Fresh delegates have no parent conversation/);
+	assert.match(description, /normal Pi skills\/context files load unless disabled/);
+	assert.match(description, /Forks copy history/);
+	assert.doesNotMatch(description, /background terminal|sees only the task and its agent prompt/);
 	assert.match(description, /result arrives later as a message that starts your next turn/);
 	assert.match(description, /do not poll delegation_status or mail it just to wait/);
 });

@@ -12,7 +12,7 @@ import {
 } from "./host.ts";
 import { recordLocator } from "./locators.ts";
 import { createPaseoApi, type PaseoApi } from "./paseo-api.ts";
-import { paseoLaunch } from "./paseo-launch.ts";
+import { paseoLaunch, paseoStartProblem } from "./paseo-launch.ts";
 import { type PaseoLocator, paseoLocator } from "./paseo-locator.ts";
 import {
 	type ClosableStates,
@@ -54,6 +54,7 @@ function promptOf(path: string): string {
 
 class PaseoHost implements DelegateHost {
 	readonly id = "paseo";
+	readonly startProblem = paseoStartProblem;
 	readonly windowNoun = "agent";
 	readonly usesWindowPlacement = false;
 	readonly requiresSessionGuard = false;

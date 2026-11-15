@@ -51,6 +51,8 @@ export type ShowResult = { shown: true; returnHint: string } | { shown: false } 
 export type NoViewer = { text: string; brief: string; cause?: unknown };
 
 export type StartKind = "launch" | "resume" | "fork";
+/** Static launch requirements, checked before reservations or workspace creation. */
+export type StartOptions = { kind: StartKind; skills?: boolean; contextFiles?: boolean };
 export type StartConfiguration = {
 	kind: StartKind;
 	sessionId: string;
@@ -62,6 +64,8 @@ export type StartConfiguration = {
 };
 
 export interface DelegateHost extends LiveNavigation {
+	/** Undefined means supported; refusal names the option and a usable alternative. */
+	startProblem?(options: StartOptions): string | undefined;
 	/** New terminal sessions receive mail before open; reopened ones after it. */
 	taskMailTiming(kind: StartKind): "before-open" | "after-open";
 	/** Optional API configuration after open; requires after-open task mail for every start kind. */

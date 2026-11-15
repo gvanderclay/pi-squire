@@ -14,10 +14,12 @@ import type { Identity } from "./identity.ts";
 import { openedIn } from "./location.ts";
 import { windowPresentation } from "./locators.ts";
 import { fallbackNote } from "./model-choice.ts";
+import { paseoLocator } from "./paseo-locator.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
 	assertNoOwner,
+	assertSessionHost,
 	contextNotice,
 	guardSession,
 	inFlight,
@@ -117,7 +119,9 @@ function startedRecords(results: Results): StartedRecorded[] {
 /** The record a `/delegate-resume` id can name: started, with no later resume of it. */
 export function resumableIds(results: Results): string[] {
 	const started = startedRecords(results);
-	return started.filter((record) => !started.some((item) => item.resumedFrom === record.id)).map(({ id }) => id);
+	return started
+		.filter((record) => !paseoLocator(record.locator) && !started.some((item) => item.resumedFrom === record.id))
+		.map(({ id }) => id);
 }
 
 /** Steps 1 and 2: the id names a started delegation that nothing resumed. */
@@ -305,6 +309,7 @@ async function resume(
 	if (request.task.trim() === "") throw new Error("a task is required");
 	deps.authorize?.(request.id, ctx);
 	const found = newestStarted(deps.results, request.id);
+	assertSessionHost(found);
 	const record = { ...found, identity: requiredIdentity(found) };
 	deps.admit?.(record.agent, ctx);
 	// Host evidence first, so a restored resource is named; the owner check still refuses any other live writer.

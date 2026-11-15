@@ -8,6 +8,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Paseo now deliberately refuses agents with `skills: false` or
+  `context_files: false` before reservations, task mail or managed-worktree
+  creation, naming tmux/Herdr as alternatives. Unsupported hook flags still
+  refuse after the hook and roll back taskless resources; no flags are dropped.
+- Resume/fork on Paseo hosts or sources now refuse up front with a fresh-delegate
+  alternative; Paseo sources are omitted from the resume picker. The deliberate
+  parser-message expectation change is in `test/paseo-launch.test.ts`.
+- Delegate guidance no longer assumes a terminal or claims the task/agent prompt
+  are the only context: fresh sessions omit parent conversation, normal Pi
+  resources load unless disabled, and forks copy history. Metadata character
+  budgets in `test/context-budget.test.ts` rise by the measured 57-character
+  correction only (not a token/billing measurement); no other guidance is cut.
+  `test/delegate-composition.test.ts` and `test/tools.test.ts` deliberately
+  assert the corrected host/context wording instead of the old claims.
 - Paseo delegates inherit the parent's explicit mail root and XDG state location,
   without copying credentials into Paseo's persisted agent environment.
 - The verification helper strips inherited `PASEO_*` routing by default; use

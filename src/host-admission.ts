@@ -1,7 +1,7 @@
 // One call-time host/placement gate. The cheap probe deliberately does not
 // read placement: tools/forms historically report availability before request
 // validation, while launch/resume read placement only at their full preflight.
-import type { DelegateHost, StartKind } from "./host.ts";
+import type { DelegateHost, StartKind, StartOptions } from "./host.ts";
 import type { windowSettings } from "./window-placement.ts";
 
 export type AdmittedHost = Readonly<ReturnType<typeof windowSettings> & { client: DelegateHost }>;
@@ -10,6 +10,11 @@ export type HostAdmission = {
 	probe(): string | undefined;
 	admit(): Promise<AdmittedHost>;
 };
+
+export function assertHostOptions(client: DelegateHost, options: StartOptions): void {
+	const problem = client.startProblem?.(options);
+	if (problem) throw new Error(problem);
+}
 
 /** Configuration must finish while the resource is still taskless. */
 function assertStartPolicy(client: DelegateHost): void {

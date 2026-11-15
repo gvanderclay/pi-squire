@@ -484,6 +484,9 @@ Paseo can host the coordinator Pi, and then pi-squire starts each delegate as a
 command must be installed with its daemon running: reading an agent's activity
 and closing an agent run that command.
 
+- Delegates receive the parent's `PI_CODING_AGENT_DIR` and, when set,
+  `PI_SESSION_MAIL_ROOT` and `XDG_STATE_HOME` so they share its mail and state
+  locations; no API keys or other credentials are copied from the parent.
 - Each delegate is a Paseo child agent of its direct coordinator. A delegate
   in the coordinator's folder reuses that folder's existing workspace; a
   managed worktree keeps its own workspace and working directory without

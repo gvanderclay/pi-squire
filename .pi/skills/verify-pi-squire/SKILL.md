@@ -36,12 +36,22 @@ Every command prints one JSON object. `"ok": false` means it failed, with the re
    | `evidence/` | Proof artifacts; cleanup never touches it |
    | `run.json` | Commit under test, whether `src/` was dirty, model, tmux socket, root session file |
 
-   It starts tmux on socket `squire-verify-<id>` (`tmux -L squire-verify-<id>`), session `root`, window `root`, running the root Pi with `--tools read,ls,delegate,delegation_*,session_mail_*` (no bash, edit or write). The environment has every `PI_*`, `TMUX*` and `HERDR*` variable removed (`self-test` checks this without starting anything), so an agent running this from inside Pi or tmux does not leak its own session into the run.
+   It starts tmux on socket `squire-verify-<id>` (`tmux -L squire-verify-<id>`), session `root`, window `root`, running the root Pi with `--tools read,ls,delegate,delegation_*,session_mail_*` (no bash, edit or write). The environment has every `PI_*`, `TMUX*`, `HERDR*` and `PASEO_*` variable removed by default (`self-test` checks this without starting anything), so an agent running this from inside Pi or tmux does not leak its own session into the run.
 
    Ready means the root's footer shows `deepseek-v4.1-flash • low`, which appears once the TUI has its model. Launch waits up to 60 s and saves the pane to `evidence/launch-pane.txt`.
 
 4. With `--herdr` (and optionally `--herdr-integration`), launch instead starts a private named Herdr session `squire-verify-<id>` with its own `herdr.toml` (`HERDR_CONFIG_PATH`), inside a `host` window of the run's tmux server, and runs the root Pi in pane `w1:p1`. No `multiplexer` setting is written, so it also proves auto-detection. `type`, `delegate`, `capture`, `windows` and `cleanup` then act on Herdr. `herdr --args` passes through only read/type probes under the run's `--session` and rejects session, server and scope-changing flags; `herdr-restart` and `cleanup` are the only lifecycle commands, and touch only `squire-verify-<id>`. See [features/herdr.md](features/herdr.md). It never addresses Herdr's `default` session or your config.
 5. Delegate windows (tmux runs) open in a second tmux session on the same socket, chosen by Squire's [window placement](../../../README.md#where-delegate-windows-open). In the runs that proved this skill it was `work-delegate-session`; read the real name from the `delegate` command's output or `windows`.
+
+For a deliberate Paseo delegate run, set `SQUIRE_VERIFY_KEEP_PASEO=1` when
+launching from a Paseo session (with `PASEO_AGENT_ID` and `PASEO_AGENT_CWD` set).
+This preserves all `PASEO_*` variables; the root still runs in the private tmux
+server, but its delegates use Paseo. Use `ask --tool delegate` rather than the
+helper's `delegate` command, whose notice parser expects a window or tab.
+Paseo delegates now receive the run's private `PI_SESSION_MAIL_ROOT`, so task
+and reply mail stay in the run even when the daemon has a different mail root.
+The helper's cleanup only kills the private tmux server: close the run's agents
+and archive only the Paseo workspaces created by this run, recording their ids.
 
 Teardown is [Cleanup](#cleanup).
 

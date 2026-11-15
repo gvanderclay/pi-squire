@@ -7,6 +7,31 @@ import { test } from "node:test";
 
 const helper = join(import.meta.dirname, "..", ".pi", "skills", "verify-pi-squire", "scripts", "squire-verify.mjs");
 
+test("verify helper strips every PASEO_* variable unless explicitly opted in", () => {
+	for (const optIn of [undefined, "0", "1"]) {
+		const env = {
+			...process.env,
+			PASEO_AGENT_ID: "driver-agent",
+			PASEO_AGENT_CWD: "/driver/cwd",
+			PASEO_OTHER: "future-routing",
+			SQUIRE_VERIFY_KEEP_PASEO: optIn,
+		};
+		if (optIn === undefined) delete env.SQUIRE_VERIFY_KEEP_PASEO;
+		const run = spawnSync(process.execPath, [helper, "self-test"], { encoding: "utf8", env });
+		assert.equal(run.status, 0, run.stdout + run.stderr);
+		const report = JSON.parse(run.stdout) as { paseoOptIn: boolean; defaultPaseoKeys: string[] };
+		assert.equal(report.paseoOptIn, true);
+		assert.deepEqual(
+			report.defaultPaseoKeys.sort(),
+			optIn === "1"
+				? Object.keys(env)
+						.filter((k) => k.startsWith("PASEO_"))
+						.sort()
+				: [],
+		);
+	}
+});
+
 test("verify helper strips driver HERDR/TMUX/PI context and rejects scope-changing Herdr probes", () => {
 	const run = spawnSync(process.execPath, [helper, "self-test"], {
 		encoding: "utf8",

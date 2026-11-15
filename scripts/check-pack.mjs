@@ -1,6 +1,6 @@
 // Checks the file list `npm pack` would publish. There is no build step: Pi
 // loads the .ts sources as they are. So every .ts file under src/, the README,
-// LICENSE, CHANGELOG and package.json must be in it, nothing from tests or
+// docs, LICENSE, CHANGELOG and package.json must be in it, nothing from tests or
 // tooling may be, and every relative import in a packed .ts file must point at
 // another packed file. Last, it packs the real tarball, unpacks it and loads it
 // into the project's own Pi, which must register the `delegate` command from
@@ -47,12 +47,15 @@ const problems = [];
 const sources = readdirSync("src", { recursive: true })
 	.filter((name) => name.endsWith(".ts"))
 	.map((name) => `src/${name}`);
-const REQUIRED = ["package.json", "README.md", "LICENSE", "CHANGELOG.md", ...sources];
+const docs = readdirSync("docs", { recursive: true })
+	.filter((name) => name.endsWith(".md"))
+	.map((name) => `docs/${name}`);
+const REQUIRED = ["package.json", "README.md", "LICENSE", "CHANGELOG.md", ...sources, ...docs];
 for (const path of REQUIRED) {
 	if (!files.has(path)) problems.push(`missing: ${path}`);
 }
 
-const FORBIDDEN = /^(test|docs|scripts|node_modules|\.github)\/|^\.|\.tgz$|\.test\.ts$/;
+const FORBIDDEN = /^(test|scripts|node_modules|\.github)\/|^\.|\.tgz$|\.test\.ts$/;
 for (const path of packed) {
 	if (FORBIDDEN.test(path)) problems.push(`should not be packed: ${path}`);
 }

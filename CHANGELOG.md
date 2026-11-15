@@ -26,7 +26,8 @@ follows [Semantic Versioning](https://semver.org/).
   references in `docs/`, with clearer experimental-feature status and package
   discovery metadata. Executable hook examples and runtime behavior are unchanged.
 - Host and mail refusals now say what to do. `/delegate`, `/delegate-resume`
-  and `/delegate-doctor` add an action chosen by the cause: install or start
+  and `/delegate-doctor` add an action chosen by how the refusal starts (a
+  path or nested error inside it cannot change the advice): install or start
   tmux, set `multiplexer` when Pi is inside both tmux and Herdr or the
   selection is invalid, fix the Squire settings file, fix Herdr, start the
   Paseo daemon, or run Pi inside a Paseo agent; a missing `message:*` provider

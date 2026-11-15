@@ -49,10 +49,12 @@ You research one question at a time and answer concisely, citing the files
 you read.
 ```
 
-Every field is optional: for a legacy agent, without `model` and `thinking`
-the delegate runs on your session's, and without `tools` it has your session's
-tools (see [Agents](docs/agents.md#agents)). A bound role uses its routing policy instead;
-see [Role/task routing](docs/routing.md#role-task-routing). The roster is read at
+Every field is optional. An agent without `routing_profile` is a **legacy
+agent**: without `model` and `thinking` its delegate runs on your session's
+model and level, and without `tools` it has your session's tools (see
+[Agents](docs/agents.md#agents)). An agent with `routing_profile` is a **bound
+role** and uses its routing policy instead; see
+[Role/task routing](docs/routing.md#role-task-routing). The roster is read at
 call time, so no reload is needed. Delegation guidance
 for the parent is optional: save Markdown as
 `<agent dir>/squire/delegation_prompt.md`, and it is read before each run.
@@ -137,10 +139,11 @@ held results, outbox retries, usage and storage repair; use the
   asks the attended root user; context files still load without project trust.
   [Project trust](docs/workspaces.md#project-trust).
 - Managed worktrees separate checkouts, not permissions. Close does not remove
-  worktrees. Cleanup refuses dirty, unmerged, live, foreign or uncertain resources
-  unless a documented interactive override applies. **Ignored files inside a
-  removed worktree are deleted too**, including `.env`, `.scratch/` and
-  `node_modules/`. Checks reduce races, not exclude external users.
+  worktrees. Cleanup refuses dirty, live or uncertain resources outright;
+  unmerged commits and foreign Paseo workspaces go only through a per-item
+  interactive confirmation. **Ignored files inside a removed worktree are
+  deleted too**, including `.env`, `.scratch/` and `node_modules/`. Checks
+  reduce races, not exclude external users.
   [Cleanup and race limits](docs/workspaces.md#cleanup).
 - Quitting/reloading a coordinator does not cascade through Squire; explicit close
   does. Paseo native parent archive can cascade: do not archive/delete a parent

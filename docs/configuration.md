@@ -1,6 +1,6 @@
 # Configuration
 
-[Home](../README.md) · [Configuration](configuration.md) · [Troubleshooting](troubleshooting.md)
+[Home](../README.md) · [Agents](agents.md) · [Troubleshooting](troubleshooting.md)
 
 - [Files and read policy](#files-and-read-policy)
 - [Setting reference](#setting-reference)

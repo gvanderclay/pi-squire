@@ -16,8 +16,10 @@
 ## Hooks
 
 The executable worked examples remain in [README.md](../README.md#hooks), where
-`test/hooks.test.ts` extracts and runs them verbatim. The API in those examples
-is `pi`, with `assert` supplied by the test harness.
+`test/hooks.test.ts` extracts and runs them verbatim. Write a block as plain
+JavaScript so it stays runnable; the name after `js` in the fence is the test
+that runs that block. The API in those examples is `pi`, with `assert`
+supplied by the test harness.
 
 ### `session:launch`
 

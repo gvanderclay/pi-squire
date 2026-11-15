@@ -61,10 +61,11 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   tests. Run it before every commit; CI runs the same on Node 22.19 and 24,
   with a fresh `HOME` and no `PI_CODING_AGENT_DIR`.
 - A single file: `node --test test/hooks.test.ts`.
-- `node scripts/check-pack.mjs` after changing `package.json` `files` or adding
-  a file under `src/`. Every `.ts` file under `src/` must be packed. It also
-  packs the bundle and loads it into the project's Pi, so run `pnpm install`
-  first.
+- `node scripts/check-pack.mjs` after changing `package.json` `files`, adding
+  a file under `src/`, or adding or renaming a page in `docs/`. Every `.ts` file
+  under `src/` and every top-level `docs/*.md` page must be packed, and nothing
+  under a `docs/` subfolder may be. It also packs the bundle and loads it into
+  the project's Pi, so run `pnpm install` first.
 - To prove a change in a real Pi, use the `verify-pi-squire` skill in
   `.pi/skills/verify-pi-squire/`. It drives this checkout with
   pi-session-mail in a private tmux server on a cheap model, and needs

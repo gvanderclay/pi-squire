@@ -1,12 +1,25 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { after, test } from "node:test";
 import { setImmediate as nextTurn } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
-import { cleanup, closeSessions, FAKE_MODELS, resetRoot, root, session } from "./harness.ts";
+import { agentDir, cleanup, closeSessions, FAKE_MODELS, resetRoot, root, session } from "./harness.ts";
 
 after(cleanup);
+
+test("an IPC fixture can import the harness without starting the test runner", () => {
+	const child = spawnSync(process.execPath, [fileURLToPath(new URL("./fixtures/harness-import.ts", import.meta.url))], {
+		env: { ...process.env, SQUIRE_TEST_AGENT_DIR: agentDir },
+		encoding: "utf8",
+		timeout: 20000,
+	});
+	assert.equal(child.error, undefined);
+	assert.equal(child.status, 0, child.stderr);
+	assert.equal(child.stdout, "harness fixture cleaned up\n");
+});
 
 test("an errored run carries the failure a test chose, and a plain one keeps boom", async () => {
 	resetRoot();
@@ -86,6 +99,9 @@ for (const operation of ["shutdown", "closeSessions", "cleanup"] as const) {
 		});
 		try {
 			await s.start();
+			// Production schedules with an unref'ed timer: a bare promise cannot keep
+			// Node alive until rename. Start the actual writer, without awaiting the gate.
+			const publishing = s.flushPublishers();
 			await entered.promise;
 			const stopping = (
 				operation === "shutdown" ? s.shutdown() : operation === "cleanup" ? cleanup() : closeSessions()
@@ -96,6 +112,7 @@ for (const operation of ["shutdown", "closeSessions", "cleanup"] as const) {
 			assert.equal(finished, false, "teardown must wait for this session's writer, not retry synchronous rm");
 			release.resolve();
 			await stopping;
+			await publishing;
 			assert.ok(destination);
 			assert.equal(existsSync(destination), false, "stopped publisher removed its late atomic write");
 			if (operation === "cleanup") assert.equal(existsSync(root), false, "root removed only after writer drained");

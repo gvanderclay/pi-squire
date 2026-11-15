@@ -180,7 +180,10 @@ test("a refused root port rejects on the connection error, not the handshake dea
 	await parent.shutdown();
 	// Preserve the now-closed port to model a stale descriptor after root death.
 	writeFileSync(path, endpoint);
-	await assert.rejects(launch(child, target("refused-root-port")), /is not running an available project trust service/);
+	await assert.rejects(
+		launch(child, target("refused-root-port")),
+		/is not running an available project trust service; nothing was launched/,
+	);
 	assert.equal(child.tmux.opened.length, 0);
 	assert.equal(parent.selects.length, 0);
 });

@@ -80,7 +80,9 @@ const sessionClosers = new Set<() => Promise<void>>();
 export async function closeSessions(): Promise<void> {
 	for (const close of [...sessionClosers].reverse()) await close();
 }
-afterEach(closeSessions);
+// IPC fixtures import this helper too, but must not start node:test's root runner.
+// TreeProcess marks those children explicitly; NODE_TEST_CONTEXT is inherited there.
+if (!process.env.SQUIRE_TEST_AGENT_DIR) afterEach(closeSessions);
 export const cleanup = async () => {
 	await closeSessions();
 	rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -858,6 +860,8 @@ export function session(options: SessionOptions = {}) {
 			return fire("session_start", { reason: "startup" });
 		},
 		shutdown,
+		/** Start pending telemetry writes explicitly instead of waiting on their unref'ed timer. */
+		flushPublishers: () => Promise.all(publishers.map((publisher) => publisher.flush())),
 		/** Fire any Pi event by name; every handler the extension registered runs with this session's context. */
 		fire,
 		/** How many times the extension asked Pi to shut down. */

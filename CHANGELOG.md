@@ -13,6 +13,20 @@ follows [Semantic Versioning](https://semver.org/).
   references in `docs/`, with clearer experimental-feature status and package
   discovery metadata. Executable hook examples and runtime behavior are unchanged.
 
+### Fixed
+
+- A launch rolled back before dispatch no longer carries the requested Paseo
+  agent id. Post-dispatch failures and interrupted attempts still retain the
+  agent id and its recovery advice.
+- `delegation_status` words a rolled-back launch from its phase: it reports that
+  no delegate window or agent was created and no managed worktree remains, and
+  names no Paseo recovery target even for a record written by 0.31.0 that kept
+  the requested agent id. A rolled-back attempt's request line says the task was
+  mailed and was not recalled, because a host that mails before opening leaves
+  the request queued in the recipient's inbox; it does not blame a failed open,
+  which an earlier hook or storage failure would contradict. Retained and
+  interrupted attempts keep their conservative recovery advice.
+
 ## [0.31.0] - 2026-11-15
 
 ### Changed
@@ -40,10 +54,6 @@ follows [Semantic Versioning](https://semver.org/).
   pane defaults, API-key advice distinguishes tmux/Paseo from Herdr inheritance,
   and the focus-adapter note describes current pinned-version
   tests rather than claiming an obsolete bundled-CLI verification.
-- A launch rolled back before dispatch no longer carries the requested Paseo
-  agent id, so `delegation_status` no longer names a recovery target for an
-  agent that was never requested from the daemon. Post-dispatch failures still
-  retain the agent id and its recovery advice.
 - Retain acknowledged Paseo workspace receipts and agent recovery targets in managed
   launch attempts and shared tree accounting before later launch steps can fail.
   Successful opens publish their receipts before configuration or task mailing;

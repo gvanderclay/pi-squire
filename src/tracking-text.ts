@@ -3,9 +3,10 @@
 import { existsSync } from "node:fs";
 import { locationTerms, recordedLocation } from "./location.ts";
 import { autoExitText } from "./locators.ts";
-import { paseoLocator } from "./paseo-locator.ts";
+import { type PaseoLocator, paseoLocator } from "./paseo-locator.ts";
 import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
+	type AttemptState,
 	type DelegationState,
 	recordedName,
 	type StartedRecorded,
@@ -21,6 +22,27 @@ import { accountingFor } from "./tree-view.ts";
 /** Records from before auto-exit existed kept their windows open, so they read off. */
 export function autoExitLine(record: StartedRecorded): string {
 	return autoExitText(record, record.autoExit === true);
+}
+
+/**
+ * A confirmed rollback removed the managed worktree and never created a
+ * delegate, so there is nothing to recover. It says nothing about recall: a
+ * host that mails before opening leaves the request queued in the recipient's
+ * inbox, and Squire never recalls it.
+ */
+const ROLLED_BACK = "no delegate window or agent was created, and no managed worktree remains";
+
+/**
+ * What an attempt's state line says after its phase. A rolled-back attempt is
+ * settled: no delegate window or agent was created and no managed worktree
+ * remains, so an older record's requested id is not a recovery target. Retained
+ * and interrupted attempts stay uncertain and keep the conservative advice.
+ */
+function attemptAdvice(phase: AttemptState["phase"], paseo: PaseoLocator | undefined): string {
+	if (phase === "rolled-back") return ROLLED_BACK;
+	return paseo
+		? "no start was published; an agent may still exist (close requires a verified open)"
+		: "no window id/start was recorded; a window may still exist (close requires a verified window id)";
 }
 
 /** The state, worded for the `state:` line. */
@@ -41,10 +63,11 @@ export function stateLine(state: DelegationState, record: StartedRecorded): stri
 			return `unknown — ${host} could not be asked whether the ${noun} is open`;
 		case "planned":
 		case "created":
-		case "rolled-back":
 		case "retained":
 		case "interrupted":
 			return `${state} — no window id/start was recorded; a window may still exist`;
+		case "rolled-back":
+			return `${state} — ${ROLLED_BACK}`;
 	}
 }
 
@@ -159,11 +182,14 @@ export function compactText({ record, state, snapshot, sessionPath, resumedAs }:
 
 /** One unstarted attempt as the status text words it. */
 export function attemptText(record: WorkspaceAttempt): string {
-	const paseo = paseoLocator(record.locator);
+	// The phase, not the locator, decides the advice: records written by 0.31.0 can
+	// keep a requested id after a confirmed rollback.
+	const rolledBack = record.attempt.phase === "rolled-back";
+	const paseo = rolledBack ? undefined : paseoLocator(record.locator);
 	return [
 		`${record.id} ${record.agent} (${modelLabel(record.model, undefined)}, thinking ${record.thinking})`,
 		`  name: ${recordedName(record)}`,
-		`  state: ${record.attempt.phase} — ${paseo ? "no start was published; an agent may still exist (close requires a verified open)" : "no window id/start was recorded; a window may still exist (close requires a verified window id)"}`,
+		`  state: ${record.attempt.phase} — ${attemptAdvice(record.attempt.phase, paseo)}`,
 		...(paseo
 			? [
 					`  Paseo recovery target: ${paseo.agent}; inspect this id in Paseo before closing it manually (creation may be unacknowledged)`,

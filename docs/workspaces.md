@@ -126,6 +126,9 @@ window is known to have opened, pi-squire removes only a checkout and branch
 it can prove it created and that remain pristine; it never uses force. Changed,
 ignored, untracked or uncertain resources are retained and reported with
 recovery facts. A timeout or other ambiguous tmux failure retains the worktree.
+A host that mails the task before opening has already delivered it by then, so
+a rolled-back attempt keeps its request id and reports that the task was mailed
+and was not recalled.
 Once tmux returns a window id, the worktree and branch are kept through later
 failure, completion and close. After merging, use `delegation_cleanup` to remove
 proved-safe managed worktrees and local branches (see [Cleanup](#cleanup)).
@@ -135,10 +138,11 @@ Paseo placement receipts are saved as soon as the daemon acknowledges placement,
 including in retained or interrupted launch attempts. Agent/session recovery
 identities are saved as they become known, before configuration and task mail.
 `delegation_status` shows a partial launch's Paseo recovery target: inspect that
-id in Paseo before closing it manually. An attempt rolled back before dispatch
-has no recovery target: nothing was requested from the daemon. A lost creation
-acknowledgement proves neither creation nor absence, so an uncertain launch is
-not automatically deleted.
+id in Paseo before closing it manually. A rolled-back attempt reports that no
+delegate window or agent was created and no managed worktree remains, and names
+no recovery target, even when an older record stored the requested id. A lost
+creation acknowledgement proves neither creation nor absence, so an uncertain
+launch is not automatically deleted.
 Cleanup accepts an attempt's exact `created` receipt when retained, or interrupted
 with last phase `created`, only after its normal Git and no-live-user checks;
 opened/reused receipts never authorize tool-triggered archive.

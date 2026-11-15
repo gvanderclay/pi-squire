@@ -549,7 +549,16 @@ without a managed-workspace receipt may resume if exact verification passes.
 Each resume still has a new delegation id and `resumedFrom`, uses the old
 session mail address, reapplies direct-parent/roster admission and tree
 caps/fences, and refuses a live exact-session Squire owner. Mail failure
-re-archives the original agent rather than deleting its conversation. Details:
+re-archives the original agent rather than deleting its conversation. That
+post-open mail failure leaves a shared started successor, so Squire refuses
+another resume of the chain (as with terminal resume). Inspect or continue the
+preserved conversation manually in Paseo/Pi with only one writer, or start a
+fresh delegate; do not delete tracking history to force a retry.
+
+A refusal before reload, or a failed/mismatched reload whose rollback is
+confirmed archived and closed, instead refunds its reservation and can be retried
+once the source passes readiness again. Unconfirmed rollback remains charged
+and requires inspection. Details:
 [Paseo support](hosts.md#paseo-support).
 
 ### Terminal-hosted resume

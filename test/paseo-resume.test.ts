@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { after, beforeEach, test } from "node:test";
+import { after, beforeEach, type TestContext, test } from "node:test";
+import type { PaseoAgent, PaseoClient } from "@getpaseo/client";
 import { readIdentity } from "../src/identity.ts";
 import { createPaseoHost } from "../src/paseo.ts";
+import { nativeResumeApi } from "../src/paseo-resume-api.ts";
 import { goneOutcome } from "../src/result-close.ts";
 import { isV2Start } from "../src/result-types.ts";
-import { readTree, treeCounts } from "../src/tree-registry.ts";
+import { claimTree, dispatchTree, failedTree, readTree, reserveTree, treeCounts } from "../src/tree-registry.ts";
 import {
 	agentDir,
 	agentFile,
@@ -114,6 +116,132 @@ test("native resume keeps agent/session identity, spends a new launch, skips lau
 	await f.s.shutdown();
 });
 
+/** Inject the production native API into the in-memory host at its post-reservation boundary. */
+function nativeFailure(t: TestContext, f: Awaited<ReturnType<typeof source>>, mode: string) {
+	return t.mock.method(f.api, "resume", async (input: Parameters<FakePaseo["resume"]>[0]) => {
+		let agent = {
+			id: input.agentId,
+			provider: "pi",
+			cwd: input.cwd,
+			archivedAt: mode === "before" ? null : "archived",
+			model: "alpha/fast-model",
+			thinkingOptionId: "low",
+			labels: { "pi-squire": "1", "paseo.parent-agent-id": input.parentAgentId },
+			runtimeInfo: { provider: "pi", sessionId: input.sessionId },
+			persistence: { provider: "pi", sessionId: input.sessionId, nativeHandle: input.path },
+		} as unknown as PaseoAgent;
+		const handle = {
+			current: () => agent,
+			refresh: async () => ({ agent }),
+			reload: async () => {
+				f.api.archived.delete(f.id);
+				f.api.running.add(f.id);
+				if (mode === "claimed") claimTree(f.s.parent, input.sessionId, undefined);
+				agent.archivedAt = null;
+				if (mode === "mismatch") {
+					if (agent.runtimeInfo) agent.runtimeInfo.sessionId = "wrong";
+				} else throw new Error("reload refused");
+			},
+			archive: async () => {
+				if (mode === "unknown") throw new Error("archive unavailable");
+				f.api.archived.add(f.id);
+				f.api.running.delete(f.id);
+				agent = { ...agent, archivedAt: "confirmed", status: "closed" };
+			},
+		};
+		const client = { agents: { ref: () => handle } } as unknown as PaseoClient;
+		await nativeResumeApi(
+			root,
+			async (run) => run(client),
+			async () => true,
+		).resume(input);
+	});
+}
+
+test("native dispatch refusals and confirmed rollbacks refund accounting and allow a truthful retry", async (t) => {
+	for (const mode of ["before", "reload", "mismatch", "claimed"])
+		await t.test(mode, async (sub) => {
+			resetRoot();
+			const f = await source();
+			const before = treeCounts(readTree(f.s.parent));
+			const starts = f.s.entries.filter((entry) => isV2Start(entry.data)).length;
+			const mock = nativeFailure(sub, f, mode);
+			await assert.rejects(f.s.toolCall("delegation_resume", { id: f.id, task: "failed" }));
+			assert.deepEqual(treeCounts(readTree(f.s.parent)), before);
+			const failed = readTree(f.s.parent).entries.find((entry) => entry.resumedFrom === f.id);
+			assert.equal(failed?.phase, "not-started");
+			assert.equal(failed?.createPending, false);
+			assert.equal(f.s.entries.filter((entry) => isV2Start(entry.data)).length, starts);
+			assert.equal(f.s.sendCalls.length, 1);
+			assert.equal(f.api.archived.has(f.id), true);
+			assert.equal(f.api.running.has(f.id), false);
+			claimTree(f.s.parent, f.sessionId, undefined);
+			assert.equal(
+				readTree(f.s.parent).entries.find((entry) => entry.id === failed?.id)?.phase,
+				"not-started",
+				"late startup cannot resurrect the refunded entry",
+			);
+			assert.deepEqual(treeCounts(readTree(f.s.parent)), before);
+			mock.mock.restore();
+			// The fake's normal readiness now models a valid archived source again.
+			const retried = await f.s.toolCall("delegation_resume", { id: f.id, task: "retry" });
+			assert.equal((retried.structuredContent as { resumedFrom: string }).resumedFrom, f.id);
+			assert.equal(f.s.sendCalls.length, 2);
+			await f.s.shutdown();
+		});
+});
+
+test("an unconfirmed native rollback stays charged and cannot be retried as if nothing opened", async (t) => {
+	const f = await source();
+	const before = treeCounts(readTree(f.s.parent));
+	nativeFailure(t, f, "unknown");
+	await assert.rejects(f.s.toolCall("delegation_resume", { id: f.id, task: "failed" }), /archive unavailable/);
+	assert.equal(treeCounts(readTree(f.s.parent)).lifetime, before.lifetime + 1);
+	assert.equal(readTree(f.s.parent).entries.find((entry) => entry.resumedFrom === f.id)?.phase, "dispatched");
+	await assert.rejects(
+		f.s.toolCall("delegation_resume", { id: f.id, task: "retry" }),
+		/already resumed; resume its newest delegation/,
+	);
+	assert.equal(f.s.sendCalls.length, 1);
+	await f.s.shutdown();
+});
+
+test("started terminal successors are never refunded by native rollback proof", async () => {
+	writeAgent("scout", agentFile({}));
+	const s = session();
+	await s.start();
+	const launched = await s.toolCall("delegate", { agent: "scout", task: "first" });
+	const id = (launched.structuredContent as { id: string }).id;
+	const record = s.entries.findLast((entry) => entry.data.id === id)?.data;
+	assert.ok(isV2Start(record) && record.identity);
+	s.events.emit("message:inbound", {
+		envelope: {
+			id: "done",
+			from: id,
+			to: s.parent,
+			in_reply_to: [record.requestId],
+			status: "done",
+			ts: "",
+			body: "done",
+		},
+		path: "/mail/done",
+		requests: [],
+		handled: false,
+	});
+	await s.run();
+	s.tmux.windows.clear();
+	const token = reserveTree({ id: randomUUID(), sessionId: id, identity: record.identity, resumedFrom: id });
+	dispatchTree(token);
+	claimTree(s.parent, id, undefined);
+	const counts = treeCounts(readTree(s.parent));
+	assert.equal(readTree(s.parent).entries.find((entry) => entry.id === token.id)?.phase, "started");
+	failedTree(token, true, { kind: "native-resume-closed", sessionId: id, agentId: id });
+	assert.deepEqual(treeCounts(readTree(s.parent)), counts);
+	failedTree(token, true);
+	assert.equal(readTree(s.parent).entries.find((entry) => entry.id === token.id)?.phase, "started");
+	await s.shutdown();
+});
+
 test("picker offers archived native sources and uses the same frozen-config resume path", async (t) => {
 	const f = await source(true, { editor: ["picker follow-up"] });
 	await f.s.command("delegate-resume");
@@ -198,6 +326,29 @@ test("mail failure after native reload re-archives the original agent, never del
 	await assert.rejects(f.s.toolCall("delegation_resume", { id: f.id, task: "again" }), /mail unavailable/);
 	assert.equal(f.api.archived.has(f.id), true);
 	assert.equal(f.api.running.has(f.id), false);
+	assert.deepEqual(f.api.removals, []);
+	assert.equal(readTree(f.s.parent).entries.find((entry) => entry.resumedFrom === f.id)?.phase, "started");
+	await assert.rejects(f.s.toolCall("delegation_resume", { id: f.id, task: "retry" }), /already resumed/);
+	await f.s.shutdown();
+});
+
+test("native rollback bookkeeping is handle-scoped and repeated rollback can never hard-delete the source", async (t) => {
+	const f = await source();
+	assert.ok(f.host.resumeSession);
+	const opened = await f.host.resumeSession({
+		locator: f.record.locator ?? {},
+		sessionId: f.sessionId,
+		path: f.path,
+		cwd: root,
+	});
+	const failedArchive = t.mock.method(f.api, "archive", async () => {
+		throw new Error("archive failed");
+	});
+	await assert.rejects(f.host.closeTaskless(opened), /archive failed/);
+	assert.deepEqual(f.api.removals, []);
+	failedArchive.mock.restore();
+	await f.host.closeTaskless(opened);
+	assert.equal(f.api.archived.has(f.id), true);
 	assert.deepEqual(f.api.removals, []);
 	await f.s.shutdown();
 });

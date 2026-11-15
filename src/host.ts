@@ -31,17 +31,22 @@ export type OpenedWindow = {
 	location?: string;
 };
 
+/** Positive daemon readback: this exact native resume was archived before any new task mail. */
+export type NativeResumeRollback = { kind: "native-resume-closed"; sessionId: string; agentId: string };
+
 /**
- * Why a window could not be opened, and whether one may exist anyway:
- * `not-opened` only when nothing was dispatched that could create it.
- * Anything else, a timeout or a malformed answer included, is `unknown`.
+ * Whether an open may remain: not-opened requires no possible dispatch, or a
+ * positively confirmed closed native rollback before new task mail. A timeout
+ * or unconfirmed rollback stays unknown. Started terminal opens are not refunded.
  */
 export class WindowOpenError extends Error {
 	certainty: "not-opened" | "unknown";
-	constructor(message: string, certainty: "not-opened" | "unknown") {
+	readonly nativeResumeRollback?: NativeResumeRollback;
+	constructor(message: string, certainty: "not-opened" | "unknown", nativeResumeRollback?: NativeResumeRollback) {
 		super(message);
 		this.name = "WindowOpenError";
 		this.certainty = certainty;
+		this.nativeResumeRollback = nativeResumeRollback;
 	}
 }
 

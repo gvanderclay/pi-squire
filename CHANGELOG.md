@@ -14,7 +14,16 @@ follows [Semantic Versioning](https://semver.org/).
   parent/session/header/cwd checks run before reservation and before reload,
   and the returned runtime session id is checked before task mail. Deleted,
   moved/mismatched, ambiguous and routed sources remain refused. Failed task
-  delivery re-archives rather than deletes the original agent.
+  delivery re-archives rather than deletes the original agent, but leaves a
+  shared started successor that blocks Squire resume of that chain; inspect or
+  continue the preserved conversation manually with one writer, or start fresh.
+- Refuse-before-reload and confirmed native reload rollbacks refund their
+  reservations so valid sources can retry. Unconfirmed archive/readback remains
+  charged with explicit inspection advice; no unknown outcome is refunded.
+  The locked registry also refunds a child-claimed native successor only with
+  exact-session/agent closed-rollback proof and no task, launch record or finished
+  outcome; late startup claims cannot revive it. Started terminal launches keep
+  their previous accounting semantics.
 
 ### Changed
 

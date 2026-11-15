@@ -117,7 +117,8 @@ Reopen the same parent Pi session with the same agent directory to recover its
 tracking and pending results. Open a delegate directly with the absolute session
 path shown by status: `pi --session /absolute/path/<file>.jsonl`. Keep only one
 Pi process per exact session id. To assign follow-up work to an exited direct
-child, use `/delegate-resume <id> <task>` on tmux or Herdr; for Paseo start fresh.
+child, use `/delegate-resume <id> <task>`. Paseo requires an archived native
+agent and reuses its original launch settings; pass only id and task.
 See [results and recovery](docs/results-and-recovery.md) for resume/fork checks,
 held results, outbox retries, usage and storage repair; use the
 [symptom checklist](docs/troubleshooting.md) before deleting or retrying anything.

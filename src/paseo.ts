@@ -60,7 +60,7 @@ class PaseoHost implements DelegateHost {
 	readonly windowNoun = "agent";
 	readonly usesWindowPlacement = false;
 	readonly requiresSessionGuard = false;
-	private readonly resumed = new Map<string, string>();
+	private readonly resumed = new WeakMap<OpenedWindow, string>();
 	readonly windowListRefusal = LIST_REFUSAL;
 	private readonly api: PaseoApi;
 	/** Read at every call: same process, and the router asks before any launch. */
@@ -153,14 +153,16 @@ class PaseoHost implements DelegateHost {
 	async resumeSession(source: ResumeSource): Promise<OpenedWindow> {
 		const input = this.resumeInput(source);
 		await this.api.resume(input);
-		this.resumed.set(input.agentId, input.sessionId);
-		return {
+		const opened: OpenedWindow = {
 			id: input.agentId,
 			session: undefined,
 			sessionId: input.sessionId,
 			locator: source.locator,
 			location: `Paseo agent ${input.agentId}`,
 		};
+		// Weak keys cannot retain completed starts; a retained handle still rolls back archive-only.
+		this.resumed.set(opened, input.sessionId);
+		return opened;
 	}
 
 	async states(strict = false): Promise<ClosableStates> {
@@ -175,10 +177,9 @@ class PaseoHost implements DelegateHost {
 
 	async closeTaskless(opened: OpenedWindow): Promise<void> {
 		try {
-			const sessionId = this.resumed.get(opened.id);
+			const sessionId = this.resumed.get(opened);
 			if (sessionId !== undefined) {
 				await this.api.archive(opened.id, sessionId, () => true);
-				this.resumed.delete(opened.id);
 			} else await this.api.remove(opened.id);
 		} catch (error) {
 			throw new Error(

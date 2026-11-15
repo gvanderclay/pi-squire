@@ -14,6 +14,7 @@ import { publishOpenedProgress, publishOpenProgress } from "./delegate-progress.
 import { closeAfterFailure, mailTask } from "./delegate-start-mail.ts";
 import {
 	type DelegateHost,
+	type NativeResumeRollback,
 	type OpenedWindow,
 	type OpenProgress,
 	type ResumeSource,
@@ -434,16 +435,21 @@ export class DelegateStarter {
 			}
 			return await client.openWindow(spec, input.admission.placement, input.identity.rootPlacement);
 		} catch (err) {
-			if (err instanceof WindowOpenError && err.certainty === "not-opened") this.refundNotOpened(token, ctx);
+			if (err instanceof WindowOpenError && err.certainty === "not-opened")
+				this.refundNotOpened(token, ctx, err.nativeResumeRollback);
 			const noun = client.windowNoun ?? "window";
 			const message = `could not open ${noun} ${input.name} for ${input.id}: ${(err as Error).message}`;
-			throw new WindowOpenError(message, err instanceof WindowOpenError ? err.certainty : "unknown");
+			throw new WindowOpenError(
+				message,
+				err instanceof WindowOpenError ? err.certainty : "unknown",
+				err instanceof WindowOpenError ? err.nativeResumeRollback : undefined,
+			);
 		}
 	}
 
-	private refundNotOpened(token: Reservation, ctx: ExtensionContext): void {
+	private refundNotOpened(token: Reservation, ctx: ExtensionContext, rollback?: NativeResumeRollback): void {
 		try {
-			failedTree(token, true);
+			failedTree(token, true, rollback);
 		} catch (accounting) {
 			ctx.ui.notify(
 				`delegate: could not refund the pre-start reservation: ${String(accounting)}; it remains charged.`,

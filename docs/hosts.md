@@ -234,8 +234,15 @@ reading activity and explicitly closing an agent run that command.
   A native Paseo resume does not emit `session:launch`: Paseo reloads the agent
   with the arguments and environment the hook produced at its original launch.
   Normal identity notifications, completion holds, accounting and result delivery
-  still run. If follow-up mail fails, Squire re-archives rather than deletes the
-  original agent. Fork remains unimplemented in Squire for Paseo hosts/sources;
+  still run. A pre-reload refusal or confirmed reload rollback refunds the
+  reservation so a valid source can be retried; an unconfirmed rollback stays
+  charged and needs inspection. If follow-up mail fails after a successful
+  reload, Squire re-archives rather than deletes the original agent, but the
+  shared started successor remains and blocks another Squire resume of that
+  chain (the same limitation as terminal resume). Inspect or continue the
+  preserved conversation manually in Paseo/Pi with only one writer, or start a
+  fresh delegate; do not delete tracking history to force a retry.
+  Fork remains unimplemented in Squire for Paseo hosts/sources;
   start a fresh delegation instead.
 - On fresh launch, agents with `skills: false` or `context_files: false` are refused before
   reservations, task mail or managed-worktree creation. Paseo 0.15.4 cannot

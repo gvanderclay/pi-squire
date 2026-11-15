@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, type TestContext, test } from "node:test";
 import type { PaseoAgent } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { WindowOpenError } from "../src/host.ts";
 import { createPaseoApi, type PaseoResumeInput } from "../src/paseo-api.ts";
 
 const dirs: string[] = [];
@@ -62,6 +63,8 @@ function fixture(t: TestContext) {
 	}));
 	t.mock.method(DaemonClient.prototype, "archiveAgent", async () => {
 		calls.push("archive");
+		agent.archivedAt = "archived";
+		agent.status = "closed";
 		return { archivedAt: "archived" };
 	});
 	t.mock.method(DaemonClient.prototype, "deleteAgent", async () => {
@@ -217,7 +220,7 @@ test("reload returning a different runtime session is re-archived, not deleted",
 		if (f.agent.runtimeInfo) f.agent.runtimeInfo.sessionId = randomUUID();
 	});
 	await assert.rejects(f.api.resume(f.input), /mismatched Pi session; no task was mailed/);
-	assert.deepEqual(f.calls, ["connect", "fetch", "reload", "fetch", "archive", "close"]);
+	assert.deepEqual(f.calls, ["connect", "fetch", "reload", "fetch", "archive", "fetch", "close"]);
 });
 
 test("every returned daemon identity field is verified after reload before task delivery", async (t) => {
@@ -271,6 +274,85 @@ test("every returned daemon identity field is verified after reload before task 
 			f.onReload(() => change(f.agent));
 			await assert.rejects(f.api.resume(f.input), /mismatched Pi session; no task was mailed/);
 			assert.ok(f.calls.includes("archive"));
+		});
+});
+
+test("pre-dispatch refusal and confirmed reload rollback are explicitly refundable", async (t) => {
+	for (const mode of ["before", "reload", "mismatch"])
+		await t.test(mode, async (sub) => {
+			const f = fixture(sub);
+			if (mode === "before") f.agent.archivedAt = null;
+			else
+				f.onReload(() => {
+					if (mode === "reload") throw new Error("reload failed");
+					if (f.agent.runtimeInfo) f.agent.runtimeInfo.sessionId = randomUUID();
+				});
+			await assert.rejects(f.api.resume(f.input), (error: unknown) => {
+				assert.ok(error instanceof WindowOpenError);
+				assert.equal(error.certainty, "not-opened");
+				assert.deepEqual(
+					error.nativeResumeRollback,
+					mode === "before"
+						? undefined
+						: { kind: "native-resume-closed", sessionId: f.input.sessionId, agentId: f.input.agentId },
+				);
+				return true;
+			});
+		});
+});
+
+test("unconfirmed rollback readback stays unknown even after an archive acknowledgement", async (t) => {
+	const f = fixture(t);
+	let reloaded = false;
+	f.onReload(() => {
+		reloaded = true;
+		throw new Error("reload failed");
+	});
+	t.mock.method(DaemonClient.prototype, "archiveAgent", async () => ({ archivedAt: "not-confirmed" }));
+	f.onFetch(() => {
+		if (reloaded) f.agent.archivedAt = null;
+	});
+	await assert.rejects(f.api.resume(f.input), (error: unknown) => {
+		assert.ok(error instanceof WindowOpenError);
+		assert.equal(error.certainty, "unknown");
+		assert.match(error.message, /archive readback/);
+		return true;
+	});
+});
+
+test("an archive timestamp alone cannot prove the reopened process closed", async (t) => {
+	const f = fixture(t);
+	f.onReload(() => {
+		throw new Error("reload failed");
+	});
+	t.mock.method(DaemonClient.prototype, "archiveAgent", async () => {
+		f.agent.archivedAt = "archived";
+		return { archivedAt: "archived" };
+	});
+	await assert.rejects(f.api.resume(f.input), (error: unknown) => {
+		assert.ok(error instanceof WindowOpenError);
+		assert.equal(error.certainty, "unknown");
+		assert.equal(error.nativeResumeRollback, undefined);
+		return true;
+	});
+});
+
+test("connection cleanup cannot erase a confirmed rollback, but a successful reopen stays unknown on close failure", async (t) => {
+	for (const rolledBack of [true, false])
+		await t.test(String(rolledBack), async (sub) => {
+			const f = fixture(sub);
+			if (rolledBack)
+				f.onReload(() => {
+					throw new Error("reload failed");
+				});
+			sub.mock.method(DaemonClient.prototype, "close", async () => {
+				throw new Error("connection close failed");
+			});
+			await assert.rejects(f.api.resume(f.input), (error: unknown) => {
+				assert.ok(error instanceof WindowOpenError);
+				assert.equal(error.certainty, rolledBack ? "not-opened" : "unknown");
+				return true;
+			});
 		});
 });
 

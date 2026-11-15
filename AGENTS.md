@@ -17,6 +17,7 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   tools, `tracking-text.ts` their full and compact status text, `poll.ts` the poll (with `window-state.ts`, which answers and closes a delegation's window), `navigator.ts`
   `/delegate-open` and the compact widget close action, `new-delegate.ts` the new-delegate
   form, `delegate-start.ts` owns the shared launch/resume/fork start sequence,
+  `delegate-start-mail.ts` its task-mail failure rollback,
   `host-admission.ts` freezes the call-time host and placement,
   `resume-picker.ts` the resume picker, `resume.ts` the resume launch (`resume-checks.ts` the checks the picker shares) and the `delegation_resume` tool, `workspace.ts` resolves a
   delegate's directory, its Git checkout at launch and its project trust,
@@ -34,7 +35,8 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   setting, and `tmux.ts` talks to tmux (`tmux-locator.ts` owns its opaque locator encoding and matching,
   `tmux-command.ts` runs each tmux command and escapes its arguments for tmux's own parser);
   `paseo-locator.ts` owns the Paseo agent locator, `paseo-api.ts` talks to the
-  Paseo daemon and CLI and loads both only inside a call, `paseo-availability.ts`
+  Paseo daemon and CLI and loads both only inside a call, `paseo-resume-api.ts`
+  verifies native reload and confirmed rollback, `paseo-availability.ts`
   classifies absent, reachable and ambiguous daemon state before SDK loading, `paseo-launch.ts` reads
   a delegate's launch argv as agent fields and environment variables, `paseo.ts`
   is the Paseo delegate host, and `paseo-child.ts` gives a Paseo delegate its

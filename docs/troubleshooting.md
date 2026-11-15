@@ -154,6 +154,8 @@ live owner, active subtree-close fence, host restrictions or routing metadata.
 
 **Fix:** return to the direct parent and newest chain record where supported.
 Records without required placement identity have no migration; do not invent
-identity or delete history to make them resumable. Paseo hosts/sources require a
+identity or delete history to make them resumable. Paseo requires the original
+Paseo-hosted direct parent, an archived agent and its unchanged Pi session
+file/cwd; pass only id and task. Deleted/mismatched or routed sources require a
 fresh delegation. See [upgrading](upgrading.md) and
 [resume requirements](results-and-recovery.md#resuming-a-delegation).

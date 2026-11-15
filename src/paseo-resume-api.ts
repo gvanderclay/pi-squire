@@ -1,8 +1,8 @@
 // Native reload is separate from new-agent creation and never falls back to import.
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import type { PaseoAgent, PaseoClient } from "@getpaseo/client";
-import type { ResumeConfiguration } from "./host.ts";
+import type { PaseoAgent, PaseoAgentHandle, PaseoClient } from "@getpaseo/client";
+import { type NativeResumeRollback, type ResumeConfiguration, WindowOpenError } from "./host.ts";
 import type { PaseoApi, PaseoResumeInput } from "./paseo-api.ts";
 import { sessionHeaderCwd, sessionHeaderId } from "./result-sessions.ts";
 import { sessionIsOwned } from "./session-owner.ts";
@@ -63,11 +63,58 @@ function canonicalHome(home: string): string {
 	}
 }
 
+type PreserveChildren = (client: PaseoClient, agentId: string) => Promise<boolean>;
+
+/** A rollback is refundable only after the daemon confirms no reopened resource remains. */
+async function rollbackReload(
+	client: PaseoClient,
+	handle: PaseoAgentHandle,
+	input: PaseoResumeInput,
+	preserveChildren: PreserveChildren,
+	error: unknown,
+): Promise<never> {
+	try {
+		if (!(await preserveChildren(client, input.agentId))) throw new Error("archive was canceled");
+		await handle.archive();
+		await handle.refresh();
+		const agent = handle.current();
+		if (!agent || agent.id !== input.agentId || !agent.archivedAt || agent.status !== "closed")
+			throw new Error("archive readback did not confirm the original agent is inactive");
+	} catch (rollback) {
+		throw new WindowOpenError(
+			`${String(error)}; could not re-archive Paseo agent ${input.agentId}: ${String(rollback)}; inspect it in Paseo`,
+			"unknown",
+		);
+	}
+	throw new WindowOpenError(error instanceof Error ? error.message : String(error), "not-opened", {
+		kind: "native-resume-closed",
+		sessionId: input.sessionId,
+		agentId: input.agentId,
+	});
+}
+
+async function reloadChecked(
+	client: PaseoClient,
+	handle: PaseoAgentHandle,
+	input: PaseoResumeInput,
+	preserveChildren: PreserveChildren,
+): Promise<void> {
+	try {
+		await handle.reload();
+		// This expected child now owns the session; only pre-existing owners conflict.
+		const agent = handle.current();
+		if (!sameSession(agent, input) || agent.archivedAt)
+			throw new Error("Paseo reopened a mismatched Pi session; no task was mailed");
+	} catch (error) {
+		await rollbackReload(client, handle, input, preserveChildren, error);
+	}
+}
+
 /** Existing connections close in the outer API; rollback preserves native public children. */
 export function nativeResumeApi(
 	home: string,
 	run: <T>(work: (client: PaseoClient) => Promise<T>) => Promise<T>,
-	preserveChildren: (client: PaseoClient, agentId: string) => Promise<boolean>,
+	preserveChildren: PreserveChildren,
 ): Pick<PaseoApi, "resumeConfiguration" | "resume"> {
 	return {
 		async resumeConfiguration(input: PaseoResumeInput): Promise<ResumeConfiguration> {
@@ -80,32 +127,35 @@ export function nativeResumeApi(
 			});
 		},
 		async resume(input: PaseoResumeInput): Promise<void> {
-			if (input.home !== undefined && canonicalHome(input.home) !== home)
-				throw new Error("Paseo resume refused: daemon home mismatch");
-			await run(async (client) => {
-				const handle = client.agents.ref(input.agentId);
-				await handle.refresh();
-				resumeConfiguration(handle.current(), input);
-				try {
-					await handle.reload();
-					// The reopened child now owns this session. Check the daemon/file identity
-					// without treating that expected owner as a competing pre-existing writer.
-					const agent = handle.current();
-					if (!sameSession(agent, input) || agent.archivedAt)
-						throw new Error("Paseo reopened a mismatched Pi session; no task was mailed");
-				} catch (error) {
-					// Never hard-delete the original agent on a failed/mismatched reload.
-					// Preserve public native children, exactly as normal auto-archive does.
+			let reloading = false;
+			let rollback: NativeResumeRollback | undefined;
+			try {
+				if (input.home !== undefined && canonicalHome(input.home) !== home)
+					throw new Error("Paseo resume refused: daemon home mismatch");
+				await run(async (client) => {
+					const handle = client.agents.ref(input.agentId);
+					await handle.refresh();
+					resumeConfiguration(handle.current(), input);
+					reloading = true;
 					try {
-						if (await preserveChildren(client, input.agentId)) await handle.archive();
-					} catch (rollback) {
-						throw new Error(
-							`${String(error)}; could not re-archive Paseo agent ${input.agentId}: ${String(rollback)}; inspect it in Paseo`,
-						);
+						await reloadChecked(client, handle, input, preserveChildren);
+					} catch (error) {
+						// A connection-close failure cannot undo confirmed inactive state.
+						if (error instanceof WindowOpenError && error.certainty === "not-opened") {
+							reloading = false;
+							rollback = error.nativeResumeRollback;
+						}
+						throw error;
 					}
-					throw error;
-				}
-			});
+				});
+			} catch (error) {
+				if (error instanceof WindowOpenError) throw error;
+				throw new WindowOpenError(
+					error instanceof Error ? error.message : String(error),
+					reloading ? "unknown" : "not-opened",
+					rollback,
+				);
+			}
 		},
 	};
 }

@@ -58,5 +58,5 @@ test("explicit local commit-ish is frozen and recorded; invalid and orphan bases
 	);
 	await s.command("delegate", 'scout --worktree "command/base" --worktree-base "HEAD~1" inspect this task');
 	assert.equal(git(s.tmux.opened[1].cwd, "rev-parse", "HEAD"), base);
-	cleanup();
+	await cleanup();
 });

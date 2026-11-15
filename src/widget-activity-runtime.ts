@@ -26,6 +26,8 @@ export function registerActivityRuntime(
 	canPublish: () => boolean,
 	tmux?: DelegateHost,
 	ownerToken?: string,
+	createPublisher: (id: string, launch?: string) => LiveActivityPublisher = (id: string, launch?: string) =>
+		new LiveActivityPublisher(id, launch),
 ): () => void {
 	const seed: string | undefined = process.env[LIVE_LAUNCH_ENV];
 	let collector: ActivityCollector | undefined;
@@ -47,7 +49,7 @@ export function registerActivityRuntime(
 		if (!canPublish()) return;
 		const id: string = ctx.sessionManager.getSessionId();
 		collector = new ActivityCollector();
-		publisher = new LiveActivityPublisher(id, liveLaunch(seed, id));
+		publisher = createPublisher(id, liveLaunch(seed, id));
 		publish();
 		if (tmux && ownerToken) void observeLocator(publisher, id, ownerToken, tmux, ctx);
 	});

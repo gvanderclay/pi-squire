@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { createHerdrClient, type HerdrRoute } from "../src/herdr.ts";
 import { herdrLocator, herdrPaneLocator } from "../src/herdr-locator.ts";
 import { createMultiplexer } from "../src/multiplexer.ts";
@@ -34,18 +36,35 @@ function wire(): HerdrWire {
 	wires.push(h);
 	return h;
 }
-function instance(h: HerdrWire, pane = h.context.pane, parent?: string): ReturnType<typeof session> {
+function instance(
+	h: HerdrWire,
+	pane = h.context.pane,
+	parent?: string,
+	publisherOptions?: NonNullable<Parameters<typeof session>[0]>["publisherOptions"],
+): ReturnType<typeof session> {
 	const client = createHerdrClient({ run: h.run.bind(h), context: () => ({ ...h.context, pane }) });
 	// A Herdr-hosted Pi: no tmux context, so its own-pane telemetry host is unambiguous.
 	const tmux = Object.assign(new FakeTmux(), { inside: false });
-	const s = session({ mode: "tui", parent, multiplexer: createMultiplexer(tmux, client, () => agentDir) });
+	const s = session({
+		mode: "tui",
+		parent,
+		publisherOptions,
+		multiplexer: createMultiplexer(tmux, client, () => agentDir),
+	});
 	sessions.push(s);
 	return s;
 }
-async function until(check: () => boolean): Promise<void> {
+async function until<T>(
+	check: () => T | Promise<T>,
+	message = "expected navigation observation",
+): Promise<NonNullable<T>> {
 	const deadline = Date.now() + 5000;
-	while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-	assert.ok(check(), "expected navigation observation");
+	do {
+		const observed = await check();
+		if (observed) return observed;
+		await nextTurn();
+	} while (Date.now() < deadline);
+	assert.fail(message);
 }
 function frame(s: ReturnType<typeof session>): string {
 	return s.widgets.get(DELEGATE_WIDGET_KEY)?.render(160).join("\n") ?? "";
@@ -180,37 +199,63 @@ test("retained Herdr error tabs stay in navigator and widget without rewriting g
 	assert.deepEqual(new DirectDelegateView().read(results, await askWindowStates(h.client), undefined), []);
 });
 
-test("widget Enter explicitly focuses a Herdr delegate and child breadcrumb returns to its live parent", async () => {
-	const h = wire();
-	const root = instance(h);
-	await root.start();
-	const output = await root.toolCall("delegate", { agent: "scout", label: "navigation", task: "look" });
-	const id = (output.details as { id: string }).id;
-	const record = root.entries.find((entry) => entry.customType === "delegate-start-v2")!.data as StartedRecorded;
-	const locator = herdrLocator(record.locator)!;
-	h.staged.push(join(locator.launchFile, ".."));
-	await until(() => frame(root).includes("navigation"));
-	assert.equal(h.shown, "w1:t1", "launch and observation remain unfocused");
-	root.terminalKey("down");
-	root.terminalKey("enter");
-	await until(() => h.shown === locator.tab);
-	assert.ok(root.notes.some((note) => /switched to.*Herdr's tab bar/.test(note)));
-	const child = instance(h, locator.pane, id);
-	await child.start();
-	const reader = new LiveActivityReader();
-	await until(() => frame(child).includes("(you)"));
-	await until(() => h.calls.some((call) => call.args[0] === "api"));
-	assert.ok(await reader.locator(root.parent), "root publishes disposable terminal evidence");
-	child.terminalKey("down");
-	child.terminalKey("enter");
-	await until(() => h.shown === "w1:t1");
-	assert.ok(child.notes.some((note) => /switched to ancestor/.test(note)));
-	await root.command("delegate-open", id);
-	assert.equal(h.shown, locator.tab, "live child telemetry routes to Herdr even through the mixed adapter");
-	h.panes.delete(locator.pane);
-	await root.command("delegate-open", id);
-	assert.ok(root.errors.some((note) => /no verified open tab.*tab changed or unavailable/.test(note)));
-});
+for (const delayedPublication of [false, true]) {
+	test(`widget Enter focuses a Herdr delegate and child breadcrumb returns to parent (delayed publication: ${delayedPublication})`, async () => {
+		const h = wire();
+		const gate = Promise.withResolvers<void>();
+		try {
+			let publicationHeld = false;
+			const root = instance(h, undefined, undefined, {
+				rename: async (from, to) => {
+					if (delayedPublication) {
+						publicationHeld = true;
+						await gate.promise;
+					}
+					await rename(from, to);
+				},
+			});
+			await root.start();
+			const output = await root.toolCall("delegate", { agent: "scout", label: "navigation", task: "look" });
+			const id = (output.details as { id: string }).id;
+			const record = root.entries.find((entry) => entry.customType === "delegate-start-v2")!.data as StartedRecorded;
+			const locator = herdrLocator(record.locator)!;
+			h.staged.push(join(locator.launchFile, ".."));
+			await until(() => frame(root).includes("navigation"));
+			assert.equal(h.shown, "w1:t1", "launch and observation remain unfocused");
+			root.terminalKey("down");
+			root.terminalKey("enter");
+			await until(() => h.shown === locator.tab);
+			await until(
+				() => root.notes.some((note) => /switched to.*Herdr's tab bar/.test(note)),
+				"delegate focus notification",
+			);
+			const child = instance(h, locator.pane, id);
+			await child.start();
+			const reader = new LiveActivityReader();
+			await until(() => frame(child).includes("(you)"));
+			if (delayedPublication) {
+				await until(() => publicationHeld, "root reached atomic FS publication");
+				assert.ok(h.calls.some((call) => call.args[0] === "api"));
+				assert.equal(await reader.locator(root.parent), undefined, "an API call is not publication evidence");
+			}
+			const ready = until(() => reader.locator(root.parent), "root publishes disposable terminal evidence");
+			gate.resolve();
+			const published = await ready;
+			assert.ok(herdrPaneLocator(published.locator));
+			child.terminalKey("down");
+			child.terminalKey("enter");
+			await until(() => h.shown === "w1:t1");
+			await until(() => child.notes.some((note) => /switched to ancestor/.test(note)), "ancestor focus notification");
+			await root.command("delegate-open", id);
+			assert.equal(h.shown, locator.tab, "live child telemetry routes to Herdr even through the mixed adapter");
+			h.panes.delete(locator.pane);
+			await root.command("delegate-open", id);
+			assert.ok(root.errors.some((note) => /no verified open tab.*tab changed or unavailable/.test(note)));
+		} finally {
+			gate.resolve();
+		}
+	});
+}
 
 test("mixed-backend navigation follows the locator after the launch setting changes", async () => {
 	const h = wire();

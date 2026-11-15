@@ -54,8 +54,8 @@ afterEach(() => {
 		else process.env[key] = value;
 	}
 });
-after(() => {
-	cleanup();
+after(async () => {
+	await cleanup();
 	rmSync(tmp, { recursive: true, force: true });
 });
 

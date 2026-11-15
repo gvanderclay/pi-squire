@@ -115,7 +115,7 @@ test("managed worktree starts at source HEAD, omits dirt and records created fac
 	await s.command("delegate", "scout --worktree command/topic inspect command entry");
 	assert.equal(s.tmux.opened.length, 2, s.errors.join("\\n"));
 	assert.equal(s.tmux.opened[1].cwd, realpathSync(join(base, "repo-worktrees", "command-topic")));
-	cleanup();
+	await cleanup();
 });
 
 test("known pre-window failure rolls back a pristine managed worktree", async () => {
@@ -217,7 +217,7 @@ test("ignored files created during launch prevent rollback", async () => {
 	assert.ok(retained);
 	assert.equal(retained.attempt.phase, "retained");
 	assert.equal(retained.attempt.resources.kind, "worktree");
-	cleanup();
+	await cleanup();
 });
 
 test("ambiguous open retains attempt and close has no window side effects", async () => {
@@ -258,5 +258,5 @@ test("ambiguous open retains attempt and close has no window side effects", asyn
 	assert.equal(item.state, "interrupted");
 	assert.equal(item.kind, "workspace-attempt");
 	assert.equal("windowId" in item, false);
-	cleanup();
+	await cleanup();
 });

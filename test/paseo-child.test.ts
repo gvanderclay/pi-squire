@@ -84,9 +84,9 @@ function folder(): { real: string; link: string } {
 	return { real, link };
 }
 
-after(() => {
+after(async () => {
 	for (const dir of TEMPS) rmSync(dir, { recursive: true, force: true });
-	cleanup();
+	await cleanup();
 });
 
 /** The identity lifecycle alone, on Pi's own bus, as `test/identity-lifecycle.test.ts` runs it. */

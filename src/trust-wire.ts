@@ -17,7 +17,9 @@ export type TrustEndpoint = { port: number; token: string };
 export type TrustRequest = TrustQuestion & { token: string; root: string; id: string; expiresAt: number };
 type TrustResponse = { id: string; answer?: TrustAnswer; error?: string };
 const FRAME_LIMIT = 32 * 1024;
-const CONNECT_TIMEOUT_MS = 1000;
+// test/root-trust.test.ts reproduces a challenge timeout with 1.2 s of synchronous
+// root work after nonce send. Allow busy roots to authenticate, but bound silent peers.
+export const TRUST_HANDSHAKE_TIMEOUT_MS = 5000;
 
 /** Fresh client nonce proves the endpoint still holds this runtime's secret. */
 export function trustProof(token: string, nonce: string): string {
@@ -161,7 +163,7 @@ function exchange(endpoint: TrustEndpoint, request: TrustRequest, signal: AbortS
 			);
 		const timer: ReturnType<typeof setTimeout> = setTimeout(
 			() => finish(new Error(`root ${request.root} project trust service is unavailable; nothing was launched`)),
-			CONNECT_TIMEOUT_MS,
+			TRUST_HANDSHAKE_TIMEOUT_MS,
 		);
 		timer.unref();
 		signal.addEventListener("abort", abort, { once: true });

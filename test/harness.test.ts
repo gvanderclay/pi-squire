@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import { after, test } from "node:test";
+import { setImmediate as nextTurn } from "node:timers/promises";
 
-import { cleanup, FAKE_MODELS, resetRoot, session } from "./harness.ts";
+import { cleanup, closeSessions, FAKE_MODELS, resetRoot, root, session } from "./harness.ts";
 
 after(cleanup);
 
@@ -63,3 +66,42 @@ test("fire reaches handlers and extra models stay in their own session", async (
 	assert.equal(registries[2].hasConfiguredAuth(extra), false);
 	assert.deepEqual((registries[0].find("opencode-go", "fake-free") as { cost: unknown }).cost, { input: 0, output: 0 });
 });
+
+for (const operation of ["shutdown", "closeSessions", "cleanup"] as const) {
+	test(`harness ${operation} drains an in-flight atomic publication before removing state`, async () => {
+		resetRoot();
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		let destination: string | undefined;
+		let finished = false;
+		const s = session({
+			publisherOptions: {
+				rename: async (from, to) => {
+					destination = String(to);
+					entered.resolve();
+					await release.promise;
+					await rename(from, to);
+				},
+			},
+		});
+		try {
+			await s.start();
+			await entered.promise;
+			const stopping = (
+				operation === "shutdown" ? s.shutdown() : operation === "cleanup" ? cleanup() : closeSessions()
+			).then(() => {
+				finished = true;
+			});
+			await nextTurn();
+			assert.equal(finished, false, "teardown must wait for this session's writer, not retry synchronous rm");
+			release.resolve();
+			await stopping;
+			assert.ok(destination);
+			assert.equal(existsSync(destination), false, "stopped publisher removed its late atomic write");
+			if (operation === "cleanup") assert.equal(existsSync(root), false, "root removed only after writer drained");
+		} finally {
+			release.resolve();
+			await s.shutdown();
+		}
+	});
+}

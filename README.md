@@ -1169,10 +1169,10 @@ The model has no trust input; every launch/resume still passes explicit
    question; nothing is saved, sent or opened.
 
 An unresolved nested question requires the same root Pi session to be running
-with dialog-capable UI (TUI or RPC), without `PI_UNATTENDED=1`. An absent or
-unavailable root refuses immediately; a disconnected root fails its pending
-launches, rather than waiting for the root to return. Already-resolved trust
-and resource-free targets need no root connection. A root's own trust in a
+with dialog-capable UI (TUI or RPC), without `PI_UNATTENDED=1`. An absent root or
+refused connection fails without waiting for a timeout; a disconnected root fails
+its pending launches, rather than waiting for the root to return. Already-resolved
+trust and resource-free targets need no root connection. A root's own trust in a
 different repository never supplies approval. For a top-level launch without UI,
 open Pi in the trust key directory named by the refusal (the source/main checkout
 for a managed worktree), answer its trust question, then delegate again.
@@ -1191,7 +1191,9 @@ Squire uses an authenticated **127.0.0.1 loopback connection**, not mail or
 per-runtime token to the owner-only
 `<agent dir>/squire/trust/<SHA-256 of root id>.json` descriptor. Only squire
 reads it; no provider files, APIs or tool grants are needed. Unreachable
-endpoints fail at once (connection establishment is bounded to one second).
+endpoints fail on the connection error without waiting for a timeout. Connection
+establishment and authentication together are bounded to five seconds, allowing
+brief synchronous work in a busy root without extending the dialog deadline.
 A fresh client-nonce/HMAC handshake verifies the root before sending any
 question or secret, so a reused stale port cannot impersonate it. Root restart
 changes the token, invalidating old frames.

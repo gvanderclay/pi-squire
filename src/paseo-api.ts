@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
 	PaseoAgentHandle,
 	PaseoClient,
@@ -77,14 +78,24 @@ const PARENT_LABEL = "paseo.parent-agent-id";
 
 /** A client for the daemon in `home`, not yet connected; the caller connects and closes it. */
 async function clientFor(home: string): Promise<PaseoClient> {
-	const address = descriptor(home);
+	const address = descriptor(home, "connect");
 	if ("state" in address) throw new Error(address.reason);
 	const { listen } = address;
-	const { createPaseoClient } = await import("@getpaseo/client");
+	// Node 22.19 can preserve the pnpm symlink after rmSync removes a stale
+	// Unix socket, even without module hooks. See the stale-socket regression
+	// in test/paseo-availability.test.ts. Canonicalize both public SDK entries
+	// so their dependencies resolve beside the installed package, not the link.
+	const sdkUrl = (specifier: string): string =>
+		pathToFileURL(realpathSync(new URL(import.meta.resolve(specifier)))).href;
+	const { createPaseoClient } = (await import(sdkUrl("@getpaseo/client"))) as typeof import("@getpaseo/client");
 	// The default browser transport cannot open Unix sockets. The installed
 	// 0.15.4 node export supports them via createHostTransportFactory.
 	const transportFactory =
-		"path" in address ? (await import("@getpaseo/client/node")).createHostTransportFactory(address.path) : undefined;
+		"path" in address
+			? (
+					(await import(sdkUrl("@getpaseo/client/node"))) as typeof import("@getpaseo/client/node")
+				).createHostTransportFactory(address.path)
+			: undefined;
 	const config = {
 		url: "path" in address ? "ws://host-connector/ws" : `ws://${listen}/ws`,
 		...(transportFactory ? { transportFactory } : {}),

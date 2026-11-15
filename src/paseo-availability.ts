@@ -16,7 +16,7 @@ type DaemonDescriptor = { listen: string } & ({ host: string; port: number } | {
 type HostIdentity = { hostname?: unknown; bootId?: unknown };
 export function descriptor(
 	home: string,
-	verifyIdentity = true,
+	mode: "cleanup" | "admission" | "connect" = "cleanup",
 ): DaemonDescriptor | Exclude<PaseoAvailability, { state: "available" }> {
 	let value: unknown;
 	try {
@@ -26,24 +26,34 @@ export function descriptor(
 			? { state: "absent", reason: `Paseo is not running: ${pidFile(home)} is missing` }
 			: { state: "ambiguous", reason: `Paseo descriptor unreadable: ${pidFile(home)} (${(error as Error).message})` };
 	}
-	return parseDescriptor(home, value, verifyIdentity);
+	return parseDescriptor(home, value, mode);
 }
 function parseDescriptor(
 	home: string,
 	value: unknown,
-	verifyIdentity: boolean,
+	mode: "cleanup" | "admission" | "connect",
 ): DaemonDescriptor | Exclude<PaseoAvailability, { state: "available" }> {
 	if (!value || typeof value !== "object") return malformed(home);
 	const { listen, pid, ...identity } = value as HostIdentity & { listen?: unknown; pid?: unknown };
+	// Connection/authentication, unlike absence classification, must not depend
+	// on whether this process can verify the daemon's pid namespace or host.
+	if (mode === "connect") return parseListen(home, listen);
 	if (pid !== undefined && (!Number.isSafeInteger(pid) || Number(pid) <= 0)) return malformed(home);
 	// A stale pid proves absence even before an address was published, or when
 	// listen is a Unix socket path (bootstrap.js formatListenTarget).
-	const stopped = typeof pid === "number" ? checkPid(home, pid, identity, verifyIdentity) : undefined;
-	if (stopped) return stopped;
+	const stopped = typeof pid === "number" ? checkPid(home, pid, identity, mode === "cleanup") : undefined;
+	// Admission must not spawn an identity lookup. A refused socket is still
+	// positive absence even if a dead pid belongs to an unverified host.
+	if (stopped && (mode === "cleanup" || stopped.state === "absent")) return stopped;
 	if (listen === null && typeof pid === "number")
 		return { state: "ambiguous", reason: `Paseo daemon has no published address: ${pidFile(home)}` };
-	if (typeof listen !== "string" || !listen) return malformed(home);
-	return parseAddress(home, listen);
+	return parseListen(home, listen);
+}
+function parseListen(
+	home: string,
+	listen: unknown,
+): DaemonDescriptor | Exclude<PaseoAvailability, { state: "available" }> {
+	return typeof listen === "string" && listen ? parseAddress(home, listen) : malformed(home);
 }
 function parseAddress(
 	home: string,
@@ -151,7 +161,7 @@ function probe(address: DaemonDescriptor): Promise<PaseoAvailability> {
 }
 /** SDK-free admission: only positive absence should refuse a launch. */
 export async function probeDaemonAvailability(home: string, verifyIdentity = true): Promise<PaseoAvailability> {
-	const address = descriptor(home, verifyIdentity);
+	const address = descriptor(home, verifyIdentity ? "cleanup" : "admission");
 	return "state" in address ? address : probe(address);
 }
 

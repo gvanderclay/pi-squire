@@ -7,7 +7,8 @@ import { createRequire, registerHooks, syncBuiltinESMExports } from "node:module
 import { createServer, type Socket } from "node:net";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { after, type TestContext, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createHostAdmission } from "../src/host-admission.ts";
 import { createPaseoHost } from "../src/paseo.ts";
@@ -136,7 +137,7 @@ test("live socket still requires authenticated SDK connection, and every retry r
 	}
 	assert.equal((await api.availability()).state, "absent", "success must not cache availability");
 });
-test("real SDK hello accepts an available fake daemon and preserves authentication rejection as ambiguous", async () => {
+test("real SDK hello accepts an available fake daemon and preserves authentication rejection as ambiguous", async (t) => {
 	// Use the SDK's installed ws dependency; Squire does not add a test/runtime dependency.
 	const { WebSocketServer } = createRequire(import.meta.resolve("@getpaseo/client"))("ws");
 	const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
@@ -162,7 +163,8 @@ test("real SDK hello accepts an available fake daemon and preserves authenticati
 			}
 		});
 	});
-	const api = createPaseoApi(home({ pid: process.pid, listen: `127.0.0.1:${server.address().port}` }));
+	const dirForApi = home({ pid: process.pid, listen: `127.0.0.1:${server.address().port}` });
+	const api = createPaseoApi(dirForApi);
 	try {
 		assert.deepEqual(await api.availability(), { state: "available" });
 		rejectAuth = true;
@@ -171,6 +173,7 @@ test("real SDK hello accepts an available fake daemon and preserves authenticati
 		assert.ok("reason" in state && /incorrect password/i.test(state.reason), JSON.stringify(state));
 		rejectAuth = false;
 		assert.deepEqual(await api.availability(), { state: "available" }, "retry after authentication repair");
+		await unverifiedConnections(t, api, dirForApi, `127.0.0.1:${server.address().port}`);
 	} finally {
 		await new Promise<void>((resolve) => server.close(resolve));
 	}
@@ -248,6 +251,78 @@ test("ambiguous launch descriptors proceed without SDK or host-identity subproce
 		run.mock.restore();
 		syncBuiltinESMExports();
 	}
+});
+
+async function unverifiedConnections(
+	t: TestContext,
+	api: ReturnType<typeof createPaseoApi>,
+	dir: string,
+	listen: string,
+) {
+	writeFileSync(join(dir, "paseo.pid"), JSON.stringify({ pid: 2147483647, hostname: "other-machine", listen }));
+	assert.equal((await api.availability()).state, "ambiguous", "cleanup must still fail closed");
+	t.mock.method(DaemonClient.prototype, "fetchWorkspaces", async () => {
+		throw new Error("listing reached after authentication with unverified pid");
+	});
+	t.mock.method(DaemonClient.prototype, "openProject", async () => {
+		throw new Error("creation reached after authentication with unverified pid");
+	});
+	await assert.rejects(api.workspaceAt(dir), /listing reached after authentication with unverified pid/);
+	await assert.rejects(
+		api.create({
+			agentId: "test",
+			parentAgentId: "parent",
+			title: "test",
+			cwd: dir,
+			model: "test/model",
+			thinking: "low",
+			systemPrompt: "",
+			env: {},
+		}),
+		/creation reached after authentication with unverified pid/,
+	);
+}
+
+test("dead-pid admission probes named-host descriptors without SDK or identity subprocesses", async (t) => {
+	const server = await listening();
+	let imports = 0;
+	const run = t.mock.method(childProcess, "execFileSync", () => {
+		throw new Error("identity subprocess in admission");
+	});
+	syncBuiltinESMExports();
+	const hooks = registerHooks({
+		resolve(specifier, context, next) {
+			if (specifier.startsWith("@getpaseo/client")) {
+				imports++;
+				throw new Error("SDK imported during admission");
+			}
+			return next(specifier, context);
+		},
+	});
+	try {
+		const api = createPaseoApi(home({ pid: 2147483647, hostname: "other-machine", listen: server.listen }));
+		assert.equal(await api.unavailable(), undefined, "accepting daemon gets to authenticate at creation");
+		await server.close();
+		assert.match((await api.unavailable()) ?? "", /connection refused/, "refusal proves absence without pid identity");
+		assert.equal(run.mock.callCount(), 0);
+		assert.equal(imports, 0, "even a caught SDK failure violates cheap admission");
+	} finally {
+		hooks.deregister();
+		run.mock.restore();
+		syncBuiltinESMExports();
+		await server.close();
+	}
+});
+
+test("fresh SDK Node transport resolves dependencies after stale socket removal without module hooks", () => {
+	childProcess.execFileSync(
+		process.execPath,
+		[fileURLToPath(new URL("./fixtures/paseo-node-transport.ts", import.meta.url))],
+		{
+			encoding: "utf8",
+			timeout: 20_000,
+		},
+	);
 });
 
 function socketPath(): string {
@@ -413,6 +488,8 @@ test("real SDK uses Unix transport for cleanup hello and agent creation, preserv
 		assert.equal(hellos, 3);
 		await assert.rejects(api.workspaceAt(dir), /listing reached after Unix authentication/);
 		assert.equal(hellos, 4);
+		await unverifiedConnections(t, api, dir, path);
+		assert.equal(hellos, 6, "create and workspaceAt authenticate despite unverified pid identity");
 	} finally {
 		await new Promise<void>((resolve) => ws.close(resolve));
 		await new Promise<void>((resolve) => http.close(() => resolve()));

@@ -31,6 +31,10 @@ follows [Semantic Versioning](https://semver.org/).
   pane defaults, API-key advice distinguishes tmux/Paseo from Herdr inheritance,
   and the focus-adapter note describes current pinned-version
   tests rather than claiming an obsolete bundled-CLI verification.
+- A launch rolled back before dispatch no longer carries the requested Paseo
+  agent id, so `delegation_status` no longer names a recovery target for an
+  agent that was never requested from the daemon. Post-dispatch failures still
+  retain the agent id and its recovery advice.
 - Retain acknowledged Paseo workspace receipts and agent recovery targets in managed
   launch attempts and shared tree accounting before later launch steps can fail.
   Successful opens publish their receipts before configuration or task mailing;

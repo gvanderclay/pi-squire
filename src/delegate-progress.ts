@@ -29,7 +29,9 @@ export function publishOpenProgress(input: ProgressInput, token: Reservation, pr
 		input.workspace = { ...input.workspace, paseo };
 		facts = { ...progress, paseo };
 	}
-	// Both writes are synchronous. A failure stops dispatch; the opener retains uncertain resources.
+	// Both writes are synchronous and a failure stops the launch. Before dispatch
+	// nothing exists, so the caller rolls the worktree back; after dispatch it
+	// retains uncertain resources and the facts published here.
 	input.onProgress?.(facts);
 	bindTree(token, {
 		workspace: input.workspace,

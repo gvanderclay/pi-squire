@@ -269,7 +269,10 @@ test("a rolled-back attempt gives no recovery advice even when an older record k
 		const text = async (phase: string): Promise<string> =>
 			(await s.toolCall("delegation_status", { id: `legacy-${phase}` })).content[0].text;
 		const rolledBack = await text("rolled-back");
-		assert.match(rolledBack, /state: rolled-back — nothing was dispatched/);
+		assert.match(
+			rolledBack,
+			/state: rolled-back — no delegate window or agent was created, and no managed worktree remains/,
+		);
 		assert.doesNotMatch(rolledBack, /Paseo recovery target:/);
 		assert.doesNotMatch(rolledBack, /an agent may still exist/);
 		assert.doesNotMatch(rolledBack, /a window may still exist/);

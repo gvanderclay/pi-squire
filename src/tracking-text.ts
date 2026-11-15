@@ -24,14 +24,19 @@ export function autoExitLine(record: StartedRecorded): string {
 	return autoExitText(record, record.autoExit === true);
 }
 
-/** A confirmed rollback dispatched nothing, so nothing can exist to recover. */
-const ROLLED_BACK = "nothing was dispatched and no worktree, window or agent remains";
+/**
+ * A confirmed rollback removed the managed worktree and never created a
+ * delegate, so there is nothing to recover. It says nothing about recall: a
+ * host that mails before opening leaves the request queued in the recipient's
+ * inbox, and Squire never recalls it.
+ */
+const ROLLED_BACK = "no delegate window or agent was created, and no managed worktree remains";
 
 /**
  * What an attempt's state line says after its phase. A rolled-back attempt is
- * settled: nothing was dispatched, so no window or agent can exist and an older
- * record's requested id is not a recovery target. Retained and interrupted
- * attempts stay uncertain and keep the conservative advice.
+ * settled: no delegate window or agent was created and no managed worktree
+ * remains, so an older record's requested id is not a recovery target. Retained
+ * and interrupted attempts stay uncertain and keep the conservative advice.
  */
 function attemptAdvice(phase: AttemptState["phase"], paseo: PaseoLocator | undefined): string {
 	if (phase === "rolled-back") return ROLLED_BACK;

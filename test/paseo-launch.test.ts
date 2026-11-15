@@ -9,7 +9,7 @@ import { after, test } from "node:test";
 import { WindowOpenError, type WindowSpec } from "../src/host.ts";
 import { createPaseoHost } from "../src/paseo.ts";
 import { PASEO_TOOLS_ENV, PASEO_TRUST_ENV } from "../src/paseo-child.ts";
-import { paseoLaunch } from "../src/paseo-launch.ts";
+import { paseoLaunch, paseoStartProblem } from "../src/paseo-launch.ts";
 import { paseoLocator } from "../src/paseo-locator.ts";
 import { FakePaseo } from "./paseo-fixture.ts";
 
@@ -164,6 +164,22 @@ test("a flag whose value is another flag is refused by name", () => {
 	const error = refusal(["--session-id", AGENT, "--model", "--thinking", "low"]);
 	assert.equal(error.certainty, "not-opened");
 	assert.match(error.message, /--model needs a value/);
+});
+
+test("resource-switch refusals identify the agent file or session:launch hook", () => {
+	for (const [flag, options] of [
+		["--no-skills", { skills: false }],
+		["--no-context-files", { contextFiles: false }],
+	] as const) {
+		const agentProblem = paseoStartProblem({ kind: "launch", ...options });
+		assert.match(agentProblem ?? "", /enable those resources in its agent file/);
+		assert.doesNotMatch(agentProblem ?? "", /hook/);
+		const hookProblem = refusal([...flags(), flag]);
+		assert.equal(hookProblem.certainty, "not-opened");
+		assert.ok(hookProblem.message.includes(flag));
+		assert.match(hookProblem.message, /remove those flags from the session:launch hook/);
+		assert.doesNotMatch(hookProblem.message, /agent file/);
+	}
 });
 
 // ---- The host ----

@@ -21,12 +21,20 @@ export const PASEO_SESSION_REFUSAL = "Paseo cannot resume or fork a delegate yet
  */
 export function paseoStartProblem(options: StartOptions): string | undefined {
 	if (options.kind !== "launch") return PASEO_SESSION_REFUSAL;
+	return resourceProblem(options, "agent file");
+}
+
+function resourceProblem(options: StartOptions, source: "agent file" | "session:launch hook"): string | undefined {
 	const flags = [
 		...(options.skills === false ? ["skills: false (--no-skills)"] : []),
 		...(options.contextFiles === false ? ["context_files: false (--no-context-files)"] : []),
 	];
+	const remedy =
+		source === "agent file"
+			? "enable those resources in its agent file"
+			: "remove those flags from the session:launch hook";
 	return flags.length
-		? `Paseo cannot disable Pi resources with ${flags.join(" and ")}; launch this agent from tmux or Herdr instead, or enable those resources in its agent file`
+		? `Paseo cannot disable Pi resources with ${flags.join(" and ")}; launch this agent from tmux or Herdr instead, or ${remedy}`
 		: undefined;
 }
 
@@ -64,12 +72,11 @@ type ParsedFlag = { key: string; value: string; consumed: number };
 function flagAt(argv: readonly string[], index: number): ParsedFlag {
 	const arg = argv[index];
 	if (REFUSED_FLAGS.has(arg)) throw refuse(PASEO_SESSION_REFUSAL);
-	const resourceProblem = paseoStartProblem({
-		kind: "launch",
-		skills: arg !== "--no-skills",
-		contextFiles: arg !== "--no-context-files",
-	});
-	if (resourceProblem) throw refuse(resourceProblem);
+	const problem = resourceProblem(
+		{ kind: "launch", skills: arg !== "--no-skills", contextFiles: arg !== "--no-context-files" },
+		"session:launch hook",
+	);
+	if (problem) throw refuse(problem);
 	if (!arg.startsWith("-")) throw refuse(`Paseo cannot pass this stray argument to a delegate: ${arg}`);
 	if (arg === "--no-tools") return { key: TOOLS, value: "", consumed: 1 };
 	if (arg === "--approve") return { key: TRUST, value: "yes", consumed: 1 };

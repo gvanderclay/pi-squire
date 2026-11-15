@@ -2,11 +2,17 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { herdrLocator } from "../src/herdr-locator.ts";
+import { createHostRouter } from "../src/multiplexer.ts";
 import { createPaseoHost } from "../src/paseo.ts";
+import { closeOutcome, goneOutcome } from "../src/result-close.ts";
+import { isV2Start } from "../src/result-types.ts";
 import { readTree, treeCounts } from "../src/tree-registry.ts";
+import { FakeTmux } from "./fake-tmux.ts";
 import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { HerdrWire } from "./herdr-adapter-fixture.ts";
 import { FakePaseo } from "./paseo-fixture.ts";
 
 beforeEach(resetRoot);
@@ -175,6 +181,72 @@ test("a terminal source cannot fork into Paseo, before reservation or a managed 
 	assert.deepEqual(api.created, []);
 	assert.deepEqual(hosted.sendCalls, []);
 	await hosted.shutdown();
+});
+
+test("missing-result and explicit-close advice respects the recorded source host", async () => {
+	writeAgent("scout", agentFile({}));
+	for (const host of [new FakeTmux(), paseo().host]) {
+		const s = session({ multiplexer: host });
+		await s.start();
+		const launched = await s.toolCall("delegate", { agent: "scout", task: "inspect" });
+		const id = (launched.structuredContent as { id: string }).id;
+		const record = s.entries.findLast((entry) => entry.data.id === id)?.data;
+		assert.ok(isV2Start(record));
+		for (const outcome of [goneOutcome(record, undefined), closeOutcome(record, undefined)]) {
+			assert.match(outcome.content, /reply that arrives later is still delivered/);
+			if (host.id === "paseo") {
+				assert.match(
+					outcome.content,
+					/cannot be resumed or forked; start a fresh delegate with the same task and working directory/,
+				);
+				assert.doesNotMatch(outcome.content, /call delegation_resume|may resume this session/);
+			} else {
+				assert.match(outcome.content, /call delegation_resume|direct parent may resume this session/);
+				assert.doesNotMatch(outcome.content, /start a fresh delegate/);
+			}
+		}
+		await s.shutdown();
+	}
+});
+
+test("resume id completions follow current host capabilities for tmux and Herdr sources", async () => {
+	writeAgent("scout", agentFile({}));
+	const herdr = new HerdrWire();
+	try {
+		for (const source of [new FakeTmux(), herdr.client]) {
+			const terminal = session({ multiplexer: source });
+			await terminal.start();
+			const launched = await terminal.toolCall("delegate", { agent: "scout", task: "first" });
+			const id = (launched.structuredContent as { id: string }).id;
+			const record = terminal.entries.findLast((entry) => entry.data.id === id)?.data;
+			assert.ok(isV2Start(record));
+			const locator = herdrLocator(record.locator);
+			if (locator) herdr.staged.push(dirname(locator.launchFile));
+			await terminal.shutdown();
+			const { host } = paseo();
+			let selected = source.id;
+			const router = createHostRouter(
+				[source, host],
+				() => selected,
+				() => undefined,
+				"unavailable",
+			);
+			const reopened = session({ parent: terminal.parent, entries: terminal.entries, multiplexer: router });
+			await reopened.start();
+			assert.ok((await reopened.completionsFor("delegate-resume", ""))?.some((item) => item.value === id));
+			selected = "paseo";
+			assert.equal(await reopened.completionsFor("delegate-resume", ""), null);
+			assert.equal(await reopened.completionsFor("delegate-resume", id.slice(0, 8)), null);
+			selected = source.id;
+			assert.ok((await reopened.completionsFor("delegate-resume", ""))?.some((item) => item.value === id));
+			selected = "missing-host";
+			assert.equal(await reopened.completionsFor("delegate-resume", ""), null);
+			assert.deepEqual(reopened.sendCalls, []);
+			await reopened.shutdown();
+		}
+	} finally {
+		herdr.dispose();
+	}
 });
 
 test("fresh delegation guidance distinguishes resources and fork history without assuming a terminal", async () => {

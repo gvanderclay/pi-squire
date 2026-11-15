@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildOutcome } from "./child-tasks.ts";
+import { paseoLocator } from "./paseo-locator.ts";
 import { cwdLine, modelLabel, workspaceLine } from "./render.ts";
 import { resumeDetails } from "./result-message.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
@@ -7,6 +8,9 @@ import { recordedName, type StartedRecorded } from "./result-types.ts";
 import type { MessageDetails } from "./results.ts";
 import { sessionUsage, usageText } from "./session-usage.ts";
 import { windowPresentation } from "./tmux.ts";
+
+const PASEO_CONTINUATION =
+	"Paseo sessions cannot be resumed or forked; start a fresh delegate with the same task and working directory.";
 
 /**
  * The usage line for a delegation that ended without a result: its session file
@@ -45,7 +49,9 @@ export function closeOutcome(record: StartedRecorded, ctx: ExtensionContext | un
 		`Working directory: ${cwdLine(record.cwd)}`,
 		...(record.workspace ? [`Workspace: ${workspaceLine(record.workspace)}`] : []),
 		`Delegate session: ${session ?? sessionIdOf(record)}`,
-		"A genuine reply that arrives later is still delivered. Only the direct parent may resume this session as a new delegation.",
+		paseoLocator(record.locator)
+			? `A genuine reply that arrives later is still delivered. ${PASEO_CONTINUATION}`
+			: "A genuine reply that arrives later is still delivered. Only the direct parent may resume this session as a new delegation.",
 	].join("\n");
 	return { key: `closed:${record.id}`, content, details };
 }
@@ -74,7 +80,9 @@ export function goneOutcome(record: StartedRecorded, session: string | undefined
 		`Working directory: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
 		`Delegate session: ${session ?? sessionIdOf(record)}`,
-		"A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
+		paseoLocator(record.locator)
+			? `A reply that arrives later is still delivered. ${PASEO_CONTINUATION}`
+			: "A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
 	].join("\n");
 	return { key: `gone:${record.id}`, content, details };
 }

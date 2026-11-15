@@ -1,6 +1,19 @@
 import { basename, join } from "node:path";
 import { type Agent, globalAgentsDir } from "./agents.ts";
 
+/**
+ * Paseo starts from the daemon's env; only copy location overrides, not secrets.
+ * Paseo 0.15.4 agent-manager/projections/storage persist create env as launchEnv.
+ */
+export function parentStateEnvironment(): Record<string, string> {
+	const env: Record<string, string> = {};
+	for (const key of ["PI_SESSION_MAIL_ROOT", "XDG_STATE_HOME"] as const) {
+		const value = process.env[key];
+		if (value !== undefined) env[key] = value;
+	}
+	return env;
+}
+
 /** The delegation tools granted to opted-in coordinators below maxDepth. */
 export const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
 	"delegate",

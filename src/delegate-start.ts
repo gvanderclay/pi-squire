@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Agent } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV } from "./child.ts";
-import { delegatePrompt, parentCommand, toolArgs } from "./delegate-composition.ts";
+import { delegatePrompt, parentCommand, parentStateEnvironment, toolArgs } from "./delegate-composition.ts";
 import { type DelegateHost, type OpenedWindow, WindowOpenError, type WindowSpec } from "./host.ts";
 import type { AdmittedHost } from "./host-admission.ts";
 import { type createIdentity, type Identity, readIdentity, writeIdentity } from "./identity.ts";
@@ -121,6 +121,7 @@ function environment(input: StartInput): Record<string, string> {
 	const { identity: own, start, id } = input;
 	const env: Record<string, string> = {
 		PI_CODING_AGENT_DIR: getAgentDir(),
+		...(input.admission.client.id === "paseo" ? parentStateEnvironment() : {}),
 		PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: sessionIdFor(input), launchId: id }),
 		PI_DELEGATE_PARENT: own.parent,
 		PI_DELEGATE_ROOT: own.root,

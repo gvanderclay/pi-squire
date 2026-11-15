@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Paseo delegates inherit the parent's explicit mail root and XDG state location,
+  without copying credentials into Paseo's persisted agent environment.
+- The verification helper strips inherited `PASEO_*` routing by default; use
+  `SQUIRE_VERIFY_KEEP_PASEO=1` for a deliberate Paseo delegate run with private mail.
+
 ## [0.29.0] - 2026-11-15
 
 ### Fixed

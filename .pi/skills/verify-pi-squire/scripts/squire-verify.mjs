@@ -47,6 +47,7 @@ const HELP = [
 	"Needs OPENCODE_API_KEY in the environment, or an API key for the model's provider in your",
 	"Pi auth.json. SQUIRE_VERIFY_MODEL and",
 	"SQUIRE_VERIFY_THINKING override the defaults " + MODEL + " / " + THINKING + ".",
+	"SQUIRE_VERIFY_KEEP_PASEO=1 preserves PASEO_* for a deliberate Paseo delegate run.",
 ].join("\n");
 
 function fail(message, extra = {}) {
@@ -100,8 +101,8 @@ function herdr(p, args, allowFail = false) {
 	return r;
 }
 /** Never the user's config or default session: a private config file and no inherited routing. */
-function herdrEnv(p) {
-	const env = cleanEnv(p);
+function herdrEnv(p, keepPaseo) {
+	const env = cleanEnv(p, keepPaseo);
 	for (const k of Object.keys(env)) if (k.startsWith("HERDR")) delete env[k];
 	env.HERDR_CONFIG_PATH = p.herdrConfig;
 	return env;
@@ -141,11 +142,12 @@ function opencodeKey() {
 }
 /** Run-owned values the helper sets itself after stripping the driver's context. */
 const RUN_KEYS = new Set(["PI_CODING_AGENT_DIR", "PI_SESSION_MAIL_ROOT", "PI_SKIP_VERSION_CHECK", "HERDR_CONFIG_PATH"]);
-function cleanEnv(p) {
+function cleanEnv(p, keepPaseo = process.env.SQUIRE_VERIFY_KEEP_PASEO === "1") {
 	const env = {};
-	// The driver's own Pi, tmux and Herdr routing must not reach the run; Herdr
-	// assigns each pane its own HERDR_* context.
-	for (const [k, v] of Object.entries(process.env)) if (!DRIVER_CONTEXT.test(k)) env[k] = v;
+	// Strip driver routing by default. Paseo is opt-in because its agent id
+	// overrides terminal host selection, even inside our private tmux server.
+	for (const [k, v] of Object.entries(process.env))
+		if (!DRIVER_CONTEXT.test(k) || (keepPaseo && k.startsWith("PASEO_"))) env[k] = v;
 	env.PI_CODING_AGENT_DIR = p.agent;
 	// Keep the run's mailboxes and Squire's prompt files inside the run. Only
 	// pi-session-mail's own root moves: redirecting XDG_STATE_HOME would also move
@@ -158,7 +160,7 @@ function cleanEnv(p) {
 	if (opencode) env.OPENCODE_API_KEY = opencode;
 	return env;
 }
-const DRIVER_CONTEXT = /^(PI_|TMUX|HERDR)/;
+const DRIVER_CONTEXT = /^(PI_|TMUX|HERDR|PASEO_)/;
 /**
  * The only probes the generic `herdr` command passes through, always under this
  * run's `--session`. Session lifecycle lives in herdr-restart and cleanup.
@@ -500,7 +502,10 @@ else if (command === "windows") {
 } else if (command === "self-test") {
 	// Deterministic, no servers: driver context is stripped and probes stay scoped.
 	const p = paths("self-test");
-	const leaked = [cleanEnv(p), herdrEnv(p)].flatMap((env) => Object.keys(env).filter((k) => DRIVER_CONTEXT.test(k) && !RUN_KEYS.has(k)));
+	const leaked = [cleanEnv(p, false), herdrEnv(p, false)].flatMap((env) => Object.keys(env).filter((k) => DRIVER_CONTEXT.test(k) && !RUN_KEYS.has(k)));
+	const paseoKeys = Object.keys(process.env).filter((k) => k.startsWith("PASEO_"));
+	const paseoOptIn = paseoKeys.every((k) => cleanEnv(p, true)[k] === process.env[k]);
+	const defaultPaseoKeys = Object.keys(cleanEnv(p)).filter((k) => k.startsWith("PASEO_"));
 	const rejected = ["session stop default", "session delete default", "server stop", "pane close w1:p1", "pane read w1:p1 --session default", "pane read w1:p1 --session=default", "api snapshot --remote host", "tab list --machine m", "pane read w1:p1 -s default", "config reset-keys", "update"].filter((a) => {
 		try {
 			herdrProbe(a.split(" "));
@@ -511,8 +516,8 @@ else if (command === "windows") {
 	});
 	const accepted = ["pane read w1:p1 --source recent", "api snapshot", "pane send-keys w1:p2 Enter"].every((a) => herdrProbe(a.split(" ")));
 	const herdrConfig = herdrEnv(p).HERDR_CONFIG_PATH === p.herdrConfig;
-	const ok = leaked.length === 0 && rejected.length === 11 && accepted && herdrConfig;
-	console.log(JSON.stringify({ ok, leaked, rejected: rejected.length, accepted, herdrConfig }, null, 2));
+	const ok = leaked.length === 0 && rejected.length === 11 && accepted && herdrConfig && paseoOptIn;
+	console.log(JSON.stringify({ ok, leaked, rejected: rejected.length, accepted, herdrConfig, paseoOptIn, defaultPaseoKeys }, null, 2));
 	process.exit(ok ? 0 : 1);
 } else if (command === "herdr-restart") {
 	const p = requireRun(opts);

@@ -5,15 +5,17 @@ import { after, beforeEach, test } from "node:test";
 import { herdrLocator } from "../src/herdr-locator.ts";
 import type { DelegateHost, OpenedWindow, WindowSpec } from "../src/host.ts";
 import { readIdentity } from "../src/identity.ts";
+import { createPaseoHost } from "../src/paseo.ts";
 import type { StartedRecorded } from "../src/results.ts";
 import { readTree } from "../src/tree-registry.ts";
 import type { WindowPlacement } from "../src/window-placement.ts";
 import type { PaseoReceipt } from "../src/worktree.ts";
 import { fixture } from "./cleanup-fixture.ts";
 import { FakeTmux } from "./fake-tmux.ts";
-import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 import { HerdrWire } from "./herdr-adapter-fixture.ts";
 import { MemoryHost } from "./memory-host.ts";
+import { FakePaseo } from "./paseo-fixture.ts";
 
 beforeEach(() => {
 	resetRoot();
@@ -108,6 +110,58 @@ test("an agent's skills and context_files reach launch, resume and fork as Pi's 
 		}
 	} finally {
 		await s.shutdown();
+	}
+});
+
+test("only Paseo copies explicit parent mail/state locations, never parent credentials", async (t) => {
+	const keys = ["PI_SESSION_MAIL_ROOT", "XDG_STATE_HOME", "OPENAI_API_KEY"] as const;
+	const saved = keys.map((key) => process.env[key]);
+	try {
+		for (const value of [undefined, join(root, "private state"), ""])
+			await t.test(value === undefined ? "unset" : value === "" ? "empty" : "set", async () => {
+				for (const key of keys) {
+					if (value === undefined) delete process.env[key];
+					else process.env[key] = value;
+				}
+				process.env.OPENAI_API_KEY = "must-not-be-copied";
+				const api = new FakePaseo();
+				const wire = new HerdrWire();
+				const hosts = [new FakeTmux(), wire.client, createPaseoHost(api, { PASEO_AGENT_ID: "coordinator" })];
+				try {
+					for (const host of hosts) {
+						let launched: WindowSpec | undefined;
+						const open = host.openWindow.bind(host);
+						host.openWindow = async (spec, placement, companion) => {
+							launched = spec;
+							const result = await open(spec, placement, companion);
+							const locator = herdrLocator(result.locator);
+							if (locator) wire.staged.push(dirname(locator.launchFile));
+							return result;
+						};
+						const s = session({ multiplexer: host });
+						try {
+							await s.toolCall("delegate", { agent: "scout", task: "go" });
+							assert.ok(launched);
+							const env = host.id === "paseo" ? api.created.at(-1)?.env : launched.env;
+							assert.ok(env);
+							assert.equal(env.PI_CODING_AGENT_DIR, agentDir);
+							for (const key of ["PI_SESSION_MAIL_ROOT", "XDG_STATE_HOME"])
+								if (host.id === "paseo" && value !== undefined) assert.equal(env[key], value);
+								else assert.equal(key in env, false, host.id);
+							assert.equal("OPENAI_API_KEY" in env, false, host.id);
+						} finally {
+							await s.shutdown();
+						}
+					}
+				} finally {
+					wire.dispose();
+				}
+			});
+	} finally {
+		for (const [index, key] of keys.entries()) {
+			if (saved[index] === undefined) delete process.env[key];
+			else process.env[key] = saved[index];
+		}
 	}
 });
 

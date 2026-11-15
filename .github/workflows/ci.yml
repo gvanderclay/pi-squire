@@ -5,9 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Pin the OS image so runner migrations are deliberate, not incidental test changes.
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -31,7 +32,7 @@ jobs:
           pnpm test
 
   pack:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

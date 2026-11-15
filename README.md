@@ -139,9 +139,10 @@ held results, outbox retries, usage and storage repair; use the
   asks the attended root user; context files still load without project trust.
   [Project trust](docs/workspaces.md#project-trust).
 - Managed worktrees separate checkouts, not permissions. Close does not remove
-  worktrees. Cleanup refuses dirty, live or uncertain resources outright;
-  unmerged commits and foreign Paseo workspaces go only through a per-item
-  interactive confirmation. **Ignored files inside a removed worktree are
+  worktrees. Cleanup refuses dirty, live or uncertain resources outright.
+  `/delegate-cleanup` can discard branches whose upstream was deleted after
+  one confirmation, and unmerged commits or foreign Paseo workspaces after a
+  confirmation per item. **Ignored files inside a removed worktree are
   deleted too**, including `.env`, `.scratch/` and `node_modules/`. Checks
   reduce races, not exclude external users.
   [Cleanup and race limits](docs/workspaces.md#cleanup).

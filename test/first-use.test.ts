@@ -5,7 +5,7 @@ import { after, beforeEach, test } from "node:test";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
 import { readRoster } from "../src/agents.ts";
 import { doctor } from "../src/doctor.ts";
-import { createHostRouter } from "../src/multiplexer.ts";
+import { chooseMultiplexer, createHostRouter } from "../src/multiplexer.ts";
 import { STARTER_AGENT } from "../src/starter-agent.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, cleanup, resetRoot, root, rosterDir, session, writeAgent } from "./harness.ts";
@@ -13,6 +13,16 @@ import { agentDir, cleanup, resetRoot, root, rosterDir, session, writeAgent } fr
 beforeEach(resetRoot);
 after(cleanup);
 const scope = () => `User — ${rosterDir} (all projects)`;
+
+/** The message a refusing call throws. */
+function refusal(run: () => unknown): string {
+	try {
+		run();
+	} catch (error) {
+		return (error as Error).message;
+	}
+	throw new Error("the call did not refuse");
+}
 
 test("empty-roster bootstrap previews exact user file, inherits the model, and continues into task/settings", async () => {
 	const s = session({
@@ -230,9 +240,17 @@ test("doctor distinguishes selected tmux, Herdr and Paseo, availability failure,
 		assert.match(unavailable, /Host prerequisite:/);
 		assert.equal(host.opened.length, 0);
 	}
+	// The causes come from the real selection, so the advice cannot drift from its wording.
+	const neither = refusal(() =>
+		chooseMultiplexer({ agentDir, inherited: undefined, inTmux: false, inHerdr: false, inPaseo: false }),
+	);
+	const both = refusal(() =>
+		chooseMultiplexer({ agentDir, inherited: undefined, inTmux: true, inHerdr: true, inPaseo: false }),
+	);
+	assert.match(neither, /^this session is inside neither tmux nor Herdr/);
 	for (const reason of [
-		"inside neither tmux nor Herdr",
-		"inside both tmux and Herdr",
+		neither,
+		both,
 		// The settings path inside the cause must not steer the advice to Paseo or Herdr.
 		'this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in /home/u/paseo-herdr/agent/squire/settings.json)',
 	]) {

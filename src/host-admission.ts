@@ -4,6 +4,10 @@
 import type { DelegateHost, StartKind, StartOptions } from "./host.ts";
 import type { windowSettings } from "./window-placement.ts";
 
+/** The action for a host with no usable terminal; two causes need it. */
+const TMUX_INSTALL =
+	"install tmux >=3.2 (brew install tmux or sudo apt install tmux), run tmux new-session -s pi, then pi; or restart Pi in Herdr/Paseo";
+
 /** Advice follows the refusal, not the router's id (which can itself refuse). */
 export function hostAction(cause: string): string {
 	let action: string;
@@ -13,11 +17,11 @@ export function hostAction(cause: string): string {
 	else if (cause.includes("inside both tmux and Herdr") || cause.includes("invalid multiplexer"))
 		action =
 			'set "multiplexer": "tmux" or "herdr" in the Squire settings file named above; PI_DELEGATE_MULTIPLEXER from the launcher is used only when that setting is absent';
-	else if (cause.includes("squire settings")) action = "fix the Squire settings file named above, then retry";
+	// The settings errors' own prefixes: a path holding these words must not steer the advice.
+	else if (cause.startsWith("could not read squire settings") || cause.startsWith("invalid squire settings"))
+		action = "fix the Squire settings file named above, then retry";
 	// Before the Paseo/Herdr matches: this cause names the settings file, whose path may contain either word.
-	else if (cause.includes("inside neither"))
-		action =
-			"install tmux >=3.2 (brew install tmux or sudo apt install tmux), run tmux new-session -s pi, then pi; or restart Pi in Herdr/Paseo";
+	else if (cause.startsWith("this session is inside neither")) action = TMUX_INSTALL;
 	else if (cause.includes("not hosted by Paseo"))
 		action =
 			'run Pi inside a Paseo agent, or fix/unset a stale PI_DELEGATE_MULTIPLEXER=paseo in the launcher; a "multiplexer": "tmux" or "herdr" setting can override it for a terminal-hosted Pi';
@@ -30,14 +34,17 @@ export function hostAction(cause: string): string {
 	else if (/Herdr/i.test(cause))
 		action =
 			"start Pi in a Herdr pane with a running compatible Herdr server; if its pane/session changed, restart Pi there, then retry";
-	else if (cause.includes("not inside tmux") || cause.includes("delegate windows need tmux"))
-		action =
-			"install tmux >=3.2 (brew install tmux or sudo apt install tmux), run tmux new-session -s pi, then pi; or restart Pi in Herdr/Paseo";
+	else if (cause.includes("not inside tmux") || cause.includes("delegate windows need tmux")) action = TMUX_INSTALL;
 	else action = "fix the host selection or availability reported above, then retry";
 	return `Host prerequisite: ${action}. See /delegate-doctor`;
 }
 
 export type HostAudience = "command" | "tool";
+
+/** The audience of a call: a tool call has an id, a command does not. */
+export function callAudience(toolCallId: string | undefined): HostAudience {
+	return toolCallId === undefined ? "command" : "tool";
+}
 
 function hostRefusal(cause: string, audience: HostAudience): string {
 	return `${cause}. ${audience === "tool" ? "Ask the user to fix the host; /delegate-doctor shows details." : hostAction(cause)}`;

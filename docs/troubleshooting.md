@@ -32,8 +32,9 @@ provider rejects synchronously before writing. It reports only whether a
 handler answered, not that mail can be delivered or replied to. It does not
 scan/claim waiting mail, send a real task, open a host resource, change trust,
 or repair files. Missing handlers name `pi install npm:pi-session-mail` and
-reloading/restarting parent and delegate sessions; a missing roster names the
-interactive starter or the exact user-agent directory.
+reloading/restarting parent and delegate sessions; a tool result instead asks
+the user to install one. A missing roster names the interactive starter or the
+exact user-agent directory.
 
 In TUI/RPC the report uses Pi’s notification UI. In print/JSON, where Pi’s
 notification UI is a no-op, the report and command refusals use **stderr**:

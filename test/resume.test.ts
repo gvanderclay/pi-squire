@@ -9,6 +9,7 @@ import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { after, beforeEach, test } from "node:test";
 
+import { MISSING_MAIL } from "../src/mail-preflight.ts";
 import {
 	agentDir,
 	agentFile,
@@ -493,6 +494,25 @@ test("refused: a delegateTools entry holding a comma, before the window opens or
 	assert.equal(d.s.tmux.opened.length, 1);
 	assert.equal(d.s.sendCalls.length, sent);
 	assert.equal(starts(d.s).length, 1);
+});
+
+test("refused: no message:* provider, worded for the tool and for the command", async () => {
+	const tool = await exitedDelegate();
+	tool.s.send.answering = false;
+	assert.equal(
+		await resumeError(tool.s, { id: tool.id, task: "x" }),
+		`${MISSING_MAIL}; Ask the user to install a mailbox extension such as pi-session-mail; /delegate-doctor shows details.`,
+	);
+	// A resume mails after opening, so its taskless window is closed again.
+	assert.ok(tool.s.tmux.killed.includes(tool.s.tmux.opened.at(-1)?.windowId ?? ""), "the taskless window is killed");
+	assert.equal(starts(tool.s).length, 1, "no resumed delegation is recorded");
+
+	const command = await exitedDelegate();
+	command.s.send.answering = false;
+	await command.s.command("delegate-resume", `${command.id} again`);
+	const text = command.s.errors.join("\n");
+	assert.match(text, /^delegate: needs a provider of message:\* to send the task; install a mailbox extension/);
+	assert.match(text, /run pi install npm:pi-session-mail, then \/reload/);
 });
 
 test("refused: a concurrent resume of the same delegation, and the guard is released afterwards", async () => {

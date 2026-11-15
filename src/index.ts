@@ -95,7 +95,7 @@ import { createDelegateStart } from "./delegate-start.ts";
 import { doctor } from "./doctor.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
 import { type DelegateHost, WindowOpenError } from "./host.ts";
-import { assertHostOptions, createHostAdmission } from "./host-admission.ts";
+import { assertHostOptions, callAudience, createHostAdmission } from "./host-admission.ts";
 import { createIdentity, grantsNesting } from "./identity.ts";
 import { clearMarks, readMarks } from "./limits.ts";
 import { openedIn } from "./location.ts";
@@ -502,7 +502,7 @@ export default function delegate(
 	): Promise<Launched> {
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
-		const admitted = await admission.admit(toolCallId === undefined ? "command" : "tool");
+		const admitted = await admission.admit(callAudience(toolCallId));
 		assertHostOptions(admitted.client, {
 			kind: fork ? "fork" : "launch",
 			skills: start.agent.skills,

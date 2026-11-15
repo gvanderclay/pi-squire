@@ -70,6 +70,11 @@ test("host actions follow each refusal cause, preserve it verbatim first, and ke
 		],
 		["delegate windows need tmux 3.2 or later; this is tmux 3.1", /install tmux >=3\.2/],
 		[
+			// The settings path holds both host words; only the cause prefix may choose the advice.
+			'this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in /home/u/paseo-herdr/agent/squire/settings.json)',
+			/install tmux >=3\.2.*tmux new-session/,
+		],
+		[
 			'this session is inside both tmux and Herdr, so pi-squire will not guess; set "multiplexer" in /agent/squire/settings.json',
 			/set "multiplexer": "tmux" or "herdr".*PI_DELEGATE_MULTIPLEXER/,
 		],
@@ -82,6 +87,7 @@ test("host actions follow each refusal cause, preserve it verbatim first, and ke
 			/fix PI_DELEGATE_MULTIPLEXER.*valid values: tmux, herdr, paseo/,
 		],
 		["could not read squire settings /agent/squire/settings.json: invalid JSON", /fix the Squire settings file/],
+		["invalid squire settings /agent/squire/settings.json: expected an object", /fix the Squire settings file/],
 		[
 			"this session is not hosted by Paseo",
 			/run Pi inside a Paseo agent, or fix\/unset a stale PI_DELEGATE_MULTIPLEXER=paseo/,
@@ -106,7 +112,8 @@ test("host actions follow each refusal cause, preserve it verbatim first, and ke
 		const command = gate.probe() ?? "";
 		assert.ok(command.startsWith(`${cause}. Host prerequisite:`), command);
 		assert.match(command.slice(cause.length), action);
-		if (!cause.includes("not inside tmux") && !cause.includes("windows need tmux"))
+		// Only a host with no usable terminal tells the user to install tmux.
+		if (!/not inside tmux|windows need tmux|inside neither/.test(cause))
 			assert.doesNotMatch(command, /brew install|apt install|tmux new-session/);
 		await assert.rejects(gate.admit(), { message: command });
 		const tool = `${cause}. Ask the user to fix the host; /delegate-doctor shows details.`;

@@ -28,9 +28,11 @@ follows [Semantic Versioning](https://semver.org/).
 - Host and mail refusals now say what to do. `/delegate`, `/delegate-resume`
   and `/delegate-doctor` add an action chosen by the cause: install or start
   tmux, set `multiplexer` when Pi is inside both tmux and Herdr or the
-  selection is invalid, fix Herdr, start the Paseo daemon, or run Pi inside a
-  Paseo agent. Tool results add only a short hint to ask the user and run
-  `/delegate-doctor`, with no install commands. Every refusal keeps its
+  selection is invalid, fix the Squire settings file, fix Herdr, start the
+  Paseo daemon, or run Pi inside a Paseo agent; a missing `message:*` provider
+  names the mailbox extension to install and the reload that loads it. Tool
+  results for host and mail refusals add only a short hint to ask the user and
+  run `/delegate-doctor`, with no install commands. Every refusal keeps its
   original cause first. Deliberately changed expectations:
   `test/host-admission.test.ts`’s “unselected router refuses before reading any
   concrete-host facts or placement”, and `test/resume-picker.test.ts`’s old-tmux

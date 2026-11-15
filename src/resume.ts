@@ -9,7 +9,7 @@ import { type TObject, Type } from "typebox";
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
 import type { ChildStart, DelegateStarter } from "./delegate-start.ts";
 import type { DelegateHost, OpenedWindow } from "./host.ts";
-import type { AdmittedHost, HostAdmission } from "./host-admission.ts";
+import { type AdmittedHost, callAudience, type HostAdmission } from "./host-admission.ts";
 import type { Identity } from "./identity.ts";
 import { openedIn } from "./location.ts";
 import { windowPresentation } from "./locators.ts";
@@ -304,7 +304,7 @@ async function resume(
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 ): Promise<Resumed> {
-	const admission = await preflight(deps, request.toolCallId === undefined ? "command" : "tool"); // read once, before the exited window is killed or anything is mailed
+	const admission = await preflight(deps, callAudience(request.toolCallId)); // read once, before the exited window is killed or anything is mailed
 	const { client } = admission;
 	if (request.task.trim() === "") throw new Error("a task is required");
 	deps.authorize?.(request.id, ctx);

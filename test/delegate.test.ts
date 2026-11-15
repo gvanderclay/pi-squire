@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { MISSING_MAIL } from "../src/mail-preflight.ts";
 import { placementProject } from "../src/window-placement.ts";
 
 import {
@@ -136,6 +137,30 @@ test("with no message:* provider the command refuses and opens no window", async
 	assert.deepEqual(s.entries, []);
 	assert.equal(s.errors.length, 1);
 	assert.match(s.errors[0], /message:\*/);
+});
+
+test("the missing-mail refusal keeps the install action for the command and asks the user in a tool result", async () => {
+	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+	const command = session({ send: "none" });
+	await command.delegate("scout do the thing");
+	assert.equal(command.errors.length, 1);
+	assert.match(
+		command.errors[0],
+		/^delegate: needs a provider of message:\* to send the task; install a mailbox extension/,
+	);
+	assert.match(command.errors[0], /run pi install npm:pi-session-mail, then \/reload/);
+
+	const tool = session({ send: "none" });
+	await assert.rejects(tool.toolCall("delegate", { agent: "scout", task: "do the thing" }), (error: Error) => {
+		assert.equal(
+			error.message,
+			`${MISSING_MAIL}; Ask the user to install a mailbox extension such as pi-session-mail; /delegate-doctor shows details.`,
+		);
+		assert.doesNotMatch(error.message, /pi install|\/reload/);
+		return true;
+	});
+	assert.deepEqual(tool.tmux.opened, []);
+	assert.deepEqual(tool.entries, []);
 });
 
 test("a provider error is reported and opens no window", async () => {

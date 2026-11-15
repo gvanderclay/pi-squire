@@ -89,7 +89,7 @@ class PaseoHost implements DelegateHost {
 		if (!parentAgentId) throw new WindowOpenError(NOT_HOSTED, "not-opened");
 		const launch = paseoLaunch(spec);
 		const systemPrompt = promptOf(launch.promptFile);
-		let created: { sessionId: string };
+		let created: Awaited<ReturnType<PaseoApi["create"]>>;
 		try {
 			created = await this.api.create({
 				agentId: launch.agentId,
@@ -108,6 +108,7 @@ class PaseoHost implements DelegateHost {
 			id: launch.agentId,
 			session: undefined,
 			sessionId: created.sessionId,
+			paseo: created.paseo,
 			locator: locatorOf(launch.agentId, spec.name),
 		};
 	}

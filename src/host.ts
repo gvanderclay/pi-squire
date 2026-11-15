@@ -2,6 +2,7 @@
 import type { LiveNavigation, WindowLocator } from "./locators.ts";
 import type { WindowPlacement } from "./window-placement.ts";
 import type { ClosableStates, PaneStates } from "./window-state.ts";
+import type { PaseoReceipt } from "./worktree.ts";
 
 /** One window to open: its name, working directory, command and environment. */
 export type WindowSpec = {
@@ -13,6 +14,7 @@ export type WindowSpec = {
 
 export type OpenedWindow = {
 	id: string;
+	paseo?: PaseoReceipt;
 	session: string | undefined;
 	/** The Pi session id, when the host assigned one instead of using the requested id. */
 	sessionId?: string;

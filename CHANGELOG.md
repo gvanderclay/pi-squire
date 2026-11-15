@@ -8,10 +8,23 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `delegation_cleanup` now archives Squire-created Paseo workspaces before
+  rechecking and removing their managed Git worktrees. Launch records retain a
+  placement receipt; opened/reused or path-found workspaces remain kept.
+  This deliberately replaces T1's blanket "Paseo workspace not recorded"
+  refusal: legacy records proceed only if no workspace is found, or the daemon
+  is unavailable (a documented residual). Receipts require an available daemon;
+  live agents/terminals and workspace setup/scripts block archive. Paseo schedules
+  are not checked. Tests intentionally update the create-result receipt contract
+  (`test/paseo-api.test.ts`), OpenedWindow receipt (`test/paseo-launch.test.ts`),
+  and legacy-Paseo cleanup expectations (`test/cleanup.test.ts`); total and
+  coordinator metadata caps (`test/context-budget.test.ts`) grow by 51 measured
+  characters, with parent declarations unchanged.
+
 - Deferred `delegation_cleanup` removes descendants' Squire-created managed
   worktrees and local branches only with identity, no-live-user, clean-state
   and local ancestry or exact GitHub squash-merge proof. Ignored files inside
-  them are deleted too; uncertain resources and Paseo delegations are kept.
+  them are deleted too; uncertain resources are kept.
   Pending launch/fork/resume reservations now record cwd; status shows
   `workspace removed` and disables resume when the recorded directory is gone.
   Tests deliberately extend the delegation-tool inventories and deferred

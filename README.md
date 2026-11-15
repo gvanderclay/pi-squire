@@ -529,8 +529,9 @@ and closing an agent run that command.
   also omit dormant stored agents whose provider is unavailable; this protection
   does not cover them. A discovery, detach or archive failure is reported without
   discarding the delivered result or
-  scheduling a cleanup retry. Squire does not archive a workspace or remove
-  its working directory.
+  scheduling a cleanup retry. Auto-exit does not archive a workspace or remove
+  its working directory; after merging, use `delegation_cleanup` for eligible
+  Squire-created worktrees and Paseo workspaces (see [Cleanup](#cleanup)).
 - The `"multiplexer"` setting is ignored, because a Paseo-hosted Pi always opens
   agents in Paseo.
 - A delegate has no terminal or pane to show. `windowId` is the agent id, and
@@ -973,9 +974,27 @@ Cleanup requires the recorded repository, worktree registration and created
 branch still to match; a locked, prunable, detached or replaced checkout stays.
 It checks all Squire tree registries in this agent directory, live owners and
 session-header working directories, pending reservations and the caller's host's
-windows. Close running delegations with `delegation_close` first. Paseo-hosted
-delegations are kept with `Paseo workspace not recorded`; this release does
-not archive Paseo workspaces.
+windows. Close running delegations with `delegation_close` first.
+
+Paseo launches record the daemon home, workspace id, directory, project and
+whether Squire created, opened or reused the workspace. Only a `created`
+receipt (including an alias's receipt for that same workspace) permits archive.
+Opened, reused and path-found workspaces are kept: Squire did not create them.
+Older records need no receipt: when the daemon is available, a workspace at
+the exact directory keeps the worktree; if none exists, Git cleanup proceeds.
+A receipt with an unavailable daemon keeps the item. Without a receipt and
+with the daemon unavailable, cleanup proceeds without Paseo checks.
+
+Before archive, the directory and project must match, the workspace must not
+be internal, archiving, Paseo-owned, running setup or running a script, and no
+unarchived agent (including internal/background agents) or terminal may use
+its id or a cwd inside the worktree. Even the delegate's own agent counts.
+Archive runs only after nonmutating Git safety proof. Squire then re-lists
+the workspace and its users before the final synchronous Git re-check and
+removal; an archive that leaves a workspace or user is `partial` and skips Git.
+A successful archive followed by a Git refusal is also `partial`.
+**Paseo schedules are not checked**: the supported SDK has no schedule-list API. A schedule
+aimed at an archived workspace fails on its next run.
 
 Staged, unstaged, conflicted and non-ignored untracked files, in-progress Git
 operations and gitlinks all block cleanup. **Ignored files inside the worktree
@@ -1017,9 +1036,12 @@ Concurrency limits: a launch/resume/fork reserving after the final check can
 open a window in the removed directory and fail loudly; non-ignored files it
 writes make Git refuse removal. Older Squire versions did not record cwd at
 reservation. External shells/editors, other agent directories, session files
-outside the scanned directories (or missing session headers), non-Squire Paseo
-agents and custom `worktreeRoot` without `{branch}` cannot be excluded. Window
-checks use only the caller's host and run in preflight. In the instant between
+outside the scanned directories (or missing session headers), and custom
+`worktreeRoot` without `{branch}` cannot be excluded. Paseo checks use the
+recorded daemon home (the current home for records without a receipt); other
+daemons are not scanned. Paseo can report no terminals when its terminal query
+fails, and a user appearing during workspace archive can be archived with it.
+Window checks use only the caller's host and run in preflight. In the instant between
 the final worktree-list check and branch deletion, another process recreating
 the branch can lose its branch ref; its worktree keeps HEAD's commit. These
 checks reduce races, not exclude arbitrary external use.

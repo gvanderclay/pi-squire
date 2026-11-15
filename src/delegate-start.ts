@@ -321,6 +321,7 @@ export class DelegateStarter {
 		const opened = await this.openSession(input, token, ctx, payload);
 		if (client.configureStart) await this.configure(input, opened);
 		const requestId = mailed ?? (await this.mailAfterOpen(input, opened, token, ctx));
+		if (input.workspace.mode === "managed" && opened.paseo) input.workspace.paseo = opened.paseo;
 		this.deps.results.recordStart(startRecord(input, opened, requestId), ctx);
 		this.deps.startPolling();
 		return {

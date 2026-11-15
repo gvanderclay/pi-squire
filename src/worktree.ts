@@ -35,9 +35,18 @@ export type WorktreePlan = {
 	sourceDirty: PathSummary;
 	trusted: boolean;
 };
+/** The daemon placement observed at launch; absence is valid for older records. */
+export type PaseoReceipt = {
+	home: string;
+	workspaceId: string;
+	directory: string;
+	projectId: string;
+	provenance: "created" | "opened" | "reused";
+};
 /** A created worktree, as the delegate's workspace. */
 export type ManagedWorkspace = {
 	mode: "managed";
+	paseo?: PaseoReceipt;
 	cwd: string;
 	git: Extract<GitLaunch, { kind: "git" }>;
 	sourceCwd: string;

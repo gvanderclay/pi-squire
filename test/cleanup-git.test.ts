@@ -10,6 +10,7 @@ import {
 	cleanGit,
 	cleanupRemains,
 	type GhRunner,
+	previewCleanupGit,
 } from "../src/cleanup-git.ts";
 import { askGit } from "../src/git.ts";
 import { commit, fixture, git } from "./cleanup-fixture.ts";
@@ -31,6 +32,23 @@ function unchanged(f: ReturnType<typeof fixture>, deps: CleanupGitDeps = {}): Cl
 	assert.deepEqual(readFileSync(join(f.cwd, "tracked")), files);
 	return result;
 }
+
+test("Git preview proves safety without invoking either mutation or the removal hooks", () => {
+	const f = fixture();
+	const trees = git(f.source, "worktree", "list", "--porcelain");
+	const branches = git(f.source, "show-ref", "--heads");
+	const fail = (): never => {
+		throw new Error("preview mutated");
+	};
+	assert.equal(
+		previewCleanupGit(f.plan, () => {}, { git: fail, beforeRemove: fail, afterRemove: fail, gh: noGh }),
+		undefined,
+	);
+	assert.equal(git(f.source, "worktree", "list", "--porcelain"), trees);
+	assert.equal(git(f.source, "show-ref", "--heads"), branches);
+	writeFileSync(join(f.cwd, "dirty"), "untracked");
+	assert.match(previewCleanupGit(f.plan, () => {}, { gh: noGh })?.reason ?? "", /uncommitted or untracked/);
+});
 
 test("remains conservatively includes the branch when Git cannot observe the source", () => {
 	const f = fixture();

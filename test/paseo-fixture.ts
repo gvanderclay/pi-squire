@@ -4,12 +4,14 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { PaseoWorkspace } from "@getpaseo/client";
 import type { DelegateHost, OpenedWindow, WindowSpec } from "../src/host.ts";
 import { windowPresentation } from "../src/locators.ts";
 import { createPaseoHost } from "../src/paseo.ts";
 import type { PaseoApi } from "../src/paseo-api.ts";
 import { paseoLocator } from "../src/paseo-locator.ts";
 import type { WindowRecord } from "../src/tmux.ts";
+import type { PaseoReceipt } from "../src/worktree.ts";
 import type { AdapterContract, AdapterFixture } from "./adapter-contract.ts";
 
 /** What one create asks the daemon for; the fake keeps it as the started delegate. */
@@ -18,6 +20,13 @@ export type PaseoCreate = Parameters<PaseoApi["create"]>[0];
 /** The daemon as a set of agent ids: create adds one, remove deletes one, live lists them. */
 export class FakePaseo implements PaseoApi {
 	readonly running = new Set<string>();
+	readonly workspaces = new Map<string, PaseoWorkspace>();
+	readonly agents: { id: string; workspaceId: string; cwd: string }[] = [];
+	readonly terminals: { id: string; workspaceId: string; cwd: string }[] = [];
+	receipt: PaseoReceipt | undefined;
+	down = false;
+	survivor = false;
+	afterArchive?: () => void;
 	/** Rows the daemon no longer lists but still holds: live leaves them out, remove deletes them. */
 	readonly archived = new Set<string>();
 	readonly created: PaseoCreate[] = [];
@@ -41,10 +50,10 @@ export class FakePaseo implements PaseoApi {
 
 	async unavailable(): Promise<string | undefined> {
 		this.use("unavailable");
-		return undefined;
+		return this.down ? "Paseo daemon unavailable" : undefined;
 	}
 
-	async create(input: PaseoCreate): Promise<{ sessionId: string }> {
+	async create(input: PaseoCreate): ReturnType<PaseoApi["create"]> {
 		this.use("create");
 		if (this.failCreate !== undefined) throw new Error(this.failCreate);
 		this.running.add(input.agentId);
@@ -54,7 +63,42 @@ export class FakePaseo implements PaseoApi {
 			this.ambiguousAgent = input.agentId;
 			throw new Error("the create answer was lost");
 		}
-		return { sessionId: `paseo-session-${input.agentId}` };
+		return {
+			sessionId: `paseo-session-${input.agentId}`,
+			paseo: this.receipt ?? {
+				home: "/fake-paseo",
+				workspaceId: "workspace",
+				directory: input.cwd,
+				projectId: "project",
+				provenance: "created",
+			},
+		};
+	}
+
+	async workspace(id: string): Promise<PaseoWorkspace | null> {
+		this.use("workspace");
+		return this.workspaces.get(id) ?? null;
+	}
+	async workspaceAt(dir: string): Promise<PaseoWorkspace[]> {
+		this.use("workspaceAt");
+		return [...this.workspaces.values()].filter((entry) => entry.workspaceDirectory === dir);
+	}
+	async agentsUsing(id: string, dir: string): Promise<string[]> {
+		this.use("agentsUsing");
+		return this.agents
+			.filter((entry) => entry.workspaceId === id || entry.cwd === dir || entry.cwd.startsWith(`${dir}/`))
+			.map((entry) => entry.id);
+	}
+	async terminalsUsing(id: string, dir: string): Promise<string[]> {
+		this.use("terminalsUsing");
+		return this.terminals
+			.filter((entry) => entry.workspaceId === id || entry.cwd === dir || entry.cwd.startsWith(`${dir}/`))
+			.map((entry) => entry.id);
+	}
+	async archiveWorkspace(id: string): Promise<void> {
+		this.use("archiveWorkspace");
+		if (!this.survivor) this.workspaces.delete(id);
+		this.afterArchive?.();
 	}
 
 	async live(): Promise<Set<string>> {

@@ -10,8 +10,8 @@ import { agentDir, agentFile, DELEGATION_TOOLS, session, writeAgent } from "./ha
 // Scripts reading delegation_status need its usage field names, not an opaque object,
 // and its selection counts, so a partial list is not mistaken for every record.
 // delegation_resume names the deferred fork in one clause, so a model can find it.
-// Cleanup adds 1,466 measured characters, deferred from a discoverable parent.
-const BUDGET = 14_287;
+// Cleanup adds 1,517 measured characters (51 for Paseo archive wording), deferred from a discoverable parent.
+const BUDGET = 14_338;
 // `delegation_fork` is deferred: a parent that can find it (codemode or
 // tool_search active) starts without it declared, so what such a parent pays in
 // every request is the other four. Activating it later declares it.
@@ -21,7 +21,7 @@ const DECLARED_BUDGET = 10_700;
 // start, so it counts two copies; a declared fork adds the third.
 const ROUTED_BUDGET = 13_480;
 // Coordinators explicitly activate both deferred tools (two-agent roster below).
-const COORDINATOR_BUDGET = 14_315;
+const COORDINATOR_BUDGET = 14_366;
 // The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
 const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 

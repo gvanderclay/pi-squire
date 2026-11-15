@@ -33,11 +33,12 @@ function parseDescriptor(
 	value: unknown,
 	mode: "cleanup" | "admission" | "connect",
 ): DaemonDescriptor | Exclude<PaseoAvailability, { state: "available" }> {
-	if (!value || typeof value !== "object") return malformed(home);
+	if (!value || typeof value !== "object" || Array.isArray(value)) return malformed(home);
 	const { listen, pid, ...identity } = value as HostIdentity & { listen?: unknown; pid?: unknown };
 	// Connection/authentication, unlike absence classification, must not depend
 	// on whether this process can verify the daemon's pid namespace or host.
-	if (mode === "connect") return parseListen(home, listen);
+	if (mode === "connect")
+		return listen === null || listen === undefined ? unpublished(home) : parseListen(home, listen);
 	if (pid !== undefined && (!Number.isSafeInteger(pid) || Number(pid) <= 0)) return malformed(home);
 	// A stale pid proves absence even before an address was published, or when
 	// listen is a Unix socket path (bootstrap.js formatListenTarget).
@@ -45,8 +46,7 @@ function parseDescriptor(
 	// Admission must not spawn an identity lookup. A refused socket is still
 	// positive absence even if a dead pid belongs to an unverified host.
 	if (stopped && (mode === "cleanup" || stopped.state === "absent")) return stopped;
-	if (listen === null && typeof pid === "number")
-		return { state: "ambiguous", reason: `Paseo daemon has no published address: ${pidFile(home)}` };
+	if (listen === null && typeof pid === "number") return unpublished(home);
 	return parseListen(home, listen);
 }
 function parseListen(
@@ -123,6 +123,10 @@ function checkPid(
 	}
 	return undefined;
 }
+const unpublished = (home: string): Exclude<PaseoAvailability, { state: "available" }> => ({
+	state: "ambiguous",
+	reason: `Paseo daemon has no published address: ${pidFile(home)}`,
+});
 const malformed = (home: string): Exclude<PaseoAvailability, { state: "available" }> => ({
 	state: "ambiguous",
 	reason: `Paseo descriptor malformed: ${pidFile(home)}`,

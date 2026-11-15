@@ -562,7 +562,7 @@ for nested workers.
 | Nested delegates | With explicit grant and tree caps | Same | Same; native parent link retained |
 | Live usage | Pi in its terminal; result/status totals | Same | Native context usage during first mailed run; later autonomous runs update at completion; result/status totals retained |
 | Navigation | Verified terminal window/pane | Verified tab/pane in the same named session | Open the agent in the Paseo app; no terminal |
-| Auto-exit | Closes window after delivered result and processed nested work | Closes tab under the same conditions | Archives agent under the same conditions; explicit close deletes it; workspace stays |
+| Auto-exit | Closes its own pane after delivered result and processed nested work; window goes only if it was the last pane | Closes its own pane under the same conditions; tab goes only if it was the last pane | Archives agent under the same conditions; explicit close deletes it; workspace stays |
 | Resume | Exited direct child with session file and original cwd | Same, plus restore/session guard | Refused for Paseo hosts and sources; start fresh |
 | Fork | Copies a direct child's history to a new session | Same | Refused for Paseo hosts and sources; start fresh |
 | `skills` / `context_files` switches | Pi flags honored | Same | Defaults load normally; `false` refused before reservation/mail/worktree |
@@ -830,9 +830,9 @@ replace your footer or editor, and cleans up observers/input listeners on
 shutdown or reload. Automatic navigation deliberately passes through custom
 editors, autocomplete, dialogs, permission questions and unrelated dashboards.
 It relies on **Pi TUI internals**, isolated in a small compatibility adapter:
-the concrete focus getter and exact built-in editor identity. Compatibility was
-tested with the installed **Pi 1.4.0 bundled CLI**, including regular/fullscreen
-mode changes. Unknown focus/editor/completion capabilities disable key capture
+the concrete focus getter and exact built-in editor identity. Tests exercise
+the adapter against the pinned Pi version (currently **1.5.2**), including
+regular/fullscreen UI migration. Unknown focus/editor/completion capabilities disable key capture
 rather than guessing; `/delegate-open` remains available. This is not a generic
 custom-editor integration or a supported Pi focus hook. JSON/RPC hosts retain
 the running-count status rather than receiving a terminal widget.
@@ -1715,14 +1715,17 @@ server's environment plus `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`
 
 Every host copies `PI_SESSION_MAIL_ROOT` and `XDG_STATE_HOME` on new launches
 (and on resumes and forks where supported) when present in the launching Pi's
-environment, including empty or relative values; Squire does not resolve them
-or copy the whole environment.
+environment, including empty or relative values; Squire does not resolve them.
+Tmux and Paseo receive selected parent variables, not the whole environment.
+Herdr starts with the parent's full environment, excluding routing/launch
+identity as described under [Tabs](#tabs).
 With pi-session-mail, only absolute values select a location: an absolute
 `PI_SESSION_MAIL_ROOT` wins, otherwise an absolute `XDG_STATE_HOME` selects its
 `pi-session-mail/` subdirectory, otherwise the provider uses its home default.
-Unset keys are not overridden in the host environment. If the tmux server or
-Paseo daemon has different defaults (including a different home directory),
-unset or non-absolute values can still split the mailboxes. Set an absolute
+Unset keys are not overridden in the host environment, including the new
+Herdr pane's own environment. If that pane, the tmux server or the Paseo daemon
+supplies different values or defaults (including a different home directory),
+unset or non-absolute parent values can still split the mailboxes. Set an absolute
 `PI_SESSION_MAIL_ROOT` in the parent to keep mail in the same namespace;
 pi-session-mail 0.7.1 exposes no effective-root hook for Squire to query.
 
@@ -1732,17 +1735,20 @@ watching this session, even though it runs in a TUI. Other extensions may read
 it to skip a dialog or confirmation instead of waiting on one, and any other
 runner that starts Pi unattended can set it too. Anything else the
 parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
-reaches the child only through a `session:launch` contributor. `--model` and
+reaches a tmux or Paseo child only through a `session:launch` contributor;
+Herdr also inherits the parent's environment as described above. `--model` and
 `--thinking` override the agent's defaults for one call, unless the agent
 locks them (see [Agents](#agents)). For a bound role, `--model` without
 `--routing` launches it outside its routing profile; with `--routing`, the
 overrides apply only within the eligible route (see
 [Role/task routing](#role-task-routing-unreleased)).
 An unknown value is refused with close matches, and so is a model with no
-configured credentials. An API key that exists only as an environment variable in the
-parent's shell does not reach the delegate, so log in through Pi or make the
-variable part of the tmux server's environment. `--auto-exit` and `--no-auto-exit` override the
-agent's `auto_exit`.
+configured credentials. For tmux and Paseo, an API key present only in the
+parent's environment does not reach the delegate: log in through Pi, supply it
+through a `session:launch` contributor, or set it in the tmux server's or
+Paseo daemon's environment respectively. Herdr inherits API keys from the
+parent's environment. `--auto-exit` and `--no-auto-exit` override the agent's
+`auto_exit`.
 
 ## Tools
 

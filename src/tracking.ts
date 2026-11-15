@@ -22,6 +22,7 @@ import {
 	sessionIdOf,
 	type WorkspaceAttempt,
 } from "./results.ts";
+import { supportsResume } from "./resume-support.ts";
 import { routingEvidence } from "./routing-provenance.ts";
 import { RoutingEvidenceSchema, RoutingRecordSchema } from "./routing-schema.ts";
 import { SessionUsageSchema, sessionUsage } from "./session-usage.ts";
@@ -149,6 +150,7 @@ function view(
 	windows: WindowStates,
 	ctx: ExtensionContext,
 	resumedAs: string | undefined,
+	host: DelegateHost,
 ): View {
 	const window = windows.look(record);
 	const state = deriveState(record, window.state);
@@ -176,6 +178,7 @@ function view(
 		resumedAs,
 		windowSession,
 		canResume:
+			supportsResume(record, host) &&
 			(record.identity?.parent ?? ctx.sessionManager.getSessionId()) === ctx.sessionManager.getSessionId() &&
 			(record.cwd === undefined || existsSync(record.cwd)),
 	};
@@ -366,7 +369,7 @@ function statusTool(results: Results, tmux: DelegateHost, readingErrors: () => R
 			const selected = scope === "recent" ? recentRecords(records, windows) : records;
 			const resumedAs = (id: string) => results.list().find((item) => isStarted(item) && item.resumedFrom === id)?.id;
 			const views = selected.map((record) =>
-				isStarted(record) ? view(record, windows, ctx, resumedAs(record.id)) : record,
+				isStarted(record) ? view(record, windows, ctx, resumedAs(record.id), tmux) : record,
 			);
 			const marks = activeMarks();
 			const errors = readingErrors();

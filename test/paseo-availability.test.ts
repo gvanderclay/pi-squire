@@ -90,6 +90,43 @@ test("an unpublished address with a live pid remains ambiguous, including EPERM"
 	}
 	assert.equal((await createPaseoApi(home({ pid: -1, listen: null })).availability()).state, "ambiguous");
 });
+test("create and workspace lookup distinguish unpublished addresses from malformed descriptors", async () => {
+	for (const value of [
+		{ pid: process.pid, listen: null },
+		{ pid: process.pid },
+		{},
+		{ listen: "" },
+		{ listen: 42 },
+		{ listen: false },
+		{ listen: {} },
+		{ listen: [] },
+		{ listen: "not-an-address" },
+		null,
+		[],
+	]) {
+		const dir = home(value);
+		const api = createPaseoApi(dir);
+		const unpublished = value !== null && !Array.isArray(value) && (!("listen" in value) || value.listen === null);
+		const message = unpublished
+			? `Paseo daemon has no published address: ${join(dir, "paseo.pid")}`
+			: `Paseo descriptor malformed: ${join(dir, "paseo.pid")}`;
+		await assert.rejects(api.workspaceAt(dir), { message });
+		await assert.rejects(
+			api.create({
+				agentId: "test",
+				parentAgentId: "parent",
+				title: "test",
+				cwd: dir,
+				model: "test/model",
+				thinking: "low",
+				systemPrompt: "",
+				env: {},
+			}),
+			{ message },
+		);
+	}
+});
+
 test("refused port is absent even with a live or missing pid, without importing the SDK", async () => {
 	const server = await listening();
 	await server.close();

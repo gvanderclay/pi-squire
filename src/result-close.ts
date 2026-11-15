@@ -1,12 +1,21 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildOutcome } from "./child-tasks.ts";
+import type { DelegateHost } from "./host.ts";
+import { paseoLocator } from "./paseo-locator.ts";
 import { cwdLine, modelLabel, workspaceLine } from "./render.ts";
 import { resumeDetails } from "./result-message.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
 import { recordedName, type StartedRecorded } from "./result-types.ts";
 import type { MessageDetails } from "./results.ts";
+import { supportsResume } from "./resume-support.ts";
 import { sessionUsage, usageText } from "./session-usage.ts";
 import { windowPresentation } from "./tmux.ts";
+
+/** No resume command when either the source or today's selected host refuses it. */
+function continuation(record: StartedRecorded, host: DelegateHost | undefined, advice: string): string {
+	if (supportsResume(record, host)) return advice;
+	return `${paseoLocator(record.locator) ? "Paseo sessions cannot be resumed or forked" : "Resume is unavailable on the current host"}; start a fresh delegate with the same task and working directory.`;
+}
 
 /**
  * The usage line for a delegation that ended without a result: its session file
@@ -20,7 +29,11 @@ function usageLine(record: StartedRecorded, session: string | undefined): string
 }
 
 /** A missing/canceled task, never a fabricated result envelope. */
-export function closeOutcome(record: StartedRecorded, ctx: ExtensionContext | undefined): ChildOutcome {
+export function closeOutcome(
+	record: StartedRecorded,
+	ctx: ExtensionContext | undefined,
+	host?: DelegateHost,
+): ChildOutcome {
 	const session: string | undefined = locateSession(record, ctx?.sessionManager.getSessionDir());
 	const finished: string | undefined = finishedModel(session);
 	const details: MessageDetails = {
@@ -45,13 +58,13 @@ export function closeOutcome(record: StartedRecorded, ctx: ExtensionContext | un
 		`Working directory: ${cwdLine(record.cwd)}`,
 		...(record.workspace ? [`Workspace: ${workspaceLine(record.workspace)}`] : []),
 		`Delegate session: ${session ?? sessionIdOf(record)}`,
-		"A genuine reply that arrives later is still delivered. Only the direct parent may resume this session as a new delegation.",
+		`A genuine reply that arrives later is still delivered. ${continuation(record, host, "Only the direct parent may resume this session as a new delegation.")}`,
 	].join("\n");
 	return { key: `closed:${record.id}`, content, details };
 }
 
 /** A delegation whose window went away with no result, worded for the direct parent's processing inbox. */
-export function goneOutcome(record: StartedRecorded, session: string | undefined): ChildOutcome {
+export function goneOutcome(record: StartedRecorded, session: string | undefined, host?: DelegateHost): ChildOutcome {
 	const finished: string | undefined = finishedModel(session);
 	const details: MessageDetails = {
 		kind: "gone",
@@ -74,7 +87,7 @@ export function goneOutcome(record: StartedRecorded, session: string | undefined
 		`Working directory: ${cwdLine(record.cwd)}`,
 		...(record.workspace === undefined ? [] : [`Workspace: ${workspaceLine(record.workspace)}`]),
 		`Delegate session: ${session ?? sessionIdOf(record)}`,
-		"A reply that arrives later is still delivered. To continue the delegate's session in a new window, call delegation_resume with this delegation's id.",
+		`A reply that arrives later is still delivered. ${continuation(record, host, "To continue the delegate's session in a new window, call delegation_resume with this delegation's id.")}`,
 	].join("\n");
 	return { key: `gone:${record.id}`, content, details };
 }

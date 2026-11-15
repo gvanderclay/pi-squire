@@ -222,6 +222,7 @@ export default function delegate(
 			readTree(identity.current()?.root ?? ctx.sessionManager.getSessionId())
 				.entries.filter((entry) => entry.identity.parent === ctx.sessionManager.getSessionId() && entry.closed)
 				.map((entry) => entry.id),
+		tmux,
 	);
 	pi.on("session_start", (_event, ctx) => tracking.restore(ctx));
 	const replies = registerTaskReplies(
@@ -496,7 +497,11 @@ export default function delegate(
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
 		const admitted = await admission.admit();
-		assertHostOptions(admitted.client, { kind: fork ? "fork" : "launch", ...start.agent });
+		assertHostOptions(admitted.client, {
+			kind: fork ? "fork" : "launch",
+			skills: start.agent.skills,
+			contextFiles: start.agent.contextFiles,
+		});
 		const { placement, companionSuffix } = admitted;
 		const parentIdentity = identity.current();
 		const project = parentIdentity
@@ -1045,7 +1050,7 @@ export default function delegate(
 		getArgumentCompletions: (prefix) =>
 			resumeCompletions(
 				prefix,
-				() => resumableIds(results),
+				() => resumableIds(results, tmux),
 				() => modelIds(registry),
 				() =>
 					results

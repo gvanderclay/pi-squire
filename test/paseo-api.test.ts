@@ -3,10 +3,15 @@ import childProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { after, type TestContext, test } from "node:test";
-import { DaemonClient, type FetchAgentsOptions } from "@getpaseo/client/internal/daemon-client";
+import {
+	DaemonClient,
+	type FetchAgentsOptions,
+	type FetchWorkspacesOptions,
+} from "@getpaseo/client/internal/daemon-client";
 import { createPaseoApi } from "../src/paseo-api.ts";
+import type { PaseoReceipt } from "../src/worktree.ts";
 
 /** Throwaway homes under .scratch/tmp, removed when this file finishes. */
 const DIRS: string[] = [];
@@ -378,13 +383,19 @@ function repositoryWithWorktree(): { main: string; worktree: string } {
 }
 
 type WorkspaceList = Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>;
-type Placement = { opened: string[]; created: unknown[]; agents: unknown[] };
+type Placement = {
+	opened: string[];
+	created: unknown[];
+	agents: unknown[];
+	receipts: PaseoReceipt[];
+	listings: (FetchWorkspacesOptions | undefined)[];
+};
 type OpenWorkspace = { id: string; workspaceDirectory: string; projectId: string };
 
 /**
  * Create one agent in `cwd` against a daemon whose open workspaces are
  * `open` (folder to project id), and report how its workspace was reached.
- * The agent request itself fails, which ends the call once the workspace is chosen.
+ * The agent is assigned a synthetic session so the launch returns its placement receipt.
  */
 async function placement(
 	t: TestContext,
@@ -392,9 +403,10 @@ async function placement(
 	open: Record<string, string> | OpenWorkspace[],
 	concurrent = 1,
 	archivedReceipt = false,
+	observation: { hidden?: OpenWorkspace[]; failSnapshot?: boolean; failAfterOpen?: boolean } = {},
 ): Promise<Placement> {
-	const seen: Placement = { opened: [], created: [], agents: [] };
-	const workspace = { id: "wks_0000000000000000", workspaceDirectory: cwd };
+	const seen: Placement = { opened: [], created: [], agents: [], receipts: [], listings: [] };
+	let workspace = { id: "wks_0000000000000000", workspaceDirectory: cwd, projectId: "prj_main" };
 	let registered = false;
 	let listings = 0;
 	const entries = Array.isArray(open)
@@ -406,20 +418,23 @@ async function placement(
 			}));
 	t.mock.method(DaemonClient.prototype, "connect", async () => {});
 	t.mock.method(DaemonClient.prototype, "close", async () => {});
-	t.mock.method(
-		DaemonClient.prototype,
-		"fetchWorkspaces",
-		async () =>
-			({
-				entries: [
-					...(listings++ % 2 === 0 ? entries : [...entries].reverse()),
-					...(registered ? [{ ...workspace, projectId: "prj_main" }] : []),
-				],
-				pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-			}) as unknown as WorkspaceList,
-	);
+	t.mock.method(DaemonClient.prototype, "fetchWorkspaces", async (options?: FetchWorkspacesOptions) => {
+		seen.listings.push(options);
+		if (observation.failSnapshot && options?.filter?.includeBackground) throw new Error("provenance unavailable");
+		if (observation.failAfterOpen && seen.opened.length) throw new Error("post-open listing failed");
+		return {
+			entries: [
+				...(listings++ % 2 === 0 ? entries : [...entries].reverse()),
+				...(options?.filter?.includeBackground ? (observation.hidden ?? []) : []),
+				...(registered ? [{ ...workspace, projectId: "prj_main" }] : []),
+			],
+			pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+		} as unknown as WorkspaceList;
+	});
 	t.mock.method(DaemonClient.prototype, "openProject", async (path: string) => {
 		seen.opened.push(path);
+		workspace = entries.find((entry) => entry.workspaceDirectory === path) ?? workspace;
+		registered = true;
 		return { workspace, error: null } as unknown as Awaited<ReturnType<DaemonClient["openProject"]>>;
 	});
 	t.mock.method(DaemonClient.prototype, "createWorkspace", async (options: unknown) => {
@@ -434,8 +449,16 @@ async function placement(
 	});
 	t.mock.method(DaemonClient.prototype, "createAgent", async (options: unknown) => {
 		seen.agents.push(options);
-		throw new Error("no agent in this test");
+		return { id: "agent" } as unknown as Awaited<ReturnType<DaemonClient["createAgent"]>>;
 	});
+	t.mock.method(
+		DaemonClient.prototype,
+		"fetchAgent",
+		async () =>
+			({ agent: { id: "agent", runtimeInfo: { sessionId: "session" } } }) as unknown as Awaited<
+				ReturnType<DaemonClient["fetchAgent"]>
+			>,
+	);
 	const input = {
 		agentId: "agent-1",
 		parentAgentId: "paseo-parent-agent",
@@ -448,7 +471,11 @@ async function placement(
 	};
 	await Promise.all(
 		Array.from({ length: concurrent }, () =>
-			assert.rejects(createPaseoApi(daemonHome()).create(input), /no agent in this test/),
+			createPaseoApi(daemonHome())
+				.create(input)
+				.then((result) => {
+					seen.receipts.push(result.paseo);
+				}),
 		),
 	);
 	return seen;
@@ -461,6 +488,9 @@ test("a new worktree joins the project of its open main checkout", async (t) => 
 	assert.equal(typeof idempotencyKey, "string");
 	assert.deepEqual(request, { source: { kind: "directory", path: worktree, projectId: "prj_main" } });
 	assert.deepEqual(seen.opened, [], "a grouped create must not open a second project by directory");
+	assert.equal(seen.receipts[0].provenance, "created");
+	assert.equal(seen.receipts[0].directory, worktree);
+	assert.equal(seen.receipts[0].projectId, "prj_main");
 });
 
 test("concurrent first worktree launches use the same daemon idempotency key", async (t) => {
@@ -502,11 +532,13 @@ test("a worktree Paseo already has a workspace for reuses it", async (t) => {
 	const seen = await placement(t, worktree, { [main]: "prj_main", [worktree]: "prj_main" });
 	assert.deepEqual(seen.opened, [worktree]);
 	assert.deepEqual(seen.created, [], "create never reuses a workspace, so a second one would appear");
+	assert.equal(seen.receipts[0].provenance, "reused");
 });
 
 test("a worktree whose main checkout Paseo has not opened is opened by its folder", async (t) => {
 	const { worktree } = repositoryWithWorktree();
 	const seen = await placement(t, worktree, {});
+	assert.equal(seen.receipts[0].provenance, "opened");
 	assert.deepEqual(seen.opened, [worktree]);
 	assert.deepEqual(seen.created, []);
 });
@@ -514,11 +546,80 @@ test("a worktree whose main checkout Paseo has not opened is opened by its folde
 test("a main checkout and a folder outside Git are opened by their folder", async (t) => {
 	const { main } = repositoryWithWorktree();
 	const outside = realpathSync(emptyHome());
-	assert.deepEqual((await placement(t, main, { [main]: "prj_main" })).opened, [main]);
+	const existing = await placement(t, main, { [main]: "prj_main" });
+	assert.deepEqual(existing.opened, [main]);
+	assert.equal(existing.receipts[0].provenance, "reused");
 	t.mock.restoreAll();
 	const seen = await placement(t, outside, { [main]: "prj_main" });
 	assert.deepEqual(seen.opened, [outside]);
+	assert.equal(seen.receipts[0].provenance, "opened");
 	assert.deepEqual(seen.created, []);
+});
+
+test("hidden workspaces do not change placement's create choice or main-checkout anchor", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const visible = [{ id: "wks_z_visible", workspaceDirectory: main, projectId: "prj_main" }];
+	const hidden = [
+		{ id: "wks_a_background", workspaceDirectory: main, projectId: "prj_background" },
+		{ id: "wks_b_internal", workspaceDirectory: worktree, projectId: "prj_background" },
+	];
+	const baseline = await placement(t, worktree, visible);
+	t.mock.restoreAll();
+	const seen = await placement(t, worktree, visible, 1, false, { hidden });
+	assert.deepEqual(seen.created, baseline.created, "same create request and anchor key as the original placement");
+	assert.deepEqual(seen.opened, []);
+	assert.equal(seen.receipts[0].provenance, "created");
+	assert.deepEqual(
+		seen.listings.map((request) => request?.filter),
+		[undefined, { includeInternal: true, includeBackground: true }, undefined],
+	);
+});
+
+test("a background-only main checkout does not become a placement anchor", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const seen = await placement(t, worktree, {}, 1, false, {
+		hidden: [{ id: "background", workspaceDirectory: main, projectId: "prj_background" }],
+	});
+	assert.deepEqual(seen.opened, [worktree]);
+	assert.deepEqual(seen.created, []);
+	assert.equal(seen.receipts[0].provenance, "opened");
+});
+
+test("a hidden pre-existing create result is reused, never claimed as Squire-created", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const seen = await placement(t, worktree, { [main]: "prj_main" }, 1, false, {
+		hidden: [{ id: "wks_0000000000000000", workspaceDirectory: worktree, projectId: "prj_main" }],
+	});
+	assert.equal(seen.created.length, 1, "hidden entries do not alter placement");
+	assert.equal(seen.receipts[0].provenance, "reused");
+});
+
+test("failed provenance listings do not fail open or create and never infer created", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const baseline = await placement(t, worktree, { [main]: "prj_main" });
+	t.mock.restoreAll();
+	const created = await placement(t, worktree, { [main]: "prj_main" }, 1, false, { failSnapshot: true });
+	assert.deepEqual(created.created, baseline.created);
+	assert.equal(created.receipts[0].provenance, "reused");
+	t.mock.restoreAll();
+	const opened = await placement(t, main, { [main]: "prj_main" }, 1, false, { failSnapshot: true });
+	assert.deepEqual(opened.opened, [main]);
+	assert.equal(opened.receipts[0].provenance, "opened");
+	t.mock.restoreAll();
+	const outside = realpathSync(emptyHome());
+	const nonGit = await placement(t, outside, {}, 1, false, { failSnapshot: true });
+	assert.deepEqual(nonGit.opened, [outside]);
+	assert.equal(nonGit.receipts[0].provenance, "opened");
+});
+
+test("opening a workspace does not require a post-open listing", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const seen = await placement(t, worktree, { [main]: "prj_main", [worktree]: "prj_main" }, 1, false, {
+		failAfterOpen: true,
+	});
+	assert.deepEqual(seen.opened, [worktree]);
+	assert.equal(seen.receipts[0].provenance, "reused");
+	assert.equal(seen.listings.length, 2, "only the placement list and best-effort pre-open provenance list");
 });
 
 test("a startup command and native parent label are sent without a caller envelope or implicit placement", async (t) => {
@@ -545,16 +646,30 @@ test("a startup command and native parent label are sent without a caller envelo
 
 test("create returns the host-assigned session while the startup turn is still pending", async (t) => {
 	const cwd = emptyHome();
+	const home = daemonHome();
+	let opened = false;
+	t.mock.method(
+		DaemonClient.prototype,
+		"fetchWorkspaces",
+		async () =>
+			({
+				entries: opened ? [{ id: "workspace", workspaceDirectory: cwd, projectId: "project" }] : [],
+				pageInfo: { hasMore: false },
+			}) as unknown as WorkspaceList,
+	);
 	let closes = 0;
 	let request: Record<string, unknown> | undefined;
 	t.mock.method(DaemonClient.prototype, "connect", async () => {});
 	t.mock.method(DaemonClient.prototype, "close", async () => {
 		closes++;
 	});
-	t.mock.method(DaemonClient.prototype, "openProject", async () => ({
-		workspace: { id: "workspace", workspaceDirectory: cwd },
-		error: null,
-	}));
+	t.mock.method(DaemonClient.prototype, "openProject", async () => {
+		opened = true;
+		return {
+			workspace: { id: "workspace", workspaceDirectory: cwd, projectId: "project" },
+			error: null,
+		};
+	});
 	t.mock.method(DaemonClient.prototype, "createAgent", async (options: Record<string, unknown>) => {
 		request = options;
 		return { id: "agent" } as unknown as Awaited<ReturnType<DaemonClient["createAgent"]>>;
@@ -573,7 +688,7 @@ test("create returns the host-assigned session while the startup turn is still p
 			}) as unknown as Awaited<ReturnType<DaemonClient["fetchAgent"]>>,
 	);
 	assert.deepEqual(
-		await createPaseoApi(daemonHome()).create({
+		await createPaseoApi(relative(process.cwd(), home)).create({
 			agentId: "agent",
 			parentAgentId: ARCHIVE_AGENT,
 			title: "worker",
@@ -583,11 +698,114 @@ test("create returns the host-assigned session while the startup turn is still p
 			systemPrompt: "instructions",
 			env: {},
 		}),
-		{ sessionId: "host-assigned-session" },
+		{
+			sessionId: "host-assigned-session",
+			paseo: { home, workspaceId: "workspace", directory: cwd, projectId: "project", provenance: "opened" },
+		},
 	);
 	assert.equal(request?.initialPrompt, "/delegate-turn");
 	assert.equal(request?.callerAgentId, undefined, "the command must reach Pi without a parent-message envelope");
 	assert.equal(closes, 1);
+});
+
+test("cleanup workspace queries page through the directory and compare canonical paths", async (t) => {
+	const dir = emptyHome();
+	const requests: unknown[] = [];
+	t.mock.method(DaemonClient.prototype, "connect", async () => {});
+	t.mock.method(DaemonClient.prototype, "close", async () => {});
+	t.mock.method(DaemonClient.prototype, "fetchWorkspaces", async (options: { page?: { cursor?: string } }) => {
+		requests.push(options);
+		return {
+			entries: options.page?.cursor
+				? [{ id: "target", workspaceDirectory: dir, projectId: "project" }]
+				: [{ id: "other", workspaceDirectory: "/elsewhere" }],
+			pageInfo: { hasMore: !options.page?.cursor, nextCursor: options.page?.cursor ? null : "next" },
+		} as unknown as WorkspaceList;
+	});
+	const api = createPaseoApi(daemonHome());
+	assert.equal((await api.workspace("target"))?.id, "target");
+	assert.deepEqual(
+		(await api.workspaceAt(join(dir, "."))).map((entry) => entry.id),
+		["target"],
+	);
+	assert.equal(await api.workspace("absent"), null);
+	assert.equal(requests.length, 6);
+	assert.ok(
+		requests.every(
+			(request) =>
+				JSON.stringify((request as { filter: unknown }).filter) ===
+				JSON.stringify({ includeInternal: true, includeBackground: true }),
+		),
+		"workspace proof must not mistake hidden workspaces for absence",
+	);
+});
+
+test("cleanup agent query includes internal/background agents across all pages and matches workspace or nested cwd", async (t) => {
+	const dir = emptyHome();
+	const requests: (FetchAgentsOptions | undefined)[] = [];
+	t.mock.method(DaemonClient.prototype, "connect", async () => {});
+	t.mock.method(DaemonClient.prototype, "close", async () => {});
+	t.mock.method(DaemonClient.prototype, "fetchAgents", async (options?: FetchAgentsOptions) => {
+		requests.push(options);
+		return {
+			entries: (options?.page?.cursor
+				? [
+						{
+							id: "internal-background",
+							workspaceId: "other",
+							cwd: join(dir, "inside"),
+							internal: true,
+							background: true,
+						},
+						{ id: "sibling", workspaceId: "other", cwd: `${dir}-sibling` },
+					]
+				: [{ id: "by-id", workspaceId: "workspace", cwd: "/outside" }]
+			).map((agent) => ({ agent })),
+			pageInfo: { hasMore: !options?.page?.cursor, nextCursor: options?.page?.cursor ? null : "next" },
+		} as unknown as AgentList;
+	});
+	assert.deepEqual(await createPaseoApi(daemonHome()).agentsUsing("workspace", dir), ["by-id", "internal-background"]);
+	assert.deepEqual(
+		requests.map((request) => request?.filter),
+		[
+			{ includeInternal: true, includeBackground: true, includeArchived: false },
+			{ includeInternal: true, includeBackground: true, includeArchived: false },
+		],
+	);
+});
+
+test("cleanup terminal query is unscoped and matches workspace or nested cwd", async (t) => {
+	const dir = emptyHome();
+	t.mock.method(DaemonClient.prototype, "connect", async () => {});
+	t.mock.method(DaemonClient.prototype, "close", async () => {});
+	t.mock.method(DaemonClient.prototype, "getLastServerInfoMessage", () => ({ features: { workspaceTerminals: true } }));
+	t.mock.method(DaemonClient.prototype, "listTerminals", async (cwd: unknown, _request: unknown, options: unknown) => {
+		assert.equal(cwd, undefined);
+		assert.deepEqual(options, { workspaceId: undefined });
+		return {
+			requestId: "r",
+			terminals: [
+				{ id: "by-id", workspaceId: "workspace", cwd: "/outside", name: "a" },
+				{ id: "by-cwd", workspaceId: "other", cwd: join(dir, "inside"), name: "b" },
+				{ id: "sibling", workspaceId: "other", cwd: `${dir}-sibling`, name: "c" },
+			],
+		};
+	});
+	assert.deepEqual(await createPaseoApi(daemonHome()).terminalsUsing("workspace", dir), ["by-id", "by-cwd"]);
+});
+
+test("cleanup workspace archive checks the daemon error instead of treating archivedAt as proof", async (t) => {
+	t.mock.method(DaemonClient.prototype, "connect", async () => {});
+	t.mock.method(DaemonClient.prototype, "close", async () => {});
+	let error: string | null = "refused";
+	t.mock.method(DaemonClient.prototype, "archiveWorkspace", async (id: string) => {
+		assert.equal(id, "workspace");
+		return { requestId: "r", workspaceId: id, archivedAt: "now", error };
+	});
+	const api = createPaseoApi(daemonHome());
+	await assert.rejects(api.archiveWorkspace("workspace"), /refused/);
+	error = null;
+	await api.archiveWorkspace("workspace");
 });
 
 test("activity and remove ask the CLI for the same home the daemon was read from", async (t) => {

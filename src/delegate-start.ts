@@ -85,7 +85,7 @@ type StartDeps = {
 	admit(agent: string, ctx: ExtensionContext): void;
 	startPolling(): void;
 };
-type Started = { opened: OpenedWindow; requestId: string; forkSourcePath?: string };
+type Started = { opened: OpenedWindow; requestId: string; workspace: Workspace; forkSourcePath?: string };
 
 function writePromptFile(prompt: string): string {
 	const path = join(mkdtempSync(join(tmpdir(), "pi-squire-")), "prompt.md");
@@ -321,11 +321,23 @@ export class DelegateStarter {
 		const opened = await this.openSession(input, token, ctx, payload);
 		if (client.configureStart) await this.configure(input, opened);
 		const requestId = mailed ?? (await this.mailAfterOpen(input, opened, token, ctx));
+		if (input.workspace.mode === "managed" && opened.paseo) {
+			const previous = input.workspace.paseo;
+			const paseo =
+				previous?.provenance === "created" &&
+				previous.home === opened.paseo.home &&
+				previous.workspaceId === opened.paseo.workspaceId
+					? previous
+					: opened.paseo;
+			// Resume shares the original record workspace: retain its creation proof without mutating it.
+			input.workspace = { ...input.workspace, paseo };
+		}
 		this.deps.results.recordStart(startRecord(input, opened, requestId), ctx);
 		this.deps.startPolling();
 		return {
 			opened,
 			requestId,
+			workspace: input.workspace,
 			...(input.session.kind === "fork" ? { forkSourcePath: input.session.path } : {}),
 		};
 	}

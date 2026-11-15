@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readChildRecords } from "../src/child-tasks.ts";
+import type { PaseoWorkspace } from "@getpaseo/client";
+import { ChildTasks, readChildRecords } from "../src/child-tasks.ts";
 import { type CleanupDeps, type CleanupResult, cleanupText, cleanup as runCleanup } from "../src/cleanup.ts";
 import { type Identity, writeIdentity } from "../src/identity.ts";
+import { createPaseoHost } from "../src/paseo.ts";
+import { createPaseoApi } from "../src/paseo-api.ts";
+import { restoreRecords } from "../src/result-restore.ts";
 import type { Recorded, StartedRecorded, WorkspaceAttempt } from "../src/result-types.ts";
 import { windowLocator } from "../src/tmux.ts";
 import { readTree, type TreeEntry, treePath, treeTransaction } from "../src/tree-registry.ts";
+import type { PaseoReceipt } from "../src/worktree.ts";
 import { fixture, git } from "./cleanup-fixture.ts";
 import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { FakePaseo } from "./paseo-fixture.ts";
 
 type Session = ReturnType<typeof session>;
 const sessions: Session[] = [];
@@ -238,7 +245,7 @@ test("all group cap reports omittedIds; explicit ids reaches omitted groups with
 	const retry: CleanupResult = await invoke(s, { ids: result.selection?.omittedIds });
 	assert.ok(retry.items.every((item) => item.outcome === "removed"));
 });
-test("running windows and Paseo locators keep without Git mutations", async () => {
+test("running windows and unrecorded Paseo workspaces keep without Git mutations", async () => {
 	const s = instance();
 	await s.start();
 	const f = fixture();
@@ -258,9 +265,338 @@ test("running windows and Paseo locators keep without Git mutations", async () =
 		},
 	};
 	save(s.parent, [paseo]);
-	assert.equal((await invoke(s)).items[0].reason, "Paseo workspace not recorded");
+	const api = new FakePaseo();
+	api.workspaces.set("foreign", { id: "foreign", workspaceDirectory: f.cwd } as PaseoWorkspace);
+	const result = await runCleanup({ all: true }, deps(s, { paseoApi: () => api }), context(s));
+	assert.equal(result.items[0].reason, "Paseo workspace not created by Squire; kept");
 	assert.equal(existsSync(f.cwd), true);
 });
+
+function paseoFixture(s: Session, provenance: PaseoReceipt["provenance"] = "created") {
+	const f = fixture();
+	const receipt: PaseoReceipt = {
+		home: "/fake-paseo",
+		workspaceId: "workspace",
+		directory: f.cwd,
+		projectId: "project",
+		provenance,
+	};
+	const record = started(f, s.parent);
+	record.workspace = { ...f.workspace, paseo: receipt };
+	const api = new FakePaseo();
+	api.workspaces.set("workspace", {
+		id: "workspace",
+		workspaceDirectory: f.cwd,
+		projectId: "project",
+		archivingAt: null,
+		scripts: [],
+	} as unknown as PaseoWorkspace);
+	publish(s.parent, [record]);
+	const run = () =>
+		runCleanup(
+			{ all: true },
+			deps(s, {
+				paseoApi: (home) => {
+					assert.equal(home, receipt.home);
+					return api;
+				},
+			}),
+			context(s),
+		);
+	return { f, api, record, receipt, run };
+}
+test("created Paseo receipt archives before Git re-check; late untracked changes keep Git as partial", async () => {
+	const s = instance();
+	await s.start();
+	const { f, api, run } = paseoFixture(s);
+	const check = unchangedWorktree(f);
+	api.afterArchive = () => {
+		check();
+		writeFileSync(join(f.cwd, "late"), "untracked");
+	};
+	const result = await run();
+	assert.equal(result.items[0].outcome, "partial");
+	assert.match(result.items[0].reason, /uncommitted or untracked/);
+	assert.equal(api.workspaces.size, 0);
+	assert.deepEqual(api.calls.slice(-4), ["archiveWorkspace", "workspace", "agentsUsing", "terminalsUsing"]);
+	check();
+});
+test("created Paseo workspace removed once, absent before archive also proceeds, retry already-clean", async () => {
+	const s = instance();
+	await s.start();
+	const { f, api, run } = paseoFixture(s);
+	const result = await run();
+	assert.equal(result.items[0].outcome, "removed");
+	assert.equal(result.items[0].reason, "merged, unused and clean; Paseo workspace archived");
+	assert.match(cleanupText(result), /Paseo workspace archived/);
+	assert.equal(existsSync(f.cwd), false);
+	assert.equal(api.calls.filter((call) => call === "archiveWorkspace").length, 1);
+	assert.equal((await run()).items[0].outcome, "already-clean");
+	assert.equal(api.calls.filter((call) => call === "archiveWorkspace").length, 1);
+});
+test("already absent Paseo workspace permits removing a still-present worktree without archive", async () => {
+	const s = instance();
+	await s.start();
+	const { f, api, run } = paseoFixture(s);
+	api.workspaces.clear();
+	const result = await run();
+	assert.equal(result.items[0].outcome, "removed", result.items[0].reason);
+	assert.equal(existsSync(f.cwd), false);
+	assert.equal(api.calls.includes("archiveWorkspace"), false);
+});
+test("opened and reused receipts keep; a created alias authorizes that exact workspace", async (t) => {
+	for (const provenance of ["opened", "reused"] as const)
+		await t.test(provenance, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const { f, api, record, run } = paseoFixture(s, provenance);
+			const check = unchangedWorktree(f);
+			assert.equal((await run()).items[0].reason, "Paseo workspace not created by Squire; kept");
+			assert.equal(api.calls.includes("archiveWorkspace"), false);
+			check();
+			assert.ok(record.workspace?.mode === "managed");
+			const alias = {
+				...record,
+				id: "alias",
+				workspace: { ...record.workspace, paseo: { ...record.workspace.paseo!, provenance: "created" as const } },
+			};
+			save(s.parent, [record, alias]);
+			const result = await run();
+			assert.ok(result.items.every((item) => item.outcome === "removed"));
+			assert.equal(api.calls.filter((call) => call === "archiveWorkspace").length, 1);
+		});
+});
+test("unreadable Paseo receipts keep Git without choosing a daemon or archiving", async (t) => {
+	const malformed: Record<string, unknown> = {
+		"null receipt": null,
+		"false receipt": false,
+		"string receipt": "created",
+		"missing home": { home: undefined },
+		"relative home": { home: "relative/paseo" },
+		"non-string home": { home: 3 },
+		"missing workspaceId": { workspaceId: undefined },
+		"non-string workspaceId": { workspaceId: 3 },
+		"empty workspaceId": { workspaceId: "" },
+		"missing directory": { directory: undefined },
+		"non-string directory": { directory: 3 },
+		"missing projectId": { projectId: undefined },
+		"non-string projectId": { projectId: 3 },
+		"missing provenance": { provenance: undefined },
+		"unknown provenance": { provenance: "foreign" },
+	};
+	for (const [name, fields] of Object.entries(malformed))
+		await t.test(name, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const { f, api, record, receipt } = paseoFixture(s);
+			assert.ok(record.workspace?.mode === "managed");
+			record.workspace.paseo = (
+				fields && typeof fields === "object" ? { ...receipt, ...fields } : fields
+			) as PaseoReceipt;
+			save(s.parent, [record]);
+			const check = unchangedWorktree(f);
+			const result = await runCleanup(
+				{ all: true },
+				deps(s, {
+					paseoApi: () => {
+						throw new Error("invalid receipt reached daemon selection");
+					},
+				}),
+				context(s),
+			);
+			assert.equal(result.items[0].outcome, "kept");
+			assert.equal(result.items[0].reason, "Paseo workspace receipt unreadable");
+			assert.deepEqual(api.calls, []);
+			check();
+		});
+});
+
+test("each Paseo workspace or user blocker keeps unchanged Git and never archives", async (t) => {
+	const cases = [
+		"agent id",
+		"agent cwd",
+		"terminal id",
+		"terminal cwd",
+		"setup",
+		"script",
+		"owned",
+		"archiving",
+		"internal",
+		"directory",
+		"project",
+		"foreign workspace",
+	];
+	for (const kind of cases)
+		await t.test(kind, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const { f, api, run } = paseoFixture(s);
+			const workspace = api.workspaces.get("workspace")!;
+			const reasons: Record<string, RegExp> = {
+				"agent id": /live Paseo agent/,
+				"agent cwd": /live Paseo agent/,
+				"terminal id": /live Paseo terminal/,
+				"terminal cwd": /live Paseo terminal/,
+				setup: /setup running/,
+				script: /script running/,
+				owned: /Paseo-owned/,
+				archiving: /already archiving/,
+				internal: /internal Paseo/,
+				directory: /identity changed/,
+				project: /identity changed/,
+				"foreign workspace": /not created by Squire/,
+			};
+			if (kind.startsWith("agent"))
+				api.agents.push({
+					id: "user",
+					workspaceId: kind.endsWith("id") ? "workspace" : "other",
+					cwd: kind.endsWith("cwd") ? join(f.cwd, "inside") : "/outside",
+				});
+			if (kind.startsWith("terminal"))
+				api.terminals.push({
+					id: "user",
+					workspaceId: kind.endsWith("id") ? "workspace" : "other",
+					cwd: kind.endsWith("cwd") ? join(f.cwd, "inside") : "/outside",
+				});
+			if (kind === "setup") workspace.setupStatus = "running";
+			if (kind === "script") workspace.scripts = [{ lifecycle: "running" }] as PaseoWorkspace["scripts"];
+			if (kind === "owned") workspace.gitRuntime = { isPaseoOwnedWorktree: true };
+			if (kind === "archiving") workspace.archivingAt = "now";
+			if (kind === "internal") workspace.internal = true;
+			if (kind === "directory") workspace.workspaceDirectory = "/replaced";
+			if (kind === "project") workspace.projectId = "replaced";
+			if (kind === "foreign workspace") api.workspaces.set("foreign", { ...workspace, id: "foreign" });
+			const check = unchangedWorktree(f);
+			const result = await run();
+			assert.equal(result.items[0].outcome, "kept", result.items[0].reason);
+			assert.match(result.items[0].reason, reasons[kind]);
+			assert.equal(api.calls.includes("archiveWorkspace"), false);
+			check();
+		});
+});
+test("workspace or agent/terminal survivor after archive is partial with no Git step", async (t) => {
+	for (const kind of ["workspace", "agent", "terminal", "error"])
+		await t.test(kind, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const { f, api, run } = paseoFixture(s);
+			const check = unchangedWorktree(f);
+			if (kind === "workspace") api.survivor = true;
+			api.afterArchive = () => {
+				if (kind === "agent") api.agents.push({ id: "late", workspaceId: "workspace", cwd: "/outside" });
+				if (kind === "terminal") api.terminals.push({ id: "late", workspaceId: "workspace", cwd: "/outside" });
+				if (kind === "error") throw new Error("archive reply lost");
+			};
+			const result = await run();
+			assert.equal(result.items[0].outcome, "partial");
+			assert.match(result.items[0].reason, /Git cleanup skipped/);
+			assert.equal(api.calls.includes("archiveWorkspace"), true);
+			check();
+		});
+});
+test("Git preview blocks dirty or unmerged work before any Paseo archive", async (t) => {
+	for (const kind of ["dirty", "unmerged"])
+		await t.test(kind, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const { f, api, run } = paseoFixture(s);
+			writeFileSync(join(f.cwd, "work"), kind);
+			if (kind === "unmerged") {
+				git(f.cwd, "add", "work");
+				git(f.cwd, "commit", "-m", "unmerged");
+			}
+			const check = unchangedWorktree(f);
+			const result = await run();
+			assert.equal(result.items[0].outcome, "kept");
+			assert.match(result.items[0].reason, kind === "dirty" ? /uncommitted or untracked/ : /merge not proved/);
+			assert.deepEqual(api.calls, []);
+			check();
+		});
+});
+test("receipt with daemon down keeps; legacy absent receipt with no workspace or daemon proceeds", async (t) => {
+	for (const mode of ["receipt down", "legacy up", "legacy down"])
+		await t.test(mode, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const { f, api, record } = paseoFixture(s);
+			api.down = mode.endsWith("down");
+			if (mode.startsWith("legacy")) {
+				record.workspace = f.workspace;
+				save(s.parent, [record]);
+				api.workspaces.clear();
+			}
+			const result = await runCleanup({ all: true }, deps(s, { paseoApi: () => api }), context(s));
+			assert.equal(result.items[0].outcome, mode === "receipt down" ? "kept" : "removed");
+			if (mode === "receipt down") assert.match(result.items[0].reason, /unavailable/);
+			assert.equal(api.calls.includes("archiveWorkspace"), false);
+			if (mode === "legacy down") assert.deepEqual(api.calls, ["unavailable"]);
+		});
+});
+test("tmux cleanup with daemon down never imports the Paseo SDK", async () => {
+	const s = instance();
+	await s.start();
+	const f = fixture();
+	publish(s.parent, [started(f, s.parent)]);
+	const hooks = registerHooks({
+		resolve(specifier, context, next) {
+			if (specifier.startsWith("@getpaseo/client")) throw new Error("SDK loaded by tmux cleanup");
+			return next(specifier, context);
+		},
+	});
+	try {
+		const result = await runCleanup(
+			{ all: true },
+			deps(s, { paseoApi: () => createPaseoApi(join(root, "no-daemon")) }),
+			context(s),
+		);
+		assert.equal(result.items[0].outcome, "removed", result.items[0].reason);
+	} finally {
+		hooks.deregister();
+	}
+});
+test("Paseo launch receipt survives durable and transcript restoration; legacy absence accepted", async () => {
+	const f = fixture();
+	const api = new FakePaseo();
+	const host = createPaseoHost(api, { PASEO_AGENT_ID: "11111111-1111-4111-8111-111111111111" });
+	const s = session({ cwd: f.source, multiplexer: host });
+	sessions.push(s);
+	await s.start();
+	const result = await s.toolCall("delegate", { agent: "scout", task: "work", worktree: "receipt" });
+	const id = (result.structuredContent as { id: string }).id;
+	const record = readChildRecords(s.parent).find((item) => item.id === id);
+	assert.ok(record && !("kind" in record) && record.workspace?.mode === "managed");
+	assert.deepEqual(record.workspace.paseo, {
+		home: "/fake-paseo",
+		workspaceId: "workspace",
+		directory: record.cwd,
+		projectId: "project",
+		provenance: "created",
+	});
+	const receipt = record.workspace.paseo;
+	assert.deepEqual((result.structuredContent as { workspace: { paseo?: PaseoReceipt } }).workspace.paseo, receipt);
+	await s.shutdown();
+	const restored = session({
+		parent: s.parent,
+		cwd: f.source,
+		multiplexer: host,
+		entries: [{ customType: "delegate", data: record }],
+	});
+	sessions.push(restored);
+	await restored.start();
+	const restoredRecord = restoreRecords(context(restored), new ChildTasks()).find((item) => item.id === id);
+	assert.ok(restoredRecord && !("kind" in restoredRecord));
+	assert.deepEqual(restoredRecord.workspace, record.workspace);
+	const status = await restored.toolCall("delegation_status", { id });
+	assert.match(status.content[0].text, /scout/);
+	assert.deepEqual(record.workspace.paseo, receipt);
+});
+
 function owner(id: string, cwd: string): void {
 	const dir: string = join(agentDir, "squire", "owners");
 	mkdirSync(dir, { recursive: true });

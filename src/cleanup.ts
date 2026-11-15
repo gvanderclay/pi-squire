@@ -10,7 +10,9 @@ import {
 	type CleanupResource,
 	cleanGit,
 	cleanupRemains,
+	previewCleanupGit,
 } from "./cleanup-git.ts";
+import { type CleanupPaseoDeps, cleanupPaseo } from "./cleanup-paseo.ts";
 import { readIdentity } from "./identity.ts";
 import { paseoLocator } from "./paseo-locator.ts";
 import { findSession, sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
@@ -40,12 +42,13 @@ export type CleanupResult = {
 type Candidate = { resource: CleanupResource; records: Recorded[]; ids: string[]; order: number };
 type Discovery = { groups: Candidate[]; records: Map<string, Recorded> };
 type Request = { ids?: string[]; all?: boolean };
-export type CleanupDeps = CleanupGitDeps & {
-	host: DelegateHost;
-	assertActive: () => void;
-	maxGroups?: number;
-	maxMs?: number;
-};
+export type CleanupDeps = CleanupGitDeps &
+	CleanupPaseoDeps & {
+		host: DelegateHost;
+		assertActive: () => void;
+		maxGroups?: number;
+		maxMs?: number;
+	};
 
 function resource(record: Recorded): CleanupResource | undefined {
 	if (isStarted(record)) {
@@ -186,7 +189,7 @@ export function cleanupLiveCheck(group: Candidate, actor: string, ctx: Extension
 function preflight(group: Candidate, windows: WindowStates): string | undefined {
 	for (const record of group.records) {
 		if (!isStarted(record)) continue;
-		if (paseoLocator(recordLocator(record))) return "Paseo workspace not recorded";
+		if (paseoLocator(recordLocator(record))) continue;
 		const state: string = windows.state(record);
 		if (state === "running") return "running delegation window; close it with delegation_close first";
 		if (state !== "gone") return "window state unknown; no live user not proved";
@@ -229,6 +232,19 @@ function select(found: Discovery, request: Request, state: TreeState, actor: str
 	}
 	return { groups: found.groups.filter((group) => group.ids.some((id) => ids.includes(id))), ids };
 }
+async function finishGroup(current: Candidate, deps: CleanupDeps, liveCheck: () => void): Promise<CleanupOutcome> {
+	const preview: CleanupOutcome | undefined = previewCleanupGit(current.resource, liveCheck, deps);
+	if (preview && preview.outcome !== "already-clean") return preview;
+	const paseo = await cleanupPaseo(current.resource, current.records, deps);
+	if (paseo.outcome) return paseo.outcome;
+	const result: CleanupOutcome = cleanGit(current.resource, liveCheck, deps);
+	if (paseo.archived && result.outcome === "kept") result.outcome = "partial";
+	if (paseo.archived && result.outcome === "already-clean") {
+		result.outcome = "removed";
+		result.reason = "Paseo workspace archived; worktree and branch already absent";
+	} else if (paseo.archived) result.reason += "; Paseo workspace archived";
+	return result;
+}
 async function processGroup(
 	group: Candidate,
 	deps: CleanupDeps,
@@ -258,7 +274,7 @@ async function processGroup(
 			const gone: Map<string, StartedRecorded> = new Map();
 			for (const record of found.records.values())
 				if (isStarted(record) && windows.state(record) === "gone") gone.set(record.id, record);
-			return cleanGit(current.resource, () => cleanupLiveCheck(current, actor, ctx, gone), deps);
+			return finishGroup(current, deps, () => cleanupLiveCheck(current, actor, ctx, gone));
 		} catch (error) {
 			return kept("", (error as Error).message, group);
 		}
@@ -367,7 +383,7 @@ export function cleanupTool(deps: CleanupDeps): ToolDef & { exposure: "deferred"
 		label: "Clean up delegations",
 		exposure: "deferred",
 		description:
-			"Remove finished delegations' Squire-created worktrees and local branches when they are merged, unused and have no uncommitted or untracked changes; ignored files in them (node_modules, a hand-made .env) are deleted too. Anything unproved is kept with a reason. Close running delegations with delegation_close first.",
+			"Remove finished delegations' Squire-created worktrees and local branches when they are merged, unused and have no uncommitted or untracked changes; ignored files in them (node_modules, a hand-made .env) are deleted too. Archives Paseo workspaces Squire created for them. Anything unproved is kept with a reason. Close running delegations with delegation_close first.",
 		promptGuidelines: [
 			"Call delegation_cleanup after a delegate's work is merged, not while you still need its worktree.",
 		],

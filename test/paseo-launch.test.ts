@@ -222,6 +222,13 @@ test("openWindow creates the agent from the fields the launch asks for", async (
 		id: AGENT,
 		session: undefined,
 		sessionId: `paseo-session-${AGENT}`,
+		paseo: {
+			home: "/fake-paseo",
+			workspaceId: "workspace",
+			directory: process.cwd(),
+			projectId: "project",
+			provenance: "created",
+		},
 		locator: { adapter: "paseo", version: 1, kind: "window", agent: AGENT, name: "worker" },
 	});
 	assert.ok(paseoLocator(opened.locator));

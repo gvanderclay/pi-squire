@@ -269,21 +269,53 @@ function removalFailure(
 		directoryGone ? summary : undefined,
 	);
 }
+/** Shared nonmutating proof; the final runner repeats it after asynchronous host operations. */
+function proof(
+	resource: CleanupResource,
+	liveCheck: () => void,
+	deps: CleanupGitDeps,
+): {
+	before: Identity;
+	summary?: PathSummary;
+} {
+	const before: Identity = cleanupIdentity(resource);
+	if (!before.exists && before.tip === null) return { before };
+	liveCheck();
+	let summary: PathSummary | undefined;
+	if (before.exists) {
+		cleanupClean(resource.destination);
+		summary = ignored(resource, deps.walk);
+	}
+	if (before.tip === null) throw new Error("branch tip not proved");
+	proveMerged(resource, before.tip, deps.gh);
+	return { before, summary };
+}
+/** A kept/already-clean result, or undefined when Git permits cleanup. Never mutates. */
+export function previewCleanupGit(
+	resource: CleanupResource,
+	liveCheck: () => void,
+	deps: CleanupGitDeps = {},
+): CleanupOutcome | undefined {
+	try {
+		const { before } = proof(resource, liveCheck, deps);
+		if (!before.exists && before.tip === null)
+			return { outcome: "already-clean", reason: "worktree and branch already absent", remains: [] };
+		return undefined;
+	} catch (error) {
+		return outcome(resource, false, (error as Error).message);
+	}
+}
 /** No awaits from final identity/live/clean proof through removal and compare-and-swap deletion. */
 export function cleanGit(resource: CleanupResource, liveCheck: () => void, deps: CleanupGitDeps = {}): CleanupOutcome {
 	let changed = false;
 	let summary: PathSummary | undefined;
 	try {
-		const before: Identity = cleanupIdentity(resource);
+		const checked = proof(resource, liveCheck, deps);
+		const before: Identity = checked.before;
+		summary = checked.summary;
 		if (!before.exists && before.tip === null)
 			return { outcome: "already-clean", reason: "worktree and branch already absent", remains: [] };
-		liveCheck();
-		if (before.exists) {
-			cleanupClean(resource.destination);
-			summary = ignored(resource, deps.walk);
-		}
 		if (before.tip === null) throw new Error("branch tip not proved");
-		proveMerged(resource, before.tip, deps.gh);
 		deps.beforeRemove?.();
 		const final: Identity = cleanupIdentity(resource);
 		if (final.tip !== before.tip || final.exists !== before.exists)

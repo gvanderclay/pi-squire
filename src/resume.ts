@@ -222,7 +222,7 @@ async function startResume(
 	const id = input.reservation.id;
 	const sessionId = sessionIdOf(record);
 	const name = recordedName(record);
-	const { opened } = await deps.starter.start(
+	const { opened, workspace: startedWorkspace } = await deps.starter.start(
 		{
 			id,
 			name,
@@ -240,7 +240,14 @@ async function startResume(
 		},
 		ctx,
 	);
-	const resumed = resumedResult({ id, resumedFrom: record.id, name, plan, sessionDir: session.dir, opened });
+	const resumed = resumedResult({
+		id,
+		resumedFrom: record.id,
+		name,
+		plan: { ...plan, workspace: startedWorkspace },
+		sessionDir: session.dir,
+		opened,
+	});
 	resumed.notices.push(
 		...contextNotice(session.path, sessionModel(record, session.path), resumed.model, ctx.modelRegistry),
 	);

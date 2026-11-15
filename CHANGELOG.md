@@ -8,10 +8,23 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `delegation_cleanup` now archives Squire-created Paseo workspaces before
+  rechecking and removing their managed Git worktrees. Launch records retain a
+  placement receipt; opened/reused or path-found workspaces remain kept.
+  This deliberately replaces T1's blanket "Paseo workspace not recorded"
+  refusal: legacy records proceed only if no workspace is found, or the daemon
+  is unavailable (a documented residual). Receipts require an available daemon;
+  live agents/terminals and workspace setup/scripts block archive. Paseo schedules
+  are not checked. Tests intentionally update the create-result receipt contract
+  (`test/paseo-api.test.ts`), OpenedWindow receipt (`test/paseo-launch.test.ts`),
+  and legacy-Paseo cleanup expectations (`test/cleanup.test.ts`); total and
+  coordinator metadata caps (`test/context-budget.test.ts`) grow by 51 measured
+  characters, with parent declarations unchanged.
+
 - Deferred `delegation_cleanup` removes descendants' Squire-created managed
   worktrees and local branches only with identity, no-live-user, clean-state
   and local ancestry or exact GitHub squash-merge proof. Ignored files inside
-  them are deleted too; uncertain resources and Paseo delegations are kept.
+  them are deleted too; uncertain resources are kept.
   Pending launch/fork/resume reservations now record cwd; status shows
   `workspace removed` and disables resume when the recorded directory is gone.
   Tests deliberately extend the delegation-tool inventories and deferred
@@ -22,6 +35,12 @@ follows [Semantic Versioning](https://semver.org/).
   `cwd` to reservation time; versions, child-task and start-v2 records are unchanged.
 
 ### Fixed
+
+- Managed resumes no longer mutate the source workspace or lose its matching
+  Squire-created Paseo receipt. Cleanup keeps unreadable receipts without choosing
+  a daemon and reports successful workspace archives explicitly. Placement keeps
+  its original workspace visibility and anchor choice; best-effort provenance
+  observations cannot fail a launch or authorize archive when unavailable.
 
 - Cleanup reports a live started delegation and keeps its worktree even before
   its start record or session ownership is published, including a resume racing

@@ -4,10 +4,17 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import type { PaseoAgentHandle, PaseoClient, PaseoClientConfig, PaseoWorkspaceHandle } from "@getpaseo/client";
+import { join, resolve, sep } from "node:path";
+import type {
+	PaseoAgentHandle,
+	PaseoClient,
+	PaseoClientConfig,
+	PaseoWorkspace,
+	PaseoWorkspaceHandle,
+} from "@getpaseo/client";
 import { inspectGit } from "./git.ts";
 import { PASEO_TURN_COMMAND } from "./paseo-child.ts";
+import type { PaseoReceipt } from "./worktree.ts";
 
 /** The label pi-squire puts on every agent it starts, so `live` sees its own. */
 const LABELS = { "pi-squire": "1" };
@@ -37,7 +44,12 @@ type CreateInput = {
 export type PaseoApi = {
 	/** Refusal text when the daemon cannot be used, else undefined. */
 	unavailable(): Promise<string | undefined>;
-	create(input: CreateInput): Promise<{ sessionId: string }>;
+	create(input: CreateInput): Promise<{ sessionId: string; paseo: PaseoReceipt }>;
+	workspace(id: string): Promise<PaseoWorkspace | null>;
+	workspaceAt(dir: string): Promise<PaseoWorkspace[]>;
+	agentsUsing(id: string, dir: string): Promise<string[]>;
+	terminalsUsing(id: string, dir: string): Promise<string[]>;
+	archiveWorkspace(id: string): Promise<void>;
 	/** Agent ids that exist and are not archived. */
 	live(): Promise<Set<string>>;
 	activity(agentId: string): Promise<string>;
@@ -194,18 +206,23 @@ function realPath(path: string): string {
 	}
 }
 
-/** Each open workspace's folder and project, one page at a time over `client`. */
-async function openWorkspaces(client: PaseoClient): Promise<{ id: string; directory: string; projectId: string }[]> {
-	const found: { id: string; directory: string; projectId: string }[] = [];
+function usesDirectory(entry: { workspaceId?: string | null; cwd: string }, id: string, dir: string): boolean {
+	const path = realPath(entry.cwd);
+	const root = realPath(dir);
+	return entry.workspaceId === id || path === root || path.startsWith(`${root}${sep}`);
+}
+
+/** Open workspaces, with hidden entries only for cleanup or provenance, never placement. */
+async function openWorkspaces(client: PaseoClient, includeHidden = false): Promise<PaseoWorkspace[]> {
+	const found: PaseoWorkspace[] = [];
 	const seen = new Set<string>();
 	let cursor: string | undefined;
 	for (;;) {
 		const { entries, pageInfo } = await client.workspaces.list({
+			...(includeHidden ? { filter: { includeInternal: true, includeBackground: true } } : {}),
 			page: { limit: WORKSPACE_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }) },
 		});
-		for (const entry of entries) {
-			found.push({ id: entry.id, directory: realPath(entry.workspaceDirectory), projectId: entry.projectId });
-		}
+		found.push(...entries);
 		if (!pageInfo.hasMore) return found;
 		const next = pageInfo.nextCursor ?? "";
 		if (next === "" || seen.has(next)) {
@@ -222,24 +239,45 @@ async function openWorkspaces(client: PaseoClient): Promise<{ id: string; direct
  * sit apart from its repository. When Paseo has the main checkout open, a new
  * worktree joins that project.
  */
-async function workspaceFor(client: PaseoClient, cwd: string): Promise<PaseoWorkspaceHandle> {
+async function workspaceFor(
+	client: PaseoClient,
+	cwd: string,
+): Promise<{
+	handle: PaseoWorkspaceHandle;
+	provenance: PaseoReceipt["provenance"];
+}> {
+	// Provenance observes hidden workspaces too, but a failed observation must not
+	// change placement or fail an otherwise supported launch. Never infer creation from it.
+	const snapshot = (): Promise<PaseoWorkspace[] | undefined> => openWorkspaces(client, true).catch(() => undefined);
+	const opened = async (): Promise<{ handle: PaseoWorkspaceHandle; provenance: PaseoReceipt["provenance"] }> => {
+		const before = await snapshot();
+		const handle = await client.workspaces.open(cwd);
+		return {
+			handle,
+			provenance: before?.some((entry) => entry.id === handle.id) ? "reused" : "opened",
+		};
+	};
 	const git = inspectGit(cwd);
-	if (git.kind !== "git") return client.workspaces.open(cwd);
+	if (git.kind !== "git") return opened();
 	const { mainRoot, checkoutRoot } = git.identity;
-	if (checkoutRoot === mainRoot || realPath(cwd) !== checkoutRoot) return client.workspaces.open(cwd);
+	if (checkoutRoot === mainRoot || realPath(cwd) !== checkoutRoot) return opened();
 	const open = await openWorkspaces(client);
 	// `open` reuses a folder's workspace; `create` never does (0.15.4
 	// protocol messages.js, WorkspaceCreateRequestSchema).
-	if (open.some((workspace) => workspace.directory === checkoutRoot)) return client.workspaces.open(cwd);
+	if (open.some((workspace) => workspace.workspaceDirectory && realPath(workspace.workspaceDirectory) === checkoutRoot))
+		return opened();
 	// Several workspaces can back the same folder, and activity reorders the
 	// listing. All launchers must choose the same anchor for their shared key.
-	const main = open.filter((workspace) => workspace.directory === mainRoot).sort((a, b) => a.id.localeCompare(b.id))[0];
-	if (main === undefined) return client.workspaces.open(cwd);
+	const main = open
+		.filter((workspace) => workspace.workspaceDirectory && realPath(workspace.workspaceDirectory) === mainRoot)
+		.sort((a, b) => a.id.localeCompare(b.id))[0];
+	if (main === undefined) return opened();
 	// A shared daemon key arbitrates concurrent first launches; create alone
 	// never deduplicates directories (0.15.4 CreationService, handleWorkspaceCreation).
 	const key = createHash("sha256")
 		.update(JSON.stringify([main.projectId, main.id, checkoutRoot]))
 		.digest("hex");
+	const before = await snapshot();
 	const deadline = Date.now() + CONNECT_TIMEOUT_MS;
 	for (let generation = 0; ; generation++) {
 		const workspace = await client.workspaces.create({
@@ -249,7 +287,11 @@ async function workspaceFor(client: PaseoClient, cwd: string): Promise<PaseoWork
 		// CreationService replays completed receipts without reviving archived
 		// workspaces (0.15.4). A new generation is a new placement operation;
 		// concurrent callers still share its daemon-owned idempotency key.
-		if ((await openWorkspaces(client)).some((entry) => entry.id === workspace.id)) return workspace;
+		if ((await openWorkspaces(client)).some((entry) => entry.id === workspace.id))
+			return {
+				handle: workspace,
+				provenance: before && !before.some((entry) => entry.id === workspace.id) ? "created" : "reused",
+			};
 		if (Date.now() >= deadline) throw new Error("Paseo did not provide an active worktree workspace");
 	}
 }
@@ -293,34 +335,93 @@ function runPaseo(home: string, args: readonly string[]): Promise<CliRun> {
 	});
 }
 
+async function createAgent(client: PaseoClient, home: string, input: CreateInput): ReturnType<PaseoApi["create"]> {
+	// A plain agents.create registers a new workspace every time, so the
+	// agent goes through its folder's own.
+	const { handle: workspace, provenance } = await workspaceFor(client, input.cwd);
+	if (!workspace.directory || !workspace.projectId) throw new Error("Paseo workspace placement is incomplete");
+	const paseo: PaseoReceipt = {
+		home,
+		workspaceId: workspace.id,
+		directory: realPath(workspace.directory),
+		projectId: workspace.projectId,
+		provenance,
+	};
+	const handle = await workspace.agents.create({
+		agentId: input.agentId,
+		title: input.title,
+		env: input.env,
+		// Keep the native parent link without callerAgentId: Paseo 0.15.4
+		// otherwise wraps the initial slash command as an agent-message,
+		// bypassing Pi command dispatch and sending it to the model.
+		// resolveCreateAgentIntent retains explicit parent labels.
+		labels: { ...LABELS, [PARENT_LABEL]: input.parentAgentId },
+		prompt: `/${PASEO_TURN_COMMAND}`,
+		config: {
+			provider: `pi/${input.model}`,
+			thinkingOptionId: input.thinking,
+			systemPrompt: input.systemPrompt,
+		},
+	});
+	return { sessionId: await assignedSession(handle), paseo };
+}
+
+async function agentsUsing(client: PaseoClient, id: string, dir: string): Promise<string[]> {
+	const users: string[] = [];
+	const seen = new Set<string>();
+	let cursor: string | undefined;
+	for (;;) {
+		const { entries, pageInfo } = await client.agents.list({
+			filter: { includeInternal: true, includeBackground: true, includeArchived: false },
+			page: { limit: AGENT_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }) },
+		});
+		for (const { agent } of entries) if (usesDirectory(agent, id, dir)) users.push(agent.id);
+		if (!pageInfo.hasMore) return users;
+		const next = pageInfo.nextCursor ?? "";
+		if (!next || seen.has(next)) throw new Error("Paseo reported more agents without a new cursor");
+		seen.add(next);
+		cursor = next;
+	}
+}
+
 /** The Paseo daemon in `home`: `PASEO_HOME` or `~/.paseo` when none is given. */
-export function createPaseoApi(home: string = process.env.PASEO_HOME ?? join(homedir(), ".paseo")): PaseoApi {
+export function createPaseoApi(homeInput: string = process.env.PASEO_HOME ?? join(homedir(), ".paseo")): PaseoApi {
+	// A receipt must keep addressing this daemon when restored from another cwd.
+	const home = realPath(resolve(homeInput));
 	return {
 		async unavailable(): Promise<string | undefined> {
 			return daemonAddress(home) === undefined ? notRunning(home) : undefined;
 		},
-		async create(input: CreateInput): Promise<{ sessionId: string }> {
-			return withClient(home, async (client) => {
-				// A plain agents.create registers a new workspace every time, so the
-				// agent goes through its folder's own.
-				const workspace = await workspaceFor(client, input.cwd);
-				const handle = await workspace.agents.create({
-					agentId: input.agentId,
-					title: input.title,
-					env: input.env,
-					// Keep the native parent link without callerAgentId: Paseo 0.15.4
-					// otherwise wraps the initial slash command as an agent-message,
-					// bypassing Pi command dispatch and sending it to the model.
-					// resolveCreateAgentIntent retains explicit parent labels.
-					labels: { ...LABELS, [PARENT_LABEL]: input.parentAgentId },
-					prompt: `/${PASEO_TURN_COMMAND}`,
-					config: {
-						provider: `pi/${input.model}`,
-						thinkingOptionId: input.thinking,
-						systemPrompt: input.systemPrompt,
-					},
-				});
-				return { sessionId: await assignedSession(handle) };
+		async create(input: CreateInput): ReturnType<PaseoApi["create"]> {
+			return withClient(home, (client) => createAgent(client, home, input));
+		},
+		async workspace(id: string): Promise<PaseoWorkspace | null> {
+			return withClient(
+				home,
+				async (client) => (await openWorkspaces(client, true)).find((entry) => entry.id === id) ?? null,
+			);
+		},
+		async workspaceAt(dir: string): Promise<PaseoWorkspace[]> {
+			return withClient(home, async (client) =>
+				(await openWorkspaces(client, true)).filter(
+					(entry) => entry.workspaceDirectory !== undefined && realPath(entry.workspaceDirectory) === realPath(dir),
+				),
+			);
+		},
+		async agentsUsing(id: string, dir: string): Promise<string[]> {
+			return withClient(home, (client) => agentsUsing(client, id, dir));
+		},
+		async terminalsUsing(id: string, dir: string): Promise<string[]> {
+			return withClient(home, async (client) =>
+				(await client.terminals.list()).entries
+					.filter((entry) => usesDirectory(entry, id, dir))
+					.map((entry) => entry.id),
+			);
+		},
+		async archiveWorkspace(id: string): Promise<void> {
+			await withClient(home, async (client) => {
+				const result = await client.workspaces.archive(id);
+				if (result.error) throw new Error(result.error);
 			});
 		},
 		async live(): Promise<Set<string>> {

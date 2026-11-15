@@ -222,6 +222,7 @@ export default function delegate(
 			readTree(identity.current()?.root ?? ctx.sessionManager.getSessionId())
 				.entries.filter((entry) => entry.identity.parent === ctx.sessionManager.getSessionId() && entry.closed)
 				.map((entry) => entry.id),
+		tmux,
 	);
 	pi.on("session_start", (_event, ctx) => tracking.restore(ctx));
 	const replies = registerTaskReplies(

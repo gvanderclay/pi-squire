@@ -8,6 +8,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { ChildTasks } from "./child-tasks.ts";
+import type { DelegateHost } from "./host.ts";
 import type { Identity } from "./identity.ts";
 import { renderMessage } from "./render.ts";
 import { closeOutcome, goneOutcome } from "./result-close.ts";
@@ -181,6 +182,7 @@ export function createResults(
 	publish: (ctx: ExtensionContext, records: Recorded[]) => void = () => {},
 	active: () => boolean = () => true,
 	closedChildren: (ctx: ExtensionContext) => string[] = () => [],
+	host?: DelegateHost,
 ): Results {
 	pi.registerMessageRenderer(CUSTOM_TYPE, renderMessage);
 	/** Every recorded delegation by its id, in the order recorded. */
@@ -302,7 +304,7 @@ export function createResults(
 		const settled = record.result !== undefined || record.gone === true;
 		if (!settled) record.settledAt = Date.now(); // a close after a result or gone keeps the earlier time
 		const at = record.settledAt;
-		const outcome = settled ? undefined : closeOutcome(record, ctx);
+		const outcome = settled ? undefined : closeOutcome(record, ctx, host);
 		if (outcome) {
 			tasks.outcomes.push(outcome);
 			if (wake) tasks.paused = false;
@@ -346,7 +348,7 @@ export function createResults(
 		});
 		record.gone = true;
 		record.settledAt = settledAt;
-		const outcome = goneOutcome(record, session);
+		const outcome = goneOutcome(record, session, host);
 		tasks.paused = false; // A fresh outcome is new work, not replay of the stopped turn.
 		tasks.outcomes.push(outcome);
 		save();

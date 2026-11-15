@@ -9,12 +9,11 @@ import { type TObject, Type } from "typebox";
 import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
 import type { ChildStart, DelegateStarter } from "./delegate-start.ts";
 import type { DelegateHost, OpenedWindow } from "./host.ts";
-import { type AdmittedHost, assertHostOptions, type HostAdmission } from "./host-admission.ts";
+import type { AdmittedHost, HostAdmission } from "./host-admission.ts";
 import type { Identity } from "./identity.ts";
 import { openedIn } from "./location.ts";
 import { windowPresentation } from "./locators.ts";
 import { fallbackNote } from "./model-choice.ts";
-import { paseoLocator } from "./paseo-locator.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
@@ -31,6 +30,7 @@ import {
 	settleModel,
 	windowCheck,
 } from "./resume-checks.ts";
+import { supportsResume } from "./resume-support.ts";
 import type { RoutedChoice, RouteOptions } from "./routing-dispatch.ts";
 import { RoutingRequestSchema } from "./routing-schema.ts";
 import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
@@ -118,17 +118,9 @@ function startedRecords(results: Results): StartedRecorded[] {
 
 /** The record a `/delegate-resume` id can name: supported source/host, started, with no later resume of it. */
 export function resumableIds(results: Results, host?: DelegateHost): string[] {
-	if (host) {
-		try {
-			// Share preflight's capability check, without probing sockets or reading placement while typing.
-			assertHostOptions(host.forLaunch?.() ?? host, { kind: "resume" });
-		} catch {
-			return [];
-		}
-	}
 	const started = startedRecords(results);
 	return started
-		.filter((record) => !paseoLocator(record.locator) && !started.some((item) => item.resumedFrom === record.id))
+		.filter((record) => supportsResume(record, host) && !started.some((item) => item.resumedFrom === record.id))
 		.map(({ id }) => id);
 }
 

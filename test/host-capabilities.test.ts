@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import type { ChildOutcome } from "../src/child-tasks.ts";
 import { herdrLocator } from "../src/herdr-locator.ts";
 import { createHostRouter } from "../src/multiplexer.ts";
 import { createPaseoHost } from "../src/paseo.ts";
 import { closeOutcome, goneOutcome } from "../src/result-close.ts";
 import { isV2Start } from "../src/result-types.ts";
 import { readTree, treeCounts } from "../src/tree-registry.ts";
+import { childState } from "./child-state.ts";
 import { FakeTmux } from "./fake-tmux.ts";
-import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 import { HerdrWire } from "./herdr-adapter-fixture.ts";
 import { FakePaseo } from "./paseo-fixture.ts";
 
@@ -133,10 +135,12 @@ test("Paseo source stays non-actionable from a terminal for resume, fork and pic
 		join(sessionDir, `source_${sessionId}.jsonl`),
 		`${JSON.stringify({ type: "session", version: 3, id: sessionId, cwd: root, timestamp: new Date().toISOString() })}\n`,
 	);
+	assert.equal(await canResume(s, id), false);
 	api.running.clear();
 	await s.shutdown();
 	const terminal = session({ parent: s.parent, entries: s.entries });
 	await terminal.start();
+	assert.equal(await canResume(terminal, id), false);
 	for (const tool of ["delegation_resume", "delegation_fork"]) {
 		await assert.rejects(terminal.toolCall(tool, { id, task: "again" }), /Paseo cannot resume or fork.*new delegation/);
 	}
@@ -209,7 +213,12 @@ test("missing-result and explicit-close advice respects the recorded source host
 	}
 });
 
-test("resume id completions follow current host capabilities for tmux and Herdr sources", async () => {
+async function canResume(s: ReturnType<typeof session>, id: string): Promise<boolean> {
+	const status = await s.toolCall("delegation_status", { id });
+	return (status.structuredContent as { delegations: { canResume: boolean }[] }).delegations[0].canResume;
+}
+
+test("resume completions, status and advice follow current host capabilities for tmux and Herdr sources", async () => {
 	writeAgent("scout", agentFile({}));
 	const herdr = new HerdrWire();
 	try {
@@ -223,7 +232,7 @@ test("resume id completions follow current host capabilities for tmux and Herdr 
 			const locator = herdrLocator(record.locator);
 			if (locator) herdr.staged.push(dirname(locator.launchFile));
 			await terminal.shutdown();
-			const { host } = paseo();
+			const { api, host } = paseo();
 			let selected = source.id;
 			const router = createHostRouter(
 				[source, host],
@@ -233,19 +242,74 @@ test("resume id completions follow current host capabilities for tmux and Herdr 
 			);
 			const reopened = session({ parent: terminal.parent, entries: terminal.entries, multiplexer: router });
 			await reopened.start();
-			assert.ok((await reopened.completionsFor("delegate-resume", ""))?.some((item) => item.value === id));
-			selected = "paseo";
-			assert.equal(await reopened.completionsFor("delegate-resume", ""), null);
-			assert.equal(await reopened.completionsFor("delegate-resume", id.slice(0, 8)), null);
-			selected = source.id;
-			assert.ok((await reopened.completionsFor("delegate-resume", ""))?.some((item) => item.value === id));
-			selected = "missing-host";
-			assert.equal(await reopened.completionsFor("delegate-resume", ""), null);
+			for (const selection of [source.id, "paseo", source.id, "missing-host"]) {
+				selected = selection;
+				const supported = selection === source.id;
+				assert.equal(await canResume(reopened, id), supported);
+				// Advice/completions may select a host and check capabilities, but never probe it.
+				const herdrCalls = herdr.calls.length;
+				const paseoCalls = api.calls.length;
+				const completions = await reopened.completionsFor("delegate-resume", "");
+				assert.equal(completions?.some((item) => item.value === id) ?? false, supported);
+				if (!supported) assert.equal(await reopened.completionsFor("delegate-resume", id.slice(0, 8)), null);
+				for (const outcome of [goneOutcome(record, undefined, router), closeOutcome(record, undefined, router)]) {
+					assert.match(outcome.content, /reply that arrives later is still delivered/);
+					if (supported) {
+						assert.match(outcome.content, /call delegation_resume|direct parent may resume this session/);
+						assert.doesNotMatch(outcome.content, /start a fresh delegate/);
+					} else {
+						assert.match(
+							outcome.content,
+							/current host; start a fresh delegate with the same task and working directory/,
+						);
+						assert.doesNotMatch(outcome.content, /call delegation_resume|may resume this session/);
+					}
+				}
+				assert.equal(herdr.calls.length, herdrCalls);
+				assert.equal(api.calls.length, paseoCalls);
+			}
 			assert.deepEqual(reopened.sendCalls, []);
 			await reopened.shutdown();
 		}
 	} finally {
 		herdr.dispose();
+	}
+});
+
+test("recorded gone/close outcomes use the current host after reopening a terminal session under Paseo", async (t) => {
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	writeAgent("scout", agentFile({}));
+	for (const ending of ["gone", "close"]) {
+		const tmux = new FakeTmux();
+		const terminal = session({ multiplexer: tmux });
+		await terminal.start();
+		const launched = await terminal.toolCall("delegate", { agent: "scout", task: "inspect" });
+		const id = (launched.structuredContent as { id: string }).id;
+		await terminal.shutdown();
+		const { host } = paseo();
+		const router = createHostRouter(
+			[tmux, host],
+			() => "paseo",
+			() => undefined,
+			"unavailable",
+		);
+		const reopened = session({ parent: terminal.parent, entries: terminal.entries, multiplexer: router });
+		await reopened.start();
+		if (ending === "gone") {
+			tmux.windows.clear();
+			t.mock.timers.tick(5000);
+			for (let n = 0; n < 6; n++) await new Promise((resolve) => setImmediate(resolve));
+		} else {
+			await reopened.toolCall("delegation_close", { id });
+		}
+		const path = join(agentDir, "squire", "child-tasks", `${reopened.parent}.json`);
+		const { outcomes }: { outcomes: ChildOutcome[] } = childState(JSON.parse(readFileSync(path, "utf8")));
+		const outcome = outcomes.find((item) => item.key === `${ending === "gone" ? "gone" : "closed"}:${id}`);
+		assert.ok(outcome);
+		assert.match(outcome.content, /current host; start a fresh delegate with the same task and working directory/);
+		assert.doesNotMatch(outcome.content, /call delegation_resume|may resume this session/);
+		if (ending === "gone") assert.ok(reopened.sent.some(({ message }) => message.content === outcome.content));
+		await reopened.shutdown();
 	}
 });
 

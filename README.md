@@ -1743,10 +1743,12 @@ locks them (see [Agents](#agents)). For a bound role, `--model` without
 overrides apply only within the eligible route (see
 [Role/task routing](#role-task-routing-unreleased)).
 An unknown value is refused with close matches, and so is a model with no
-configured credentials. An API key that exists only as an environment variable in the
-parent's shell does not reach the delegate, so log in through Pi or make the
-variable part of the tmux server's environment. `--auto-exit` and `--no-auto-exit` override the
-agent's `auto_exit`.
+configured credentials. For tmux and Paseo, an API key present only in the
+parent's environment does not reach the delegate: log in through Pi, supply it
+through a `session:launch` contributor, or set it in the tmux server's or
+Paseo daemon's environment respectively. Herdr inherits API keys from the
+parent's environment. `--auto-exit` and `--no-auto-exit` override the agent's
+`auto_exit`.
 
 ## Tools
 

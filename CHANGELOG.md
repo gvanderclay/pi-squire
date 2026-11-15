@@ -10,9 +10,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 - Paseo resource-switch refusals now name the source: enable resources in the
   agent file, or remove unsupported flags from the `session:launch` hook.
-- Missing-result and explicit-close advice for Paseo-recorded delegates now
-  recommends a fresh delegate with the same task and working directory,
-  rather than unsupported resume/fork operations.
+- Missing-result and explicit-close advice for Paseo-recorded delegates, or
+  terminal records reopened under a Paseo host, now recommends a fresh delegate
+  with the same task and working directory instead of unsupported continuation.
+  Structured `delegation_status.canResume` uses the same source/current-host
+  capability check as that advice and resume id completions, while preserving
+  direct-parent and working-directory checks.
 - `/delegate-resume` id completions now respect the current host's resume
   capabilities, including when terminal records are reopened under Paseo.
 - Paseo create/workspace operations report an unpublished daemon address for
@@ -20,7 +23,8 @@ follows [Semantic Versioning](https://semver.org/).
   values.
 - README host auto-exit cells now distinguish owned panes from their enclosing
   tabs/windows, mail-environment guidance accounts for Herdr's inheritance and
-  pane defaults, and the focus-adapter note describes current pinned-version
+  pane defaults, API-key advice distinguishes tmux/Paseo from Herdr inheritance,
+  and the focus-adapter note describes current pinned-version
   tests rather than claiming an obsolete bundled-CLI verification.
 
 ### Changed

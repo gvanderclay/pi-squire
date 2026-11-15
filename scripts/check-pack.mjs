@@ -7,7 +7,7 @@
 // inside the unpacked directory.
 // Run from the package root, after `pnpm install`: node scripts/check-pack.mjs
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize, sep } from "node:path";
 
@@ -21,6 +21,26 @@ const result = Object.values(
 )[0];
 const packed = result.files.map((file) => file.path);
 const files = new Set(packed);
+
+// The host a developer runs check-pack from must not reach the Pi that loads
+// the bundle: Paseo's agent id overrides terminal host selection, and TMUX and
+// HERDR decide which multiplexer a delegate would use. Pi sets PI_CODING_AGENT
+// itself and check-pack sets PI_CODING_AGENT_DIR for the throwaway home, so
+// neither can prove a leak.
+const DRIVER_CONTEXT = /^(PI_|TMUX|HERDR|PASEO_)/;
+const PI_OWNED = new Set(["PI_CODING_AGENT", "PI_CODING_AGENT_DIR"]);
+
+/** A probe extension whose command name reports whether a stripped variable reached Pi. */
+function probeSource(stripped) {
+	return `export default function probe(pi) {
+	const leaked = ${JSON.stringify(stripped)}.filter((key) => process.env[key] !== undefined);
+	pi.registerCommand(leaked.length === 0 ? "check-pack-env-clean" : "check-pack-env-leaked", {
+		description: leaked.length === 0 ? "no stripped driver context reached Pi" : leaked.join(", "),
+		handler: async () => {},
+	});
+}
+`;
+}
 
 const problems = [];
 
@@ -65,11 +85,13 @@ async function loadInPi() {
 		execFileSync("tar", ["-xzf", join(temp, tarball), "-C", temp]);
 		const bundle = realpathSync(join(temp, "package"));
 		const home = join(temp, "home");
-		// A delegate's PI_* variables (and PI_CODING_AGENT_DIR) would change what Pi loads.
-		const env = Object.fromEntries(
-			Object.entries(process.env).filter(([key]) => !key.startsWith("PI_")),
-		);
-		pi = spawn("node_modules/.bin/pi", ["--no-session", "--mode", "rpc", "-e", bundle], {
+		// Strip the driver's context, then prove with a probe extension that none of
+		// it reached the Pi process that loads the bundle.
+		const stripped = Object.keys(process.env).filter((key) => DRIVER_CONTEXT.test(key) && !PI_OWNED.has(key));
+		const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !DRIVER_CONTEXT.test(key)));
+		const probe = join(temp, "probe.ts");
+		writeFileSync(probe, probeSource(stripped));
+		pi = spawn("node_modules/.bin/pi", ["--no-session", "--mode", "rpc", "-e", bundle, "-e", probe], {
 			env: { ...env, HOME: home, PI_CODING_AGENT_DIR: home },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
@@ -100,14 +122,21 @@ async function loadInPi() {
 			throw new Error(`${error.message}\n${stderr.trim()}`);
 		});
 		if (!response.success) throw new Error(`get_commands failed: ${response.error}`);
-		const delegate = response.data.commands.find((command) => command.name === "delegate");
+		const commands = response.data.commands;
+		const delegate = commands.find((command) => command.name === "delegate");
 		const path = delegate?.sourceInfo?.path;
 		if (!path || !realpathSync(path).startsWith(bundle + sep)) {
 			throw new Error(
 				`delegate was not registered from the unpacked bundle (source: ${path ?? "none"})\n${stderr.trim()}`,
 			);
 		}
-		console.log("check-pack: the bundle loaded in Pi and registered delegate");
+		const leaked = commands.find((command) => command.name === "check-pack-env-leaked");
+		if (leaked) throw new Error(`driver context reached the loaded Pi: ${leaked.description ?? "unknown"}`);
+		if (!commands.some((command) => command.name === "check-pack-env-clean"))
+			throw new Error(`the environment probe did not load\n${stderr.trim()}`);
+		console.log(
+			`check-pack: the bundle loaded in Pi and registered delegate; ${stripped.length} driver-context variable(s) stayed out`,
+		);
 	} finally {
 		pi?.kill("SIGKILL");
 		rmSync(temp, { recursive: true, force: true });

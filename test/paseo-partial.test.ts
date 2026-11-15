@@ -146,6 +146,11 @@ test("a failed requested-locator journal write rolls back before any Paseo call"
 		const attempt = readChildRecords(s.parent).at(-1);
 		assert.ok(attempt && !isStarted(attempt));
 		assert.equal(attempt.attempt.phase, "rolled-back");
+		assert.equal(attempt.locator, undefined, "a rolled-back attempt keeps no requested id");
+		const status = await s.toolCall("delegation_status", { id: attempt.id });
+		const text = status.content[0].text;
+		assert.doesNotMatch(text, /Paseo recovery target:/);
+		assert.doesNotMatch(text, /an agent may still exist/);
 		assert.equal(existsSync(attempt.plan.destination), false);
 		const tree = readTree(s.parent).entries.find((item) => item.id === attempt.id);
 		assert.ok(tree);
@@ -194,6 +199,9 @@ test("a failed progress journal write stops launch and retains acknowledged plac
 			projectId: "project",
 			provenance: "created",
 		});
+		const status = await s.toolCall("delegation_status", { id: attempt.id });
+		assert.match(status.content[0].text, /an agent may still exist/);
+		assert.match(status.content[0].text, /Paseo recovery target:/);
 		await s.shutdown();
 		const restored = session({ parent: s.parent, cwd: f.source, multiplexer: host, entries: s.entries });
 		try {

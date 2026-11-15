@@ -717,18 +717,24 @@ export default function delegate(
 						const rollbackPlan = plan;
 						if (rollbackPlan === undefined) throw error;
 						const rolled = rollbackWorktree(rollbackPlan, managed);
-						attempt =
-							rolled.kind === "rolled-back"
-								? { ...attempt, attempt: { phase: "rolled-back", resources: { kind: "none" }, cause } }
-								: {
-										...attempt,
-										attempt: {
-											phase: "retained",
-											resources: rolled.resources,
-											cause: `${cause}; ${rolled.reason}`,
-											recovery: recoveryCommands(rollbackPlan, rolled.resources),
-										},
-									};
+						if (rolled.kind === "rolled-back") {
+							// Nothing was dispatched, so the requested id is not a recovery target:
+							// a rolled-back record must not send the user to inspect an agent that
+							// was never asked for.
+							const record = { ...attempt };
+							delete record.locator;
+							attempt = { ...record, attempt: { phase: "rolled-back", resources: { kind: "none" }, cause } };
+						} else {
+							attempt = {
+								...attempt,
+								attempt: {
+									phase: "retained",
+									resources: rolled.resources,
+									cause: `${cause}; ${rolled.reason}`,
+									recovery: recoveryCommands(rollbackPlan, rolled.resources),
+								},
+							};
+						}
 					}
 					results.recordAttempt(attempt, ctx);
 					const state = attempt.attempt;

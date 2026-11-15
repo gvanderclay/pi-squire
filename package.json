@@ -1,6 +1,6 @@
 {
 	"name": "pi-squire",
-	"version": "0.32.0",
+	"version": "0.33.0",
 	"description": "Run background Pi delegates in tmux, Herdr or Paseo, get results back, and isolate checkouts with optional managed worktrees",
 	"keywords": [
 		"pi-package",

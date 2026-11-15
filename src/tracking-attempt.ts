@@ -3,7 +3,7 @@ import { Type } from "typebox";
 const ATTEMPT_PHASES = ["planned", "created", "rolled-back", "retained", "interrupted"] as const;
 const PHASE = Type.Enum(ATTEMPT_PHASES);
 
-/** A managed launch that has no window: never running, never closable, with no window id. */
+/** No published start: resource progress is recovery evidence, not proof an agent exists. */
 export const AttemptSchema = Type.Object({
 	kind: Type.Literal("workspace-attempt"),
 	id: Type.String(),
@@ -16,5 +16,8 @@ export const AttemptSchema = Type.Object({
 	plan: Type.Object({ branch: Type.String(), destination: Type.String() }, { additionalProperties: true }),
 	attempt: Type.Object({ phase: PHASE }, { additionalProperties: true }),
 	requestId: Type.Optional(Type.String()),
+	locator: Type.Optional(Type.Object({}, { additionalProperties: true })),
+	paseo: Type.Optional(Type.Object({}, { additionalProperties: true })),
+	sessionId: Type.Optional(Type.String()),
 	state: PHASE,
 });

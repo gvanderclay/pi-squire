@@ -15,18 +15,20 @@ import { agentDir, agentFile, DELEGATION_TOOLS, session, writeAgent } from "./ha
 // scripts must not mistake already-clean Git for a verified Paseo workspace.
 // Discoverable parents still defer cleanup, so their declaration caps do not grow.
 // T11 adds 57 characters of accurate fresh-launch/resource/fork guidance; no other text is cut.
+// T2 adds 172 measured schema characters for partial-open locator, receipt and assigned session recovery.
+const PASEO_PROGRESS_METADATA = 172;
 const CLEANUP_RESOURCE_METADATA = 140;
-const BUDGET = 14_441 + CLEANUP_RESOURCE_METADATA;
+const BUDGET = 14_441 + CLEANUP_RESOURCE_METADATA + PASEO_PROGRESS_METADATA;
 // `delegation_fork` is deferred: a parent that can find it (codemode or
 // tool_search active) starts without it declared, so what such a parent pays in
 // every request is the other four. Activating it later declares it.
-const DECLARED_BUDGET = 10_757;
+const DECLARED_BUDGET = 10_757 + PASEO_PROGRESS_METADATA;
 // The routing request is one schema embedded in `delegate`, `delegation_resume`
 // and `delegation_fork`. This case measures the four tools declared at the
 // start, so it counts two copies; a declared fork adds the third.
-const ROUTED_BUDGET = 13_537;
+const ROUTED_BUDGET = 13_537 + PASEO_PROGRESS_METADATA;
 // Coordinators explicitly activate both deferred tools (two-agent roster below).
-const COORDINATOR_BUDGET = 14_469 + CLEANUP_RESOURCE_METADATA;
+const COORDINATOR_BUDGET = 14_469 + CLEANUP_RESOURCE_METADATA + PASEO_PROGRESS_METADATA;
 // The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
 const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 

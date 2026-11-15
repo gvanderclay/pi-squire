@@ -32,6 +32,17 @@ follows [Semantic Versioning](https://semver.org/).
 - Pi 1.5.2 is now the tested-against version; the minimum supported version
   remains Pi 1.5.0.
 
+### Fixed
+
+- Retain acknowledged Paseo workspace receipts and agent recovery targets in managed
+  launch attempts and shared tree accounting before later launch steps can fail.
+  Successful opens publish their receipts before configuration or task mailing;
+  restored retained attempts can authorize cleanup only with the original
+  `created` receipt and the usual no-live-user checks. Missing acknowledgements
+  remain uncertain, and opened/reused workspaces never gain creation authority.
+  `test/context-budget.test.ts` deliberately raises each metadata cap by the
+  measured 172 schema characters needed to expose partial-open recovery facts.
+
 ## [0.30.0] - 2026-11-15
 
 ### Fixed

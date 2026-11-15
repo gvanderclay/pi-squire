@@ -92,16 +92,26 @@ class PaseoHost implements DelegateHost {
 		const systemPrompt = promptOf(launch.promptFile);
 		let created: Awaited<ReturnType<PaseoApi["create"]>>;
 		try {
-			created = await this.api.create({
-				agentId: launch.agentId,
-				parentAgentId,
-				title: launch.title,
-				cwd: spec.cwd,
-				model: launch.model,
-				thinking: launch.thinking,
-				systemPrompt,
-				env: launch.env,
-			});
+			// The requested id is a recovery target, not an acknowledgement that it exists.
+			spec.onProgress?.({ locator: locatorOf(launch.agentId, spec.name) });
+			created = await this.api.create(
+				{
+					agentId: launch.agentId,
+					parentAgentId,
+					title: launch.title,
+					cwd: spec.cwd,
+					model: launch.model,
+					thinking: launch.thinking,
+					systemPrompt,
+					env: launch.env,
+				},
+				(progress) =>
+					spec.onProgress?.({
+						paseo: progress.paseo,
+						locator: locatorOf(progress.agentId ?? launch.agentId, spec.name),
+						...(progress.sessionId === undefined ? {} : { sessionId: progress.sessionId }),
+					}),
+			);
 		} catch (error) {
 			throw new WindowOpenError(`could not start Paseo agent ${launch.agentId}: ${messageOf(error)}`, "unknown");
 		}

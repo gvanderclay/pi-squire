@@ -1,13 +1,17 @@
 // Shared start lifecycle. Callers own eligibility and workspace preparation;
 // this module owns identity, prompt, hook, mail, dispatch, open and recording.
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Agent } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV } from "./child.ts";
-import { delegatePrompt, parentCommand, parentStateEnvironment, toolArgs } from "./delegate-composition.ts";
-import { type DelegateHost, type OpenedWindow, WindowOpenError, type WindowSpec } from "./host.ts";
+import {
+	delegatePrompt,
+	parentCommand,
+	parentStateEnvironment,
+	toolArgs,
+	writePromptFile,
+} from "./delegate-composition.ts";
+import { publishOpenedProgress, publishOpenProgress } from "./delegate-progress.ts";
+import { type DelegateHost, type OpenedWindow, type OpenProgress, WindowOpenError, type WindowSpec } from "./host.ts";
 import type { AdmittedHost } from "./host-admission.ts";
 import { type createIdentity, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { windowLocator } from "./locators.ts";
@@ -76,6 +80,8 @@ type StartInput = {
 	/** Managed workspace facts are published at the original mail boundary. */
 	onMailed?: (requestId: string) => void;
 	onWindowOpened?: () => void;
+	/** Publish partial resource facts to the existing managed-attempt journal. */
+	onProgress?: (progress: OpenProgress) => void;
 };
 type StartDeps = {
 	pi: ExtensionAPI;
@@ -86,12 +92,6 @@ type StartDeps = {
 	startPolling(): void;
 };
 type Started = { opened: OpenedWindow; requestId: string; workspace: Workspace; forkSourcePath?: string };
-
-function writePromptFile(prompt: string): string {
-	const path = join(mkdtempSync(join(tmpdir(), "pi-squire-")), "prompt.md");
-	writeFileSync(path, prompt, { mode: 0o600 });
-	return path;
-}
 
 function promptContext(input: StartInput): string {
 	const workspace = input.workspace;
@@ -322,17 +322,6 @@ export class DelegateStarter {
 		const opened = await this.openSession(input, token, ctx, payload);
 		if (client.configureStart) await this.configure(input, opened);
 		const requestId = mailed ?? (await this.mailAfterOpen(input, opened, token, ctx));
-		if (input.workspace.mode === "managed" && opened.paseo) {
-			const previous = input.workspace.paseo;
-			const paseo =
-				previous?.provenance === "created" &&
-				previous.home === opened.paseo.home &&
-				previous.workspaceId === opened.paseo.workspaceId
-					? previous
-					: opened.paseo;
-			// Resume shares the original record workspace: retain its creation proof without mutating it.
-			input.workspace = { ...input.workspace, paseo };
-		}
 		this.deps.results.recordStart(startRecord(input, opened, requestId), ctx);
 		this.deps.startPolling();
 		return {
@@ -426,9 +415,16 @@ export class DelegateStarter {
 		if (!prepared) this.deps.pi.events.emit("session:launch", payload);
 		bindTree(token, { cwd: workspace.cwd, workspace });
 		dispatchTree(token);
-		const spec = { name: input.name, cwd: workspace.cwd, argv: payload.args, env: payload.env };
+		const spec: WindowSpec = {
+			name: input.name,
+			cwd: workspace.cwd,
+			argv: payload.args,
+			env: payload.env,
+			onProgress: (progress: OpenProgress) => publishOpenProgress(input, token, progress),
+		};
 		const opened = await this.open(input, spec, token, ctx);
 		input.onWindowOpened?.();
+		publishOpenedProgress(input, token, opened);
 		if (opened.sessionId !== undefined) {
 			writeIdentity(opened.sessionId, own);
 			this.publishSession(input, opened, token, ctx, opened.sessionId);

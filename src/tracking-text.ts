@@ -3,6 +3,7 @@
 import { existsSync } from "node:fs";
 import { locationTerms, recordedLocation } from "./location.ts";
 import { autoExitText } from "./locators.ts";
+import { paseoLocator } from "./paseo-locator.ts";
 import { attemptLines, cwdLine, modelLabel, snapshotLines, workspaceLine } from "./render.ts";
 import {
 	type DelegationState,
@@ -158,10 +159,17 @@ export function compactText({ record, state, snapshot, sessionPath, resumedAs }:
 
 /** One unstarted attempt as the status text words it. */
 export function attemptText(record: WorkspaceAttempt): string {
+	const paseo = paseoLocator(record.locator);
 	return [
 		`${record.id} ${record.agent} (${modelLabel(record.model, undefined)}, thinking ${record.thinking})`,
 		`  name: ${recordedName(record)}`,
-		`  state: ${record.attempt.phase} — no window id/start was recorded; a window may still exist (close requires a verified window id)`,
+		`  state: ${record.attempt.phase} — ${paseo ? "no start was published; an agent may still exist (close requires a verified open)" : "no window id/start was recorded; a window may still exist (close requires a verified window id)"}`,
+		...(paseo
+			? [
+					`  Paseo recovery target: ${paseo.agent}; inspect this id in Paseo before closing it manually (creation may be unacknowledged)`,
+				]
+			: []),
+		...(record.sessionId ? [`  assigned session: ${record.sessionId}`] : []),
 		...attemptLines(record).map((line) => `  ${line}`),
 	].join("\n");
 }

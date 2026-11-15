@@ -1,5 +1,13 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { type Agent, globalAgentsDir } from "./agents.ts";
+
+export function writePromptFile(prompt: string): string {
+	const path = join(mkdtempSync(join(tmpdir(), "pi-squire-")), "prompt.md");
+	writeFileSync(path, prompt, { mode: 0o600 });
+	return path;
+}
 
 /**
  * Hosts may start from a server/daemon environment, not the launching Pi's.

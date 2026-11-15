@@ -989,6 +989,16 @@ failure, completion and close. After merging, use `delegation_cleanup` to remove
 proved-safe managed worktrees and local branches (see [Cleanup](#cleanup)).
 Worktrees isolate checkouts, not delegate permissions or filesystem access.
 
+Paseo placement receipts are saved as soon as the daemon acknowledges placement,
+including in retained or interrupted launch attempts. Agent/session recovery
+identities are saved as they become known, before configuration and task mail.
+`delegation_status` shows a partial launch's Paseo recovery target: inspect that
+id in Paseo before closing it manually. A lost creation acknowledgement proves
+neither creation nor absence, so an uncertain launch is not automatically deleted.
+Cleanup accepts a retained attempt's exact `created` receipt only after its normal
+Git and no-live-user checks; opened/reused receipts never authorize tool-triggered
+archive.
+
 ### Cleanup
 
 Call `delegation_cleanup` after merging a delegate's work, not while you still

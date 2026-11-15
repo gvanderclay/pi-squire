@@ -38,8 +38,12 @@ const foreignReason = (count: number): string => `${FOREIGN}${count === 1 ? "; u
 const key = (receipt: PaseoReceipt): string => JSON.stringify([receipt.home, receipt.workspaceId]);
 function receipts(records: Recorded[]): PaseoReceipt[] {
 	return records.flatMap((record) => {
-		if (!isStarted(record) || record.workspace?.mode !== "managed" || record.workspace.paseo === undefined) return [];
-		const receipt = record.workspace.paseo;
+		let receipt: PaseoReceipt | undefined;
+		if (isStarted(record)) {
+			if (record.workspace?.mode !== "managed") return [];
+			receipt = record.workspace.paseo;
+		} else receipt = record.paseo;
+		if (receipt === undefined) return [];
 		if (
 			!receipt ||
 			typeof receipt !== "object" ||

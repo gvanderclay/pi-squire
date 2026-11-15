@@ -4,6 +4,10 @@ import type { WindowPlacement } from "./window-placement.ts";
 import type { ClosableStates, PaneStates } from "./window-state.ts";
 import type { PaseoReceipt } from "./worktree.ts";
 
+/** Exact native session identity; the host must verify it before reopening. */
+export type ResumeSource = { locator: object; sessionId: string; path: string; cwd: string; home?: string };
+export type ResumeConfiguration = { model: string; thinking: string };
+
 /** One window to open: its name, working directory, command and environment. */
 export type WindowSpec = {
 	name: string;
@@ -27,17 +31,22 @@ export type OpenedWindow = {
 	location?: string;
 };
 
+/** Positive daemon readback: this exact native resume was archived before any new task mail. */
+export type NativeResumeRollback = { kind: "native-resume-closed"; sessionId: string; agentId: string };
+
 /**
- * Why a window could not be opened, and whether one may exist anyway:
- * `not-opened` only when nothing was dispatched that could create it.
- * Anything else, a timeout or a malformed answer included, is `unknown`.
+ * Whether an open may remain: not-opened requires no possible dispatch, or a
+ * positively confirmed closed native rollback before new task mail. A timeout
+ * or unconfirmed rollback stays unknown. Started terminal opens are not refunded.
  */
 export class WindowOpenError extends Error {
 	certainty: "not-opened" | "unknown";
-	constructor(message: string, certainty: "not-opened" | "unknown") {
+	readonly nativeResumeRollback?: NativeResumeRollback;
+	constructor(message: string, certainty: "not-opened" | "unknown", nativeResumeRollback?: NativeResumeRollback) {
 		super(message);
 		this.name = "WindowOpenError";
 		this.certainty = certainty;
+		this.nativeResumeRollback = nativeResumeRollback;
 	}
 }
 
@@ -75,6 +84,9 @@ export interface DelegateHost extends LiveNavigation {
 	taskMailTiming(kind: StartKind): "before-open" | "after-open";
 	/** Optional API configuration after open; requires after-open task mail for every start kind. */
 	configureStart?(opened: OpenedWindow, configuration: StartConfiguration): Promise<void>;
+	/** Native frozen-config resume: inspect read-only, then revalidate and reopen before task mail. */
+	resumeConfiguration?(source: ResumeSource): Promise<ResumeConfiguration>;
+	resumeSession?(source: ResumeSource): Promise<OpenedWindow>;
 	/** Setting/inheritance key; never inferred from a presentation noun. */
 	readonly id: string;
 	/** Accept owned identity; with a navigation target, also validate its adapter-specific routing fields. */

@@ -14,14 +14,15 @@ import type {
 	PaseoWorkspaceHandle,
 } from "@getpaseo/client";
 import { inspectGit } from "./git.ts";
+import type { ResumeConfiguration } from "./host.ts";
 import {
 	daemonAvailability,
 	descriptor,
 	type PaseoAvailability,
 	probeDaemonAvailability,
 } from "./paseo-availability.ts";
-
 import { PASEO_TURN_COMMAND } from "./paseo-child.ts";
+import { nativeResumeApi } from "./paseo-resume-api.ts";
 import type { PaseoReceipt } from "./worktree.ts";
 
 export type { PaseoAvailability } from "./paseo-availability.ts";
@@ -51,6 +52,15 @@ type CreateInput = {
 	env: Record<string, string>;
 };
 
+export type PaseoResumeInput = {
+	agentId: string;
+	parentAgentId: string;
+	sessionId: string;
+	path: string;
+	cwd: string;
+	home?: string;
+};
+
 /** Acknowledged placement; no receipt is inferred from a failed daemon acknowledgement. */
 export type PaseoProgress = { paseo: PaseoReceipt; agentId?: string; sessionId?: string };
 export type PaseoProgressSink = (progress: PaseoProgress) => void;
@@ -61,6 +71,8 @@ export type PaseoApi = {
 	/** SDK-free launch admission: refuse positive absence, leave other failures to create. */
 	unavailable(): Promise<string | undefined>;
 	create(input: CreateInput, progress?: PaseoProgressSink): Promise<{ sessionId: string; paseo: PaseoReceipt }>;
+	resumeConfiguration(input: PaseoResumeInput): Promise<ResumeConfiguration>;
+	resume(input: PaseoResumeInput): Promise<void>;
 	workspace(id: string): Promise<PaseoWorkspace | null>;
 	workspaceAt(dir: string): Promise<PaseoWorkspace[]>;
 	agentsUsing(id: string, dir: string): Promise<string[]>;
@@ -429,6 +441,11 @@ export function createPaseoApi(homeInput: string = process.env.PASEO_HOME ?? joi
 		async create(input: CreateInput, progress?: PaseoProgressSink): ReturnType<PaseoApi["create"]> {
 			return withClient(home, (client) => createAgent(client, home, input, progress));
 		},
+		...nativeResumeApi(
+			home,
+			(run) => withClient(home, run),
+			(client, agentId) => archiveChildren(client, agentId, () => true),
+		),
 		async workspace(id: string): Promise<PaseoWorkspace | null> {
 			return withClient(
 				home,

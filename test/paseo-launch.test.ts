@@ -140,12 +140,14 @@ test("a missing required field is refused as not opened", () => {
 	}
 });
 
-test("resume and fork are refused as not opened, before anything can start", () => {
-	for (const flag of ["--fork", "--session"]) {
-		const error = refusal([...flags(), flag, "/sessions/parent.jsonl"]);
-		assert.equal(error.certainty, "not-opened", flag);
-		assert.equal(error.message, "Paseo cannot resume or fork a delegate yet; start a new delegation instead");
-	}
+test("fork and arbitrary session imports are refused before create; verified native resume is admitted", () => {
+	const fork = refusal([...flags(), "--fork", "/sessions/parent.jsonl"]);
+	assert.equal(fork.certainty, "not-opened");
+	assert.equal(fork.message, "Squire cannot fork a Paseo delegate yet; start a new delegation instead");
+	const resume = refusal([...flags(), "--session", "/sessions/parent.jsonl"]);
+	assert.equal(resume.certainty, "not-opened");
+	assert.match(resume.message, /verified archived Squire agent/);
+	assert.equal(paseoStartProblem({ kind: "resume" }), undefined);
 });
 
 test("any other flag or stray argument is refused by name", () => {

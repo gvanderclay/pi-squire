@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readChildRecords } from "./child-tasks.ts";
+import type { NativeResumeRollback } from "./host.ts";
 import type { Identity } from "./identity.ts";
 import { readState, writeState } from "./local-state.ts";
+import { paseoLocator } from "./paseo-locator.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Recorded } from "./result-types.ts";
 import { sessionIsOwned } from "./session-owner.ts";
@@ -241,11 +243,34 @@ export function claimTree(root: string, session: string, window: { id: string; n
 		}
 	});
 }
-/** Only a confirmed pre-start failure may refund lifetime. Unknown stays charged. */
-export function failedTree(token: Reservation, notOpened = false): void {
+function confirmedNativeRollback(state: TreeState, entry: TreeEntry, proof?: NativeResumeRollback): boolean {
+	if (
+		proof?.kind !== "native-resume-closed" ||
+		entry.phase !== "started" ||
+		entry.sessionId !== proof.sessionId ||
+		!entry.resumedFrom ||
+		entry.requestId ||
+		entry.launch ||
+		entry.finished
+	)
+		return false;
+	const located = recordLocator(entry);
+	if (located && paseoLocator(located)?.agent !== proof.agentId) return false;
+	const source = state.entries.find((item) => item.id === entry.resumedFrom && item.sessionId === proof.sessionId);
+	return !!source && paseoLocator(recordLocator(source))?.agent === proof.agentId;
+}
+
+/** Refund pre-start failure, or an explicitly proved closed native resume before any task/launch publication.
+ * A child startup claim alone may precede that native rollback; terminal starts and unknown outcomes stay charged.
+ */
+export function failedTree(token: Reservation, notOpened = false, rollback?: NativeResumeRollback): void {
 	treeTransaction(token.root, (state) => {
 		const entry: TreeEntry = entryFor(state, token);
-		if (entry.phase === "reserved" || (entry.phase === "dispatched" && notOpened && !entry.finished)) {
+		if (
+			entry.phase === "reserved" ||
+			(notOpened &&
+				((entry.phase === "dispatched" && !entry.finished) || confirmedNativeRollback(state, entry, rollback)))
+		) {
 			entry.phase = "not-started";
 			entry.createPending = false;
 		}

@@ -103,17 +103,14 @@ test("hook-only unsupported Paseo flags run once with final cwd, then roll back 
 	await s.shutdown();
 });
 
-test("Paseo selected host refuses resume tool and picker up front", async () => {
+test("Paseo selected host admits resume but still requires a real source for tool and picker", async () => {
 	const { api, host } = paseo();
 	const s = session({ multiplexer: host });
 	await s.start();
-	await assert.rejects(
-		s.toolCall("delegation_resume", { id: "missing", task: "again" }),
-		/Paseo cannot resume or fork.*new delegation/,
-	);
+	await assert.rejects(s.toolCall("delegation_resume", { id: "missing", task: "again" }), /no delegation "missing"/);
 	await s.command("delegate-resume", "");
 	assert.equal(s.selects.length, 0);
-	assert.match(s.errors.at(-1) ?? "", /Paseo cannot resume or fork/);
+	assert.match(s.notes.at(-1) ?? "", /no delegation can be resumed now/);
 	assert.deepEqual(readTree(s.parent).entries, []);
 	assert.deepEqual(api.created, []);
 	assert.deepEqual(s.sendCalls, []);
@@ -135,15 +132,17 @@ test("Paseo source stays non-actionable from a terminal for resume, fork and pic
 		join(sessionDir, `source_${sessionId}.jsonl`),
 		`${JSON.stringify({ type: "session", version: 3, id: sessionId, cwd: root, timestamp: new Date().toISOString() })}\n`,
 	);
-	assert.equal(await canResume(s, id), false);
+	assert.equal(await canResume(s, id), true, "static capability is not archive/owner/file eligibility");
 	api.running.clear();
 	await s.shutdown();
 	const terminal = session({ parent: s.parent, entries: s.entries });
 	await terminal.start();
 	assert.equal(await canResume(terminal, id), false);
-	for (const tool of ["delegation_resume", "delegation_fork"]) {
-		await assert.rejects(terminal.toolCall(tool, { id, task: "again" }), /Paseo cannot resume or fork.*new delegation/);
-	}
+	await assert.rejects(
+		terminal.toolCall("delegation_resume", { id, task: "again" }),
+		/original Paseo delegate.*Paseo-hosted parent/,
+	);
+	await assert.rejects(terminal.toolCall("delegation_fork", { id, task: "again" }), /cannot fork a Paseo delegate/);
 	await terminal.command("delegate-resume", "");
 	assert.equal(terminal.selects.length, 0);
 	const completions = await terminal.completionsFor("delegate-resume", "");
@@ -172,7 +171,7 @@ test("a terminal source cannot fork into Paseo, before reservation or a managed 
 	const before = readTree(terminal.parent);
 	await assert.rejects(
 		hosted.toolCall("delegation_fork", { id, task: "fork", worktree: "not-created" }),
-		/Paseo cannot resume or fork.*new delegation/,
+		/cannot fork a Paseo delegate.*new delegation/,
 	);
 	const after = readTree(terminal.parent);
 	assert.deepEqual(
@@ -198,10 +197,10 @@ test("missing-result and explicit-close advice respects the recorded source host
 		assert.ok(isV2Start(record));
 		for (const outcome of [goneOutcome(record, undefined), closeOutcome(record, undefined)]) {
 			assert.match(outcome.content, /reply that arrives later is still delivered/);
-			if (host.id === "paseo") {
+			if (host.id === "paseo" && outcome.key.startsWith("closed:")) {
 				assert.match(
 					outcome.content,
-					/cannot be resumed or forked; start a fresh delegate with the same task and working directory/,
+					/deleted and cannot be resumed or forked; start a fresh delegate with the same task and working directory/,
 				);
 				assert.doesNotMatch(outcome.content, /call delegation_resume|may resume this session/);
 			} else {

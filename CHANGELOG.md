@@ -6,6 +6,50 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `delegation_resume` and `/delegate-resume` support archived Paseo delegates,
+  including existing receiptless records, through the public SDK reload path.
+  The same Paseo agent and Pi session/file/conversation are retained; exact
+  parent/session/header/cwd checks run before reservation and before reload,
+  and the returned runtime session id is checked before task mail. Deleted,
+  moved/mismatched, ambiguous and routed sources remain refused. Failed task
+  delivery re-archives rather than deletes the original agent, but leaves a
+  shared started successor that blocks Squire resume of that chain; inspect or
+  continue the preserved conversation manually with one writer, or start fresh.
+- Refuse-before-reload and native reload rollbacks with a definitive daemon
+  answer plus confirmed archive/closed readback refund their reservations so
+  valid sources can retry. Timeouts, lost connections and other unknown reload
+  outcomes keep their slots held even after confirmed archive: reload might
+  still finish later. Unconfirmed archive/readback also stays charged with
+  explicit inspection advice; no unknown outcome is refunded.
+  The locked registry also refunds a child-claimed native successor only with
+  exact-session/agent closed-rollback proof and no task, launch record or finished
+  outcome; late startup claims cannot revive it. Started terminal launches keep
+  their previous accounting semantics.
+
+### Changed
+
+- Native Paseo resume accepts id/task only and reuses original launch settings:
+  explicit model/thinking/auto_exit/routing overrides are refused, current
+  roster launch-setting edits are not applied, and `session:launch` is not
+  emitted because its original arguments/environment are retained. Identity
+  notifications, completion holds, tree caps/fences and result handling remain
+  active. Fork stays refused. Correct host documentation to distinguish Squire
+  routing/first-run usage/navigation choices from Paseo capabilities, and
+  qualify native archive cascade's cross-workspace/open-tab detachment.
+- Deliberately change `test/paseo-launch.test.ts`'s blanket resume/fork refusal
+  into separate fork and unverified-session-import refusals, and
+  `test/host-capabilities.test.ts`'s source/picker/status/advice expectations:
+  Paseo parents now expose native resume capability; terminal parents cannot
+  resume Paseo sources, and explicit close still deletes them. Native resume
+  does not perform the terminal exited-window close. The shared terminal
+  restore-guard contract and executable README hook fences are unchanged.
+- Tighten this PR's `test/paseo-resume-api.test.ts` and
+  `test/paseo-resume.test.ts` reload-failure fixtures: refundable rejections now
+  require a server `DaemonRpcError`; ambiguous failures deliberately stay charged.
+  No test that exists on main changes in this follow-up.
+
 ## [0.32.0] - 2026-11-15
 
 ### Added

@@ -58,9 +58,9 @@ const fresh = (): string => realpathSync(mkdtempSync(join(root, "case-")));
 afterEach(() => {
 	process.env.PATH = savedEnv.PATH;
 });
-after(() => {
+after(async () => {
 	process.env.HOME = savedEnv.HOME;
-	cleanup();
+	await cleanup();
 });
 
 const gitEnv = (): NodeJS.ProcessEnv => ({

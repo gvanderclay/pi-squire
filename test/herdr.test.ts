@@ -17,9 +17,9 @@ beforeEach(() => {
 	resetRoot();
 	writeAgent("scout", agentFile({ model: "alpha/fast-model", thinking: "low" }));
 });
-after(() => {
+after(async () => {
 	for (const wire of wires) wire.dispose();
-	cleanup();
+	await cleanup();
 });
 function wire(): HerdrWire {
 	const value = new HerdrWire();

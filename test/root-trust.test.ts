@@ -2,11 +2,14 @@
 // lifecycle/tmux. Cross-process kill/restart guarantees are tested separately.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { createServer, Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
+import { setImmediate as nextLoop } from "node:timers/promises";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import { requestRootTrust } from "../src/trust-wire.ts";
+import { TRUST_TIMEOUT_MS } from "../src/trust-prompt.ts";
+import { requestRootTrust, TRUST_HANDSHAKE_TIMEOUT_MS, trustEndpointPath } from "../src/trust-wire.ts";
 import {
 	agentDir,
 	agentFile,
@@ -53,7 +56,8 @@ function target(name: string): string {
 	return realpathSync(path);
 }
 async function until(check: () => boolean): Promise<void> {
-	for (let count = 0; count < 200 && !check(); count++) await new Promise((resolve) => setTimeout(resolve, 5));
+	const deadline = Date.now() + 5000;
+	while (!check() && Date.now() < deadline) await nextLoop();
 	assert.ok(check(), "fixture reached expected control state");
 }
 const launch = (child: Session, cwd: string, signal?: AbortSignal) =>
@@ -104,13 +108,13 @@ for (const choice of [
 	});
 }
 
-test("already-resolved and resource-free nested launches need no root; unresolved trust refuses immediately", async () => {
+test("already-resolved and resource-free nested launches need no root; unresolved trust refuses before connecting", async (t) => {
 	const { parent, child } = await tree();
 	await parent.shutdown();
 	const cwd = target("absent-root");
-	const start = Date.now();
+	const connections = t.mock.method(Socket.prototype, "connect");
 	await assert.rejects(launch(child, cwd), /root .*not running.*trust service/);
-	assert.ok(Date.now() - start < 1000);
+	assert.equal(connections.mock.callCount(), 0, "absent endpoint refuses before starting a handshake deadline");
 	assert.equal(child.tmux.opened.length, 0);
 	assert.equal(envelopes(child.parent, "sent").length, 0);
 	for (const decision of [true, false]) {
@@ -124,6 +128,97 @@ test("already-resolved and resource-free nested launches need no root; unresolve
 	assert.deepEqual(flags(child), ["--no-approve"]);
 	await child.toolCall("delegate", { agent: "worker", task: "inherited" });
 	assert.equal(child.selects.length, 0);
+});
+
+for (const stallAt of ["nonce", "proof"]) {
+	test(`nested trust authenticates through 1.2 s of synchronous root work after ${stallAt}`, async (t) => {
+		const { parent, child } = await tree({ ui: { select: ["Trust (this session only)"] } });
+		const phases: { phase: string; elapsedMs: number }[] = [];
+		const started = performance.now();
+		let stalled = false;
+		const mark = (phase: string) => phases.push({ phase, elapsedMs: Math.round(performance.now() - started) });
+		const select = parent.context.ui.select;
+		t.mock.method(parent.context.ui, "select", (...args: Parameters<typeof select>) => {
+			mark("validated/UI queued");
+			return select(...args);
+		});
+		const write = Socket.prototype.write;
+		t.mock.method(Socket.prototype, "write", function (this: Socket, ...args: Parameters<Socket["write"]>) {
+			const frame = String(args[0]);
+			const phase = ["nonce", "proof", "directory", "id"].find((key) => frame.startsWith(`{"${key}"`));
+			if (phase === "nonce") mark("connected");
+			if (phase) mark(phase);
+			const result = write.apply(this, args);
+			if (phase === stallAt && !stalled) {
+				stalled = true;
+				// Deliberate event-loop contention, not a readiness sleep. Root Git/FS work
+				// and other extensions can block the same loop while a child authenticates.
+				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1200);
+				phases.push({ phase: "sync work finished", elapsedMs: Math.round(performance.now() - started) });
+			}
+			return result;
+		});
+		try {
+			await launch(child, target(`busy-root-${stallAt}`));
+			assert.equal(stalled, true);
+			assert.equal(parent.selects.length, 1);
+			assert.deepEqual(flags(child), ["--approve"]);
+			assert.deepEqual(
+				phases.filter(({ phase }) => phase !== "sync work finished").map(({ phase }) => phase),
+				["connected", "nonce", "proof", "directory", "validated/UI queued", "id"],
+			);
+		} finally {
+			t.diagnostic(JSON.stringify({ stallAt, phases }));
+		}
+	});
+}
+
+test("a refused root port rejects on the connection error, not the handshake deadline", async () => {
+	const { parent, child } = await tree();
+	const path = trustEndpointPath(agentDir, parent.parent);
+	const endpoint = readFileSync(path, "utf8");
+	await parent.shutdown();
+	// Preserve the now-closed port to model a stale descriptor after root death.
+	writeFileSync(path, endpoint);
+	await assert.rejects(
+		launch(child, target("refused-root-port")),
+		/is not running an available project trust service; nothing was launched/,
+	);
+	assert.equal(child.tmux.opened.length, 0);
+	assert.equal(parent.selects.length, 0);
+});
+
+test("a silent endpoint reaches the bounded authentication deadline without receiving trust authority", {
+	timeout: TRUST_HANDSHAKE_TIMEOUT_MS + 5000,
+}, async () => {
+	const { parent, child } = await tree();
+	const path = trustEndpointPath(agentDir, parent.parent);
+	await parent.shutdown();
+	let received = "";
+	const sockets = new Set<Socket>();
+	const server = createServer((socket) => {
+		sockets.add(socket);
+		socket.on("data", (data) => {
+			received += String(data);
+		});
+	});
+	await new Promise<void>((resolve) => {
+		server.listen(0, "127.0.0.1", resolve);
+	});
+	const address = server.address();
+	assert.ok(address && typeof address !== "string");
+	writeFileSync(path, JSON.stringify({ port: address.port, token: "never-send-this-before-authentication" }));
+	try {
+		await assert.rejects(launch(child, target("silent-root")), /trust service is unavailable/);
+		assert.ok(JSON.parse(received).nonce);
+		assert.equal(received.includes("never-send-this-before-authentication"), false);
+		assert.equal(child.tmux.opened.length, 0);
+	} finally {
+		for (const socket of sockets) socket.destroy();
+		await new Promise<void>((resolve) => {
+			server.close(() => resolve());
+		});
+	}
 });
 
 test("root with no dialog UI or marked unattended is not an approval source", async () => {
@@ -145,7 +240,13 @@ test("root validation refusals retain correlation and reach the requester withou
 		message: "project trust requester does not belong to this root; nothing was launched",
 	});
 	await assert.rejects(
-		requestRootTrust(agentDir, parent.parent, { ...question, requester: child.parent }, undefined, Date.now() + 601000),
+		requestRootTrust(
+			agentDir,
+			parent.parent,
+			{ ...question, requester: child.parent },
+			undefined,
+			Date.now() + 2 * TRUST_TIMEOUT_MS,
+		),
 		{
 			message: "invalid or expired project trust request; nothing was launched",
 		},

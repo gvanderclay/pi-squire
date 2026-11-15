@@ -191,14 +191,15 @@ function readParentPrompt(): { text?: string; error?: string } {
 }
 
 /**
- * Register `/delegate` and the three tools. The second and third
- * parameters are test-only seams, for tmux and for the usage readers: Pi
+ * Register `/delegate` and the three tools. The optional parameters are
+ * test-only seams for the host, usage readers and live publication: Pi
  * passes only `pi`, so they are not part of the package's documented contract.
  */
 export default function delegate(
 	api: ExtensionAPI,
 	tmux: DelegateHost = createMultiplexer(),
 	usage: UsageClient = createUsageClient(),
+	createPublisher?: Parameters<typeof registerActivityRuntime>[4],
 ): void {
 	const owner = new SessionOwner();
 	const host = api;
@@ -276,7 +277,7 @@ export default function delegate(
 	const tracking = createTracking(pi, results, tmux, proactive.errors, viewResults, () => owner.assert());
 	const trustControl = registerTrustControl(pi, identity.current);
 	// Factual lifecycle observation survives failed action processing; only creation needs ownership.
-	registerActivityRuntime(host, () => owner.active(), tmux, owner.token);
+	registerActivityRuntime(host, () => owner.active(), tmux, owner.token, createPublisher);
 	registerDelegateWidget(
 		pi,
 		results,

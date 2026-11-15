@@ -19,6 +19,7 @@ import {
 import {
 	readTrustFrame,
 	requestRootTrust,
+	TRUST_HANDSHAKE_TIMEOUT_MS,
 	type TrustEndpoint,
 	type TrustRequest,
 	trustEndpointPath,
@@ -114,7 +115,7 @@ class TrustRuntime {
 			closed.abort(new Error("the requesting launch was canceled or stopped; nothing was launched"));
 		});
 		// Bound connections which never provide a complete first frame.
-		socket.setTimeout(1000, () => socket.destroy());
+		socket.setTimeout(TRUST_HANDSHAKE_TIMEOUT_MS, () => socket.destroy());
 		readTrustFrame(
 			socket,
 			(value) => {

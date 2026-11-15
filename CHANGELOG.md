@@ -34,6 +34,11 @@ follows [Semantic Versioning](https://semver.org/).
   launch-environment assertion.
 - The verification helper strips inherited `PASEO_*` routing by default; use
   `SQUIRE_VERIFY_KEEP_PASEO=1` for a deliberate Paseo delegate run with private mail.
+- Nested trust requests no longer fail when the root session is busy for over a
+  second. Loopback authentication now allows up to five seconds; absent roots and
+  refused connections still fail without waiting for that deadline. Authentication,
+  cancellation, and the ten-minute trust-dialog deadline are unchanged.
+  `test/root-trust.test.ts` covers the deliberately larger handshake allowance.
 
 ## [0.29.0] - 2026-11-15
 

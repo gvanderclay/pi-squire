@@ -191,7 +191,7 @@ test("real private tmux: attached-client root switch, exact pane/server scope, r
 			if (saved.pane === undefined) delete process.env.TMUX_PANE;
 			else process.env.TMUX_PANE = saved.pane;
 			rmSync(dir, { recursive: true, force: true });
-			cleanup();
+			await cleanup();
 		}
 	}
 });

@@ -22,9 +22,9 @@ function setSetting(value: unknown): void {
 const AGENT = "6f1d0b2e-6b7a-4f3c-9a10-3c6d5e8f7a21";
 const wires: HerdrWire[] = [];
 beforeEach(() => resetRoot());
-after(() => {
+after(async () => {
 	for (const wire of wires.splice(0)) wire.dispose();
-	cleanup();
+	await cleanup();
 });
 /** A Herdr host present or absent, without a socket. */
 function herdrHost(inside: boolean): HerdrWire {

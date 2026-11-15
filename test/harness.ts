@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach } from "node:test";
 
 import {
 	CustomEditor,
@@ -22,6 +23,7 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { readIdentity, writeIdentity } from "../src/identity.ts";
 import register from "../src/index.ts";
+import { LiveActivityPublisher } from "../src/widget-live.ts";
 import { placementProject } from "../src/window-placement.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { FakeUsage } from "./fake-usage.ts";
@@ -73,8 +75,18 @@ function clearLaunchEnv(): void {
 }
 // Before any test runs, so a test may still set one of these for its own session.
 clearLaunchEnv();
-// Retries cover late async writes from a test's sessions landing while the root is removed.
-export const cleanup = () => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+const sessionClosers = new Set<() => Promise<void>>();
+/** Finish the sessions and their in-flight telemetry before the next test removes state. */
+export async function closeSessions(): Promise<void> {
+	for (const close of [...sessionClosers].reverse()) await close();
+}
+// IPC fixtures import this helper too, but must not start node:test's root runner.
+// TreeProcess marks those children explicitly; NODE_TEST_CONTEXT is inherited there.
+if (!process.env.SQUIRE_TEST_AGENT_DIR) afterEach(closeSessions);
+export const cleanup = async () => {
+	await closeSessions();
+	rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+};
 
 /** A frontmatter block and body, the way an agent file is written. */
 export function agentFile(fields: Record<string, string>, body = "Do the task and report back."): string {
@@ -293,6 +305,8 @@ let counter = 0;
 export type Entry = { customType: string; data: Record<string, unknown> };
 
 export type SessionOptions = {
+	/** Hold actual atomic publication in readiness regression tests. */
+	publisherOptions?: ConstructorParameters<typeof LiveActivityPublisher>[2];
 	/** Shared server for multi-instance tree accounting tests. */
 	tmux?: FakeTmux;
 	/** Select a real second-backend/router fixture without changing the tmux model. */
@@ -699,7 +713,12 @@ export function session(options: SessionOptions = {}) {
 		});
 	if (!options.mailProviderLast) options.mailProvider?.(pi as never);
 	options.beforeSquire?.(pi as never);
-	register(pi as never, options.multiplexer ?? tmux, usage);
+	const publishers: LiveActivityPublisher[] = [];
+	register(pi as never, options.multiplexer ?? tmux, usage, (id, launch) => {
+		const publisher = new LiveActivityPublisher(id, launch, options.publisherOptions);
+		publishers.push(publisher);
+		return publisher;
+	});
 	if (options.mailProviderLast) {
 		options.beforeMailProvider?.(pi as never);
 		options.mailProvider?.(pi as never);
@@ -709,6 +728,15 @@ export function session(options: SessionOptions = {}) {
 		for (const handler of handlers[name] ?? []) results.push(await handler({ type: name, ...event }, ctx));
 		return results;
 	};
+	const shutdown = async (): Promise<void> => {
+		try {
+			await fire("session_shutdown");
+			await Promise.all(publishers.map((publisher) => publisher.closed()));
+		} finally {
+			sessionClosers.delete(shutdown);
+		}
+	};
+	sessionClosers.add(shutdown);
 	/** Dispatch one run preparation, with the structured options Pi would pass, and return the event after handlers. */
 	const prepare = async (options: PrepareOptions = {}): Promise<PrepareEvent> => {
 		await ensureStarted();
@@ -827,10 +855,13 @@ export function session(options: SessionOptions = {}) {
 		/** Call a tool the way Pi does, with this session's context. */
 		toolCall: callTool,
 		start: () => {
+			sessionClosers.add(shutdown);
 			bound = true;
 			return fire("session_start", { reason: "startup" });
 		},
-		shutdown: () => fire("session_shutdown"),
+		shutdown,
+		/** Start pending telemetry writes explicitly instead of waiting on their unref'ed timer. */
+		flushPublishers: () => Promise.all(publishers.map((publisher) => publisher.flush())),
 		/** Fire any Pi event by name; every handler the extension registered runs with this session's context. */
 		fire,
 		/** How many times the extension asked Pi to shut down. */

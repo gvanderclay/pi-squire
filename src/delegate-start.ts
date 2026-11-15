@@ -121,7 +121,7 @@ function environment(input: StartInput): Record<string, string> {
 	const { identity: own, start, id } = input;
 	const env: Record<string, string> = {
 		PI_CODING_AGENT_DIR: getAgentDir(),
-		...(input.admission.client.id === "paseo" ? parentStateEnvironment() : {}),
+		...parentStateEnvironment(),
 		PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: sessionIdFor(input), launchId: id }),
 		PI_DELEGATE_PARENT: own.parent,
 		PI_DELEGATE_ROOT: own.root,

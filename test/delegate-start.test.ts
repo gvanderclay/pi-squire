@@ -113,13 +113,24 @@ test("an agent's skills and context_files reach launch, resume and fork as Pi's 
 	}
 });
 
-test("only Paseo copies explicit parent mail/state locations, never parent credentials", async (t) => {
+test("all hosts copy explicit parent mail/state locations on every supported start, never parent credentials", async (t) => {
 	const keys = ["PI_SESSION_MAIL_ROOT", "XDG_STATE_HOME", "OPENAI_API_KEY"] as const;
 	const saved = keys.map((key) => process.env[key]);
+	const cases = [
+		{ name: "unset", mail: undefined, state: undefined },
+		{ name: "absolute", mail: join(root, "private mail"), state: join(root, "other state") },
+		{ name: "relative", mail: "relative-mail", state: "relative-state" },
+		{ name: "empty", mail: "", state: "" },
+		{ name: "mail only", mail: join(root, "mail-only"), state: undefined },
+		{ name: "state only", mail: undefined, state: join(root, "state-only") },
+	];
 	try {
-		for (const value of [undefined, join(root, "private state"), ""])
-			await t.test(value === undefined ? "unset" : value === "" ? "empty" : "set", async () => {
-				for (const key of keys) {
+		for (const { name, mail, state } of cases)
+			await t.test(name, async () => {
+				for (const [key, value] of [
+					["PI_SESSION_MAIL_ROOT", mail],
+					["XDG_STATE_HOME", state],
+				] as const) {
 					if (value === undefined) delete process.env[key];
 					else process.env[key] = value;
 				}
@@ -129,10 +140,10 @@ test("only Paseo copies explicit parent mail/state locations, never parent crede
 				const hosts = [new FakeTmux(), wire.client, createPaseoHost(api, { PASEO_AGENT_ID: "coordinator" })];
 				try {
 					for (const host of hosts) {
-						let launched: WindowSpec | undefined;
+						const launched: WindowSpec[] = [];
 						const open = host.openWindow.bind(host);
 						host.openWindow = async (spec, placement, companion) => {
-							launched = spec;
+							launched.push(spec);
 							const result = await open(spec, placement, companion);
 							const locator = herdrLocator(result.locator);
 							if (locator) wire.staged.push(dirname(locator.launchFile));
@@ -141,14 +152,32 @@ test("only Paseo copies explicit parent mail/state locations, never parent crede
 						const s = session({ multiplexer: host });
 						try {
 							await s.toolCall("delegate", { agent: "scout", task: "go" });
-							assert.ok(launched);
-							const env = host.id === "paseo" ? api.created.at(-1)?.env : launched.env;
-							assert.ok(env);
-							assert.equal(env.PI_CODING_AGENT_DIR, agentDir);
-							for (const key of ["PI_SESSION_MAIL_ROOT", "XDG_STATE_HOME"])
-								if (host.id === "paseo" && value !== undefined) assert.equal(env[key], value);
-								else assert.equal(key in env, false, host.id);
-							assert.equal("OPENAI_API_KEY" in env, false, host.id);
+							if (host.id !== "paseo") {
+								const first = lastRecord(s);
+								sessionFile(first.id);
+								if (host instanceof FakeTmux) host.windows.delete((first.locator as { id: string }).id);
+								else {
+									const locator = herdrLocator(first.locator);
+									assert.ok(locator);
+									writeFileSync(`${locator.launchFile}.status`, JSON.stringify({ pid: 99, exit: 1 }));
+								}
+								await s.toolCall("delegation_resume", { id: first.id, task: "resume" });
+								await s.toolCall("delegation_fork", { id: lastRecord(s).id, task: "fork" });
+							}
+							assert.equal(launched.length, host.id === "paseo" ? 1 : 3, host.id);
+							const environments =
+								host.id === "paseo" ? api.created.map((created) => created.env) : launched.map((spec) => spec.env);
+							for (const env of environments) {
+								assert.ok(env);
+								assert.equal(env.PI_CODING_AGENT_DIR, agentDir);
+								for (const [key, value] of [
+									["PI_SESSION_MAIL_ROOT", mail],
+									["XDG_STATE_HOME", state],
+								] as const)
+									if (value !== undefined) assert.equal(env[key], value, host.id);
+									else assert.equal(key in env, false, host.id);
+								assert.equal("OPENAI_API_KEY" in env, false, host.id);
+							}
 						} finally {
 							await s.shutdown();
 						}

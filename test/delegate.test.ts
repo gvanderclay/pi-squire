@@ -417,27 +417,43 @@ test("a compiled Pi binary is launched alone, with no script argument", async ()
 	assert.deepEqual(s.tmux.opened[0].argv.slice(0, 2), ["/opt/pi/pi", "--session-id"]);
 });
 
-test("the child's env names the parent's root and address, and the session dir when set", async () => {
-	writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
-	const s = session();
-	await s.delegate("scout do the thing");
-	const nativeId = s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--session-id") + 1];
-	assert.deepEqual(s.tmux.opened[0].env, {
-		PI_CODING_AGENT_DIR: agentDir,
-		PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: nativeId, launchId: nativeId }),
-		PI_DELEGATE_PARENT: s.parent,
-		PI_DELEGATE_ROOT: s.parent,
-		PI_DELEGATE_DEPTH: "1",
-		PI_DELEGATE_CHAIN: "scout",
-		PI_DELEGATE_AUTO_EXIT: "1",
-		PI_DELEGATE_AGENT: "scout",
-		PI_DELEGATE_MULTIPLEXER: "tmux",
-		PI_UNATTENDED: "1",
-	});
-	process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/other-sessions";
-	const second = session();
-	await second.delegate("scout do the thing");
-	assert.equal(second.tmux.opened[0].env.PI_CODING_AGENT_SESSION_DIR, "/tmp/other-sessions");
+test("the child's env names the parent's root, address, mail/state locations and session dir when set", async () => {
+	const keys = ["PI_SESSION_MAIL_ROOT", "XDG_STATE_HOME", "PI_CODING_AGENT_SESSION_DIR"] as const;
+	const saved = keys.map((key) => process.env[key]);
+	const mail = join(root, "mail override");
+	const state = join(root, "state override");
+	process.env.PI_SESSION_MAIL_ROOT = mail;
+	process.env.XDG_STATE_HOME = state;
+	delete process.env.PI_CODING_AGENT_SESSION_DIR;
+	try {
+		writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+		const s = session();
+		await s.delegate("scout do the thing");
+		const nativeId = s.tmux.opened[0].argv[s.tmux.opened[0].argv.indexOf("--session-id") + 1];
+		assert.deepEqual(s.tmux.opened[0].env, {
+			PI_CODING_AGENT_DIR: agentDir,
+			PI_SESSION_MAIL_ROOT: mail,
+			XDG_STATE_HOME: state,
+			PI_SQUIRE_LIVE_LAUNCH: JSON.stringify({ version: 1, sessionId: nativeId, launchId: nativeId }),
+			PI_DELEGATE_PARENT: s.parent,
+			PI_DELEGATE_ROOT: s.parent,
+			PI_DELEGATE_DEPTH: "1",
+			PI_DELEGATE_CHAIN: "scout",
+			PI_DELEGATE_AUTO_EXIT: "1",
+			PI_DELEGATE_AGENT: "scout",
+			PI_DELEGATE_MULTIPLEXER: "tmux",
+			PI_UNATTENDED: "1",
+		});
+		process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/other-sessions";
+		const second = session();
+		await second.delegate("scout do the thing");
+		assert.equal(second.tmux.opened[0].env.PI_CODING_AGENT_SESSION_DIR, "/tmp/other-sessions");
+	} finally {
+		for (const [index, key] of keys.entries()) {
+			if (saved[index] === undefined) delete process.env[key];
+			else process.env[key] = saved[index];
+		}
+	}
 });
 
 // ---------------------------------------------------------------------------

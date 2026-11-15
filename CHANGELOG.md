@@ -22,8 +22,16 @@ follows [Semantic Versioning](https://semver.org/).
   correction only (not a token/billing measurement); no other guidance is cut.
   `test/delegate-composition.test.ts` and `test/tools.test.ts` deliberately
   assert the corrected host/context wording instead of the old claims.
-- Paseo delegates inherit the parent's explicit mail root and XDG state location,
-  without copying credentials into Paseo's persisted agent environment.
+- Tmux delegates now receive the parent's explicit `PI_SESSION_MAIL_ROOT` and
+  `XDG_STATE_HOME`, as Paseo delegates do; Herdr also receives these explicitly.
+  This deliberately changes tmux's server-environment-only behaviour for those
+  keys on new launches, resumes and forks. Values are copied unchanged, without
+  copying credentials into Paseo's persisted agent environment. Unset keys still
+  use host defaults; use an absolute mail root when those defaults differ.
+  `test/delegate-start.test.ts` deliberately replaces the Paseo-only expectation
+  with distinct mail/state values across hosts and supported resume/fork paths;
+  `test/delegate.test.ts` also expects these explicit locations in its exact
+  launch-environment assertion.
 - The verification helper strips inherited `PASEO_*` routing by default; use
   `SQUIRE_VERIFY_KEEP_PASEO=1` for a deliberate Paseo delegate run with private mail.
 

@@ -9,6 +9,30 @@ import { canonical, type PaseoReceipt } from "./worktree.ts";
 export type CleanupPaseoDeps = { paseoApi?: (home?: string) => PaseoApi };
 type Proof = { api: PaseoApi; receipt: PaseoReceipt; workspace: PaseoWorkspace | null };
 type Progress = { dispatched: boolean; ids: Set<string> };
+export class PaseoUnavailableError extends Error {}
+async function available(api: PaseoApi, allowAbsent = false): Promise<boolean> {
+	const state = await api.availability();
+	if (state.state === "available") return true;
+	if (allowAbsent && state.state === "absent") return false;
+	throw new PaseoUnavailableError(state.reason);
+}
+/** Preserve the overall refusal while reporting independent resource observations. */
+export function unverifiedPaseo(error: unknown, resource: CleanupResource, gitAbsent = false): CleanupOutcome {
+	return {
+		outcome: "kept",
+		reason: `${gitAbsent ? "Git already-clean (worktree and branch already absent); " : ""}Paseo workspace unverified: ${(error as Error).message}`,
+		remains: cleanupRemains(resource),
+		resources: { ...(gitAbsent ? { git: "already-clean" as const } : {}), paseo: "unverified" },
+	};
+}
+export function withCleanGit(outcome: CleanupOutcome, git?: { tip: string | null; exists: boolean }): CleanupOutcome {
+	if (git && (git.tip !== null || git.exists)) return outcome;
+	return {
+		...outcome,
+		reason: `Git already-clean (worktree and branch already absent); ${outcome.reason}`,
+		resources: { ...outcome.resources, git: "already-clean" },
+	};
+}
 const FOREIGN = "Paseo workspace not created by Squire; kept";
 const foreignReason = (count: number): string => `${FOREIGN}${count === 1 ? "; use /delegate-cleanup" : ""}`;
 const key = (receipt: PaseoReceipt): string => JSON.stringify([receipt.home, receipt.workspaceId]);
@@ -51,8 +75,7 @@ async function noUsers(api: PaseoApi, id: string, dir: string): Promise<void> {
 	if ((await api.terminalsUsing(id, dir)).length) throw new Error("live Paseo terminal uses workspace");
 }
 async function legacyCheck(api: PaseoApi, dir: string, progress: Progress): Promise<void> {
-	// unavailable checks the pid file before any dynamic SDK import.
-	if (await api.unavailable()) return;
+	if (!(await available(api, true))) return;
 	const workspaces = await api.workspaceAt(dir);
 	for (const workspace of workspaces) progress.ids.add(workspace.id);
 	if (workspaces.length) throw new Error(foreignReason(new Set(workspaces.map((workspace) => workspace.id)).size));
@@ -69,8 +92,7 @@ async function proofs(
 	for (const receipt of found) {
 		if (selected.has(key(receipt))) continue;
 		const api = factory(receipt.home);
-		const unavailable = await api.unavailable();
-		if (unavailable) throw new Error(unavailable);
+		await available(api);
 		const workspace = await api.workspace(receipt.workspaceId);
 		const reason = workspace ? blocker(workspace, resource, receipt) : undefined;
 		if (reason) throw new Error(reason);
@@ -180,10 +202,10 @@ async function commandProof(
 	const unavailableHomes: string[] = [];
 	for (const home of homes.length ? homes : [undefined]) {
 		const api = factory(home);
-		const unavailable = await api.unavailable();
-		if (unavailable) {
-			if (found.length) throw new Error(unavailable);
-			unavailableHomes.push(unavailable);
+		const state = await api.availability();
+		if (state.state !== "available") {
+			if (found.length || state.state === "ambiguous") throw new PaseoUnavailableError(state.reason);
+			unavailableHomes.push(state.reason);
 			continue;
 		}
 		selected.push(...(await commandHome(resource, found, api, home)));
@@ -223,6 +245,25 @@ export type CleanupPaseoConfirmation = {
 	preview: CleanupPaseoPreview;
 	beforeArchive: () => void;
 };
+function failedPaseo(
+	resource: CleanupResource,
+	progress: Progress,
+	error: unknown,
+): { archived: boolean; outcome: CleanupOutcome } {
+	if (error instanceof PaseoUnavailableError && !progress.dispatched) {
+		const outcome = unverifiedPaseo(error, resource);
+		outcome.remains.push(...[...progress.ids].map((id) => `paseo workspace: ${id}`));
+		return { archived: false, outcome };
+	}
+	return {
+		archived: progress.dispatched,
+		outcome: {
+			outcome: progress.dispatched ? "partial" : "kept",
+			reason: `${(error as Error).message}${progress.dispatched ? "; archive may be incomplete; Git cleanup skipped" : ""}`,
+			remains: [...cleanupRemains(resource), ...[...progress.ids].map((id) => `paseo workspace: ${id}`)],
+		},
+	};
+}
 /** Returns whether archive was dispatched, or an outcome that stops before Git mutation. */
 export async function cleanupPaseo(
 	resource: CleanupResource,
@@ -250,13 +291,6 @@ export async function cleanupPaseo(
 		else await legacyCheck(factory(), resource.destination, progress);
 		return { archived: progress.dispatched };
 	} catch (error) {
-		return {
-			archived: progress.dispatched,
-			outcome: {
-				outcome: progress.dispatched ? "partial" : "kept",
-				reason: `${(error as Error).message}${progress.dispatched ? "; archive may be incomplete; Git cleanup skipped" : ""}`,
-				remains: [...cleanupRemains(resource), ...[...progress.ids].map((id) => `paseo workspace: ${id}`)],
-			},
-		};
+		return failedPaseo(resource, progress, error);
 	}
 }

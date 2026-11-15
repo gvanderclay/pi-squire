@@ -8,7 +8,7 @@ import type { PaseoWorkspace } from "@getpaseo/client";
 import type { DelegateHost, OpenedWindow, WindowSpec } from "../src/host.ts";
 import { windowPresentation } from "../src/locators.ts";
 import { createPaseoHost } from "../src/paseo.ts";
-import type { PaseoApi } from "../src/paseo-api.ts";
+import type { PaseoApi, PaseoAvailability } from "../src/paseo-api.ts";
 import { paseoLocator } from "../src/paseo-locator.ts";
 import type { WindowRecord } from "../src/tmux.ts";
 import type { PaseoReceipt } from "../src/worktree.ts";
@@ -25,6 +25,7 @@ export class FakePaseo implements PaseoApi {
 	readonly terminals: { id: string; workspaceId: string; cwd: string }[] = [];
 	receipt: PaseoReceipt | undefined;
 	down = false;
+	availabilityState?: PaseoAvailability;
 	survivor = false;
 	afterArchive?: () => void;
 	/** Rows the daemon no longer lists but still holds: live leaves them out, remove deletes them. */
@@ -46,6 +47,14 @@ export class FakePaseo implements PaseoApi {
 	private use(name: string): void {
 		this.calls.push(name);
 		if (this.failAll) throw new Error(`unexpected Paseo API call: ${name}`);
+	}
+
+	async availability(): Promise<PaseoAvailability> {
+		this.use("availability");
+		return (
+			this.availabilityState ??
+			(this.down ? { state: "absent", reason: "Paseo daemon unavailable" } : { state: "available" })
+		);
 	}
 
 	async unavailable(): Promise<string | undefined> {

@@ -31,7 +31,7 @@ function emptyHome(): string {
 /** A home whose pid file names a daemon at `listen`, with the credential the SDK transport reads. */
 function daemonHome(listen = "127.0.0.1:1"): string {
 	const home = emptyHome();
-	writeFileSync(join(home, "paseo.pid"), JSON.stringify({ listen }));
+	writeFileSync(join(home, "paseo.pid"), JSON.stringify({ pid: process.pid, listen }));
 	writeFileSync(join(home, "local-credential"), "test-credential");
 	return home;
 }

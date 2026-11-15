@@ -11,6 +11,8 @@ export type CleanupOutcome = {
 	reason: string;
 	remains: string[];
 	ignoredRemoved?: Pick<PathSummary, "total" | "paths">;
+	/** Independent observations; a clean Git resource does not prove Paseo clean. */
+	resources?: { git?: "already-clean"; paseo?: "unverified" };
 };
 export type GhRunner = (cwd: string, args: string[]) => { ok: true; out: string } | { ok: false; message: string };
 export type CleanupGitDeps = {

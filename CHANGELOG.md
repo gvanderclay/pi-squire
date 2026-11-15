@@ -8,6 +8,24 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Paseo launch admission now checks descriptors, pids and sockets without importing
+  or authenticating the SDK. Positive absence refuses with a missing
+  descriptor, identity-free dead-pid or refused-connection reason; dead pids with
+  host/boot identity instead fall through to an SDK-free socket probe, without
+  spawning an identity lookup. Other failures are left to agent creation.
+  `test/paseo-availability.test.ts` deliberately expects four SDK closes instead
+  of five because admission no longer opens an extra connection.
+- Paseo Unix-socket descriptors now support cleanup and agent creation through
+  the SDK's Node transport. Dead pids are checked before parsing listen addresses;
+  refused Unix sockets prove absence as TCP does, while missing socket paths with
+  live pids remain ambiguous. Dead-pid records with mismatched or unverifiable
+  host/boot identity stay fail-closed during cleanup, but do not prevent agent
+  creation or workspace operations from authenticating a parseable address.
+- Paseo SDK imports now resolve their real installed paths, avoiding a Node 22.19
+  symlink-resolution failure after stale Unix-socket removal that hid transitive
+  dependencies such as `ws` in pnpm installs. Fresh-process transport tests cover
+  the filesystem sequence without module hooks; import-blocker assertions remain
+  unchanged.
 - Paseo now deliberately refuses agents with `skills: false` or
   `context_files: false` before reservations, task mail or managed-worktree
   creation, naming tmux/Herdr as alternatives. Unsupported hook flags still
@@ -32,6 +50,16 @@ follows [Semantic Versioning](https://semver.org/).
   with distinct mail/state values across hosts and supported resume/fork paths;
   `test/delegate.test.ts` also expects these explicit locations in its exact
   launch-environment assertion.
+- Cleanup no longer lets a stale Paseo descriptor (dead pid or refused port)
+  block a receiptless tmux worktree. Missing descriptors are also positive
+  absence; malformed state, timeouts and authentication failures deliberately
+  keep worktrees instead of silently skipping foreign-workspace checks.
+- Cleanup reports already-clean Git separately from an unverified recorded
+  Paseo workspace when the daemon is down, without claiming the whole item is
+  clean. Tool results add optional per-resource observations; the command
+  reports the same distinction without offering a misleading confirmation.
+  The `test/context-budget.test.ts` expectations deliberately allow the 140
+  measured characters of this additive schema; tool-description text is unchanged.
 - The verification helper strips inherited `PASEO_*` routing by default; use
   `SQUIRE_VERIFY_KEEP_PASEO=1` for a deliberate Paseo delegate run with private mail.
 - Nested trust requests no longer fail when the root session is busy for over a

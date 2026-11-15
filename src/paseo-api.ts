@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
 	PaseoAgentHandle,
 	PaseoClient,
@@ -13,8 +14,17 @@ import type {
 	PaseoWorkspaceHandle,
 } from "@getpaseo/client";
 import { inspectGit } from "./git.ts";
+import {
+	daemonAvailability,
+	descriptor,
+	type PaseoAvailability,
+	probeDaemonAvailability,
+} from "./paseo-availability.ts";
+
 import { PASEO_TURN_COMMAND } from "./paseo-child.ts";
 import type { PaseoReceipt } from "./worktree.ts";
+
+export type { PaseoAvailability } from "./paseo-availability.ts";
 
 /** The label pi-squire puts on every agent it starts, so `live` sees its own. */
 const LABELS = { "pi-squire": "1" };
@@ -42,7 +52,9 @@ type CreateInput = {
 };
 
 export type PaseoApi = {
-	/** Refusal text when the daemon cannot be used, else undefined. */
+	/** Positive absence is safe to skip only when there is no recorded workspace receipt. */
+	availability(): Promise<PaseoAvailability>;
+	/** SDK-free launch admission: refuse positive absence, leave other failures to create. */
 	unavailable(): Promise<string | undefined>;
 	create(input: CreateInput): Promise<{ sessionId: string; paseo: PaseoReceipt }>;
 	workspace(id: string): Promise<PaseoWorkspace | null>;
@@ -59,34 +71,34 @@ export type PaseoApi = {
 	remove(agentId: string): Promise<boolean>;
 };
 
-const pidFile = (home: string): string => join(home, "paseo.pid");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // @getpaseo/protocol 0.15.4 dist/agent-labels.js: PARENT_AGENT_ID_LABEL.
 // The declared client dependency does not re-export this protocol constant.
 const PARENT_LABEL = "paseo.parent-agent-id";
 
-/** The daemon's `listen` address, or undefined when the pid file is missing or names none. */
-function daemonAddress(home: string): string | undefined {
-	try {
-		const pid: unknown = JSON.parse(readFileSync(pidFile(home), "utf8"));
-		const listen = (pid as { listen?: unknown }).listen;
-		return typeof listen === "string" && listen !== "" ? listen : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-/** Refusal text naming the pid file that would hold the daemon's address. */
-const notRunning = (home: string): string =>
-	`Paseo is not running: ${pidFile(home)} is missing or has no daemon address`;
-
 /** A client for the daemon in `home`, not yet connected; the caller connects and closes it. */
 async function clientFor(home: string): Promise<PaseoClient> {
-	const listen = daemonAddress(home);
-	if (listen === undefined) throw new Error(notRunning(home));
-	const { createPaseoClient } = await import("@getpaseo/client");
+	const address = descriptor(home, "connect");
+	if ("state" in address) throw new Error(address.reason);
+	const { listen } = address;
+	// Node 22.19 can preserve the pnpm symlink after rmSync removes a stale
+	// Unix socket, even without module hooks. See the stale-socket regression
+	// in test/paseo-availability.test.ts. Canonicalize both public SDK entries
+	// so their dependencies resolve beside the installed package, not the link.
+	const sdkUrl = (specifier: string): string =>
+		pathToFileURL(realpathSync(new URL(import.meta.resolve(specifier)))).href;
+	const { createPaseoClient } = (await import(sdkUrl("@getpaseo/client"))) as typeof import("@getpaseo/client");
+	// The default browser transport cannot open Unix sockets. The installed
+	// 0.15.4 node export supports them via createHostTransportFactory.
+	const transportFactory =
+		"path" in address
+			? (
+					(await import(sdkUrl("@getpaseo/client/node"))) as typeof import("@getpaseo/client/node")
+				).createHostTransportFactory(address.path)
+			: undefined;
 	const config = {
-		url: `ws://${listen}/ws`,
+		url: "path" in address ? "ws://host-connector/ws" : `ws://${listen}/ws`,
+		...(transportFactory ? { transportFactory } : {}),
 		connectTimeoutMs: CONNECT_TIMEOUT_MS,
 		// One call owns one connection, so a daemon that drops must fail the call:
 		// reconnect would leave `connect` waiting on a daemon that is gone.
@@ -389,8 +401,10 @@ export function createPaseoApi(homeInput: string = process.env.PASEO_HOME ?? joi
 	// A receipt must keep addressing this daemon when restored from another cwd.
 	const home = realPath(resolve(homeInput));
 	return {
+		availability: () => daemonAvailability(home, () => withClient(home, async () => {})),
 		async unavailable(): Promise<string | undefined> {
-			return daemonAddress(home) === undefined ? notRunning(home) : undefined;
+			const result = await probeDaemonAvailability(home, false);
+			return result.state === "absent" ? result.reason : undefined;
 		},
 		async create(input: CreateInput): ReturnType<PaseoApi["create"]> {
 			return withClient(home, (client) => createAgent(client, home, input));

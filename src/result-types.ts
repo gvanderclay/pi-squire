@@ -1,3 +1,4 @@
+import type { OpenProgress } from "./host.ts";
 import type { Delegation, DelegationState, WindowState } from "./results.ts";
 import type { SessionUsage } from "./session-usage.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
@@ -93,8 +94,8 @@ export type AttemptState =
 	| { phase: "rolled-back"; resources: { kind: "none" }; cause: string }
 	| { phase: "retained"; resources: ResourceFacts; cause: string; recovery: string[] }
 	| { phase: "interrupted"; resources: ResourceFacts; lastPhase: "planned" | "created"; reason: string };
-/** A managed launch with no window; its request id exists only if mail returned one. */
-export type WorkspaceAttempt = {
+/** A managed launch without a published start; progress does not prove an agent is live. */
+export type WorkspaceAttempt = OpenProgress & {
 	kind: "workspace-attempt";
 	id: string;
 	parentId: string;

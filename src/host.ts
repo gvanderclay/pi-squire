@@ -10,7 +10,12 @@ export type WindowSpec = {
 	cwd: string;
 	argv: readonly string[];
 	env: Readonly<Record<string, string>>;
+	/** Persist known resource facts synchronously before the host continues; throwing stops launch. */
+	onProgress?: (progress: OpenProgress) => void;
 };
+
+/** Placement facts, not proof a requested agent exists or that dispatch has completed. */
+export type OpenProgress = { paseo?: PaseoReceipt; locator?: WindowLocator; sessionId?: string };
 
 export type OpenedWindow = {
 	id: string;

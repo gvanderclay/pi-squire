@@ -51,12 +51,16 @@ type CreateInput = {
 	env: Record<string, string>;
 };
 
+/** Acknowledged placement; no receipt is inferred from a failed daemon acknowledgement. */
+export type PaseoProgress = { paseo: PaseoReceipt; agentId?: string; sessionId?: string };
+export type PaseoProgressSink = (progress: PaseoProgress) => void;
+
 export type PaseoApi = {
 	/** Positive absence is safe to skip only when there is no recorded workspace receipt. */
 	availability(): Promise<PaseoAvailability>;
 	/** SDK-free launch admission: refuse positive absence, leave other failures to create. */
 	unavailable(): Promise<string | undefined>;
-	create(input: CreateInput): Promise<{ sessionId: string; paseo: PaseoReceipt }>;
+	create(input: CreateInput, progress?: PaseoProgressSink): Promise<{ sessionId: string; paseo: PaseoReceipt }>;
 	workspace(id: string): Promise<PaseoWorkspace | null>;
 	workspaceAt(dir: string): Promise<PaseoWorkspace[]>;
 	agentsUsing(id: string, dir: string): Promise<string[]>;
@@ -254,6 +258,7 @@ async function openWorkspaces(client: PaseoClient, includeHidden = false): Promi
 async function workspaceFor(
 	client: PaseoClient,
 	cwd: string,
+	placed: (handle: PaseoWorkspaceHandle, provenance: PaseoReceipt["provenance"]) => void,
 ): Promise<{
 	handle: PaseoWorkspaceHandle;
 	provenance: PaseoReceipt["provenance"];
@@ -264,10 +269,9 @@ async function workspaceFor(
 	const opened = async (): Promise<{ handle: PaseoWorkspaceHandle; provenance: PaseoReceipt["provenance"] }> => {
 		const before = await snapshot();
 		const handle = await client.workspaces.open(cwd);
-		return {
-			handle,
-			provenance: before?.some((entry) => entry.id === handle.id) ? "reused" : "opened",
-		};
+		const provenance = before?.some((entry) => entry.id === handle.id) ? "reused" : "opened";
+		placed(handle, provenance);
+		return { handle, provenance };
 	};
 	const git = inspectGit(cwd);
 	if (git.kind !== "git") return opened();
@@ -296,13 +300,16 @@ async function workspaceFor(
 			idempotencyKey: `pi-squire-worktree:${key}:${generation}`,
 			source: { kind: "directory", path: checkoutRoot, projectId: main.projectId },
 		});
+		const provenance = before && !before.some((entry) => entry.id === workspace.id) ? "created" : "reused";
+		// Preserve the acknowledgement before even the active-workspace check can fail.
+		placed(workspace, provenance);
 		// CreationService replays completed receipts without reviving archived
 		// workspaces (0.15.4). A new generation is a new placement operation;
 		// concurrent callers still share its daemon-owned idempotency key.
 		if ((await openWorkspaces(client)).some((entry) => entry.id === workspace.id))
 			return {
 				handle: workspace,
-				provenance: before && !before.some((entry) => entry.id === workspace.id) ? "created" : "reused",
+				provenance,
 			};
 		if (Date.now() >= deadline) throw new Error("Paseo did not provide an active worktree workspace");
 	}
@@ -347,18 +354,28 @@ function runPaseo(home: string, args: readonly string[]): Promise<CliRun> {
 	});
 }
 
-async function createAgent(client: PaseoClient, home: string, input: CreateInput): ReturnType<PaseoApi["create"]> {
+async function createAgent(
+	client: PaseoClient,
+	home: string,
+	input: CreateInput,
+	progress?: PaseoProgressSink,
+): ReturnType<PaseoApi["create"]> {
 	// A plain agents.create registers a new workspace every time, so the
 	// agent goes through its folder's own.
-	const { handle: workspace, provenance } = await workspaceFor(client, input.cwd);
-	if (!workspace.directory || !workspace.projectId) throw new Error("Paseo workspace placement is incomplete");
-	const paseo: PaseoReceipt = {
-		home,
-		workspaceId: workspace.id,
-		directory: realPath(workspace.directory),
-		projectId: workspace.projectId,
-		provenance,
+	const receipt = (workspace: PaseoWorkspaceHandle, provenance: PaseoReceipt["provenance"]): PaseoReceipt => {
+		if (!workspace.directory || !workspace.projectId) throw new Error("Paseo workspace placement is incomplete");
+		return {
+			home,
+			workspaceId: workspace.id,
+			directory: realPath(workspace.directory),
+			projectId: workspace.projectId,
+			provenance,
+		};
 	};
+	const { handle: workspace, provenance } = await workspaceFor(client, input.cwd, (handle, provenance) => {
+		progress?.({ paseo: receipt(handle, provenance) });
+	});
+	const paseo = receipt(workspace, provenance);
 	const handle = await workspace.agents.create({
 		agentId: input.agentId,
 		title: input.title,
@@ -375,7 +392,10 @@ async function createAgent(client: PaseoClient, home: string, input: CreateInput
 			systemPrompt: input.systemPrompt,
 		},
 	});
-	return { sessionId: await assignedSession(handle), paseo };
+	progress?.({ paseo, agentId: handle.id });
+	const sessionId = await assignedSession(handle);
+	progress?.({ paseo, agentId: handle.id, sessionId });
+	return { sessionId, paseo };
 }
 
 async function agentsUsing(client: PaseoClient, id: string, dir: string): Promise<string[]> {
@@ -406,8 +426,8 @@ export function createPaseoApi(homeInput: string = process.env.PASEO_HOME ?? joi
 			const result = await probeDaemonAvailability(home, false);
 			return result.state === "absent" ? result.reason : undefined;
 		},
-		async create(input: CreateInput): ReturnType<PaseoApi["create"]> {
-			return withClient(home, (client) => createAgent(client, home, input));
+		async create(input: CreateInput, progress?: PaseoProgressSink): ReturnType<PaseoApi["create"]> {
+			return withClient(home, (client) => createAgent(client, home, input, progress));
 		},
 		async workspace(id: string): Promise<PaseoWorkspace | null> {
 			return withClient(

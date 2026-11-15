@@ -90,18 +90,33 @@ class PaseoHost implements DelegateHost {
 		if (!parentAgentId) throw new WindowOpenError(NOT_HOSTED, "not-opened");
 		const launch = paseoLaunch(spec);
 		const systemPrompt = promptOf(launch.promptFile);
+		// The requested id is a recovery target, not an acknowledgement that it exists.
+		// A failed pre-dispatch journal/tree write cannot have created a daemon resource.
+		try {
+			spec.onProgress?.({ locator: locatorOf(launch.agentId, spec.name) });
+		} catch (error) {
+			throw new WindowOpenError(`could not record Paseo agent ${launch.agentId}: ${messageOf(error)}`, "not-opened");
+		}
 		let created: Awaited<ReturnType<PaseoApi["create"]>>;
 		try {
-			created = await this.api.create({
-				agentId: launch.agentId,
-				parentAgentId,
-				title: launch.title,
-				cwd: spec.cwd,
-				model: launch.model,
-				thinking: launch.thinking,
-				systemPrompt,
-				env: launch.env,
-			});
+			created = await this.api.create(
+				{
+					agentId: launch.agentId,
+					parentAgentId,
+					title: launch.title,
+					cwd: spec.cwd,
+					model: launch.model,
+					thinking: launch.thinking,
+					systemPrompt,
+					env: launch.env,
+				},
+				(progress) =>
+					spec.onProgress?.({
+						paseo: progress.paseo,
+						locator: locatorOf(progress.agentId ?? launch.agentId, spec.name),
+						...(progress.sessionId === undefined ? {} : { sessionId: progress.sessionId }),
+					}),
+			);
 		} catch (error) {
 			throw new WindowOpenError(`could not start Paseo agent ${launch.agentId}: ${messageOf(error)}`, "unknown");
 		}

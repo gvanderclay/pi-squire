@@ -198,7 +198,7 @@ export function reserveTree(intent: TreeIntent): Reservation {
 
 export function bindTree(
 	token: Reservation,
-	facts: Partial<Pick<TreeEntry, "requestId" | "cwd" | "workspace" | "sessionId">>,
+	facts: Partial<Pick<TreeEntry, "requestId" | "cwd" | "workspace" | "sessionId" | "locator">>,
 ): void {
 	treeTransaction(token.root, (state) => Object.assign(entryFor(state, token), facts));
 }

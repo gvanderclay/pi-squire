@@ -668,6 +668,12 @@ export default function delegate(
 					onWindowOpened: () => {
 						windowOpened = true;
 					},
+					onProgress: (progress) => {
+						if (attempt !== undefined) {
+							attempt = { ...attempt, ...progress };
+							results.recordAttempt(attempt, ctx);
+						}
+					},
 				},
 				ctx,
 			);

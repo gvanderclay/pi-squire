@@ -555,10 +555,13 @@ another resume of the chain (as with terminal resume). Inspect or continue the
 preserved conversation manually in Paseo/Pi with only one writer, or start a
 fresh delegate; do not delete tracking history to force a retry.
 
-A refusal before reload, or a failed/mismatched reload whose rollback is
-confirmed archived and closed, instead refunds its reservation and can be retried
-once the source passes readiness again. Unconfirmed rollback remains charged
-and requires inspection. Details:
+A refusal before reload instead refunds its reservation. After reload begins,
+refund requires a definitive daemon answer (resolved reload with a mismatched
+identity, or a server RPC error) plus confirmed archived/closed rollback readback.
+The source can then be retried once it passes readiness again. Timeouts, lost
+connections and other unknown reload outcomes keep the slot held even after
+confirmed archive, because reload might still finish later. Unconfirmed rollback
+also remains charged and requires inspection. Details:
 [Paseo support](hosts.md#paseo-support).
 
 ### Terminal-hosted resume

@@ -284,7 +284,7 @@ test("pre-dispatch refusal and confirmed reload rollback are explicitly refundab
 			if (mode === "before") f.agent.archivedAt = null;
 			else
 				f.onReload(() => {
-					if (mode === "reload") throw new Error("reload failed");
+					if (mode === "reload") throw Object.assign(new Error("reload failed"), { name: "DaemonRpcError" });
 					if (f.agent.runtimeInfo) f.agent.runtimeInfo.sessionId = randomUUID();
 				});
 			await assert.rejects(f.api.resume(f.input), (error: unknown) => {
@@ -306,7 +306,7 @@ test("unconfirmed rollback readback stays unknown even after an archive acknowle
 	let reloaded = false;
 	f.onReload(() => {
 		reloaded = true;
-		throw new Error("reload failed");
+		throw Object.assign(new Error("reload failed"), { name: "DaemonRpcError" });
 	});
 	t.mock.method(DaemonClient.prototype, "archiveAgent", async () => ({ archivedAt: "not-confirmed" }));
 	f.onFetch(() => {
@@ -323,7 +323,7 @@ test("unconfirmed rollback readback stays unknown even after an archive acknowle
 test("an archive timestamp alone cannot prove the reopened process closed", async (t) => {
 	const f = fixture(t);
 	f.onReload(() => {
-		throw new Error("reload failed");
+		throw Object.assign(new Error("reload failed"), { name: "DaemonRpcError" });
 	});
 	t.mock.method(DaemonClient.prototype, "archiveAgent", async () => {
 		f.agent.archivedAt = "archived";
@@ -343,7 +343,7 @@ test("connection cleanup cannot erase a confirmed rollback, but a successful reo
 			const f = fixture(sub);
 			if (rolledBack)
 				f.onReload(() => {
-					throw new Error("reload failed");
+					throw Object.assign(new Error("reload failed"), { name: "DaemonRpcError" });
 				});
 			sub.mock.method(DaemonClient.prototype, "close", async () => {
 				throw new Error("connection close failed");
@@ -353,6 +353,33 @@ test("connection cleanup cannot erase a confirmed rollback, but a successful reo
 				assert.equal(error.certainty, rolledBack ? "not-opened" : "unknown");
 				return true;
 			});
+		});
+});
+
+test("ambiguous reload rejections remain unknown even after confirmed closed rollback", async (t) => {
+	const errors = [
+		new Error("Session RPC timed out (60000ms)"),
+		new Error("Timeout waiting for message"),
+		Object.assign(new Error("connection lost"), { name: "DaemonConnectionError" }),
+		Object.assign(new Error("invalid response"), { name: "DaemonProtocolError" }),
+		new Error("unknown reload failure"),
+	];
+	for (const rejection of errors)
+		await t.test(rejection.message, async (sub) => {
+			const f = fixture(sub);
+			f.onReload(() => {
+				throw rejection;
+			});
+			await assert.rejects(f.api.resume(f.input), (error: unknown) => {
+				assert.ok(error instanceof WindowOpenError);
+				assert.equal(error.certainty, "unknown");
+				assert.equal(error.nativeResumeRollback, undefined);
+				assert.match(error.message, /reload outcome is unknown.*reservation slot stays held/);
+				return true;
+			});
+			assert.deepEqual(f.calls, ["connect", "fetch", "reload", "archive", "fetch", "close"]);
+			assert.ok(f.agent.archivedAt);
+			assert.equal(f.agent.status, "closed");
 		});
 });
 

@@ -65,14 +65,18 @@ function canonicalHome(home: string): string {
 
 type PreserveChildren = (client: PaseoClient, agentId: string) => Promise<boolean>;
 
-/** A rollback is refundable only after the daemon confirms no reopened resource remains. */
+/** Refund only a definitive reload answer followed by confirmed closed rollback. */
 async function rollbackReload(
 	client: PaseoClient,
 	handle: PaseoAgentHandle,
 	input: PaseoResumeInput,
 	preserveChildren: PreserveChildren,
 	error: unknown,
+	answered: boolean,
 ): Promise<never> {
+	const message = `${error instanceof Error ? error.message : String(error)}${
+		answered ? "" : "; Paseo reload outcome is unknown; its reservation slot stays held"
+	}`;
 	try {
 		if (!(await preserveChildren(client, input.agentId))) throw new Error("archive was canceled");
 		await handle.archive();
@@ -82,11 +86,12 @@ async function rollbackReload(
 			throw new Error("archive readback did not confirm the original agent is inactive");
 	} catch (rollback) {
 		throw new WindowOpenError(
-			`${String(error)}; could not re-archive Paseo agent ${input.agentId}: ${String(rollback)}; inspect it in Paseo`,
+			`${message}; could not re-archive Paseo agent ${input.agentId}: ${String(rollback)}; inspect it in Paseo`,
 			"unknown",
 		);
 	}
-	throw new WindowOpenError(error instanceof Error ? error.message : String(error), "not-opened", {
+	if (!answered) throw new WindowOpenError(`${message}; inspect it in Paseo`, "unknown");
+	throw new WindowOpenError(message, "not-opened", {
 		kind: "native-resume-closed",
 		sessionId: input.sessionId,
 		agentId: input.agentId,
@@ -99,14 +104,20 @@ async function reloadChecked(
 	input: PaseoResumeInput,
 	preserveChildren: PreserveChildren,
 ): Promise<void> {
+	let answered = false;
 	try {
 		await handle.reload();
+		answered = true;
 		// This expected child now owns the session; only pre-existing owners conflict.
 		const agent = handle.current();
 		if (!sameSession(agent, input) || agent.archivedAt)
 			throw new Error("Paseo reopened a mismatched Pi session; no task was mailed");
 	} catch (error) {
-		await rollbackReload(client, handle, input, preserveChildren, error);
+		// @getpaseo/client 0.15.4 dist/daemon-client.js:141-156,1207-1246:
+		// the unexported DaemonRpcError identifies a server rpc_error response.
+		// Other rejections (including timeouts) may still finish reload after rollback.
+		answered ||= error instanceof Error && error.name === "DaemonRpcError";
+		await rollbackReload(client, handle, input, preserveChildren, error, answered);
 	}
 }
 

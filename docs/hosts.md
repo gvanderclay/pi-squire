@@ -234,8 +234,12 @@ reading activity and explicitly closing an agent run that command.
   A native Paseo resume does not emit `session:launch`: Paseo reloads the agent
   with the arguments and environment the hook produced at its original launch.
   Normal identity notifications, completion holds, accounting and result delivery
-  still run. A pre-reload refusal or confirmed reload rollback refunds the
-  reservation so a valid source can be retried; an unconfirmed rollback stays
+  still run. A pre-reload refusal refunds the reservation. A reload rollback
+  refunds it only after a definitive daemon answer (resolved reload with a
+  mismatched identity, or a server RPC error) plus confirmed archive/closed
+  readback, so a valid source can be retried. Timeouts, lost connections and
+  other unknown reload outcomes keep the slot held even after confirmed archive,
+  because reload might still finish later. Unconfirmed rollback also stays
   charged and needs inspection. If follow-up mail fails after a successful
   reload, Squire re-archives rather than deletes the original agent, but the
   shared started successor remains and blocks another Squire resume of that

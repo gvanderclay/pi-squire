@@ -4,12 +4,21 @@ import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, type TestContext, test } from "node:test";
 import type { PaseoAgent, PaseoClient } from "@getpaseo/client";
+import { WindowOpenError } from "../src/host.ts";
 import { readIdentity } from "../src/identity.ts";
 import { createPaseoHost } from "../src/paseo.ts";
 import { nativeResumeApi } from "../src/paseo-resume-api.ts";
 import { goneOutcome } from "../src/result-close.ts";
 import { isV2Start } from "../src/result-types.ts";
-import { claimTree, dispatchTree, failedTree, readTree, reserveTree, treeCounts } from "../src/tree-registry.ts";
+import {
+	claimTree,
+	dispatchTree,
+	failedTree,
+	readTree,
+	reserveTree,
+	treeCounts,
+	treeTransaction,
+} from "../src/tree-registry.ts";
 import {
 	agentDir,
 	agentFile,
@@ -140,9 +149,13 @@ function nativeFailure(t: TestContext, f: Awaited<ReturnType<typeof source>>, mo
 				agent.archivedAt = null;
 				if (mode === "mismatch") {
 					if (agent.runtimeInfo) agent.runtimeInfo.sessionId = "wrong";
-				} else throw new Error("reload refused");
+				} else if (mode === "timeout") throw new Error("Timeout waiting for message");
+				else if (mode === "connection")
+					throw Object.assign(new Error("connection lost"), { name: "DaemonConnectionError" });
+				else throw Object.assign(new Error("reload refused"), { name: "DaemonRpcError" });
 			},
 			archive: async () => {
+				f.api.calls.push("rollback-archive");
 				if (mode === "unknown") throw new Error("archive unavailable");
 				f.api.archived.add(f.id);
 				f.api.running.delete(f.id);
@@ -204,6 +217,74 @@ test("an unconfirmed native rollback stays charged and cannot be retried as if n
 	);
 	assert.equal(f.s.sendCalls.length, 1);
 	await f.s.shutdown();
+});
+
+test("ambiguous native reloads archive but keep accounting charged and refuse retry", async (t) => {
+	for (const mode of ["timeout", "connection"])
+		await t.test(mode, async (sub) => {
+			resetRoot();
+			const f = await source();
+			const before = treeCounts(readTree(f.s.parent));
+			const starts = f.s.entries.filter((entry) => isV2Start(entry.data)).length;
+			nativeFailure(sub, f, mode);
+			await assert.rejects(f.s.toolCall("delegation_resume", { id: f.id, task: "failed" }), (error: unknown) => {
+				assert.ok(error instanceof WindowOpenError);
+				assert.equal(error.certainty, "unknown");
+				assert.equal(error.nativeResumeRollback, undefined);
+				assert.match(error.message, /reload outcome is unknown.*reservation slot stays held/);
+				return true;
+			});
+			const counts = treeCounts(readTree(f.s.parent));
+			assert.deepEqual(counts, { concurrent: before.concurrent + 1, lifetime: before.lifetime + 1 });
+			assert.equal(readTree(f.s.parent).entries.find((entry) => entry.resumedFrom === f.id)?.phase, "dispatched");
+			assert.ok(f.api.calls.includes("rollback-archive"));
+			assert.ok(f.api.archived.has(f.id));
+			assert.equal(f.api.running.has(f.id), false);
+			assert.equal(f.s.entries.filter((entry) => isV2Start(entry.data)).length, starts);
+			await assert.rejects(
+				f.s.toolCall("delegation_resume", { id: f.id, task: "retry" }),
+				/already resumed; resume its newest delegation/,
+			);
+			assert.deepEqual(treeCounts(readTree(f.s.parent)), counts);
+			assert.equal(f.s.sendCalls.length, 1);
+			await f.s.shutdown();
+		});
+});
+
+test("native closed rollback proof cannot refund published outcomes or mismatched identities", async (t) => {
+	for (const mode of ["requestId", "launch", "finished", "agent", "source-agent", "session"])
+		await t.test(mode, async () => {
+			resetRoot();
+			const f = await source();
+			assert.ok(f.record.identity);
+			const token = reserveTree({
+				id: randomUUID(),
+				sessionId: f.sessionId,
+				identity: f.record.identity,
+				resumedFrom: f.id,
+			});
+			dispatchTree(token);
+			claimTree(f.s.parent, f.sessionId, undefined);
+			treeTransaction(f.s.parent, (state) => {
+				const entry = state.entries.find((item) => item.id === token.id);
+				assert.ok(entry);
+				if (mode === "requestId") entry.requestId = "task-request";
+				if (mode === "launch") entry.launch = { ...f.record, id: token.id, resumedFrom: f.id };
+				if (mode === "finished") entry.finished = true;
+				if (mode === "agent") entry.locator = f.record.locator;
+			});
+			const before = readTree(f.s.parent);
+			const counts = treeCounts(before);
+			assert.equal(before.entries.find((entry) => entry.id === token.id)?.phase, "started");
+			failedTree(token, true, {
+				kind: "native-resume-closed",
+				sessionId: mode === "session" ? randomUUID() : f.sessionId,
+				agentId: mode === "agent" || mode === "source-agent" ? randomUUID() : f.id,
+			});
+			assert.deepEqual(readTree(f.s.parent), before, "invalid proof must not change the started entry");
+			assert.deepEqual(treeCounts(readTree(f.s.parent)), counts);
+			await f.s.shutdown();
+		});
 });
 
 test("started terminal successors are never refunded by native rollback proof", async () => {

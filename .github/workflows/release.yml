@@ -16,9 +16,10 @@ permissions:
 
 concurrency: release
 
+# Match CI's pinned OS image; review runner upgrades together with ci.yml.
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
@@ -36,7 +37,7 @@ jobs:
   publish:
     needs: version
     if: needs.version.outputs.tag != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # the tag and the GitHub release
       id-token: write # trusted publishing and provenance

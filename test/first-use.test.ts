@@ -230,7 +230,12 @@ test("doctor distinguishes selected tmux, Herdr and Paseo, availability failure,
 		assert.match(unavailable, /Host prerequisite:/);
 		assert.equal(host.opened.length, 0);
 	}
-	for (const reason of ["inside neither tmux nor Herdr", "inside both tmux and Herdr"]) {
+	for (const reason of [
+		"inside neither tmux nor Herdr",
+		"inside both tmux and Herdr",
+		// The settings path inside the cause must not steer the advice to Paseo or Herdr.
+		'this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in /home/u/paseo-herdr/agent/squire/settings.json)',
+	]) {
 		const host = createHostRouter(
 			[],
 			() => {

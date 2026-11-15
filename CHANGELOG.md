@@ -16,7 +16,8 @@ follows [Semantic Versioning](https://semver.org/).
 - `/delegate-doctor` checks host selection and availability, roster paths and
   parse warnings, settings parsing, session storage, and separate invalid-input
   responses from `message:send` and `message:reply`. It launches nothing and
-  never scans or claims mail; a handler response does not prove delivery.
+  never scans or claims mail; a handler response, shown with the provider's
+  error text, does not prove delivery.
 
 ### Changed
 
@@ -24,33 +25,31 @@ follows [Semantic Versioning](https://semver.org/).
   uninstall; ship the full configuration, host, workspace, result and integration
   references in `docs/`, with clearer experimental-feature status and package
   discovery metadata. Executable hook examples and runtime behavior are unchanged.
-- Missing-host and missing-mail refusals now include exact install/start or
-  reload actions. The shared host-admission gate preserves the original cause
-  before its action text; `test/host-admission.test.ts`’s “unselected router
-  refuses before reading any concrete-host facts or placement” expectations
-  deliberately include that new advice.
+- Host and mail refusals now say what to do. `/delegate`, `/delegate-resume`
+  and `/delegate-doctor` add an action chosen by the cause: install or start
+  tmux, set `multiplexer` when Pi is inside both tmux and Herdr or the
+  selection is invalid, fix Herdr, start the Paseo daemon, or run Pi inside a
+  Paseo agent. Tool results add only a short hint to ask the user and run
+  `/delegate-doctor`, with no install commands. Every refusal keeps its
+  original cause first. Deliberately changed expectations:
+  `test/host-admission.test.ts`’s “unselected router refuses before reading any
+  concrete-host facts or placement”, and `test/resume-picker.test.ts`’s old-tmux
+  case, which now checks the identical cause prefix plus audience-specific
+  advice instead of equal command and tool text.
+- An empty roster tells a tool caller to ask the user to run `/delegate` or add
+  an agent file; in interactive Pi the starter offer opens without a preceding
+  error.
 - `/delegate`, `/delegate-resume`, `/delegate-open` and `/delegate-cleanup`
   refusals and `/delegate-doctor` output go to stderr in print/JSON mode instead
   of disappearing with Pi’s no-op UI. They add no user/model messages or agent
   turns; successful slash-command semantics are unchanged.
   `test/cleanup-command.test.ts`’s “registered /delegate-cleanup refuses no-UI
   before proof or mutations; no model message/turn” deliberately checks stderr
-  instead of a no-op notification.
+  instead of a no-op notification. Agent-file warnings reach stderr the same way,
+  so an empty roster caused by a broken file says why.
 
 ### Fixed
 
-- Host refusal advice now follows the cause: ambiguous/invalid multiplexer
-  selection points to settings, Herdr failures to Herdr, and a stopped Paseo
-  daemon to starting it and checking `paseo status`. Tool results keep only
-  the original cause and a short user/doctor hint, without install commands.
-  `test/resume-picker.test.ts`’s old-tmux expectation deliberately now checks
-  the identical cause prefix plus audience-specific advice, rather than equal
-  command/tool text.
-- Empty-roster tool results ask the user to create an agent rather than telling
-  the model to run a slash command. The interactive starter opens without a
-  preceding empty-roster error; print/JSON users still get the refusal and now
-  also see agent-file warnings. Doctor mail probes include bounded provider
-  errors while still proving only that a handler answered invalid input.
 - A launch rolled back before dispatch no longer carries the requested Paseo
   agent id. Post-dispatch failures and interrupted attempts still retain the
   agent id and its recovery advice.

@@ -1016,8 +1016,16 @@ Opened, reused and path-found workspaces are kept by the tool: Squire did not cr
 The interactive `/delegate-cleanup` command can ask you to archive one such workspace.
 Older records need no receipt: when the daemon is available, a workspace at
 the exact directory keeps the worktree; if none exists, Git cleanup proceeds.
-A receipt with an unavailable daemon keeps the item. Without a receipt and
-with the daemon unavailable, cleanup proceeds without Paseo checks.
+A receipt with an unavailable daemon keeps the item: its persisted workspace
+cannot be verified or archived while the daemon is down. Without a receipt,
+cleanup skips Paseo checks only on **positive absence**: a missing `paseo.pid`,
+a recorded pid that no longer exists, or a refused daemon TCP port. These checks
+do not load the SDK. A live pid alone does not prove availability; Squire probes
+the socket and authenticates with the daemon. A descriptor without a pid still
+needs the socket probe. Malformed/unreadable descriptors, timeouts, failed
+authentication and other ambiguous failures keep the item with the specific
+reason, even for tmux-only worktrees. When a daemon is available, the foreign
+workspace policy above still applies.
 
 Before archive, the directory and project must match, the workspace must not
 be internal, archiving, Paseo-owned, running setup or running a script, and no
@@ -1049,7 +1057,15 @@ use `/delegate-cleanup` for confirmed overrides. Remote branches are untouched.
 The result carries `items`, `counts` and, for `all`, `selection`. An item is
 `removed`, `kept`, `partial` (resources remain after removal, or a failed
 removal may have deleted some content) or `already-clean`, with a reason and
-observed `remains`. Completed worktree removals have a bounded `ignoredRemoved`
+observed `remains`. When Git is already clean but a recorded Paseo workspace
+cannot be verified, the overall outcome is still `kept`, not `already-clean`.
+The text reports "Git already-clean; Paseo workspace unverified" with the daemon
+failure, and additive `resources` observations report
+`{ git: "already-clean", paseo: "unverified" }`. Retry after restoring the daemon
+to verify/archive the remaining workspace; a previous successful cleanup is not
+cached as proof. Opened/reused receipts still receive the tool\'s foreign-workspace
+refusal without contacting the daemon, alongside any already-clean Git observation;
+use `/delegate-cleanup` for confirmation. Completed worktree removals have a bounded `ignoredRemoved`
 path summary; an incomplete directory removal does not claim an ignored count.
 Kept text groups reasons and shows at most ten ids per group. Calls process at most 50 worktree groups,
 and stop starting new worktrees after about 120 s; the rest are listed in

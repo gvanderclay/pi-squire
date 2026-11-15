@@ -78,6 +78,41 @@ async function setup(ui: UiAnswers = {}, hasUI = true) {
 	const run = () => cleanupCommand(deps, ctx);
 	return { s, f, record, publish, api, deps, ctx, run };
 }
+test("already-clean Git with unavailable receipt reports Paseo unverified without offering confirmation", async () => {
+	const { s, f, record, publish, api, deps, ctx, run } = await setup({ confirm: [true] });
+	record.workspace = {
+		...f.workspace,
+		paseo: {
+			home: "/fake-paseo",
+			workspaceId: "workspace",
+			projectId: "project",
+			directory: f.cwd,
+			provenance: "created",
+		},
+	};
+	publish();
+	git(f.source, "worktree", "remove", f.cwd);
+	git(f.source, "branch", "-d", f.plan.branch);
+	api.down = true;
+	const items = await previewCleanup(deps, ctx);
+	assert.equal(items[0].outcome.outcome, "kept");
+	assert.equal(items[0].preview, undefined);
+	assert.deepEqual(items[0].outcome.resources, { git: "already-clean", paseo: "unverified" });
+	await run();
+	assert.match(s.notes.join("\n"), /kept.*Git already-clean.*Paseo workspace unverified.*unavailable/);
+	assert.equal(s.confirms.length, 0);
+	api.down = false;
+	assert.equal((await previewCleanup(deps, ctx))[0].outcome.outcome, "already-clean");
+});
+test("ambiguous receiptless daemon state is reported, never offered as safe or already-clean", async () => {
+	const { s, f, api, run } = await setup({ confirm: [true] });
+	api.availabilityState = { state: "ambiguous", reason: "Paseo authentication failed" };
+	const check = untouched(f);
+	await run();
+	check();
+	assert.equal(s.confirms.length, 0);
+	assert.match(s.notes.join("\n"), /Paseo workspace unverified.*authentication failed/);
+});
 function untouched(f: ReturnType<typeof fixture>): () => void {
 	const trees = git(f.source, "worktree", "list", "--porcelain");
 	const branches = git(f.source, "show-ref", "--heads");

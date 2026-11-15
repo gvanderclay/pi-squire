@@ -11,9 +11,12 @@ import { agentDir, agentFile, DELEGATION_TOOLS, session, writeAgent } from "./ha
 // and its selection counts, so a partial list is not mistaken for every record.
 // delegation_resume names the deferred fork in one clause, so a model can find it.
 // Cleanup adds 1,563 measured characters: T3 adds 46 for the command override pointer.
+// T6 adds 140 measured schema characters for independently readable Git/Paseo observations;
+// scripts must not mistake already-clean Git for a verified Paseo workspace.
 // Discoverable parents still defer cleanup, so their declaration caps do not grow.
 // T11 adds 57 characters of accurate fresh-launch/resource/fork guidance; no other text is cut.
-const BUDGET = 14_441;
+const CLEANUP_RESOURCE_METADATA = 140;
+const BUDGET = 14_441 + CLEANUP_RESOURCE_METADATA;
 // `delegation_fork` is deferred: a parent that can find it (codemode or
 // tool_search active) starts without it declared, so what such a parent pays in
 // every request is the other four. Activating it later declares it.
@@ -23,7 +26,7 @@ const DECLARED_BUDGET = 10_757;
 // start, so it counts two copies; a declared fork adds the third.
 const ROUTED_BUDGET = 13_537;
 // Coordinators explicitly activate both deferred tools (two-agent roster below).
-const COORDINATOR_BUDGET = 14_469;
+const COORDINATOR_BUDGET = 14_469 + CLEANUP_RESOURCE_METADATA;
 // The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
 const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 

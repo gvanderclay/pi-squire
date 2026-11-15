@@ -32,6 +32,16 @@ follows [Semantic Versioning](https://semver.org/).
   with distinct mail/state values across hosts and supported resume/fork paths;
   `test/delegate.test.ts` also expects these explicit locations in its exact
   launch-environment assertion.
+- Cleanup no longer lets a stale Paseo descriptor (dead pid or refused port)
+  block a receiptless tmux worktree. Missing descriptors are also positive
+  absence; malformed state, timeouts and authentication failures deliberately
+  keep worktrees instead of silently skipping foreign-workspace checks.
+- Cleanup reports already-clean Git separately from an unverified recorded
+  Paseo workspace when the daemon is down, without claiming the whole item is
+  clean. Tool results add optional per-resource observations; the command
+  reports the same distinction without offering a misleading confirmation.
+  The `test/context-budget.test.ts` expectations deliberately allow the 140
+  measured characters of this additive schema; tool-description text is unchanged.
 - The verification helper strips inherited `PASEO_*` routing by default; use
   `SQUIRE_VERIFY_KEEP_PASEO=1` for a deliberate Paseo delegate run with private mail.
 - Nested trust requests no longer fail when the root session is busy for over a

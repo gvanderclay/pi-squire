@@ -12,7 +12,7 @@ import {
 	cleanupRemains,
 	previewCleanupGit,
 } from "./cleanup-git.ts";
-import { type CleanupPaseoDeps, cleanupPaseo } from "./cleanup-paseo.ts";
+import { type CleanupPaseoDeps, cleanupPaseo, withCleanGit } from "./cleanup-paseo.ts";
 import { readIdentity } from "./identity.ts";
 import { paseoLocator } from "./paseo-locator.ts";
 import { findSession, sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
@@ -243,7 +243,7 @@ async function finishGroup(current: Candidate, deps: CleanupDeps, liveCheck: () 
 	const preview: CleanupOutcome | undefined = previewCleanupGit(current.resource, liveCheck, deps);
 	if (preview && preview.outcome !== "already-clean") return preview;
 	const paseo = await cleanupPaseo(current.resource, current.records, deps);
-	if (paseo.outcome) return paseo.outcome;
+	if (paseo.outcome) return preview?.outcome === "already-clean" ? withCleanGit(paseo.outcome) : paseo.outcome;
 	const result: CleanupOutcome = cleanGit(current.resource, liveCheck, deps);
 	if (paseo.archived && result.outcome === "kept") result.outcome = "partial";
 	if (paseo.archived && result.outcome === "already-clean") {
@@ -367,6 +367,12 @@ const ItemSchema = Type.Object({
 	reason: Type.String(),
 	remains: Type.Array(Type.String()),
 	ignoredRemoved: Type.Optional(Type.Object({ total: Type.Number(), paths: Type.Array(Type.String()) })),
+	resources: Type.Optional(
+		Type.Object({
+			git: Type.Optional(Type.Literal("already-clean")),
+			paseo: Type.Optional(Type.Literal("unverified")),
+		}),
+	),
 });
 export const CleanupSchema = Type.Object({
 	items: Type.Array(ItemSchema),

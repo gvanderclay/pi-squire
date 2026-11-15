@@ -9,7 +9,14 @@ import {
 	cleanGit,
 	inspectCleanupGit,
 } from "./cleanup-git.ts";
-import { type CleanupPaseoPreview, cleanupPaseo, previewCleanupPaseo } from "./cleanup-paseo.ts";
+import {
+	type CleanupPaseoPreview,
+	cleanupPaseo,
+	PaseoUnavailableError,
+	previewCleanupPaseo,
+	unverifiedPaseo,
+	withCleanGit,
+} from "./cleanup-paseo.ts";
 import { readIdentity } from "./identity.ts";
 import { readTree } from "./tree-registry.ts";
 
@@ -41,7 +48,14 @@ export async function previewCleanup(deps: CleanupDeps, ctx: ExtensionContext): 
 		let preview: CleanupPreview | undefined;
 		const result = await processGroup(group, deps, ctx, actor, root, undefined, async (current, liveCheck) => {
 			const git = inspectCleanupGit(current.resource, liveCheck, deps);
-			const paseo = await previewCleanupPaseo(current.resource, current.records, deps);
+			let paseo: CleanupPaseoPreview;
+			try {
+				paseo = await previewCleanupPaseo(current.resource, current.records, deps);
+			} catch (error) {
+				if (error instanceof PaseoUnavailableError)
+					return unverifiedPaseo(error, current.resource, git.tip === null && !git.exists);
+				throw error;
+			}
 			preview = {
 				ids: current.ids,
 				resource: current.resource,
@@ -94,7 +108,7 @@ export async function removeConfirmedCleanup(
 			preview: confirmed.paseo,
 			beforeArchive: checkGit,
 		});
-		if (paseo.outcome) return paseo.outcome;
+		if (paseo.outcome) return withCleanGit(paseo.outcome, confirmed.git);
 		const outcome = cleanGit(current.resource, liveCheck, deps, confirmed.git);
 		if (paseo.archived) {
 			outcome.reason = outcome.reason.replace(CHANGED_CONFIRMATION, "changed after archive; Git cleanup skipped");

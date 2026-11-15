@@ -402,8 +402,8 @@ test("multiple foreign workspaces omit the unusable command pointer without extr
 				mode === "opened"
 					? []
 					: mode === "legacy"
-						? ["unavailable", "workspaceAt"]
-						: ["unavailable", "workspace", "agentsUsing", "terminalsUsing", "workspaceAt"],
+						? ["availability", "workspaceAt"]
+						: ["availability", "workspace", "agentsUsing", "terminalsUsing", "workspaceAt"],
 			);
 			assert.equal(existsSync(f.cwd), true);
 			await s.shutdown();
@@ -579,7 +579,7 @@ test("receipt with daemon down keeps; legacy absent receipt with no workspace or
 			assert.equal(result.items[0].outcome, mode === "receipt down" ? "kept" : "removed");
 			if (mode === "receipt down") assert.match(result.items[0].reason, /unavailable/);
 			assert.equal(api.calls.includes("archiveWorkspace"), false);
-			if (mode === "legacy down") assert.deepEqual(api.calls, ["unavailable"]);
+			if (mode === "legacy down") assert.deepEqual(api.calls, ["availability"]);
 		});
 });
 test("tmux cleanup with daemon down never imports the Paseo SDK", async () => {
@@ -602,6 +602,84 @@ test("tmux cleanup with daemon down never imports the Paseo SDK", async () => {
 		assert.equal(result.items[0].outcome, "removed", result.items[0].reason);
 	} finally {
 		hooks.deregister();
+	}
+});
+test("tmux cleanup skips a stale dead-pid descriptor without loading the SDK", async () => {
+	const s = instance();
+	await s.start();
+	const f = fixture();
+	publish(s.parent, [started(f, s.parent)]);
+	const home = join(root, "stale-paseo");
+	mkdirSync(home, { recursive: true });
+	writeFileSync(join(home, "paseo.pid"), JSON.stringify({ pid: 2147483647, listen: "127.0.0.1:1" }));
+	const hooks = registerHooks({
+		resolve(specifier, context, next) {
+			if (specifier.startsWith("@getpaseo/client")) throw new Error("SDK loaded by stale descriptor");
+			return next(specifier, context);
+		},
+	});
+	try {
+		const result = await runCleanup({ all: true }, deps(s, { paseoApi: () => createPaseoApi(home) }), context(s));
+		assert.equal(result.items[0].outcome, "removed", result.items[0].reason);
+		assert.equal(existsSync(f.cwd), false);
+	} finally {
+		hooks.deregister();
+	}
+});
+test("ambiguous daemon state keeps tmux and receipt-backed Git; positively absent only skips receiptless checks", async (t) => {
+	for (const receipt of [false, true]) {
+		for (const state of ["absent", "ambiguous"] as const) {
+			await t.test(`${receipt ? "receipt" : "tmux"} ${state}`, async () => {
+				resetRoot();
+				const s = instance();
+				await s.start();
+				const { f, api, record } = paseoFixture(s);
+				if (!receipt) {
+					record.workspace = f.workspace;
+					save(s.parent, [record]);
+				}
+				api.availabilityState = { state, reason: `Paseo ${state}: test failure` };
+				const result = await runCleanup({ all: true }, deps(s, { paseoApi: () => api }), context(s));
+				const kept = receipt || state === "ambiguous";
+				assert.equal(result.items[0].outcome, kept ? "kept" : "removed");
+				assert.equal(existsSync(f.cwd), kept);
+				assert.deepEqual(api.calls, ["availability"]);
+				if (kept) assert.match(result.items[0].reason, /Paseo workspace unverified/);
+			});
+		}
+	}
+});
+test("retry with clean Git and daemon down reports Git clean but Paseo unverified; recovery is checked afresh", async () => {
+	const s = instance();
+	await s.start();
+	const { api, run } = paseoFixture(s);
+	assert.equal((await run()).items[0].outcome, "removed");
+	api.down = true;
+	const result = await run();
+	assert.equal(result.items[0].outcome, "kept");
+	assert.deepEqual(result.items[0].resources, { git: "already-clean", paseo: "unverified" });
+	assert.deepEqual(result.counts, { removed: 0, kept: 1, partial: 0, alreadyClean: 0 });
+	assert.match(cleanupText(result), /Git already-clean.*Paseo workspace unverified.*unavailable/);
+	assert.deepEqual(result.items[0].remains, ["paseo workspace: workspace"]);
+	api.down = false;
+	assert.equal((await run()).items[0].outcome, "already-clean");
+});
+test("already-clean Git is reported alongside a fast foreign receipt refusal without daemon calls", async (t) => {
+	for (const provenance of ["opened", "reused"] as const) {
+		await t.test(provenance, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const { f, api, run } = paseoFixture(s, provenance);
+			git(f.source, "worktree", "remove", f.cwd);
+			git(f.source, "branch", "-d", f.plan.branch);
+			api.down = true;
+			const result = await run();
+			assert.equal(result.items[0].outcome, "kept");
+			assert.deepEqual(result.items[0].resources, { git: "already-clean" });
+			assert.match(result.items[0].reason, /Git already-clean.*not created by Squire.*use \/delegate-cleanup/);
+			assert.deepEqual(api.calls, []);
+		});
 	}
 });
 test("Paseo launch receipt survives durable and transcript restoration; legacy absence accepted", async () => {

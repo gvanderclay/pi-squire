@@ -1,7 +1,7 @@
 // Async Paseo preflight and archive; Git is synchronously re-proved after this returns.
 import { isAbsolute } from "node:path";
 import type { PaseoWorkspace } from "@getpaseo/client";
-import { type CleanupOutcome, type CleanupResource, cleanupRemains } from "./cleanup-git.ts";
+import { CHANGED_CONFIRMATION, type CleanupOutcome, type CleanupResource, cleanupRemains } from "./cleanup-git.ts";
 import { createPaseoApi, type PaseoApi } from "./paseo-api.ts";
 import { isStarted, type Recorded } from "./result-types.ts";
 import { canonical, type PaseoReceipt } from "./worktree.ts";
@@ -10,6 +10,7 @@ export type CleanupPaseoDeps = { paseoApi?: (home?: string) => PaseoApi };
 type Proof = { api: PaseoApi; receipt: PaseoReceipt; workspace: PaseoWorkspace | null };
 type Progress = { dispatched: boolean; ids: Set<string> };
 const FOREIGN = "Paseo workspace not created by Squire; kept";
+const foreignReason = (count: number): string => `${FOREIGN}${count === 1 ? "; use /delegate-cleanup" : ""}`;
 const key = (receipt: PaseoReceipt): string => JSON.stringify([receipt.home, receipt.workspaceId]);
 function receipts(records: Recorded[]): PaseoReceipt[] {
 	return records.flatMap((record) => {
@@ -54,7 +55,7 @@ async function legacyCheck(api: PaseoApi, dir: string, progress: Progress): Prom
 	if (await api.unavailable()) return;
 	const workspaces = await api.workspaceAt(dir);
 	for (const workspace of workspaces) progress.ids.add(workspace.id);
-	if (workspaces.length) throw new Error(FOREIGN);
+	if (workspaces.length) throw new Error(foreignReason(new Set(workspaces.map((workspace) => workspace.id)).size));
 }
 async function proofs(
 	found: PaseoReceipt[],
@@ -62,7 +63,8 @@ async function proofs(
 	factory: (home?: string) => PaseoApi,
 ): Promise<Proof[]> {
 	const created = new Set(found.filter((receipt) => receipt.provenance === "created").map(key));
-	if (found.some((receipt) => !created.has(key(receipt)))) throw new Error(FOREIGN);
+	const foreign = new Set(found.filter((receipt) => !created.has(key(receipt))).map(key));
+	if (foreign.size) throw new Error(foreignReason(foreign.size));
 	const selected: Map<string, Proof> = new Map();
 	for (const receipt of found) {
 		if (selected.has(key(receipt))) continue;
@@ -75,7 +77,10 @@ async function proofs(
 		await noUsers(api, receipt.workspaceId, resource.destination);
 		// A foreign workspace at the same path would be stranded by Git removal.
 		const others = await api.workspaceAt(resource.destination);
-		if (others.some((other) => !created.has(key({ ...receipt, workspaceId: other.id })))) throw new Error(FOREIGN);
+		const foreignIds = new Set(
+			others.filter((other) => !created.has(key({ ...receipt, workspaceId: other.id }))).map((other) => other.id),
+		);
+		if (foreignIds.size) throw new Error(foreignReason(foreignIds.size));
 		selected.set(key(receipt), { api, receipt, workspace });
 	}
 	return [...selected.values()];
@@ -92,11 +97,138 @@ async function archive(selected: Proof[], dir: string, progress: Progress): Prom
 		await noUsers(api, receipt.workspaceId, dir);
 	}
 }
+// WorkspaceDescriptorPayloadSchema (@getpaseo/protocol 0.15.4) also carries volatile
+// activity/status/diff/forge/health observations. Bind only identity and safety facts.
+type StableWorkspace = Pick<
+	PaseoWorkspace,
+	| "id"
+	| "projectId"
+	| "workspaceDirectory"
+	| "name"
+	| "title"
+	| "createdAt"
+	| "internal"
+	| "archivingAt"
+	| "setupStatus"
+> & {
+	isPaseoOwnedWorktree?: boolean;
+	scripts: Pick<PaseoWorkspace["scripts"][number], "scriptName" | "lifecycle">[];
+};
+function stableWorkspace(workspace: PaseoWorkspace | null): StableWorkspace | null {
+	if (!workspace) return null;
+	const { id, projectId, workspaceDirectory, name, title, createdAt, internal, archivingAt, setupStatus } = workspace;
+	return {
+		id,
+		projectId,
+		workspaceDirectory,
+		name,
+		title,
+		createdAt,
+		internal,
+		archivingAt,
+		setupStatus,
+		isPaseoOwnedWorktree: workspace.gitRuntime?.isPaseoOwnedWorktree,
+		scripts: workspace.scripts.map(({ scriptName, lifecycle }) => ({ scriptName, lifecycle })),
+	};
+}
+export type CleanupPaseoPreview = {
+	binding: string;
+	foreignId?: string;
+	workspace?: StableWorkspace;
+	archives: { home: string; workspaceId: string }[];
+};
+type CommandProof = { preview: CleanupPaseoPreview; selected: Proof[] };
+async function commandHome(
+	resource: CleanupResource,
+	found: PaseoReceipt[],
+	api: PaseoApi,
+	home?: string,
+): Promise<Proof[]> {
+	const own = found.filter((receipt) => receipt.home === home);
+	const at = await api.workspaceAt(resource.destination);
+	const ids = [
+		...new Set([...own.map((receipt) => receipt.workspaceId), ...at.map((workspace) => workspace.id)]),
+	].sort();
+	const selected: Proof[] = [];
+	for (const id of ids) {
+		const workspace = await api.workspace(id);
+		if (workspace && workspace.id !== id) throw new Error("Paseo workspace identity changed");
+		const receipt = own.find((item) => item.workspaceId === id) ?? {
+			home: home ?? "",
+			workspaceId: id,
+			directory: resource.destination,
+			projectId: workspace?.projectId ?? "",
+			provenance: "opened" as const,
+		};
+		const reason = workspace ? blocker(workspace, resource, receipt) : undefined;
+		if (reason) throw new Error(reason);
+		await noUsers(api, id, resource.destination);
+		selected.push({ api, receipt, workspace });
+	}
+	return selected;
+}
+/** Read every policy-independent blocker before offering a foreign-workspace override. */
+async function commandProof(
+	resource: CleanupResource,
+	records: Recorded[],
+	deps: CleanupPaseoDeps,
+): Promise<CommandProof> {
+	const found = receipts(records);
+	const factory = deps.paseoApi ?? createPaseoApi;
+	const homes = [...new Set(found.map((receipt) => receipt.home))];
+	const selected: Proof[] = [];
+	const unavailableHomes: string[] = [];
+	for (const home of homes.length ? homes : [undefined]) {
+		const api = factory(home);
+		const unavailable = await api.unavailable();
+		if (unavailable) {
+			if (found.length) throw new Error(unavailable);
+			unavailableHomes.push(unavailable);
+			continue;
+		}
+		selected.push(...(await commandHome(resource, found, api, home)));
+	}
+	const created = new Set(found.filter((receipt) => receipt.provenance === "created").map(key));
+	const foreign = selected.filter((item) => item.workspace && !created.has(key(item.receipt)));
+	if (foreign.length > 1)
+		throw new Error("multiple foreign Paseo workspaces use this path; keep and resolve individually in Paseo");
+	return {
+		selected,
+		preview: {
+			binding: JSON.stringify({
+				receipts: found,
+				unavailableHomes,
+				workspaces: selected.map(({ receipt, workspace }) => ({ receipt, workspace: stableWorkspace(workspace) })),
+			}),
+			workspace:
+				stableWorkspace((foreign[0] ?? selected.find((item) => item.workspace))?.workspace ?? null) ?? undefined,
+			archives: selected
+				.filter((item) => item.workspace)
+				.map(({ receipt }) => ({
+					home: receipt.home,
+					workspaceId: receipt.workspaceId,
+				})),
+			...(foreign[0] ? { foreignId: foreign[0].receipt.workspaceId } : {}),
+		},
+	};
+}
+export async function previewCleanupPaseo(
+	resource: CleanupResource,
+	records: Recorded[],
+	deps: CleanupPaseoDeps,
+): Promise<CleanupPaseoPreview> {
+	return (await commandProof(resource, records, deps)).preview;
+}
+export type CleanupPaseoConfirmation = {
+	preview: CleanupPaseoPreview;
+	beforeArchive: () => void;
+};
 /** Returns whether archive was dispatched, or an outcome that stops before Git mutation. */
 export async function cleanupPaseo(
 	resource: CleanupResource,
 	records: Recorded[],
 	deps: CleanupPaseoDeps,
+	confirmed?: CleanupPaseoConfirmation,
 ): Promise<{
 	archived: boolean;
 	outcome?: CleanupOutcome;
@@ -105,6 +237,14 @@ export async function cleanupPaseo(
 	try {
 		const found = receipts(records);
 		for (const receipt of found) progress.ids.add(receipt.workspaceId);
+		if (confirmed) {
+			const checked = await commandProof(resource, records, deps);
+			if (JSON.stringify(checked.preview) !== JSON.stringify(confirmed.preview)) throw new Error(CHANGED_CONFIRMATION);
+			confirmed.beforeArchive();
+			for (const { receipt } of checked.selected) progress.ids.add(receipt.workspaceId);
+			await archive(checked.selected, resource.destination, progress);
+			return { archived: progress.dispatched };
+		}
 		const factory = deps.paseoApi ?? createPaseoApi;
 		if (found.length) await archive(await proofs(found, resource, factory), resource.destination, progress);
 		else await legacyCheck(factory(), resource.destination, progress);

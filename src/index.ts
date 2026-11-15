@@ -67,6 +67,7 @@ import {
 } from "./agents.ts";
 import { registerChild } from "./child.ts";
 import { cleanupTool } from "./cleanup.ts";
+import { cleanupCommand } from "./cleanup-command.ts";
 import { registerCompletionHost } from "./completion-holds.ts";
 import {
 	DELEGATION_TOOLS,
@@ -1066,6 +1067,11 @@ export default function delegate(
 			if ("error" in parsed) return ctx.ui.notify(`delegate: ${parsed.error}`, "error");
 			await navigator.openDelegate(ctx, parsed.id, parsed.mode);
 		},
+	});
+
+	pi.registerCommand("delegate-cleanup", {
+		description: "Preview and confirm removal of finished delegates’ worktrees and local branches",
+		handler: async (_args, ctx) => cleanupCommand({ host: tmux, assertActive: () => owner.assert() }, ctx),
 	});
 
 	pi.registerCommand("delegate-clear", {

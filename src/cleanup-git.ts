@@ -212,8 +212,9 @@ export function proveMerged(resource: CleanupResource, tip: string, run: GhRunne
 		"--format=%(upstream:track)",
 		ref(resource),
 	]).trim();
-	if (track === "[gone]") throw new Error("upstream branch deleted but merge not proved; fetch and retry");
-	throw new Error(`merge not proved (${why}); fetch and retry`);
+	const override = local.length ? "; use /delegate-cleanup" : "";
+	if (track === "[gone]") throw new Error(`upstream branch deleted but merge not proved; fetch and retry${override}`);
+	throw new Error(`merge not proved (${why}); fetch and retry${override}`);
 }
 /** Omit a branch only when Git proves it absent; a failed observation is not absence. */
 export function cleanupRemains(resource: CleanupResource): string[] {
@@ -274,11 +275,15 @@ function proof(
 	resource: CleanupResource,
 	liveCheck: () => void,
 	deps: CleanupGitDeps,
+	confirmed?: CleanupGitPreview,
+	skipMerge = false,
 ): {
 	before: Identity;
 	summary?: PathSummary;
 } {
 	const before: Identity = cleanupIdentity(resource);
+	if (confirmed && (before.tip !== confirmed.tip || before.exists !== confirmed.exists))
+		throw new Error(CHANGED_CONFIRMATION);
 	if (!before.exists && before.tip === null) return { before };
 	liveCheck();
 	let summary: PathSummary | undefined;
@@ -287,8 +292,70 @@ function proof(
 		summary = ignored(resource, deps.walk);
 	}
 	if (before.tip === null) throw new Error("branch tip not proved");
-	proveMerged(resource, before.tip, deps.gh);
+	if (confirmed) {
+		const now = inspectCleanupGit(resource, liveCheck, deps);
+		if (JSON.stringify(now) !== JSON.stringify(confirmed)) throw new Error(CHANGED_CONFIRMATION);
+	} else if (!skipMerge) proveMerged(resource, before.tip, deps.gh);
 	return { before, summary };
+}
+export const CHANGED_CONFIRMATION = "changed since you confirmed; nothing removed";
+export type CleanupGitPreview = {
+	worktree: string;
+	tip: string | null;
+	exists: boolean;
+	upstreamTrack: string;
+	upstream: string;
+	merge: "merged" | "gone" | "unmerged";
+	uniqueCommits: number | null;
+	target: string;
+	targets: { ref: string; tip: string }[];
+	ignored: Pick<PathSummary, "total" | "paths">;
+};
+function mergeClass(
+	resource: CleanupResource,
+	tip: string | null,
+	track: string,
+	deps: CleanupGitDeps,
+): CleanupGitPreview["merge"] {
+	if (tip === null) return "merged";
+	try {
+		proveMerged(resource, tip, deps.gh);
+		return "merged";
+	} catch (error) {
+		const reason = (error as Error).message;
+		if (!reason.startsWith("merge not proved (") && !reason.startsWith("upstream branch deleted but merge not proved"))
+			throw error;
+		return track === "[gone]" ? "gone" : "unmerged";
+	}
+}
+/** Same identity/live/clean/ignored proof as the tool, with merge failure classified, never ignored. */
+export function inspectCleanupGit(
+	resource: CleanupResource,
+	liveCheck: () => void,
+	deps: CleanupGitDeps = {},
+): CleanupGitPreview {
+	liveCheck();
+	const { before, summary } = proof(resource, liveCheck, deps, undefined, true);
+	const cwd = resource.source.mainRoot;
+	const local = targets(resource);
+	const upstreamTrack = git(cwd, ["for-each-ref", "--format=%(upstream:track)", ref(resource)]).trim();
+	const upstream = git(cwd, ["for-each-ref", "--format=%(upstream)", ref(resource)]).trim();
+	const merge = mergeClass(resource, before.tip, upstreamTrack, deps);
+	const target = local[0]?.ref ?? "";
+	const count = target && before.tip ? git(cwd, ["rev-list", "--count", `${target}..${before.tip}`]).trim() : "";
+	if (merge !== "merged" && !/^\d+$/.test(count)) throw new Error("unique commit count not proved");
+	return {
+		worktree: resource.destination,
+		tip: before.tip,
+		exists: before.exists,
+		upstreamTrack,
+		upstream,
+		merge,
+		uniqueCommits: count ? Number(count) : null,
+		target,
+		targets: local.map((entry) => ({ ref: entry.ref, tip: git(cwd, ["rev-parse", "--verify", entry.ref]).trim() })),
+		ignored: { total: summary?.total ?? 0, paths: summary?.paths ?? [] },
+	};
 }
 /** A kept/already-clean result, or undefined when Git permits cleanup. Never mutates. */
 export function previewCleanupGit(
@@ -306,11 +373,16 @@ export function previewCleanupGit(
 	}
 }
 /** No awaits from final identity/live/clean proof through removal and compare-and-swap deletion. */
-export function cleanGit(resource: CleanupResource, liveCheck: () => void, deps: CleanupGitDeps = {}): CleanupOutcome {
+export function cleanGit(
+	resource: CleanupResource,
+	liveCheck: () => void,
+	deps: CleanupGitDeps = {},
+	confirmed?: CleanupGitPreview,
+): CleanupOutcome {
 	let changed = false;
 	let summary: PathSummary | undefined;
 	try {
-		const checked = proof(resource, liveCheck, deps);
+		const checked = proof(resource, liveCheck, deps, confirmed);
 		const before: Identity = checked.before;
 		summary = checked.summary;
 		if (!before.exists && before.tip === null)
@@ -320,6 +392,7 @@ export function cleanGit(resource: CleanupResource, liveCheck: () => void, deps:
 		const final: Identity = cleanupIdentity(resource);
 		if (final.tip !== before.tip || final.exists !== before.exists)
 			throw new Error("checkout changed since proof; nothing removed");
+		if (confirmed) proof(resource, liveCheck, deps, confirmed);
 		liveCheck();
 		if (final.exists) {
 			cleanupClean(resource.destination);
@@ -339,7 +412,10 @@ export function cleanGit(resource: CleanupResource, liveCheck: () => void, deps:
 		if (left.length) return outcome(resource, true, "resources remain after removal", summary);
 		return {
 			outcome: "removed",
-			reason: "merged, unused and clean",
+			reason:
+				confirmed?.merge !== "merged" && confirmed
+					? "confirmed override, unused and clean"
+					: "merged, unused and clean",
 			remains: [],
 			...(summary ? { ignoredRemoved: { total: summary.total, paths: summary.paths } } : {}),
 		};

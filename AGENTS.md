@@ -27,6 +27,7 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   plans/creates/rolls back managed worktrees; `cleanup.ts` discovers and cleans descendant managed worktrees through
   the deferred `delegation_cleanup` tool; `cleanup-git.ts` proves their Git identity, cleanliness and merge before non-forced removal;
   `cleanup-paseo.ts` verifies and archives receipt-proved Squire-created Paseo workspaces before the final Git re-check;
+  `cleanup-command.ts` owns the interactive preview and confirmed cleanup overrides;
   `worktree-placement.ts` resolves
   call-time placement settings, `tool-names.ts` holds tool-name matching and
   the parent's available tools, `tool-bundles.ts` reads the `toolBundles`

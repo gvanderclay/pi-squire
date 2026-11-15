@@ -10,6 +10,7 @@ import {
 	cleanGit,
 	cleanupRemains,
 	type GhRunner,
+	inspectCleanupGit,
 	previewCleanupGit,
 } from "../src/cleanup-git.ts";
 import { askGit } from "../src/git.ts";
@@ -50,6 +51,23 @@ test("Git preview proves safety without invoking either mutation or the removal 
 	assert.match(previewCleanupGit(f.plan, () => {}, { gh: noGh })?.reason ?? "", /uncommitted or untracked/);
 });
 
+test("merge not proved without local targets omits the unusable command pointer", () => {
+	for (const upstreamGone of [false, true]) {
+		const f = fixture();
+		commit(f.cwd);
+		if (upstreamGone) {
+			git(f.source, "remote", "add", "origin", "https://example.invalid/repo");
+			git(f.source, "update-ref", "refs/remotes/origin/topic", "HEAD");
+			git(f.cwd, "branch", "--set-upstream-to=origin/topic");
+			git(f.source, "update-ref", "-d", "refs/remotes/origin/topic");
+		}
+		git(f.source, "checkout", "--detach");
+		const result = unchanged(f);
+		assert.match(result.reason, /merge not proved/);
+		assert.doesNotMatch(result.reason, /use \/delegate-cleanup/);
+		assert.throws(() => inspectCleanupGit(f.plan, () => {}, { gh: noGh }), /unique commit count not proved/);
+	}
+});
 test("remains conservatively includes the branch when Git cannot observe the source", () => {
 	const f = fixture();
 	assert.deepEqual(cleanupRemains({ ...f.plan, source: { ...f.plan.source, mainRoot: join(f.source, "missing") } }), [
@@ -208,9 +226,9 @@ const blockerReasons: Record<string, RegExp> = {
 	"wrong branch": /^branch checked out elsewhere$/,
 	detached: /^branch checked out elsewhere$/,
 	locked: /^worktree unregistered, locked or prunable$/,
-	"unmerged tip": /^merge not proved \(gh absent\); fetch and retry$/,
+	"unmerged tip": /^merge not proved \(gh absent\); fetch and retry; use \/delegate-cleanup$/,
 	"nested ignored repository": /^nested repository in ignored content$/,
-	"gone upstream": /^upstream branch deleted but merge not proved; fetch and retry$/,
+	"gone upstream": /^upstream branch deleted but merge not proved; fetch and retry; use \/delegate-cleanup$/,
 };
 test("unsafe worktrees retain files, branch and registration unchanged", async (t) => {
 	for (const [name, setup] of Object.entries(blockers))

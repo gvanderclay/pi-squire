@@ -14,12 +14,14 @@ pnpm check   # lint, typecheck and tests, as CI runs them
 
 The package has no build step. The tests under
 `test/` are not loaded by Pi and not published to npm. Run one test file with
-`node --test test/hooks.test.ts`. After changing `package.json` `files` or
-adding a file under `src/`, run `node scripts/check-pack.mjs`: it checks the
-file list `npm pack` would publish, then loads the packed bundle into Pi, so run
-`pnpm install` first. To try a change in Pi, load your checkout:
-`pi -e <path to this checkout>`. To prove one end to end in a real Pi, follow
-`.pi/skills/verify-pi-squire/SKILL.md`; it needs `OPENCODE_API_KEY`.
+`node --test test/hooks.test.ts`. After changing `package.json` `files`,
+adding a file under `src/`, or adding or renaming a page in `docs/`, run
+`node scripts/check-pack.mjs`: it checks the file list `npm pack` would
+publish (every top-level `docs/*.md` page, nothing under a `docs/` subfolder),
+then loads the packed bundle into Pi, so run `pnpm install` first. To try a
+change in Pi, load your checkout: `pi -e <path to this checkout>`. To prove
+one end to end in a real Pi, follow `.pi/skills/verify-pi-squire/SKILL.md`; it
+needs `OPENCODE_API_KEY`.
 
 ## Pull requests
 

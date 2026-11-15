@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Reorganize the README around installation, first use, recovery and safe
+  uninstall; ship the full configuration, host, workspace, result and integration
+  references in `docs/`, with clearer experimental-feature status and package
+  discovery metadata. Executable hook examples and runtime behavior are unchanged.
+
 ### Fixed
 
 - A launch rolled back before dispatch no longer carries the requested Paseo

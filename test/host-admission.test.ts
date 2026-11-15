@@ -55,8 +55,11 @@ test("unselected router refuses before reading any concrete-host facts or placem
 	const gate = createHostAdmission(router, () => {
 		throw new Error("placement must not be read");
 	});
-	assert.equal(gate.probe(), "selection refused");
-	await assert.rejects(gate.admit(), /^Error: selection refused$/);
+	assert.match(gate.probe() ?? "", /^selection refused\. Host prerequisite: install tmux/);
+	await assert.rejects(
+		gate.admit(),
+		/^Error: selection refused\. Host prerequisite:.*tmux new-session.*delegate-doctor/,
+	);
 });
 
 test("a host without window placement never reads terminal settings", async () => {

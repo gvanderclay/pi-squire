@@ -13,7 +13,17 @@
 
 ## New-delegate form
 
-`/delegate` with no arguments opens a form: pick an agent, write the
+With an empty roster in interactive Pi, `/delegate` first offers to create a
+minimal `scout.md`. Choose user scope (all projects) or project scope (offered
+only when this project is trusted; replaces a same-name user agent). Review the
+exact path and content before confirming. Creation is exclusive: an existing
+file, including a disabled agent, is never overwritten. Cancel either creation
+dialog to write nothing. Model and thinking are omitted, so the current
+session’s values apply. The new scout is selected straight into the task form;
+canceling the task afterward keeps the agent file you already approved.
+The bootstrap never runs for typed requests, RPC, print or JSON mode.
+
+`/delegate` with no arguments and an existing roster opens a form: pick an agent, write the
 task in the multi-line editor, give it an optional label (empty for the
 default name), then a settings screen. Its first row, Start, launches; the rows
 below it all begin at the agent's defaults: Model (a filterable list of the
@@ -88,8 +98,12 @@ temporary folder, not as text on the command line.
   ask its attended root; see
   [Project trust](workspaces.md#project-trust)). They need a supported host (tmux, Herdr or a Paseo-hosted Pi)
   and a provider of `message:*`, and refuse with a message when either is
-  missing. In print mode (`pi -p`) Pi does not show the refusal notices, so
-  the refusal is silent there.
+  missing. `/delegate` and `/delegate-resume` refusals go to stderr in print
+  (`pi -p`) and JSON mode, without adding a message or starting a model turn.
+  `/delegate-open` and `/delegate-cleanup` refusals use the same path. JSON
+  stdout stays protocol-only. Successful slash commands still add nothing to
+  context; refusal diagnostics do not change Pi’s exit status. See
+  [doctor](troubleshooting.md#delegate-doctor).
 
 <a id="direct-delegate-overview"></a>
 

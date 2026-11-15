@@ -6,12 +6,36 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `/delegate` in interactive Pi offers to create a minimal `scout.md` when the
+  roster is empty, previews its exact path and content, asks for user or trusted
+  project scope, and never overwrites a file. Canceling creation writes nothing;
+  the starter inherits the current model and thinking and continues into the
+  task form without a reload.
+- `/delegate-doctor` checks host selection and availability, roster paths and
+  parse warnings, settings parsing, session storage, and separate invalid-input
+  responses from `message:send` and `message:reply`. It launches nothing and
+  never scans or claims mail; a handler response does not prove delivery.
+
 ### Changed
 
 - Reorganize the README around installation, first use, recovery and safe
   uninstall; ship the full configuration, host, workspace, result and integration
   references in `docs/`, with clearer experimental-feature status and package
   discovery metadata. Executable hook examples and runtime behavior are unchanged.
+- Missing-host and missing-mail refusals now include exact install/start or
+  reload actions. The shared host-admission gate preserves the original cause
+  before its action text; `test/host-admission.test.ts`’s “unselected router
+  refuses before reading any concrete-host facts or placement” expectations
+  deliberately include that new advice.
+- `/delegate`, `/delegate-resume`, `/delegate-open` and `/delegate-cleanup`
+  refusals and `/delegate-doctor` output go to stderr in print/JSON mode instead
+  of disappearing with Pi’s no-op UI. They add no user/model messages or agent
+  turns; successful slash-command semantics are unchanged.
+  `test/cleanup-command.test.ts`’s “registered /delegate-cleanup refuses no-UI
+  before proof or mutations; no model message/turn” deliberately checks stderr
+  instead of a no-op notification.
 
 ### Fixed
 

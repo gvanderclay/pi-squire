@@ -190,4 +190,6 @@ field that cannot be used (a `fallback` that is not a list, an unknown
 agent still loads. While the retired `<agent dir>/squire/agents/` folder
 exists, a warning says to move each `<name>/AGENT.md` to
 `<agent dir>/agents/<name>.md`. With no agents at all, `/delegate` says how to
-add one.
+add one and, in interactive Pi, offers an opt-in minimal scout with a file
+preview and scope choice. See the [first-use path](../README.md#first-use) and
+[bootstrap details](delegation.md#new-delegate-form).

@@ -23,6 +23,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { type Agent, isThinking, type Roster, THINKING_LEVELS } from "./agents.ts";
+import { commandOutput } from "./command-output.ts";
 import { promptRouting } from "./routing-input.ts";
 import type { RoutingRequest } from "./routing-types.ts";
 import { resolveDirectory } from "./workspace.ts";
@@ -50,6 +51,8 @@ export type NewDelegateDeps = {
 	roster(ctx: ExtensionContext): Roster;
 	/** The refusal text for an empty roster. */
 	noAgents(): string;
+	/** Interactive empty-roster opt-in; true only after creating an agent. */
+	bootstrap?(ctx: ExtensionContext): Promise<boolean>;
 	/** The model and thinking `agent` runs on when the request names none: its own, else the parent's. */
 	defaults(agent: Agent, ctx: ExtensionContext): { model?: string; thinking: string };
 	/** Why `value` is not a usable label, or undefined; the check `--label` gets. */
@@ -409,19 +412,46 @@ function cwdProblem(value: string, base: string): string | undefined {
 	}
 }
 
-/** Run the form for `ctx` and start the delegate it describes; a cancelled step ends it quietly. */
-export async function startNewDelegate(ctx: ExtensionContext, deps: NewDelegateDeps): Promise<void> {
-	const fail = (message: string): void => ctx.ui.notify(`delegate: ${message}`, "error");
-	const unavailable = deps.unavailable();
-	if (unavailable !== undefined) return fail(unavailable);
-	const roster = deps.roster(ctx);
-	if (roster.agents.length === 0) return fail(deps.noAgents());
+/** Refresh after bootstrap so the normal form uses the same parser as typed launches. */
+async function pickAgent(ctx: ExtensionContext, deps: NewDelegateDeps): Promise<Agent | undefined> {
+	const fail = (message: string): void => commandOutput(ctx, `delegate: ${message}`, "error");
+	let roster = deps.roster(ctx);
+	let created = false;
+	if (roster.agents.length === 0) {
+		fail(deps.noAgents());
+		try {
+			created = (await deps.bootstrap?.(ctx)) ?? false;
+		} catch (error) {
+			fail((error as Error).message);
+			return undefined;
+		}
+		if (!created) return;
+		roster = deps.roster(ctx);
+	}
+	if (!ctx.hasUI) {
+		fail("the new-delegate form needs interactive Pi; use /delegate <agent> <task>");
+		return undefined;
+	}
 	const options = roster.agents.map(
 		(agent) =>
 			`${agent.name}${agent.displayName === undefined ? "" : ` (${agent.displayName})`} — ${agent.description}`,
 	);
+	if (created) {
+		const scout = roster.agents.find((agent) => agent.name === "scout");
+		if (!scout)
+			fail("starter created but not usable in this roster; run /delegate-doctor to check shadowing or parse errors");
+		return scout;
+	}
 	const picked = await ctx.ui.select("New delegate: agent", options);
-	const agent = roster.agents[options.indexOf(picked ?? "")];
+	return roster.agents[options.indexOf(picked ?? "")];
+}
+
+/** Run the form for `ctx` and start the delegate it describes; a cancelled step ends it quietly. */
+export async function startNewDelegate(ctx: ExtensionContext, deps: NewDelegateDeps): Promise<void> {
+	const fail = (message: string): void => commandOutput(ctx, `delegate: ${message}`, "error");
+	const unavailable = deps.unavailable();
+	if (unavailable !== undefined) return fail(unavailable);
+	const agent = await pickAgent(ctx, deps);
 	if (agent === undefined) return;
 	const task = await ctx.ui.editor(`Task for ${agent.name}`);
 	if (task === undefined) return;
@@ -465,6 +495,6 @@ async function submitForm(
 		if (routed && !routing) return;
 		await deps.start({ ...request, ...(routing ? { routing } : {}) }, ctx);
 	} catch (error) {
-		ctx.ui.notify(`delegate: ${(error as Error).message}`, "error");
+		commandOutput(ctx, `delegate: ${(error as Error).message}`, "error");
 	}
 }

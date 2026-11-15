@@ -15,6 +15,7 @@ import { type DelegateHost, type OpenedWindow, type OpenProgress, WindowOpenErro
 import type { AdmittedHost } from "./host-admission.ts";
 import { type createIdentity, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { windowLocator } from "./locators.ts";
+import { MISSING_MAIL, mailAnswered } from "./mail-preflight.ts";
 import { MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { type Delegation, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { assertRoutingSource, snapshotRoutingSource } from "./routing-inheritance.ts";
@@ -296,10 +297,7 @@ export class DelegateStarter {
 		const sent: SendPayload = { to, body: task };
 		this.deps.pi.events.emit("message:send", sent);
 		if (typeof sent.error === "string") throw new Error(`could not send the task to ${to}: ${sent.error}`);
-		if (sent.envelope === undefined)
-			throw new Error(
-				"needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)",
-			);
+		if (!mailAnswered(sent) || sent.envelope === undefined) throw new Error(MISSING_MAIL);
 		const requestId = sent.envelope.id;
 		if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${to}`);
 		return requestId;

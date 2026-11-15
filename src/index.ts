@@ -68,6 +68,7 @@ import {
 import { registerChild } from "./child.ts";
 import { cleanupTool } from "./cleanup.ts";
 import { cleanupCommand } from "./cleanup-command.ts";
+import { commandOutput } from "./command-output.ts";
 import { registerCompletionHost } from "./completion-holds.ts";
 import {
 	DELEGATION_TOOLS,
@@ -91,6 +92,7 @@ import {
 } from "./delegate-request.ts";
 import { DelegateSchema } from "./delegate-schema.ts";
 import { createDelegateStart } from "./delegate-start.ts";
+import { doctor } from "./doctor.ts";
 import { type ForkSource, forkTool } from "./fork.ts";
 import { type DelegateHost, WindowOpenError } from "./host.ts";
 import { assertHostOptions, createHostAdmission } from "./host-admission.ts";
@@ -111,6 +113,7 @@ import { promptRouting } from "./routing-input.ts";
 import { RoutingRequestSchema } from "./routing-schema.ts";
 import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
 import { ownedAPI, SessionOwner } from "./session-owner.ts";
+import { bootstrapAgent } from "./starter-agent.ts";
 import { registerTaskReplies } from "./task-replies.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
@@ -410,7 +413,8 @@ export default function delegate(
 	}
 
 	/** The refusal for an empty roster. */
-	const noAgents = (): string => `no agents are defined; add ${whereAgentsGo(getAgentDir())}`;
+	const noAgents = (): string =>
+		`no agents are defined; add ${whereAgentsGo(getAgentDir())}; or run /delegate in interactive Pi to create a starter. Retry /delegate after saving (no reload needed)`;
 
 	/**
 	 * The request as a start, or an error naming what to fix. `byUser` marks the
@@ -791,7 +795,7 @@ export default function delegate(
 
 	/** Start a delegate from a parsed `/delegate` or the form, telling the user how it went. */
 	async function runDelegate(parsed: Parsed, ctx: ExtensionContext): Promise<void> {
-		const fail = (message: string) => ctx.ui.notify(`delegate: ${message}`, "error");
+		const fail = (message: string) => commandOutput(ctx, `delegate: ${message}`, "error");
 		try {
 			const cwd = normalizeWorkspaceValue(parsed.cwd, "--cwd");
 			const worktree_source = normalizeWorkspaceValue(parsed.worktree_source, "--worktree-source");
@@ -817,6 +821,7 @@ export default function delegate(
 		unavailable: admission.probe,
 		roster: rosterFor,
 		noAgents,
+		bootstrap: (ctx) => bootstrapAgent(ctx, getAgentDir()),
 		defaults: (agent, ctx) => {
 			if (agent.routingProfile) return { model: undefined, thinking: "" };
 			const parent = parentDefaults(ctx);
@@ -835,7 +840,7 @@ export default function delegate(
 		}
 		const outcome = parse(input);
 		if ("error" in outcome) {
-			ctx.ui.notify(`delegate: ${outcome.error}`, "error");
+			commandOutput(ctx, `delegate: ${outcome.error}`, "error");
 			return;
 		}
 		await runDelegate(outcome.parsed, ctx);
@@ -855,7 +860,7 @@ export default function delegate(
 						if (agent?.routingProfile && !routing) return;
 						context.ui.notify(startedLine(await resumer.resume({ ...request, routing }, context)), "info");
 					} catch (err) {
-						context.ui.notify(`delegate: ${(err as Error).message}`, "error");
+						commandOutput(context, `delegate: ${(err as Error).message}`, "error");
 					}
 				},
 			},
@@ -867,13 +872,13 @@ export default function delegate(
 		if (input.trim() === "") return resumePicker(ctx);
 		const outcome = parseResume(input);
 		if ("error" in outcome) {
-			ctx.ui.notify(`delegate: ${outcome.error}`, "error");
+			commandOutput(ctx, `delegate: ${outcome.error}`, "error");
 			return;
 		}
 		try {
 			ctx.ui.notify(startedLine(await resumer.resume(outcome.request, ctx)), "info");
 		} catch (err) {
-			ctx.ui.notify(`delegate: ${(err as Error).message}`, "error");
+			commandOutput(ctx, `delegate: ${(err as Error).message}`, "error");
 		}
 	}
 
@@ -1057,6 +1062,16 @@ export default function delegate(
 		handler: command,
 	});
 
+	pi.registerCommand("delegate-doctor", {
+		description: "Check delegate prerequisites without launching",
+		handler: async (_args, ctx) => {
+			commandOutput(
+				ctx,
+				await doctor(ctx, { agentDir: getAgentDir(), host: tmux, roster: () => currentRoster(ctx), events: pi.events }),
+			);
+		},
+	});
+
 	pi.registerCommand("delegate-resume", {
 		description: `Reopen an exited delegate's session in a new window with a follow-up task: ${RESUME_USAGE}`,
 		getArgumentCompletions: (prefix) =>
@@ -1083,7 +1098,7 @@ export default function delegate(
 		getArgumentCompletions: async (prefix: string) => openCompletions(prefix, await navigator.openIds()),
 		handler: async (args: string, ctx: ExtensionContext) => {
 			const parsed = parseOpen(args);
-			if ("error" in parsed) return ctx.ui.notify(`delegate: ${parsed.error}`, "error");
+			if ("error" in parsed) return commandOutput(ctx, `delegate: ${parsed.error}`, "error");
 			await navigator.openDelegate(ctx, parsed.id, parsed.mode);
 		},
 	});

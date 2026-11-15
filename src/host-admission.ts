@@ -4,6 +4,9 @@
 import type { DelegateHost, StartKind, StartOptions } from "./host.ts";
 import type { windowSettings } from "./window-placement.ts";
 
+export const HOST_ACTION =
+	"Host prerequisite: install tmux >=3.2 (brew install tmux or sudo apt install tmux), run tmux new-session -s pi, then pi; or restart Pi in Herdr/Paseo. See /delegate-doctor";
+
 export type AdmittedHost = Readonly<ReturnType<typeof windowSettings> & { client: DelegateHost }>;
 
 export type HostAdmission = {
@@ -33,13 +36,21 @@ export function createHostAdmission(
 	settings: () => ReturnType<typeof windowSettings>,
 ): HostAdmission {
 	return {
-		probe: (): string | undefined => host.unavailable(),
+		probe: (): string | undefined => {
+			const refusal = host.unavailable();
+			return refusal === undefined ? undefined : `${refusal}. ${HOST_ACTION}`;
+		},
 		async admit(): Promise<AdmittedHost> {
 			// Only concrete adapters' facts are read beyond this boundary. Never use
 			// an unselected router's id, noun, placement or guard getters.
-			const client = host.forLaunch?.() ?? host;
-			const refusal = await client.unavailable(true);
-			if (refusal !== undefined) throw new Error(refusal);
+			let client: DelegateHost;
+			try {
+				client = host.forLaunch?.() ?? host;
+				const refusal = await client.unavailable(true);
+				if (refusal !== undefined) throw new Error(refusal);
+			} catch (error) {
+				throw new Error(`${(error as Error).message}. ${HOST_ACTION}`);
+			}
 			assertStartPolicy(client);
 			return Object.freeze({
 				client,

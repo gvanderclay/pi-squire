@@ -146,14 +146,20 @@ function gone(f: ReturnType<typeof fixture>): void {
 const unmergedLabel = "child — topic; unmerged";
 const foreignLabel = "child — topic; foreign Paseo workspace";
 
-test("registered /delegate-cleanup refuses no-UI before proof or mutations; no model message/turn", async () => {
+test("registered /delegate-cleanup refuses no-UI before proof or mutations; no model message/turn", async (t) => {
+	let stderr = "";
+	t.mock.method(process.stderr, "write", (chunk: string) => {
+		stderr += chunk;
+		return true;
+	});
 	const { s, f, api, deps, run } = await setup({ confirm: [true] }, false);
 	const check = untouched(f);
 	deps.assertActive = () => assert.fail("no-UI must refuse before proving");
 	await run();
 	await s.command("delegate-cleanup");
 	assert.ok(s.commands().includes("delegate-cleanup"));
-	assert.match(s.warnings.join("\n"), /needs an interactive session/);
+	assert.match(stderr, /needs an interactive session/);
+	assert.deepEqual(s.warnings, []);
 	assert.equal(s.confirms.length, 0);
 	assert.equal(s.selects.length, 0);
 	assert.deepEqual(api.calls, []);

@@ -13,7 +13,12 @@ import type {
 	PaseoWorkspaceHandle,
 } from "@getpaseo/client";
 import { inspectGit } from "./git.ts";
-import { daemonAvailability, descriptor, type PaseoAvailability } from "./paseo-availability.ts";
+import {
+	daemonAvailability,
+	descriptor,
+	type PaseoAvailability,
+	probeDaemonAvailability,
+} from "./paseo-availability.ts";
 
 import { PASEO_TURN_COMMAND } from "./paseo-child.ts";
 import type { PaseoReceipt } from "./worktree.ts";
@@ -48,7 +53,7 @@ type CreateInput = {
 export type PaseoApi = {
 	/** Positive absence is safe to skip only when there is no recorded workspace receipt. */
 	availability(): Promise<PaseoAvailability>;
-	/** Refusal text when the daemon cannot be used, else undefined. */
+	/** SDK-free launch admission: refuse positive absence, leave other failures to create. */
 	unavailable(): Promise<string | undefined>;
 	create(input: CreateInput): Promise<{ sessionId: string; paseo: PaseoReceipt }>;
 	workspace(id: string): Promise<PaseoWorkspace | null>;
@@ -76,8 +81,13 @@ async function clientFor(home: string): Promise<PaseoClient> {
 	if ("state" in address) throw new Error(address.reason);
 	const { listen } = address;
 	const { createPaseoClient } = await import("@getpaseo/client");
+	// The default browser transport cannot open Unix sockets. The installed
+	// 0.15.4 node export supports them via createHostTransportFactory.
+	const transportFactory =
+		"path" in address ? (await import("@getpaseo/client/node")).createHostTransportFactory(address.path) : undefined;
 	const config = {
-		url: `ws://${listen}/ws`,
+		url: "path" in address ? "ws://host-connector/ws" : `ws://${listen}/ws`,
+		...(transportFactory ? { transportFactory } : {}),
 		connectTimeoutMs: CONNECT_TIMEOUT_MS,
 		// One call owns one connection, so a daemon that drops must fail the call:
 		// reconnect would leave `connect` waiting on a daemon that is gone.
@@ -382,8 +392,8 @@ export function createPaseoApi(homeInput: string = process.env.PASEO_HOME ?? joi
 	return {
 		availability: () => daemonAvailability(home, () => withClient(home, async () => {})),
 		async unavailable(): Promise<string | undefined> {
-			const result = await daemonAvailability(home, () => withClient(home, async () => {}));
-			return result.state === "available" ? undefined : result.reason;
+			const result = await probeDaemonAvailability(home, false);
+			return result.state === "absent" ? result.reason : undefined;
 		},
 		async create(input: CreateInput): ReturnType<PaseoApi["create"]> {
 			return withClient(home, (client) => createAgent(client, home, input));

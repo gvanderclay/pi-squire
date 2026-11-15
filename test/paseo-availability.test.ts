@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire, registerHooks } from "node:module";
+import childProcess from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { createRequire, registerHooks, syncBuiltinESMExports } from "node:module";
 import { createServer, type Socket } from "node:net";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createHostAdmission } from "../src/host-admission.ts";
+import { createPaseoHost } from "../src/paseo.ts";
 import { createPaseoApi } from "../src/paseo-api.ts";
+import { daemonAvailability } from "../src/paseo-availability.ts";
 
 const dirs: string[] = [];
 function home(value?: unknown): string {
@@ -123,7 +130,7 @@ test("live socket still requires authenticated SDK connection, and every retry r
 		}
 		failure = undefined;
 		assert.deepEqual(await api.availability(), { state: "available" });
-		assert.equal(closes, 5, "failed connections are also closed");
+		assert.equal(closes, 4, "failed connections are also closed; admission makes no SDK connection");
 	} finally {
 		await server.close();
 	}
@@ -178,6 +185,240 @@ test("a live pid with EPERM still requires a socket probe", async (t) => {
 	assert.equal(state.state, "absent");
 	assert.ok("reason" in state && state.reason.includes("refused"));
 });
+test("launch admission never imports or connects the SDK for absent or accepting daemons", async (t) => {
+	const server = await listening();
+	let connects = 0;
+	let imports = 0;
+	t.mock.method(DaemonClient.prototype, "connect", async () => {
+		connects++;
+	});
+	const hooks = registerHooks({
+		resolve(specifier, context, next) {
+			if (specifier.startsWith("@getpaseo/client")) {
+				imports++;
+				throw new Error("SDK imported during admission");
+			}
+			return next(specifier, context);
+		},
+	});
+	try {
+		for (const value of [
+			undefined,
+			{ pid: 2147483647, listen: server.listen },
+			{ pid: process.pid, listen: server.listen },
+		]) {
+			const host = createPaseoHost(createPaseoApi(home(value)), { PASEO_AGENT_ID: "parent" });
+			const admission = createHostAdmission(host, () => {
+				throw new Error("terminal setting read");
+			});
+			if (!value || value.pid !== process.pid) await assert.rejects(admission.admit(), /Paseo is not running/);
+			else assert.equal((await admission.admit()).client, host);
+			assert.equal(connects, 0);
+			assert.equal(imports, 0, "even a caught import failure violates cheap admission");
+		}
+		await server.close();
+		const refused = createPaseoHost(createPaseoApi(home({ pid: process.pid, listen: server.listen })), {
+			PASEO_AGENT_ID: "parent",
+		});
+		await assert.rejects(
+			createHostAdmission(refused, () => {
+				throw new Error("terminal setting read");
+			}).admit(),
+			/connection refused/,
+		);
+		assert.equal(connects, 0);
+		assert.equal(imports, 0);
+	} finally {
+		hooks.deregister();
+		if (server) await server.close();
+	}
+});
+
+test("ambiguous launch descriptors proceed without SDK or host-identity subprocesses", async (t) => {
+	const run = t.mock.method(childProcess, "execFileSync", () => {
+		throw new Error("subprocess in admission");
+	});
+	syncBuiltinESMExports();
+	try {
+		for (const value of [{ pid: 2147483647, hostname: "other-machine", listen: null }, { listen: "malformed" }]) {
+			assert.equal(await createPaseoApi(home(value)).unavailable(), undefined);
+		}
+		assert.equal(run.mock.callCount(), 0);
+	} finally {
+		run.mock.restore();
+		syncBuiltinESMExports();
+	}
+});
+
+function socketPath(): string {
+	// macOS Unix paths are limited to 104 bytes, so do not put these inside a home.
+	const path = join(process.cwd(), ".scratch", `s-${randomUUID().slice(0, 8)}`);
+	dirs.push(path);
+	return path;
+}
+
+test("Unix listen checks dead pids before parsing and probes live refused/missing sockets SDK-free", async () => {
+	const bound = socketPath();
+	const path = socketPath();
+	const server = createServer();
+	await new Promise<void>((resolve) => server.listen(bound, resolve));
+	// Keep a real stale socket inode: close unlinks the original name, not the
+	// renamed one. A regular file gives ENOTSOCK on macOS, not ECONNREFUSED.
+	renameSync(bound, path);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+	const hooks = registerHooks({
+		resolve(specifier, context, next) {
+			if (specifier.startsWith("@getpaseo/client")) throw new Error("SDK imported for absent/unverified Unix socket");
+			return next(specifier, context);
+		},
+	});
+	try {
+		for (const listen of [path, "not-an-address", null]) {
+			assert.equal((await createPaseoApi(home({ pid: 2147483647, listen })).availability()).state, "absent");
+		}
+		const api = createPaseoApi(home({ pid: process.pid, listen: path }));
+		const refused = await api.availability();
+		assert.equal(refused.state, "absent");
+		assert.ok("reason" in refused && refused.reason.includes("refused"));
+		assert.match((await api.unavailable()) ?? "", /connection refused/);
+		rmSync(path);
+		const missing = await api.availability();
+		assert.equal(missing.state, "ambiguous");
+		assert.ok("reason" in missing && missing.reason.includes("ENOENT"));
+	} finally {
+		hooks.deregister();
+	}
+});
+
+test("accepting Unix socket requires authentication exactly as TCP does", async () => {
+	const path = socketPath();
+	const server = createServer();
+	const sockets = new Set<Socket>();
+	server.on("connection", (socket) => {
+		sockets.add(socket);
+		socket.once("close", () => sockets.delete(socket));
+	});
+	await new Promise<void>((resolve) => server.listen(path, resolve));
+	let authenticates = 0;
+	try {
+		const dir = home({ pid: process.pid, listen: path });
+		assert.deepEqual(
+			await daemonAvailability(dir, async () => {
+				authenticates++;
+			}),
+			{ state: "available" },
+		);
+		assert.equal(authenticates, 1);
+		const rejected = await daemonAvailability(dir, async () => {
+			throw new Error("authentication rejected");
+		});
+		assert.equal(rejected.state, "ambiguous");
+		assert.ok("reason" in rejected && rejected.reason.includes("authentication rejected"));
+	} finally {
+		for (const socket of sockets) socket.destroy();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
+});
+
+test("dead-pid host/boot mismatch or unverifiable identity stays ambiguous", async (t) => {
+	let local = "test-computer-name";
+	const run = t.mock.method(childProcess, "execFileSync", () => {
+		if (!local) throw new Error("host identity unavailable");
+		return local;
+	});
+	syncBuiltinESMExports();
+	try {
+		const localName = process.platform === "darwin" ? local : hostname();
+		const matched = await createPaseoApi(home({ pid: 2147483647, hostname: localName, listen: null })).availability();
+		assert.equal(matched.state, "absent");
+		for (const identity of [{ hostname: "different-host" }, { hostname: localName, bootId: "another-boot" }]) {
+			const state = await createPaseoApi(home({ ...identity, pid: 2147483647, listen: "127.0.0.1:1" })).availability();
+			assert.equal(state.state, "ambiguous");
+			assert.ok("reason" in state && /host\/boot identity/.test(state.reason));
+		}
+		if (process.platform === "darwin") {
+			assert.equal(run.mock.callCount(), 3, "one hostname read per check");
+			local = "";
+			assert.equal(
+				(await createPaseoApi(home({ pid: 2147483647, hostname: localName, listen: null })).availability()).state,
+				"ambiguous",
+			);
+			const options = run.mock.calls[0].arguments[2] as { timeout?: number };
+			assert.equal(options.timeout, 1_000, "bounded hostname lookup");
+		}
+	} finally {
+		run.mock.restore();
+		syncBuiltinESMExports();
+	}
+});
+
+test("real SDK uses Unix transport for cleanup hello and agent creation, preserving auth failure", async (t) => {
+	const path = socketPath();
+	const http = createHttpServer();
+	const { WebSocketServer } = createRequire(import.meta.resolve("@getpaseo/client"))("ws");
+	const ws = new WebSocketServer({ server: http });
+	let rejectAuth = false;
+	let hellos = 0;
+	type Peer = {
+		once(event: "message", listener: () => void): void;
+		send(data: string): void;
+		close(code: number, reason: string): void;
+	};
+	ws.on("connection", (socket: Peer) => {
+		socket.once("message", () => {
+			hellos++;
+			if (rejectAuth) {
+				socket.send(JSON.stringify({ type: "hello.rejected", reason: "incorrect_password", accepts: ["password"] }));
+				socket.close(1008, "Incorrect password");
+			} else
+				socket.send(
+					JSON.stringify({
+						type: "session",
+						message: { type: "status", payload: { status: "server_info", serverId: "fake-unix-daemon" } },
+					}),
+				);
+		});
+	});
+	await new Promise<void>((resolve) => http.listen(path, resolve));
+	const dir = home({ pid: process.pid, listen: path });
+	const api = createPaseoApi(dir);
+	try {
+		assert.deepEqual(await api.availability(), { state: "available" });
+		rejectAuth = true;
+		const state = await api.availability();
+		assert.equal(state.state, "ambiguous");
+		assert.ok("reason" in state && /incorrect password/i.test(state.reason));
+		rejectAuth = false;
+		// Leave connect real. The create path tolerates snapshot listing failure,
+		// then reaches openProject; stop there after real Unix authentication.
+		t.mock.method(DaemonClient.prototype, "fetchWorkspaces", async () => {
+			throw new Error("listing reached after Unix authentication");
+		});
+		t.mock.method(DaemonClient.prototype, "openProject", async () => {
+			throw new Error("create reached openProject after Unix authentication");
+		});
+		await assert.rejects(
+			api.create({
+				agentId: "test-agent",
+				parentAgentId: "parent",
+				title: "test",
+				cwd: dir,
+				model: "test/model",
+				thinking: "low",
+				systemPrompt: "",
+				env: {},
+			}),
+			/create reached openProject after Unix authentication/,
+		);
+		assert.equal(hellos, 3);
+		await assert.rejects(api.workspaceAt(dir), /listing reached after Unix authentication/);
+		assert.equal(hellos, 4);
+	} finally {
+		await new Promise<void>((resolve) => ws.close(resolve));
+		await new Promise<void>((resolve) => http.close(() => resolve()));
+	}
+});
+
 test("a socket accepting TCP but never completing hello times out ambiguously", async () => {
 	const server = await listening();
 	try {

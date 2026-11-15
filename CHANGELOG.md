@@ -8,6 +8,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Paseo launch admission now checks descriptors, pids and sockets without importing
+  or authenticating the SDK. Positive absence refuses with the specific missing
+  descriptor, dead-pid or refused-connection reason; other failures are left to
+  agent creation. `test/paseo-availability.test.ts` deliberately expects four SDK
+  closes instead of five because admission no longer opens an extra connection.
+- Paseo Unix-socket descriptors now support cleanup and agent creation through
+  the SDK's Node transport. Dead pids are checked before parsing listen addresses;
+  refused Unix sockets prove absence as TCP does, while missing socket paths with
+  live pids remain ambiguous. Dead-pid records with mismatched or unverifiable
+  host/boot identity stay fail-closed during cleanup.
 - Paseo now deliberately refuses agents with `skills: false` or
   `context_files: false` before reservations, task mail or managed-worktree
   creation, naming tmux/Herdr as alternatives. Unsupported hook flags still

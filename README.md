@@ -1019,13 +1019,15 @@ the exact directory keeps the worktree; if none exists, Git cleanup proceeds.
 A receipt with an unavailable daemon keeps the item: its persisted workspace
 cannot be verified or archived while the daemon is down. Without a receipt,
 cleanup skips Paseo checks only on **positive absence**: a missing `paseo.pid`,
-a recorded pid that no longer exists, or a refused daemon TCP port. These checks
-do not load the SDK. A live pid alone does not prove availability; Squire probes
+a recorded local pid that no longer exists, or a refused daemon TCP port or Unix
+socket. These checks do not load the SDK. A live pid alone does not prove availability; Squire probes
 the socket and authenticates with the daemon. A descriptor without a pid still
 needs the socket probe. Malformed/unreadable descriptors, timeouts, failed
 authentication and other ambiguous failures keep the item with the specific
 reason, even for tmux-only worktrees. When a daemon is available, the foreign
-workspace policy above still applies.
+workspace policy above still applies. A dead pid with a mismatched or unverifiable
+recorded host/boot identity stays ambiguous; a missing socket path with a live pid
+also stays ambiguous (only connection refusal proves absence).
 
 Before archive, the directory and project must match, the workspace must not
 be internal, archiving, Paseo-owned, running setup or running a script, and no
@@ -1061,8 +1063,9 @@ observed `remains`. When Git is already clean but a recorded Paseo workspace
 cannot be verified, the overall outcome is still `kept`, not `already-clean`.
 The text reports "Git already-clean; Paseo workspace unverified" with the daemon
 failure, and additive `resources` observations report
-`{ git: "already-clean", paseo: "unverified" }`. Retry after restoring the daemon
-to verify/archive the remaining workspace; a previous successful cleanup is not
+`{ git: "already-clean", paseo: "unverified" }`; receipt-less ambiguous checks also
+report `paseo: "unverified"`, adding `git: "already-clean"` when observed. Retry
+after restoring the daemon to verify/archive the remaining workspace; a previous successful cleanup is not
 cached as proof. Opened/reused receipts still receive the tool\'s foreign-workspace
 refusal without contacting the daemon, alongside any already-clean Git observation;
 use `/delegate-cleanup` for confirmation. Completed worktree removals have a bounded `ignoredRemoved`

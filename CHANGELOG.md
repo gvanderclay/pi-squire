@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-15
+
 ### Fixed
 
 - Cleanup confirmations bind stable Paseo identity and safety facts rather than
@@ -1791,7 +1793,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/gvanderclay/pi-squire/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/gvanderclay/pi-squire/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/gvanderclay/pi-squire/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/gvanderclay/pi-squire/compare/v0.25.0...v0.26.0

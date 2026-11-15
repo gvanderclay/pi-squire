@@ -8,34 +8,49 @@ import type { windowSettings } from "./window-placement.ts";
 const TMUX_INSTALL =
 	"install tmux >=3.2 (brew install tmux or sudo apt install tmux), run tmux new-session -s pi, then pi; or restart Pi in Herdr/Paseo";
 
+/**
+ * Each action keyed by the start of the refusal it answers (src/multiplexer.ts,
+ * src/settings.ts, src/tmux.ts, src/herdr.ts, src/paseo.ts,
+ * src/paseo-availability.ts). Causes embed paths and nested errors, so only a
+ * prefix may choose the advice; the first matching prefix wins.
+ */
+const ACTIONS: readonly (readonly [readonly string[], string])[] = [
+	[
+		["invalid PI_DELEGATE_MULTIPLEXER "],
+		'fix PI_DELEGATE_MULTIPLEXER in the launcher (valid values: tmux, herdr, paseo), or override it with "multiplexer": "tmux" or "herdr" in the Squire settings file named above',
+	],
+	[
+		["this session is inside both tmux and Herdr", "invalid multiplexer settings "],
+		'set "multiplexer": "tmux" or "herdr" in the Squire settings file named above; PI_DELEGATE_MULTIPLEXER from the launcher is used only when that setting is absent',
+	],
+	[
+		["could not read squire settings", "invalid squire settings"],
+		"fix the Squire settings file named above, then retry",
+	],
+	[
+		["this session is inside neither tmux nor Herdr", "this session is not inside tmux", "delegate windows need tmux"],
+		TMUX_INSTALL,
+	],
+	[
+		["this session is not hosted by Paseo"],
+		'run Pi inside a Paseo agent, or fix/unset a stale PI_DELEGATE_MULTIPLEXER=paseo in the launcher; a "multiplexer": "tmux" or "herdr" setting can override it for a terminal-hosted Pi',
+	],
+	[["Paseo is not running:"], "start the Paseo daemon, check paseo status, then retry from the Paseo-hosted Pi"],
+	[["Paseo "], "check paseo status and the Paseo daemon connection/descriptor named above, then retry"],
+	[
+		["this Pi's Herdr pane "],
+		"move the Herdr pane back, or restart Pi in the Herdr workspace where delegates should open",
+	],
+	[
+		["this session is not inside a Herdr pane", "Herdr ", "could not ask Herdr for the parent pane/server:"],
+		"start Pi in a Herdr pane with a running compatible Herdr server; if its pane/session changed, restart Pi there, then retry",
+	],
+];
+
 /** Advice follows the refusal, not the router's id (which can itself refuse). */
 export function hostAction(cause: string): string {
-	let action: string;
-	if (cause.includes("invalid PI_DELEGATE_MULTIPLEXER"))
-		action =
-			'fix PI_DELEGATE_MULTIPLEXER in the launcher (valid values: tmux, herdr, paseo), or override it with "multiplexer": "tmux" or "herdr" in the Squire settings file named above';
-	else if (cause.includes("inside both tmux and Herdr") || cause.includes("invalid multiplexer"))
-		action =
-			'set "multiplexer": "tmux" or "herdr" in the Squire settings file named above; PI_DELEGATE_MULTIPLEXER from the launcher is used only when that setting is absent';
-	// The settings errors' own prefixes: a path holding these words must not steer the advice.
-	else if (cause.startsWith("could not read squire settings") || cause.startsWith("invalid squire settings"))
-		action = "fix the Squire settings file named above, then retry";
-	// Before the Paseo/Herdr matches: this cause names the settings file, whose path may contain either word.
-	else if (cause.startsWith("this session is inside neither")) action = TMUX_INSTALL;
-	else if (cause.includes("not hosted by Paseo"))
-		action =
-			'run Pi inside a Paseo agent, or fix/unset a stale PI_DELEGATE_MULTIPLEXER=paseo in the launcher; a "multiplexer": "tmux" or "herdr" setting can override it for a terminal-hosted Pi';
-	else if (cause.includes("Paseo is not running"))
-		action = "start the Paseo daemon, check paseo status, then retry from the Paseo-hosted Pi";
-	else if (/Paseo/i.test(cause))
-		action = "check paseo status and the Paseo daemon connection/descriptor named above, then retry";
-	else if (cause.includes("Herdr pane") && cause.includes("moved"))
-		action = "move the Herdr pane back, or restart Pi in the Herdr workspace where delegates should open";
-	else if (/Herdr/i.test(cause))
-		action =
-			"start Pi in a Herdr pane with a running compatible Herdr server; if its pane/session changed, restart Pi there, then retry";
-	else if (cause.includes("not inside tmux") || cause.includes("delegate windows need tmux")) action = TMUX_INSTALL;
-	else action = "fix the host selection or availability reported above, then retry";
+	const found = ACTIONS.find(([prefixes]) => prefixes.some((prefix) => cause.startsWith(prefix)));
+	const action = found?.[1] ?? "fix the host selection or availability reported above, then retry";
 	return `Host prerequisite: ${action}. See /delegate-doctor`;
 }
 

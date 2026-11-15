@@ -102,6 +102,27 @@ test("host actions follow each refusal cause, preserve it verbatim first, and ke
 		["Herdr session/socket identity changed; launch refused", /restart Pi there/],
 		["this Pi's Herdr pane w1:p1 moved from workspace w1 to w2 since it started", /move the Herdr pane back/],
 		["could not ask Herdr for the parent pane/server: failed", /running compatible Herdr server/],
+		// Paths and nested errors inside a cause hold other causes' words; only the prefix counts.
+		[
+			"could not read squire settings /home/u/invalid multiplexer/agent/squire/settings.json: invalid JSON",
+			/fix the Squire settings file/,
+		],
+		[
+			'this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in /home/invalid PI_DELEGATE_MULTIPLEXER/agent/squire/settings.json)',
+			/install tmux >=3\.2.*tmux new-session/,
+		],
+		[
+			"Paseo is not running: /home/this session is not hosted by Paseo/.paseo/paseo.pid is missing",
+			/start the Paseo daemon, check paseo status/,
+		],
+		[
+			"could not ask Herdr for the parent pane/server: Error: ENOENT /tmp/Paseo is not running/herdr.sock; no tmux fallback was attempted",
+			/running compatible Herdr server/,
+		],
+		[
+			"Herdr delegation needs a running, compatible protocol 22 server (this session is not inside tmux)",
+			/running compatible Herdr server/,
+		],
 	];
 	for (const [cause, action] of cases) {
 		const host = new FakeTmux();
@@ -113,7 +134,10 @@ test("host actions follow each refusal cause, preserve it verbatim first, and ke
 		assert.ok(command.startsWith(`${cause}. Host prerequisite:`), command);
 		assert.match(command.slice(cause.length), action);
 		// Only a host with no usable terminal tells the user to install tmux.
-		if (!/not inside tmux|windows need tmux|inside neither/.test(cause))
+		if (
+			/^(this session is not inside tmux|delegate windows need tmux|this session is inside neither)/.test(cause) ===
+			false
+		)
 			assert.doesNotMatch(command, /brew install|apt install|tmux new-session/);
 		await assert.rejects(gate.admit(), { message: command });
 		const tool = `${cause}. Ask the user to fix the host; /delegate-doctor shows details.`;

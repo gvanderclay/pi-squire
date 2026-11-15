@@ -8,6 +8,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `/delegate-cleanup` previews descendant managed worktrees and confirms proven
+  items, upstream-deleted items, and per-item unmerged/foreign-Paseo overrides
+  separately. Confirmations bind the exact Git and workspace facts and expire
+  after 60 seconds; no UI or a canceled dialog changes nothing. Results stay
+  in UI notifications. It never forces Git, fetches or touches remote branches.
+  New acceptance coverage is in `test/cleanup-command.test.ts`.
+  Kept reasons now point to the command for unmerged/upstream-deleted work and
+  foreign workspaces; outside-tree users no longer suggest an unauthorized
+  `delegation_close`. The reason expectations in `test/cleanup.test.ts` and
+  `test/cleanup-git.test.ts` change deliberately; metadata budget caps are
+  raised by 46 measured characters for the command pointer in
+  `test/context-budget.test.ts` (parent declarations unchanged).
+
 - `delegation_cleanup` now archives Squire-created Paseo workspaces before
   rechecking and removing their managed Git worktrees. Launch records retain a
   placement receipt; opened/reused or path-found workspaces remain kept.

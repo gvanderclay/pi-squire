@@ -978,8 +978,9 @@ windows. Close running delegations with `delegation_close` first.
 
 Paseo launches record the daemon home, workspace id, directory, project and
 whether Squire created, opened or reused the workspace. Only a `created`
-receipt (including an alias's receipt for that same workspace) permits archive.
-Opened, reused and path-found workspaces are kept: Squire did not create them.
+receipt (including an alias's receipt for that same workspace) permits tool-triggered archive.
+Opened, reused and path-found workspaces are kept by the tool: Squire did not create them.
+The interactive `/delegate-cleanup` command can ask you to archive one such workspace.
 Older records need no receipt: when the daemon is available, a workspace at
 the exact directory keeps the worktree; if none exists, Git cleanup proceeds.
 A receipt with an unavailable daemon keeps the item. Without a receipt and
@@ -1009,8 +1010,8 @@ head from this repository whose merge commit is in a matching local target.
 Squire never fetches. Missing/stale refs, absent/failing `gh`, or ambiguous
 evidence keep the item; fetch and retry. An upstream marked `[gone]` is not
 merge proof: a deleted branch after an unmerged closed PR, or local commits
-after the last push, look the same as a merge. There is no discard/force option
-or interactive cleanup command in this release. Remote branches are untouched.
+after the last push, look the same as a merge. The tool has no discard/force option;
+use `/delegate-cleanup` for confirmed overrides. Remote branches are untouched.
 
 The result carries `items`, `counts` and, for `all`, `selection`. An item is
 `removed`, `kept`, `partial` (resources remain after removal, or a failed
@@ -1023,6 +1024,40 @@ and stop starting new worktrees after about 120 s; the rest are listed in
 Git-command timeouts. Pass those ids next so kept groups cannot starve them.
 Partial removal or failed selection sets the tool error flag. Retry re-derives
 the facts from Git, including a branch left after worktree removal.
+
+### Interactive cleanup: `/delegate-cleanup`
+
+Run `/delegate-cleanup` in an interactive session to preview the same descendant
+worktree candidates as `delegation_cleanup({ all: true })`, without removing anything:
+
+1. One confirmation lists proven-safe items with their paths, local branches
+   and ignored-entry counts.
+2. A separate confirmation lists items whose upstream is marked `[gone]`,
+   including the upstream name, tip and unique-commit count. **Merge is not
+   proved**; accepting can discard work.
+3. A selector offers kept items only when their remaining blockers are unmerged
+   commits and/or a Paseo workspace Squire did not create. Pick one for its own
+   confirmation, naming branch, tip and unique commits versus the local target,
+   plus the workspace id, title and creation time when applicable. There is no
+   "yes to all". Multiple foreign workspaces at one path stay kept; resolve them
+   individually in Paseo before retrying.
+
+Each confirmation and selector expires after 60 seconds. Decline, Escape,
+timeout or Done keeps the unconfirmed items. Without UI the command refuses
+before discovery or mutation. Results appear as notifications, never a model
+message or a new model turn. The preview processes at most 50 groups and stops
+starting new groups after about 120 seconds, like the tool.
+
+Each yes is bound to the worktree path, exact branch tip, upstream tracking
+state and exact Paseo workspace identity. Squire repeats the full proof before
+archiving or removing; changed facts abort that item with
+"changed since you confirmed; nothing removed". Ignored files are deleted here
+too. The command never forces Git, fetches, touches remote branches, or overrides
+dirty files, locks, live users or other safety blockers. A foreign workspace
+gets the same live-user and setup/script checks as a Squire-created one.
+**Paseo schedules are not checked**; a schedule aimed at an archived workspace
+fails on its next run. If a race or failure occurs after an archive or removal,
+the result is `partial`, not a claim that nothing changed.
 
 Cleanup serializes with managed launches in this process, refreshes the
 records and window states after entering that queue, and synchronously

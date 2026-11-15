@@ -88,7 +88,7 @@ function descendantRecords(state: TreeState, actor: string): Map<string, Recorde
 	return records;
 }
 /** Include attempts and grandchildren; display projections deliberately omit some of these. */
-function discover(state: TreeState, actor: string): Discovery {
+export function discover(state: TreeState, actor: string): Discovery {
 	const records: Map<string, Recorded> = descendantRecords(state, actor);
 	const groups: Map<string, Candidate> = new Map();
 	let order = 0;
@@ -130,7 +130,7 @@ function trees(): TreeState[] {
 		.map((name) => readTreeDisplay(decodeURIComponent(name.slice(0, -5))));
 }
 type GoneStarts = ReadonlyMap<string, StartedRecorded>;
-function checkEntry(entry: TreeEntry, group: Candidate, actor: string, gone: GoneStarts): void {
+function checkEntry(entry: TreeEntry, group: Candidate, actor: string, gone: GoneStarts, descendant: boolean): void {
 	if (entry.sessionId === actor) return;
 	const path: string = group.resource.destination;
 	if (
@@ -153,7 +153,11 @@ function checkEntry(entry: TreeEntry, group: Candidate, actor: string, gone: Gon
 		!judgedGone &&
 		[entry.cwd, entry.workspace?.cwd].some((cwd) => cwd !== undefined && overlap(cwd, path, true))
 	)
-		throw new Error("live started delegation overlaps worktree; close it with delegation_close first");
+		throw new Error(
+			descendant
+				? "live started delegation overlaps worktree; close it with delegation_close first"
+				: "in use by a delegation outside this tree",
+		);
 	if (group.ids.includes(entry.id)) return;
 	if (
 		sessionIsOwned(entry.sessionId) &&
@@ -173,7 +177,10 @@ function sessionDirs(entries: TreeEntry[], id: string, ctx: ExtensionContext): s
 /** Synchronous registry/owner/header proof; repeated immediately before Git removal. */
 export function cleanupLiveCheck(group: Candidate, actor: string, ctx: ExtensionContext, gone: GoneStarts): void {
 	const entries: TreeEntry[] = trees().flatMap((state) => state.entries);
-	for (const entry of entries) checkEntry(entry, group, actor, gone);
+	const root = readIdentity(actor)?.root ?? actor;
+	const state = readTree(root);
+	for (const entry of entries)
+		checkEntry(entry, group, actor, gone, entry.identity.root === root && below(state, entry.identity.parent, actor));
 	const owners: string = join(getAgentDir(), "squire", "owners");
 	for (const name of names(owners).filter((name) => name.endsWith(".json"))) {
 		const id: string = decodeURIComponent(name.slice(0, -5));
@@ -196,7 +203,7 @@ function preflight(group: Candidate, windows: WindowStates): string | undefined 
 	}
 	return undefined;
 }
-function kept(id: string, reason: string, candidate?: Candidate): CleanupItem {
+export function kept(id: string, reason: string, candidate?: Candidate): CleanupItem {
 	return {
 		id,
 		outcome: "kept",
@@ -245,13 +252,14 @@ async function finishGroup(current: Candidate, deps: CleanupDeps, liveCheck: () 
 	} else if (paseo.archived) result.reason += "; Paseo workspace archived";
 	return result;
 }
-async function processGroup(
+export async function processGroup(
 	group: Candidate,
 	deps: CleanupDeps,
 	ctx: ExtensionContext,
 	actor: string,
 	root: string,
 	signal?: AbortSignal,
+	visit?: (current: Candidate, liveCheck: () => void) => Promise<CleanupOutcome>,
 ): Promise<CleanupOutcome> {
 	return inQueue(group.resource.source.commonDir, signal, async () => {
 		try {
@@ -274,7 +282,8 @@ async function processGroup(
 			const gone: Map<string, StartedRecorded> = new Map();
 			for (const record of found.records.values())
 				if (isStarted(record) && windows.state(record) === "gone") gone.set(record.id, record);
-			return finishGroup(current, deps, () => cleanupLiveCheck(current, actor, ctx, gone));
+			const liveCheck = () => cleanupLiveCheck(current, actor, ctx, gone);
+			return await (visit ? visit(current, liveCheck) : finishGroup(current, deps, liveCheck));
 		} catch (error) {
 			return kept("", (error as Error).message, group);
 		}
@@ -383,7 +392,7 @@ export function cleanupTool(deps: CleanupDeps): ToolDef & { exposure: "deferred"
 		label: "Clean up delegations",
 		exposure: "deferred",
 		description:
-			"Remove finished delegations' Squire-created worktrees and local branches when they are merged, unused and have no uncommitted or untracked changes; ignored files in them (node_modules, a hand-made .env) are deleted too. Archives Paseo workspaces Squire created for them. Anything unproved is kept with a reason. Close running delegations with delegation_close first.",
+			"Remove finished delegations' Squire-created worktrees and local branches when they are merged, unused and have no uncommitted or untracked changes; ignored files in them (node_modules, a hand-made .env) are deleted too. Archives Paseo workspaces Squire created for them. Anything unproved is kept with a reason; /delegate-cleanup offers confirmed overrides. Close running delegations with delegation_close first.",
 		promptGuidelines: [
 			"Call delegation_cleanup after a delegate's work is merged, not while you still need its worktree.",
 		],

@@ -208,9 +208,9 @@ const blockerReasons: Record<string, RegExp> = {
 	"wrong branch": /^branch checked out elsewhere$/,
 	detached: /^branch checked out elsewhere$/,
 	locked: /^worktree unregistered, locked or prunable$/,
-	"unmerged tip": /^merge not proved \(gh absent\); fetch and retry$/,
+	"unmerged tip": /^merge not proved \(gh absent\); fetch and retry; use \/delegate-cleanup$/,
 	"nested ignored repository": /^nested repository in ignored content$/,
-	"gone upstream": /^upstream branch deleted but merge not proved; fetch and retry$/,
+	"gone upstream": /^upstream branch deleted but merge not proved; fetch and retry; use \/delegate-cleanup$/,
 };
 test("unsafe worktrees retain files, branch and registration unchanged", async (t) => {
 	for (const [name, setup] of Object.entries(blockers))

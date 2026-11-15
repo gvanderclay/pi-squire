@@ -268,7 +268,7 @@ test("running windows and unrecorded Paseo workspaces keep without Git mutations
 	const api = new FakePaseo();
 	api.workspaces.set("foreign", { id: "foreign", workspaceDirectory: f.cwd } as PaseoWorkspace);
 	const result = await runCleanup({ all: true }, deps(s, { paseoApi: () => api }), context(s));
-	assert.equal(result.items[0].reason, "Paseo workspace not created by Squire; kept");
+	assert.equal(result.items[0].reason, "Paseo workspace not created by Squire; kept; use /delegate-cleanup");
 	assert.equal(existsSync(f.cwd), true);
 });
 
@@ -352,7 +352,7 @@ test("opened and reused receipts keep; a created alias authorizes that exact wor
 			await s.start();
 			const { f, api, record, run } = paseoFixture(s, provenance);
 			const check = unchangedWorktree(f);
-			assert.equal((await run()).items[0].reason, "Paseo workspace not created by Squire; kept");
+			assert.equal((await run()).items[0].reason, "Paseo workspace not created by Squire; kept; use /delegate-cleanup");
 			assert.equal(api.calls.includes("archiveWorkspace"), false);
 			check();
 			assert.ok(record.workspace?.mode === "managed");
@@ -854,9 +854,29 @@ test("other-root unfinished started overlap is live even before session ownershi
 	const check = unchangedWorktree(f);
 	const result: CleanupResult = await invoke(s);
 	assert.equal(result.items[0].outcome, "kept", result.items[0].reason);
-	assert.match(result.items[0].reason, /live started delegation/);
+	assert.equal(result.items[0].reason, "in use by a delegation outside this tree");
 	check();
 });
+test("a sibling branch's live start says outside this tree, not to close an unauthorized delegation", async () => {
+	const rootSession = instance();
+	await rootSession.start();
+	const f = fixture();
+	const coordinator = started(f, rootSession.parent, "coordinator");
+	coordinator.workspace = { mode: "existing", cwd: root, git: { kind: "non-git" } };
+	coordinator.cwd = root;
+	const sibling = { ...started(f, rootSession.parent, "sibling"), gone: false };
+	publish(rootSession.parent, [coordinator, sibling]);
+	const child = session({ parent: coordinator.id });
+	sessions.push(child);
+	await child.start();
+	publish(child.parent, [started(f, child.parent, "grandchild", rootSession.parent)]);
+	const check = unchangedWorktree(f);
+	const result = await runCleanup({ all: true }, deps(child), context(child));
+	assert.equal(result.items[0].outcome, "kept");
+	assert.equal(result.items[0].reason, "in use by a delegation outside this tree");
+	check();
+});
+
 test("gone snapshot proof cannot exempt a same-id start with a newer window", async () => {
 	const s = instance();
 	await s.start();

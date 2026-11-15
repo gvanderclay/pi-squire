@@ -253,6 +253,28 @@ async function runKeyScript(factory: unknown, script: KeyScript): Promise<unknow
 	return script.result;
 }
 
+/** Mirror Pi's cancellation values so command tests can advance a pending dialog's timeout. */
+async function dialogAnswer<T>(
+	answer: T | Promise<T>,
+	fallback: T,
+	opts?: { signal?: AbortSignal; timeout?: number },
+): Promise<T> {
+	if (opts?.signal?.aborted) return fallback;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let dismiss = (): void => {};
+	const dismissed = new Promise<T>((resolve) => {
+		dismiss = () => resolve(fallback);
+		opts?.signal?.addEventListener("abort", dismiss, { once: true });
+		if (opts?.timeout !== undefined) timer = setTimeout(dismiss, opts.timeout);
+	});
+	try {
+		return await Promise.race([Promise.resolve(answer), dismissed]);
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+		opts?.signal?.removeEventListener("abort", dismiss);
+	}
+}
+
 /** The answers a scripted `ctx.ui` gives, one queue per dialog. */
 export type UiAnswers = {
 	/** A promise answers when the test settles it, so a dialog can stay open while another call starts. */
@@ -262,7 +284,7 @@ export type UiAnswers = {
 	input?: (string | undefined)[];
 	/** A `KeyScript` drives the component; anything else is the answer itself. */
 	custom?: unknown[];
-	confirm?: boolean[];
+	confirm?: (boolean | Promise<boolean>)[];
 };
 
 let counter = 0;
@@ -438,7 +460,7 @@ export function session(options: SessionOptions = {}) {
 	const customAnswers = [...(options.ui?.custom ?? [])];
 	const confirmAnswers = [...(options.ui?.confirm ?? [])];
 	/** Every `ctx.ui.confirm` call, with its title and message. */
-	const confirms: { title: string; message: string }[] = [];
+	const confirms: { title: string; message: string; signal?: AbortSignal; timeout?: number }[] = [];
 	/** Every `pi.registerShortcut` handler, by key. */
 	const shortcuts: Record<string, (ctx: unknown) => unknown> = {};
 	const events: EventBus = createEventBus();
@@ -602,32 +624,19 @@ export function session(options: SessionOptions = {}) {
 			},
 			select: async (title: string, options: string[], opts?: { signal?: AbortSignal; timeout?: number }) => {
 				selects.push({ title, options, ...opts });
-				const answer = selectAnswers.shift();
-				if (!opts?.signal) return await answer;
-				const signal = opts.signal;
-				if (signal.aborted) return undefined;
-				let dismiss = () => {};
-				const dismissed = new Promise<undefined>((resolve) => {
-					dismiss = () => resolve(undefined);
-					signal.addEventListener("abort", dismiss, { once: true });
-				});
-				try {
-					return await Promise.race([Promise.resolve(answer), dismissed]);
-				} finally {
-					signal.removeEventListener("abort", dismiss);
-				}
+				return dialogAnswer(selectAnswers.shift(), undefined, opts);
 			},
 			editor: async (title: string, prefill?: string) => {
 				editors.push({ title, prefill });
 				return editorAnswers.shift();
 			},
-			confirm: async (title: string, message: string) => {
-				confirms.push({ title, message });
+			confirm: async (title: string, message: string, opts?: { signal?: AbortSignal; timeout?: number }) => {
+				confirms.push({ title, message, ...opts });
 				const previous: unknown = focusedComponent;
 				focusedComponent = {};
 				await fire("ui_prompt_start", { kind: "confirm" });
 				try {
-					return confirmAnswers.shift() ?? false;
+					return await dialogAnswer(confirmAnswers.shift() ?? false, false, opts);
 				} finally {
 					focusedComponent = previous;
 					await fire("ui_prompt_end", { kind: "confirm" });

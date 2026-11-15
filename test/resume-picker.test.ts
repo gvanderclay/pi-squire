@@ -89,7 +89,7 @@ test("a window still running its program, a removed agent, a missing session fil
 	assert.deepEqual(await offered(noDir.s), []);
 });
 
-test("tmux older than 3.2 refuses with the message resume gives, and lists nothing", async () => {
+test("tmux older than 3.2 preserves the same cause with command/tool advice, and lists nothing", async () => {
 	const { s, id } = await exited();
 	s.tmux.versionText = "tmux 3.1c";
 	await s.command("delegate-resume", "");
@@ -97,7 +97,15 @@ test("tmux older than 3.2 refuses with the message resume gives, and lists nothi
 	const picker = s.errors.at(-1) ?? "";
 	assert.match(picker, /tmux 3\.2 or later; this is tmux 3\.1c/);
 	const tool = await s.toolCall("delegation_resume", { id, task: "again" }).then(String, (err: Error) => err.message);
-	assert.equal(picker, `delegate: ${tool}`);
+	const cause = "delegate windows need tmux 3.2 or later; this is tmux 3.1c";
+	assert.equal(picker.slice(0, `delegate: ${cause}`.length), `delegate: ${cause}`);
+	assert.equal(tool.slice(0, cause.length), cause);
+	assert.match(
+		picker.slice(`delegate: ${cause}`.length),
+		/^\. Host prerequisite: install tmux >=3\.2.*tmux new-session.*delegate-doctor/,
+	);
+	assert.equal(tool.slice(cause.length), ". Ask the user to fix the host; /delegate-doctor shows details.");
+	assert.doesNotMatch(tool, /brew install|apt install|tmux new-session/);
 });
 
 test("an invalid windowPlacement refuses with the message resume gives, and lists nothing", async () => {

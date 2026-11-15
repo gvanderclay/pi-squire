@@ -17,6 +17,7 @@ import {
 	unverifiedPaseo,
 	withCleanGit,
 } from "./cleanup-paseo.ts";
+import { commandOutput } from "./command-output.ts";
 import { readIdentity } from "./identity.ts";
 import { readTree } from "./tree-registry.ts";
 
@@ -201,10 +202,10 @@ async function chooseOverrides(overrides: CleanupPreview[], deps: CleanupDeps, c
 	}
 	for (const item of overrides) ctx.ui.notify(`${item.ids.join(", ")}: kept — not confirmed`, "info");
 }
-/** No model message/turn: every result, including a canceled confirmation, stays in the UI. */
+/** No model message/turn: results stay in the UI; non-UI refusal goes to stderr. */
 export async function cleanupCommand(deps: CleanupDeps, ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) {
-		ctx.ui.notify("delegate-cleanup needs an interactive session", "warning");
+		commandOutput(ctx, "delegate-cleanup needs an interactive session", "warning");
 		return;
 	}
 	try {
@@ -236,6 +237,6 @@ export async function cleanupCommand(deps: CleanupDeps, ctx: ExtensionContext): 
 			ctx,
 		);
 	} catch (error) {
-		ctx.ui.notify(`delegate-cleanup: ${(error as Error).message}`, "error");
+		commandOutput(ctx, `delegate-cleanup: ${(error as Error).message}`, "error");
 	}
 }

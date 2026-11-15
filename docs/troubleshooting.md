@@ -2,6 +2,7 @@
 
 [Home](../README.md) · [Results and recovery](results-and-recovery.md) · [Configuration](configuration.md)
 
+- [Delegate doctor](#delegate-doctor)
 - [Task or result never arrives: mail namespaces](#task-or-result-never-arrives-mail-namespaces)
 - [Cleanup is kept: stale Paseo daemon descriptor](#cleanup-is-kept-stale-paseo-daemon-descriptor)
 - [Window state is unknown, or navigation is unavailable](#window-state-is-unknown-or-navigation-is-unavailable)
@@ -14,6 +15,39 @@ Start with `delegation_status` for one id (or `all: true` for the full inventory
 Keep the delegation id, request id, session path, envelope path and the exact
 refusal. Inspect records read-only before retrying; an unknown observation is
 not permission to delete records or launch another copy.
+
+## Delegate doctor
+
+Run `/delegate-doctor` before a first launch or after a prerequisite refusal.
+It reports the selected tmux/Herdr/Paseo host and selection source (Paseo host,
+explicit Squire setting, launcher inheritance or environment), the selected
+adapter’s availability preflight, usable agent count and paths, agent parse
+warnings, project-agent trust, Squire/Pi settings parsing, and Pi’s reported
+session directory. A parsed settings object is not validation of every value;
+a reported directory is not proof of writability.
+
+Mail has no handler-listing or version-negotiation API. Doctor sends separate
+**invalid-input** `message:send` and `message:reply` probes, which a conforming
+provider rejects synchronously before writing. It reports only whether a
+handler answered, not that mail can be delivered or replied to. It does not
+scan/claim waiting mail, send a real task, open a host resource, change trust,
+or repair files. Missing handlers name `pi install npm:pi-session-mail` and
+reloading/restarting parent and delegate sessions; a tool result instead asks
+the user to install one. A missing roster names the interactive starter or the
+exact user-agent directory.
+
+In TUI/RPC the report uses Pi’s notification UI. In print/JSON, where Pi’s
+notification UI is a no-op, the report and command refusals use **stderr**:
+
+```bash
+pi -p /delegate-doctor
+pi --mode json /delegate-doctor
+```
+
+JSON stdout remains JSONL; no fake user/custom model message is injected and no
+model turn starts. Refusal diagnostics do not change Pi’s slash-command exit
+status: neither a zero exit code nor a successful preflight is a task result.
+Look for the actual `[delegate]` result.
 
 ## Task or result never arrives: mail namespaces
 

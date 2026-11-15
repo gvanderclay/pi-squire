@@ -6,12 +6,50 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `/delegate` in interactive Pi offers to create a minimal `scout.md` when the
+  roster is empty, previews its exact path and content, asks for user or trusted
+  project scope, and never overwrites a file. Canceling creation writes nothing;
+  the starter inherits the current model and thinking and continues into the
+  task form without a reload.
+- `/delegate-doctor` checks host selection and availability, roster paths and
+  parse warnings, settings parsing, session storage, and separate invalid-input
+  responses from `message:send` and `message:reply`. It launches nothing and
+  never scans or claims mail; a handler response, shown with the provider's
+  error text, does not prove delivery.
+
 ### Changed
 
 - Reorganize the README around installation, first use, recovery and safe
   uninstall; ship the full configuration, host, workspace, result and integration
   references in `docs/`, with clearer experimental-feature status and package
   discovery metadata. Executable hook examples and runtime behavior are unchanged.
+- Host and mail refusals now say what to do. `/delegate`, `/delegate-resume`
+  and `/delegate-doctor` add an action chosen by how the refusal starts (a
+  path or nested error inside it cannot change the advice): install or start
+  tmux, set `multiplexer` when Pi is inside both tmux and Herdr or the
+  selection is invalid, fix the Squire settings file, fix Herdr, start the
+  Paseo daemon, or run Pi inside a Paseo agent; a missing `message:*` provider
+  names the mailbox extension to install and the reload that loads it. Tool
+  results for host and mail refusals add only a short hint to ask the user and
+  run `/delegate-doctor`, with no install commands. Every refusal keeps its
+  original cause first. Deliberately changed expectations:
+  `test/host-admission.test.ts`’s “unselected router refuses before reading any
+  concrete-host facts or placement”, and `test/resume-picker.test.ts`’s old-tmux
+  case, which now checks the identical cause prefix plus audience-specific
+  advice instead of equal command and tool text.
+- An empty roster tells a tool caller to ask the user to run `/delegate` or add
+  an agent file; in interactive Pi the starter offer opens without a preceding
+  error.
+- `/delegate`, `/delegate-resume`, `/delegate-open` and `/delegate-cleanup`
+  refusals and `/delegate-doctor` output go to stderr in print/JSON mode instead
+  of disappearing with Pi’s no-op UI. They add no user/model messages or agent
+  turns; successful slash-command semantics are unchanged.
+  `test/cleanup-command.test.ts`’s “registered /delegate-cleanup refuses no-UI
+  before proof or mutations; no model message/turn” deliberately checks stderr
+  instead of a no-op notification. Agent-file warnings reach stderr the same way,
+  so an empty roster caused by a broken file says why.
 
 ### Fixed
 

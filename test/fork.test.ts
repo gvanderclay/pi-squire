@@ -55,6 +55,18 @@ function lastStart(s: ReturnType<typeof session>): Delegation {
 	return s.entries.findLast(({ data }) => typeof data.requestId === "string")!.data as Delegation;
 }
 
+test("fork tool full admission keeps host refusal hints short", async () => {
+	const d = await source();
+	d.s.tmux.versionText = "tmux 3.1";
+	await assert.rejects(fork(d.s, d.id), (error: Error) => {
+		assert.match(error.message, /^delegate windows need tmux 3\.2 or later; this is tmux 3\.1\./);
+		assert.match(error.message, /Ask the user to fix the host; \/delegate-doctor shows details\.$/);
+		assert.doesNotMatch(error.message, /brew install|apt install|tmux new-session/);
+		return true;
+	});
+	assert.equal(d.s.tmux.opened.length, 1, "only the source was opened");
+});
+
 test("fork combines Pi flags, copies context to a new exact session id and leaves a running source untouched", async () => {
 	const cwd = join(root, "child-folder");
 	mkdirSync(cwd);

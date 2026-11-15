@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
 import type { DelegateHost } from "./host.ts";
-import { assertHostOptions } from "./host-admission.ts";
+import { assertHostOptions, type HostAudience } from "./host-admission.ts";
 import { windowFacts, windowPresentation, windowTerms } from "./locators.ts";
 import { PASEO_SESSION_REFUSAL } from "./paseo-launch.ts";
 import { paseoLocator } from "./paseo-locator.ts";
@@ -290,8 +290,11 @@ export async function settleModel(
  * (frozen like a launch's), that backend usable, and a valid placement setting
  * (only for hosts that use window placement).
  */
-export async function preflight(deps: ResumeDeps): ReturnType<ResumeDeps["admission"]["admit"]> {
-	const admission = await deps.admission.admit();
+export async function preflight(
+	deps: ResumeDeps,
+	audience: HostAudience = "command",
+): ReturnType<ResumeDeps["admission"]["admit"]> {
+	const admission = await deps.admission.admit(audience);
 	assertHostOptions(admission.client, { kind: "resume" });
 	return admission;
 }

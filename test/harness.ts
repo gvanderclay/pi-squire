@@ -677,11 +677,14 @@ export function session(options: SessionOptions = {}) {
 		},
 	};
 	// The provider stub runs synchronously on the same bus, as `mailbox` does.
+	// Set `send.answering` false for a provider that is no longer loaded.
 	const mode = options.send ?? "envelope";
+	const send = { answering: true };
 	events.on("message:send", (data) => {
 		if (options.mailProvider !== undefined) return;
 		const payload = data as SendPayload;
 		sendCalls.push(payload);
+		if (!send.answering) return;
 		if (mode === "envelope") payload.envelope = { id: randomUUID() };
 		else if (mode === "error") payload.error = "mailbox: no active session has a mailbox address";
 	});
@@ -827,6 +830,7 @@ export function session(options: SessionOptions = {}) {
 		warnings,
 		errors,
 		sendCalls,
+		send,
 		scan,
 		selects,
 		editors,

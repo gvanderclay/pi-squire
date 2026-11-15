@@ -32,42 +32,33 @@ see [Hosts](docs/hosts.md).
 
 ## First use
 
-The package ships no agents, so create one first. `<agent dir>` is Pi's agent
-directory: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when that is set. Save this
-as `<agent dir>/agents/scout.md`, replacing `provider/model-id` with a model
-your Pi can use:
+With both packages installed above and Pi authenticated to a model, take the
+tmux path first (tmux ≥3.2):
 
-```markdown
----
-description: Looks things up and answers in one message
-model: provider/model-id
-thinking: medium
-tools: read, grep, find, ls
----
-
-You research one question at a time and answer concisely, citing the files
-you read.
+```bash
+tmux new-session -s pi
+pi
 ```
 
-Every field is optional. An agent without `routing_profile` is a **legacy
-agent**: without `model` and `thinking` its delegate runs on your session's
-model and level, and without `tools` it has your session's tools (see
-[Agents](docs/agents.md#agents)). An agent with `routing_profile` is a **bound
-role** and uses its routing policy instead; see
-[Role/task routing](docs/routing.md#role-task-routing). The roster is read at
-call time, so no reload is needed. Delegation guidance
-for the parent is optional: save Markdown as
-`<agent dir>/squire/delegation_prompt.md`, and it is read before each run.
-Then, from a Pi session running in tmux, hand it a task:
+Already in tmux? Just start Pi there. Already in **Herdr/Paseo**? See [Hosts](docs/hosts.md).
 
-```text
-/delegate scout --label first Which files define the command-line entry point?
-```
+1. Run `/delegate` with no arguments. An empty roster offers a starter scout:
+   choose **User** scope, review the exact `<agent dir>/agents/scout.md` path
+   and content, then confirm creation. It inherits your current model and
+   thinking; no model-ID lookup or reload is needed. Cancel either creation
+   dialog to write nothing; existing files are never overwritten.
+2. Enter a task, for example **Which files define the command-line entry point?**
+   Leave the label empty, keep the settings defaults, and choose **Start**.
+3. Keep working. The answer arrives as one `[delegate]` result in this parent,
+   then the scout closes its own window
+   ([auto-exit](docs/results-and-recovery.md#auto-exit)). An open window alone
+   is not a successful result.
 
-A detached tmux window named `scout-first` opens in your working directory.
-When the delegate finishes, its answer reaches the parent as one `[delegate]`
-message that links the task copy (see [Results](docs/results-and-recovery.md#results)), and the delegate then
-closes its own window ([auto-exit](docs/results-and-recovery.md#auto-exit)).
+The starter uses `read, grep, find, ls`; tool lists are not a security sandbox.
+Trusted projects can instead save a project-scoped scout that overrides a
+same-name user agent. See [agents](docs/agents.md) for custom agents and optional
+parent guidance. If a prerequisite is missing, run
+[`/delegate-doctor`](docs/troubleshooting.md#delegate-doctor).
 
 Use `/delegate` with no arguments for the new-delegate form. Watch the compact
 **Delegates** tree above the editor; at an empty prompt, Down selects a row,
@@ -94,6 +85,7 @@ setting's type, default, scope, read time and invalid-value behavior.
 | Command | Purpose |
 | --- | --- |
 | `/delegate [<agent> … <task>]` | Start in the background, or open the form with no arguments. |
+| `/delegate-doctor` | Inspect host, agents, settings, session storage and mail-handler evidence without launching. |
 | `/delegate-open <id> [--switch\|--peek]` | Switch to or preview a verified terminal. |
 | `/delegate-resume [<id> … <task>]` | Continue an exited direct child's session, or open the picker. |
 | `/delegate-cleanup` | Preview managed resources and confirm eligible cleanup or narrow overrides. |

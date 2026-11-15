@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { commandOutput } from "./command-output.ts";
 import type { DelegateHost } from "./host.ts";
 import { locationTerms, noVerifiedOpen } from "./location.ts";
 import { livePaneTarget, windowLocator } from "./locators.ts";
@@ -158,19 +159,20 @@ async function switchTo(env: Env, ctx: ExtensionContext, item: OpenDelegate): Pr
 		const found = await env.tmux.show({ windowId: item.window.id, locator: windowLocator(item.window) }, async () => {
 			env.actions.assertActive?.();
 			if (await verifiedWindow(env, item)) return true;
-			ctx.ui.notify(`delegate: ${noVerifiedOpen(locationTerms(item.record).noun)}`, "error");
+			commandOutput(ctx, `delegate: ${noVerifiedOpen(locationTerms(item.record).noun)}`, "error");
 			return false;
 		});
-		if ("text" in found) return ctx.ui.notify(`delegate: cannot switch: ${found.text}`, "warning");
+		if ("text" in found) return commandOutput(ctx, `delegate: cannot switch: ${found.text}`, "warning");
 		if (!found.shown) return;
 		returnHint = found.returnHint;
 	} catch (err) {
-		return ctx.ui.notify(`delegate: could not switch: ${(err as Error).message}`, "error");
+		return commandOutput(ctx, `delegate: could not switch: ${(err as Error).message}`, "error");
 	}
 	try {
 		env.actions.assertActive?.();
 	} catch (err) {
-		return ctx.ui.notify(
+		return commandOutput(
+			ctx,
 			`delegate: switched to ${item.name} (${item.window.id}); session ownership lost: ${(err as Error).message}`,
 			"warning",
 		);
@@ -182,7 +184,7 @@ async function close(env: Env, ctx: ExtensionContext, id: string): Promise<void>
 	env.actions.assertActive?.();
 	const record = env.results.find(id);
 	if (!record || !isStarted(record))
-		return ctx.ui.notify("delegate: selected delegate is no longer available", "warning");
+		return commandOutput(ctx, "delegate: selected delegate is no longer available", "warning");
 	const name = recordedName(record);
 	const running = record.result || record.closed || record.gone ? "" : `${name} is still running. `;
 	if (
@@ -198,7 +200,7 @@ async function close(env: Env, ctx: ExtensionContext, id: string): Promise<void>
 			("isError" in result && result.isError) || result.details?.complete === false ? "error" : "info",
 		);
 	} catch (err) {
-		ctx.ui.notify(`delegate: ${(err as Error).message}`, "error");
+		commandOutput(ctx, `delegate: ${(err as Error).message}`, "error");
 	}
 }
 
@@ -227,9 +229,10 @@ async function peek(env: Env, ctx: ExtensionContext, item: OpenDelegate): Promis
 	return result?.action === "switch";
 }
 
-const noUi = (ctx: ExtensionContext): void => ctx.ui.notify("delegate: this needs an interactive session", "error");
+const noUi = (ctx: ExtensionContext): void =>
+	commandOutput(ctx, "delegate: this needs an interactive session", "error");
 const noWindows = (env: Env, ctx: ExtensionContext): void =>
-	ctx.ui.notify(`delegate: ${env.tmux.windowListRefusal}`, "error");
+	commandOutput(ctx, `delegate: ${env.tmux.windowListRefusal}`, "error");
 
 /** One action on one open delegate, as `/delegate-open` runs it. */
 async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMode): Promise<void> {
@@ -241,10 +244,10 @@ async function openOne(env: Env, ctx: ExtensionContext, id: string, mode: OpenMo
 		const record = env.results.find(id);
 		if (record) {
 			const noun = isStarted(record) ? locationTerms(record).noun : "window";
-			return ctx.ui.notify(`delegate: ${noVerifiedOpen(noun)}`, "error");
+			return commandOutput(ctx, `delegate: ${noVerifiedOpen(noun)}`, "error");
 		}
 		const known = items.map((candidate) => candidate.id).join(", ") || "none";
-		return ctx.ui.notify(`delegate: no open delegate ${JSON.stringify(id)}; open: ${known}`, "error");
+		return commandOutput(ctx, `delegate: no open delegate ${JSON.stringify(id)}; open: ${known}`, "error");
 	}
 	if (mode === "switch") return switchTo(env, ctx, item);
 	if (ctx.mode !== "tui") return noUi(ctx);

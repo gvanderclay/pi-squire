@@ -12,9 +12,10 @@ import {
 } from "./delegate-composition.ts";
 import { publishOpenedProgress, publishOpenProgress } from "./delegate-progress.ts";
 import { type DelegateHost, type OpenedWindow, type OpenProgress, WindowOpenError, type WindowSpec } from "./host.ts";
-import type { AdmittedHost } from "./host-admission.ts";
+import { type AdmittedHost, callAudience, type HostAudience } from "./host-admission.ts";
 import { type createIdentity, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { windowLocator } from "./locators.ts";
+import { mailAnswered, missingMail } from "./mail-preflight.ts";
 import { MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { type Delegation, type Results, type StartedRecorded, sessionIdOf } from "./results.ts";
 import { assertRoutingSource, snapshotRoutingSource } from "./routing-inheritance.ts";
@@ -292,14 +293,11 @@ export class DelegateStarter {
 		}
 	}
 
-	private sendTask(to: string, task: string): string {
+	private sendTask(to: string, task: string, audience: HostAudience): string {
 		const sent: SendPayload = { to, body: task };
 		this.deps.pi.events.emit("message:send", sent);
 		if (typeof sent.error === "string") throw new Error(`could not send the task to ${to}: ${sent.error}`);
-		if (sent.envelope === undefined)
-			throw new Error(
-				"needs a provider of message:* to send the task; install a mailbox extension (for example pi-session-mail)",
-			);
+		if (!mailAnswered(sent) || sent.envelope === undefined) throw new Error(missingMail(audience));
 		const requestId = sent.envelope.id;
 		if (typeof requestId !== "string") throw new Error(`the message:send provider wrote no request id for ${to}`);
 		return requestId;
@@ -333,7 +331,7 @@ export class DelegateStarter {
 	}
 
 	private mailBeforeOpen(input: StartInput, token: Reservation): string {
-		const requestId = this.sendTask(sessionIdFor(input), input.task);
+		const requestId = this.sendTask(sessionIdFor(input), input.task, callAudience(input.toolCallId));
 		bindTree(token, { requestId });
 		input.onMailed?.(requestId);
 		return requestId;
@@ -346,7 +344,10 @@ export class DelegateStarter {
 		ctx: ExtensionContext,
 	): Promise<string> {
 		const requestId = await mailTask(
-			{ host: input.admission.client, sendTask: (to: string, task: string) => this.sendTask(to, task) },
+			{
+				host: input.admission.client,
+				sendTask: (to: string, task: string) => this.sendTask(to, task, callAudience(input.toolCallId)),
+			},
 			opened,
 			startedSessionId(input, opened),
 			input.task,

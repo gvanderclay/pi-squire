@@ -514,9 +514,15 @@ and closing an agent run that command.
   Paseo 0.15.4 drops its native usage display when an agent is archived;
   use `auto_exit: false` to keep it open and retain the final display, or
   read Squire's result/status usage after archive.
-- Resume and fork are refused for now, with the reason "Paseo cannot resume or
-  fork a delegate yet": `delegation_resume`, `/delegate-resume` and
-  `delegation_fork`. Start a new delegation instead.
+- Resume and fork are refused before reservations or workspace creation:
+  `delegation_resume`, `/delegate-resume` and `delegation_fork`. Paseo sources
+  are not offered in the resume picker, even from a terminal coordinator.
+  Start a new delegation instead.
+- Agents with `skills: false` or `context_files: false` are refused before
+  reservations, task mail or managed-worktree creation. Paseo 0.15.4 cannot
+  pass these Pi resource switches per agent; changing the child's prompt
+  would not stop resource loading. Launch that agent from tmux or Herdr, or
+  enable those resources in its agent file. Neither switch is silently dropped.
 - Paseo honors the roster's and call's `auto_exit` (default on). After the
   final task reply is delivered and nested work is processed, auto-exit
   archives the delegate. It leaves the active agent list, but its transcript
@@ -546,6 +552,29 @@ and closing an agent run that command.
 A delegate is itself a Paseo agent. Starting another Pi by hand from a Paseo
 delegate's shell inherits that agent's identity; use Squire's `delegate` tool
 for nested workers.
+
+### Host capabilities
+
+| Capability | tmux | Herdr | Paseo |
+| --- | --- | --- | --- |
+| Fresh launch | Background window | Background tab | Child agent; coordinator must be Paseo-hosted |
+| Nested delegates | With explicit grant and tree caps | Same | Same; native parent link retained |
+| Live usage | Pi in its terminal; result/status totals | Same | Native context usage during first mailed run; later autonomous runs update at completion; result/status totals retained |
+| Navigation | Verified terminal window/pane | Verified tab/pane in the same named session | Open the agent in the Paseo app; no terminal |
+| Auto-exit | Closes window after delivered result and processed nested work | Closes tab under the same conditions | Archives agent under the same conditions; explicit close deletes it; workspace stays |
+| Resume | Exited direct child with session file and original cwd | Same, plus restore/session guard | Refused for Paseo hosts and sources; start fresh |
+| Fork | Copies a direct child's history to a new session | Same | Refused for Paseo hosts and sources; start fresh |
+| `skills` / `context_files` switches | Pi flags honored | Same | Defaults load normally; `false` refused before reservation/mail/worktree |
+| `session:launch` flags | Passed to Pi | Passed to Pi | Only supported fields translated; other flags refused, never dropped |
+
+Paseo translates `--session-id`, `--name`, `--model`, `--thinking`,
+`--append-system-prompt`, `--session-dir`, `--tools` / `--no-tools` and
+`--approve` / `--no-approve`. A hook-added unsupported flag is discovered
+only after the hook runs with the final existing cwd, not during static
+admission: no task is mailed or Paseo agent/workspace created, and a newly
+created managed worktree and reservation are rolled back. A failed rollback
+is retained and reported for recovery. Remove the unsupported flag or launch
+from tmux or Herdr; the hook still runs once at its existing lifecycle point.
 
 ## Where delegate windows open
 

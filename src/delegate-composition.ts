@@ -154,7 +154,7 @@ export function delegatePrompt(agent: Agent, managedContext: string): string {
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 export function toolDescription(agents: readonly Agent[], agentDir: string): string {
 	const intro =
-		"Start a delegate Pi session on a self-contained task in a background terminal. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status or mail it just to wait.";
+		"Start a delegate Pi session on a self-contained task in the background. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status or mail it just to wait.";
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${whereAgentsGo(agentDir)}.`;
 	}
@@ -164,6 +164,6 @@ export function toolDescription(agents: readonly Agent[], agentDir: string): str
 		"Agents (outside a routing profile, a model or thinking level a line does not name is this session's, also when locked):",
 		...agents.map(rosterLine),
 		"",
-		"The delegate sees only the task and its agent prompt. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",
+		"Fresh delegates have no parent conversation; normal Pi skills/context files load unless disabled. Forks copy history. State the question, the decision it feeds, what is known or ruled out, and where to start. For a long report, name a file to write and ask for the conclusion back.",
 	].join("\n");
 }

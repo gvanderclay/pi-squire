@@ -12,17 +12,18 @@ import { agentDir, agentFile, DELEGATION_TOOLS, session, writeAgent } from "./ha
 // delegation_resume names the deferred fork in one clause, so a model can find it.
 // Cleanup adds 1,563 measured characters: T3 adds 46 for the command override pointer.
 // Discoverable parents still defer cleanup, so their declaration caps do not grow.
-const BUDGET = 14_384;
+// T11 adds 57 characters of accurate fresh-launch/resource/fork guidance; no other text is cut.
+const BUDGET = 14_441;
 // `delegation_fork` is deferred: a parent that can find it (codemode or
 // tool_search active) starts without it declared, so what such a parent pays in
 // every request is the other four. Activating it later declares it.
-const DECLARED_BUDGET = 10_700;
+const DECLARED_BUDGET = 10_757;
 // The routing request is one schema embedded in `delegate`, `delegation_resume`
 // and `delegation_fork`. This case measures the four tools declared at the
 // start, so it counts two copies; a declared fork adds the third.
-const ROUTED_BUDGET = 13_480;
+const ROUTED_BUDGET = 13_537;
 // Coordinators explicitly activate both deferred tools (two-agent roster below).
-const COORDINATOR_BUDGET = 14_412;
+const COORDINATOR_BUDGET = 14_469;
 // The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
 const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
 

@@ -144,7 +144,7 @@ test("resume and fork are refused as not opened, before anything can start", () 
 	for (const flag of ["--fork", "--session"]) {
 		const error = refusal([...flags(), flag, "/sessions/parent.jsonl"]);
 		assert.equal(error.certainty, "not-opened", flag);
-		assert.equal(error.message, "Paseo cannot resume or fork a delegate yet");
+		assert.equal(error.message, "Paseo cannot resume or fork a delegate yet; start a new delegation instead");
 	}
 });
 

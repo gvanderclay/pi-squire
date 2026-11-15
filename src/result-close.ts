@@ -13,8 +13,11 @@ import { windowPresentation } from "./tmux.ts";
 
 /** No resume command when either the source or today's selected host refuses it. */
 function continuation(record: StartedRecorded, host: DelegateHost | undefined, advice: string): string {
-	if (supportsResume(record, host)) return advice;
-	return `${paseoLocator(record.locator) ? "Paseo sessions cannot be resumed or forked" : "Resume is unavailable on the current host"}; start a fresh delegate with the same task and working directory.`;
+	if (supportsResume(record, host))
+		return paseoLocator(record.locator)
+			? "If this Paseo agent is archived (not deleted), the direct parent can call delegation_resume with id and task; mail an open agent instead."
+			: advice;
+	return `${paseoLocator(record.locator) && record.closed ? "This Paseo agent was deleted and cannot be resumed or forked" : "Resume is unavailable on the current host"}; start a fresh delegate with the same task and working directory.`;
 }
 
 /**
@@ -58,7 +61,7 @@ export function closeOutcome(
 		`Working directory: ${cwdLine(record.cwd)}`,
 		...(record.workspace ? [`Workspace: ${workspaceLine(record.workspace)}`] : []),
 		`Delegate session: ${session ?? sessionIdOf(record)}`,
-		`A genuine reply that arrives later is still delivered. ${continuation(record, host, "Only the direct parent may resume this session as a new delegation.")}`,
+		`A genuine reply that arrives later is still delivered. ${continuation(paseoLocator(record.locator) ? { ...record, closed: true } : record, host, "Only the direct parent may resume this session as a new delegation.")}`,
 	].join("\n");
 	return { key: `closed:${record.id}`, content, details };
 }

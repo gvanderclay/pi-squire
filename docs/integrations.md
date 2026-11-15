@@ -31,6 +31,12 @@ delegation](results-and-recovery.md#resuming-a-delegation)). Routed launches val
 protected values before any task is sent, regardless of whether the host would
 otherwise open before delivery.
 
+A native Paseo resume does not emit `session:launch`: Paseo reloads the agent
+with the arguments and environment the hook produced at its original launch.
+It accepts only id/task, not launch overrides. Identity notifications and
+completion holds still run normally in the reopened Pi. Launch observers do
+not see this native reload; its working directory is unchanged.
+
 | Field | Meaning |
 | --- | --- |
 | `args` | the child `pi`'s complete argument list, launcher first |

@@ -120,7 +120,9 @@ restores parent/root/depth/agent/chain, the original `rootPlacement` companion
 preference and the saved auto-exit setting. This internal placement scalar adds
 no launch environment variable or `session:launch` field. The
 launch-time remaining fallback list is not restored by a manual reopen;
-squire resume still supplies its current fallback candidates.
+terminal-hosted Squire resume supplies its current fallback candidates. Native
+Paseo resume instead reuses the original daemon-stored launch environment and
+fallback list.
 
 Direct-child facts and pending result/gone outcomes live in
 `<agent dir>/squire/child-tasks/<encoded parent session id>.json`, independently
@@ -210,7 +212,9 @@ resume authority; forked/cloned/copied history with a new Pi id grants none.
 Return to the original parent. Identity is read from exact-id durable state,
 written before launch; inherited launch environment cannot assign a new session
 to the old tree. Current allowlists, depth, caps and
-directory/source trust still apply to resume, including its picker. A live
+directory/source trust still apply to terminal resume, including its picker.
+Native Paseo resume keeps its original trust and launch settings, while current
+allowlists, depth and caps still apply. A live
 same-id Squire owner and obsolete local/shared resume chains are refused.
 
 ## Usage limits
@@ -517,7 +521,40 @@ reopens them. The tool, command and picker refuse before trust resolution, mail,
 killing an exited window, reserving a launch or spawning a new window. There is
 no legacy identity synthesis or migration.
 
-An exited delegate can continue its own session with a follow-up task:
+### Paseo native resume
+
+An archived Paseo delegate can continue with `delegation_resume({ id, task })`
+or `/delegate-resume <id> <task…>`; no arguments opens the same eligibility
+picker. It keeps the **same Paseo agent, Pi session file and conversation**.
+Only its original Paseo-hosted direct parent may resume it; fork stays refused.
+An explicit close deletes the agent and cannot be resumed. An open agent
+should receive mail instead.
+
+Every explicit `model`, `thinking`, `auto_exit` or `routing` override is
+refused, even if unchanged. Native reload preserves original tools, trust,
+prompt, fallback and launch environment; current roster launch-setting edits
+are **not** applied. Recorded auto-exit is retained. `session:launch` is not
+emitted on native resume: its original hook-produced arguments/environment are
+reused. Identity notifications, completion holds and result delivery still run.
+
+Squire verifies the exact Squire-labelled agent/native parent, Pi runtime and
+persistence ids, original native path, session header and cwd, and archived
+state before any reservation. It checks again before reload, then verifies the
+actual returned runtime session before sending the follow-up. A missing/moved
+session file, deleted agent, mismatched identity/cwd or ambiguous daemon state
+fails closed, never importing a replacement session. Routed records, current
+routing profiles and persisted routing history are refused. Legacy records
+without a managed-workspace receipt may resume if exact verification passes.
+
+Each resume still has a new delegation id and `resumedFrom`, uses the old
+session mail address, reapplies direct-parent/roster admission and tree
+caps/fences, and refuses a live exact-session Squire owner. Mail failure
+re-archives the original agent rather than deleting its conversation. Details:
+[Paseo support](hosts.md#paseo-support).
+
+### Terminal-hosted resume
+
+An exited terminal delegate can continue its own session with a follow-up task:
 
 ```text
 /delegate-resume <id> [--model <provider/id>] [--thinking <level>] [--routing "<JSON>"] [--auto-exit | --no-auto-exit] <task…>

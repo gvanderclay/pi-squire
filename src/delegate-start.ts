@@ -11,7 +11,15 @@ import {
 	writePromptFile,
 } from "./delegate-composition.ts";
 import { publishOpenedProgress, publishOpenProgress } from "./delegate-progress.ts";
-import { type DelegateHost, type OpenedWindow, type OpenProgress, WindowOpenError, type WindowSpec } from "./host.ts";
+import { closeAfterFailure, mailTask } from "./delegate-start-mail.ts";
+import {
+	type DelegateHost,
+	type OpenedWindow,
+	type OpenProgress,
+	type ResumeSource,
+	WindowOpenError,
+	type WindowSpec,
+} from "./host.ts";
 import { type AdmittedHost, callAudience, type HostAudience } from "./host-admission.ts";
 import { type createIdentity, type Identity, readIdentity, writeIdentity } from "./identity.ts";
 import { windowLocator } from "./locators.ts";
@@ -63,7 +71,7 @@ export type ChildStart = {
 export type StartSession =
 	| { kind: "launch" }
 	| { kind: "fork"; id: string; path: string; sessionId: string; sourceCwd: string }
-	| { kind: "resume"; id: string; path: string; sessionId: string };
+	| { kind: "resume"; id: string; path: string; sessionId: string; native?: ResumeSource };
 
 type StartInput = {
 	id: string;
@@ -183,32 +191,6 @@ function launchPayload(input: StartInput): LaunchPayload {
 	for (const key of ["parent", "root", "depth", "chain"] as const)
 		Object.defineProperty(payload, key, { writable: false, configurable: false });
 	return payload;
-}
-
-/** Mail failure after open uses only the host's taskless-resource rollback seam. */
-async function mailTask(
-	deps: { host: DelegateHost; sendTask(to: string, task: string): string },
-	opened: OpenedWindow,
-	sessionId: string,
-	task: string,
-): Promise<string> {
-	try {
-		return deps.sendTask(sessionId, task);
-	} catch (error) {
-		return closeAfterFailure(deps.host, opened, error);
-	}
-}
-
-async function closeAfterFailure(client: DelegateHost, opened: OpenedWindow, error: unknown): Promise<never> {
-	try {
-		await client.closeTaskless(opened);
-	} catch (closeError) {
-		throw new Error(
-			`${(error as Error).message ?? String(error)}; ${(closeError as Error).message ?? String(closeError)}`,
-			{ cause: error },
-		);
-	}
-	throw error;
 }
 
 function publishRequest(token: Reservation, requestId: string, windowId: string, ctx: ExtensionContext): void {
@@ -412,15 +394,18 @@ export class DelegateStarter {
 		assertRootPlacement(own.rootPlacement);
 		own.autoExit = start.autoExit && input.admission.client.keepsDelegatesOpen !== true;
 		writeIdentity(sessionIdFor(input), own);
-		const payload = prepared ?? launchPayload(input);
-		if (!prepared) this.deps.pi.events.emit("session:launch", payload);
+		// Native reload preserves the original hook-produced config; emitting a
+		// mutable launch hook here would promise changes Paseo cannot apply.
+		const native = session.kind === "resume" ? session.native : undefined;
+		const payload = native ? undefined : (prepared ?? launchPayload(input));
+		if (payload && !prepared) this.deps.pi.events.emit("session:launch", payload);
 		bindTree(token, { cwd: workspace.cwd, workspace });
 		dispatchTree(token);
 		const spec: WindowSpec = {
 			name: input.name,
 			cwd: workspace.cwd,
-			argv: payload.args,
-			env: payload.env,
+			argv: payload?.args ?? [],
+			env: payload?.env ?? {},
 			onProgress: (progress: OpenProgress) => publishOpenProgress(input, token, progress),
 		};
 		const opened = await this.open(input, spec, token, ctx);
@@ -442,6 +427,11 @@ export class DelegateStarter {
 	): Promise<OpenedWindow> {
 		const client = input.admission.client;
 		try {
+			if (input.session.kind === "resume" && input.session.native) {
+				if (!client.resumeSession)
+					throw new WindowOpenError("this host cannot reopen the native session", "not-opened");
+				return await client.resumeSession(input.session.native);
+			}
 			return await client.openWindow(spec, input.admission.placement, input.identity.rootPlacement);
 		} catch (err) {
 			if (err instanceof WindowOpenError && err.certainty === "not-opened") this.refundNotOpened(token, ctx);

@@ -5,13 +5,15 @@ import { readFileSync } from "node:fs";
 import {
 	type DelegateHost,
 	type OpenedWindow,
+	type ResumeConfiguration,
+	type ResumeSource,
 	type ShowResult,
 	WindowOpenError,
 	type WindowSpec,
 	type WindowTarget,
 } from "./host.ts";
 import { recordLocator } from "./locators.ts";
-import { createPaseoApi, type PaseoApi } from "./paseo-api.ts";
+import { createPaseoApi, type PaseoApi, type PaseoResumeInput } from "./paseo-api.ts";
 import { paseoLaunch, paseoStartProblem } from "./paseo-launch.ts";
 import { type PaseoLocator, paseoLocator } from "./paseo-locator.ts";
 import {
@@ -58,6 +60,7 @@ class PaseoHost implements DelegateHost {
 	readonly windowNoun = "agent";
 	readonly usesWindowPlacement = false;
 	readonly requiresSessionGuard = false;
+	private readonly resumed = new Map<string, string>();
 	readonly windowListRefusal = LIST_REFUSAL;
 	private readonly api: PaseoApi;
 	/** Read at every call: same process, and the router asks before any launch. */
@@ -129,6 +132,37 @@ class PaseoHost implements DelegateHost {
 		};
 	}
 
+	private resumeInput(source: ResumeSource): PaseoResumeInput {
+		const own = paseoLocator(source.locator);
+		const parentAgentId = this.env.PASEO_AGENT_ID;
+		if (!own || !parentAgentId) throw new Error("Paseo resume requires the original Paseo source and parent");
+		return {
+			agentId: own.agent,
+			parentAgentId,
+			sessionId: source.sessionId,
+			path: source.path,
+			cwd: source.cwd,
+			...(source.home ? { home: source.home } : {}),
+		};
+	}
+
+	async resumeConfiguration(source: ResumeSource): Promise<ResumeConfiguration> {
+		return this.api.resumeConfiguration(this.resumeInput(source));
+	}
+
+	async resumeSession(source: ResumeSource): Promise<OpenedWindow> {
+		const input = this.resumeInput(source);
+		await this.api.resume(input);
+		this.resumed.set(input.agentId, input.sessionId);
+		return {
+			id: input.agentId,
+			session: undefined,
+			sessionId: input.sessionId,
+			locator: source.locator,
+			location: `Paseo agent ${input.agentId}`,
+		};
+	}
+
 	async states(strict = false): Promise<ClosableStates> {
 		if (!this.hosted()) {
 			if (strict) throw new Error(NOT_HOSTED);
@@ -141,7 +175,11 @@ class PaseoHost implements DelegateHost {
 
 	async closeTaskless(opened: OpenedWindow): Promise<void> {
 		try {
-			await this.api.remove(opened.id);
+			const sessionId = this.resumed.get(opened.id);
+			if (sessionId !== undefined) {
+				await this.api.archive(opened.id, sessionId, () => true);
+				this.resumed.delete(opened.id);
+			} else await this.api.remove(opened.id);
 		} catch (error) {
 			throw new Error(
 				`the delegate's Paseo agent ${opened.id} could not be closed and may still run Pi with no task (${messageOf(error)}); close it yourself`,

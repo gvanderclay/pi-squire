@@ -4,6 +4,10 @@ import type { WindowPlacement } from "./window-placement.ts";
 import type { ClosableStates, PaneStates } from "./window-state.ts";
 import type { PaseoReceipt } from "./worktree.ts";
 
+/** Exact native session identity; the host must verify it before reopening. */
+export type ResumeSource = { locator: object; sessionId: string; path: string; cwd: string; home?: string };
+export type ResumeConfiguration = { model: string; thinking: string };
+
 /** One window to open: its name, working directory, command and environment. */
 export type WindowSpec = {
 	name: string;
@@ -75,6 +79,9 @@ export interface DelegateHost extends LiveNavigation {
 	taskMailTiming(kind: StartKind): "before-open" | "after-open";
 	/** Optional API configuration after open; requires after-open task mail for every start kind. */
 	configureStart?(opened: OpenedWindow, configuration: StartConfiguration): Promise<void>;
+	/** Native frozen-config resume: inspect read-only, then revalidate and reopen before task mail. */
+	resumeConfiguration?(source: ResumeSource): Promise<ResumeConfiguration>;
+	resumeSession?(source: ResumeSource): Promise<OpenedWindow>;
 	/** Setting/inheritance key; never inferred from a presentation noun. */
 	readonly id: string;
 	/** Accept owned identity; with a navigation target, also validate its adapter-specific routing fields. */

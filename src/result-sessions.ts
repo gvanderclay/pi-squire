@@ -35,7 +35,7 @@ export function locateSession(record: StartedRecorded, fallbackDir: string | und
 const HEADER_BYTES = 64 * 1024;
 
 /** The working directory a session file's header stores, which Pi runs the session in; undefined when the file or the field is missing. */
-export function sessionHeaderCwd(sessionPath: string): string | undefined {
+function sessionHeader(sessionPath: string): { id?: unknown; cwd?: unknown } | undefined {
 	let fd: number;
 	try {
 		fd = openSync(sessionPath, "r");
@@ -45,13 +45,24 @@ export function sessionHeaderCwd(sessionPath: string): string | undefined {
 	try {
 		const buffer = Buffer.alloc(HEADER_BYTES);
 		const text = buffer.subarray(0, readSync(fd, buffer, 0, HEADER_BYTES, 0)).toString("utf8");
-		const header = JSON.parse(text.split("\n", 1)[0]) as { type?: unknown; cwd?: unknown };
-		return header.type === "session" && typeof header.cwd === "string" && header.cwd !== "" ? header.cwd : undefined;
+		const header = JSON.parse(text.split("\n", 1)[0]) as { type?: unknown; id?: unknown; cwd?: unknown };
+		return header.type === "session" ? header : undefined;
 	} catch {
 		return undefined;
 	} finally {
 		closeSync(fd);
 	}
+}
+
+export function sessionHeaderCwd(sessionPath: string): string | undefined {
+	const cwd = sessionHeader(sessionPath)?.cwd;
+	return typeof cwd === "string" && cwd !== "" ? cwd : undefined;
+}
+
+/** Exact header identity, not a session filename or daemon persistence claim. */
+export function sessionHeaderId(sessionPath: string): string | undefined {
+	const id = sessionHeader(sessionPath)?.id;
+	return typeof id === "string" && id !== "" ? id : undefined;
 }
 
 /** The provider/model of the last assistant message in the delegate session, if available. */

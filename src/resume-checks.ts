@@ -13,7 +13,7 @@ import {
 	resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
 import { type Agent, disabledProblem, isThinking, withoutLocked } from "./agents.ts";
-import type { DelegateHost } from "./host.ts";
+import type { DelegateHost, ResumeSource } from "./host.ts";
 import { assertHostOptions, type HostAudience } from "./host-admission.ts";
 import { windowFacts, windowPresentation, windowTerms } from "./locators.ts";
 import { PASEO_SESSION_REFUSAL } from "./paseo-launch.ts";
@@ -65,9 +65,13 @@ export function isDirectory(path: string): boolean {
 /** A delegate's session file, the directory its header says Pi runs it in, and the session directory to pass. */
 export type SessionFile = { path: string; cwd: string; dir: string };
 
-/** A Paseo source cannot become actionable by switching the coordinator to a terminal. */
-export function assertSessionHost(record: StartedRecorded): void {
-	if (paseoLocator(record.locator)) throw new Error(PASEO_SESSION_REFUSAL);
+/** Native Paseo resume cannot import terminal sessions or move to another host. */
+export function assertSessionHost(record: StartedRecorded, host?: DelegateHost): void {
+	const native = !!paseoLocator(record.locator);
+	if (native && record.closed)
+		throw new Error("a closed Paseo agent was deleted and cannot be resumed; start a new delegation");
+	if (host && native !== (host.id === "paseo"))
+		throw new Error("Paseo resume requires the original Paseo delegate and its Paseo-hosted parent");
 }
 
 /** Step 5: the session file, and the directory its header says Pi will run it in. */
@@ -76,6 +80,7 @@ export function sessionFor(
 	ctx: ExtensionContext,
 	purpose: "resumable" | "forkable" = "resumable",
 ): SessionFile {
+	if (purpose === "forkable" && paseoLocator(record.locator)) throw new Error(PASEO_SESSION_REFUSAL);
 	assertSessionHost(record);
 	const dir = record.sessionDir ?? ctx.sessionManager.getSessionDir();
 	const path = locateSession(record, ctx.sessionManager.getSessionDir());
@@ -244,6 +249,14 @@ function assertRoutingBinding(record: StartedRecorded, agent: Agent, request: un
 	);
 }
 
+/** A new routed attempt cannot reuse the old immutable launchEnv seed. */
+export function assertFrozenPaseoSource(record: StartedRecorded, agent: Agent, path: string): void {
+	if (record.routingVersion || record.routing || agent.routingProfile)
+		throw new Error("Paseo resume reuses the original launch settings; routed delegates cannot be resumed yet");
+	// Persisted routing history remains protected even if the current roster removed its binding.
+	assertRoutingSource(agent, { path, sessionId: sessionIdOf(record) }, undefined);
+}
+
 /** The thinking level and model a resume runs with; throws when the level is invalid or no model can be used. */
 export async function settleModel(
 	deps: Pick<ResumeDeps, "parentDefaults" | "thinkingProblem" | "chooseModel" | "chooseRouting">,
@@ -299,6 +312,17 @@ export async function preflight(
 	return admission;
 }
 
+/** Native identity includes a managed receipt's daemon home when one was recorded. */
+export function resumeSource(record: StartedRecorded, session: SessionFile): ResumeSource {
+	return {
+		locator: record.locator ?? {},
+		sessionId: sessionIdOf(record),
+		path: session.path,
+		cwd: session.cwd,
+		...(record.workspace?.mode === "managed" && record.workspace.paseo ? { home: record.workspace.paseo.home } : {}),
+	};
+}
+
 /** Before any side effect: no other live Pi (including a host-restored session) may already host the session. */
 export async function guardSession(
 	deps: ResumeDeps,
@@ -306,10 +330,12 @@ export async function guardSession(
 	client: DelegateHost,
 	ctx: ExtensionContext,
 ): Promise<void> {
-	// Hosts without a restore guard keep their order of checks; guarded hosts need the file now.
-	if (!windowFacts(record).requiresSessionGuard && !client.requiresSessionGuard) return;
+	// Native readiness is independent of a terminal's restored-session guard.
+	const guarded = windowFacts(record).requiresSessionGuard || client.requiresSessionGuard;
+	if (!guarded && !client.resumeConfiguration) return;
 	const session = sessionFor(record, ctx);
-	await deps.tmux.guardSession?.(record, { path: session.path, id: sessionIdOf(record) }, client);
+	if (client.resumeConfiguration) await client.resumeConfiguration(resumeSource(record, session));
+	if (guarded) await deps.tmux.guardSession?.(record, { path: session.path, id: sessionIdOf(record) }, client);
 }
 
 /** The delegation ids with a resume under way in this process. */
@@ -324,9 +350,13 @@ export async function passes(
 	models: Map<string, boolean>,
 ): Promise<boolean> {
 	try {
-		assertSessionHost(record);
+		assertSessionHost(record, deps.tmux.forLaunch?.() ?? deps.tmux);
 		windowCheck(record, windows);
 		const { session, agent } = recordCheck(deps, record, ctx);
+		if (paseoLocator(record.locator)) {
+			assertFrozenPaseoSource(record, agent, session.path);
+			return true;
+		}
 		// Source-dependent binding must be checked before the shared legacy model-availability cache.
 		assertRecordedBinding(record, agent);
 		assertRoutingSource(agent, { path: session.path, sessionId: sessionIdOf(record) }, undefined);

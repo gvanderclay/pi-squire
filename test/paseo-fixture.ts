@@ -10,6 +10,7 @@ import { windowPresentation } from "../src/locators.ts";
 import { createPaseoHost } from "../src/paseo.ts";
 import type { PaseoApi, PaseoAvailability } from "../src/paseo-api.ts";
 import { paseoLocator } from "../src/paseo-locator.ts";
+import { sessionHeaderCwd, sessionHeaderId } from "../src/result-sessions.ts";
 import type { WindowRecord } from "../src/tmux.ts";
 import type { PaseoReceipt } from "../src/worktree.ts";
 import type { AdapterContract, AdapterFixture } from "./adapter-contract.ts";
@@ -82,6 +83,21 @@ export class FakePaseo implements PaseoApi {
 				provenance: "created",
 			},
 		};
+	}
+
+	async resumeConfiguration(
+		input: Parameters<PaseoApi["resumeConfiguration"]>[0],
+	): ReturnType<PaseoApi["resumeConfiguration"]> {
+		this.use("resumeConfiguration");
+		if (!this.archived.has(input.agentId)) throw new Error("Paseo resume requires an archived agent");
+		if (sessionHeaderId(input.path) !== input.sessionId || sessionHeaderCwd(input.path) !== input.cwd)
+			throw new Error("Paseo resume requires the original Pi session file");
+		return { model: "alpha/fast-model", thinking: "low" };
+	}
+	async resume(input: Parameters<PaseoApi["resume"]>[0]): Promise<void> {
+		this.use("resume");
+		if (!this.archived.delete(input.agentId)) throw new Error("Paseo resume requires an archived agent");
+		this.running.add(input.agentId);
 	}
 
 	async workspace(id: string): Promise<PaseoWorkspace | null> {

@@ -13,14 +13,15 @@ export type PaseoLaunch = {
 	env: Record<string, string>;
 };
 
-export const PASEO_SESSION_REFUSAL = "Paseo cannot resume or fork a delegate yet; start a new delegation instead";
+export const PASEO_SESSION_REFUSAL = "Squire cannot fork a Paseo delegate yet; start a new delegation instead";
 
 /** Paseo 0.15.4 PiProviderOptionsSchema has no resource switches or per-agent argv.
  * https://github.com/getpaseo/paseo/blob/v0.15.4/packages/server/src/server/agent/providers/pi/agent.ts
  * Pi resources_discover adds paths; prompt edits cannot prevent resource loading.
  */
 export function paseoStartProblem(options: StartOptions): string | undefined {
-	if (options.kind !== "launch") return PASEO_SESSION_REFUSAL;
+	if (options.kind === "fork") return PASEO_SESSION_REFUSAL;
+	if (options.kind === "resume") return undefined;
 	return resourceProblem(options, "agent file");
 }
 
@@ -47,8 +48,8 @@ const VALUE_FLAGS = new Set([
 	"--append-system-prompt",
 	"--session-dir",
 ]);
-/** Resume and fork need a Pi session file, which Paseo has no field for. */
-const REFUSED_FLAGS = new Set(["--session", "--fork"]);
+/** Native resume bypasses create; arbitrary session imports are not a Squire launch. */
+const REFUSED_FLAGS = new Set(["--fork"]);
 /** Marker keys: the tools and trust flags share one, so the last one given wins. */
 const TOOLS = "tools";
 const TRUST = "trust";
@@ -72,6 +73,8 @@ type ParsedFlag = { key: string; value: string; consumed: number };
 function flagAt(argv: readonly string[], index: number): ParsedFlag {
 	const arg = argv[index];
 	if (REFUSED_FLAGS.has(arg)) throw refuse(PASEO_SESSION_REFUSAL);
+	if (arg === "--session")
+		throw refuse("Paseo resume requires a verified archived Squire agent; arbitrary session import is refused");
 	const problem = resourceProblem(
 		{ kind: "launch", skills: arg !== "--no-skills", contextFiles: arg !== "--no-context-files" },
 		"session:launch hook",

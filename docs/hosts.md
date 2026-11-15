@@ -178,9 +178,10 @@ tmux behaviour and its controls are unchanged.
 
 Paseo can host the coordinator Pi, and then pi-squire starts each delegate as a
 **Paseo agent** instead of a tmux window or a Herdr tab. Tested with Paseo
-0.15.4. The coordinator must be a Pi that Paseo started, and the `paseo`
-command must be installed with its daemon running: reading an agent's activity
-and closing an agent run that command.
+0.15.4. Squire currently selects this host only for a coordinator Pi that
+Paseo started; this is Squire routing policy, not a Paseo requirement for
+creating agents. The `paseo` command must be installed with its daemon running:
+reading activity and explicitly closing an agent run that command.
 
 - As on tmux and Herdr, delegates receive the parent's `PI_CODING_AGENT_DIR`
   and explicit `PI_SESSION_MAIL_ROOT` and `XDG_STATE_HOME` values (see
@@ -193,8 +194,9 @@ and closing an agent run that command.
   main checkout when Paseo has the checkout open; otherwise it shows as a
   project of its own. Closing an agent leaves its workspace in place.
   Existing agents and delegation records are not relinked or moved.
-- Paseo's parent link also affects lifecycle: archiving a parent in Paseo
-  archives its children. Do not archive or delete a coordinator just to move
+- Paseo's parent link also affects lifecycle: archiving a parent archives its
+  same-workspace children, except children with open agent tabs; cross-workspace
+  and open-tab children detach instead. Do not archive or delete a coordinator just to move
   back to the terminal while its delegates still need to run. Use
   `delegation_close` for an explicit Squire subtree close.
 - On launch, an internal `/delegate-turn` command lets Paseo poll the
@@ -202,8 +204,10 @@ and closing an agent run that command.
   message to the model's context and waits at most 10 seconds for that run
   to start; a timeout leaves launch and task delivery unchanged. Paseo may
   show the command in its timeline. Later autonomous runs (follow-up mail or
-  a nested child's result) refresh usage when they finish, not live while
-  running. No prompt is sent into a delegate that is already running.
+  a nested child's result), including resumed runs, refresh usage when they
+  finish, not live while running. This first-run bridge is Squire behavior,
+  not a Paseo limit on subsequent native turns. No prompt is sent into a
+  delegate that is already running.
   This relies on Paseo 0.15.4 behaviour: a parent given as the
   `paseo.parent-agent-id` label keeps the parent link without Paseo wrapping
   the launch prompt, and Paseo keeps a slash-command turn open while the
@@ -213,16 +217,33 @@ and closing an agent run that command.
   Paseo 0.15.4 drops its native usage display when an agent is archived;
   use `auto_exit: false` to keep it open and retain the final display, or
   read Squire's result/status usage after archive.
-- Resume and fork are refused before reservations or workspace creation:
-  `delegation_resume`, `/delegate-resume` and `delegation_fork`. Paseo sources
-  are not offered in the resume picker, even from a terminal coordinator.
-  Start a new delegation instead.
-- Agents with `skills: false` or `context_files: false` are refused before
+- `delegation_resume` and `/delegate-resume` reopen an **archived** Squire
+  delegate with Paseo's public SDK `reload()`, keeping the same Paseo agent,
+  Pi session file and conversation. Only its original Paseo-hosted direct parent
+  may resume it. Squire checks the exact agent, native parent, Pi session id,
+  file/header and cwd before reservation and again before reload, then verifies
+  the actual returned runtime session id before mailing the follow-up. Deleted
+  agents, moved/missing session files, changed identities/cwd, ambiguous daemon
+  responses and routed delegates are refused; Squire never imports a new agent
+  as a fallback. Older receiptless records can resume when these checks pass.
+- Paseo resume accepts **only `id` and `task`**. Every explicit `model`,
+  `thinking`, `auto_exit` or `routing` override is refused, even if unchanged.
+  Paseo reuses the original launch settings (including tools, trust, prompt,
+  fallback and environment); current roster launch-setting edits are not applied.
+  Saved Squire auto-exit state and current roster admission/grants still apply.
+  A native Paseo resume does not emit `session:launch`: Paseo reloads the agent
+  with the arguments and environment the hook produced at its original launch.
+  Normal identity notifications, completion holds, accounting and result delivery
+  still run. If follow-up mail fails, Squire re-archives rather than deletes the
+  original agent. Fork remains unimplemented in Squire for Paseo hosts/sources;
+  start a fresh delegation instead.
+- On fresh launch, agents with `skills: false` or `context_files: false` are refused before
   reservations, task mail or managed-worktree creation. Paseo 0.15.4 cannot
   pass these Pi resource switches per agent; changing the child's prompt
   would not stop resource loading. Launch that agent from tmux or Herdr, or
   enable those resources in its agent file. Neither switch is silently dropped.
-- Paseo honors the roster's and call's `auto_exit` (default on). After the
+- Fresh Paseo launches honor the roster's and call's `auto_exit` (default on);
+  native resume retains the original setting. After the
   final task reply is delivered and nested work is processed, auto-exit
   archives the delegate. It leaves the active agent list, but its transcript
   remains recoverable in Paseo. With `auto_exit: false`, after human takeover,
@@ -240,10 +261,12 @@ and closing an agent run that command.
   scheduling a cleanup retry. Auto-exit does not archive a workspace or remove
   its working directory; after merging, use `delegation_cleanup` for eligible
   Squire-created worktrees and Paseo workspaces (see [Cleanup](workspaces.md#cleanup)).
-- The `"multiplexer"` setting is ignored, because a Paseo-hosted Pi always opens
-  agents in Paseo.
-- A delegate has no terminal or pane to show. `windowId` is the agent id, and
-  `delegation_close` deletes that agent.
+- Squire ignores the `"multiplexer"` setting for a Paseo-hosted Pi and always
+  opens agents in Paseo; mixed-host launches are not implemented.
+- A delegate has no terminal or pane to show. Paseo supports desktop navigation
+  through `paseo agent open <id>`, but Squire has not implemented that action:
+  its navigation reply tells you to open the agent in Paseo yourself. `windowId`
+  is the agent id, and `delegation_close` deletes that agent.
 - A pi-squire older than this support cannot read a Paseo delegation record, so
   it refuses that whole delegation tree. Upgrade every Pi that reads the tree
   instead of moving one back.
@@ -259,12 +282,12 @@ for nested workers.
 | Fresh launch | Background window | Background tab | Child agent; coordinator must be Paseo-hosted |
 | Nested delegates | With explicit grant and tree caps | Same | Same; native parent link retained |
 | Live usage | Pi in its terminal; result/status totals | Same | Native context usage during first mailed run; later autonomous runs update at completion; result/status totals retained |
-| Navigation | Verified terminal window/pane | Verified tab/pane in the same named session | Open the agent in the Paseo app; no terminal |
+| Navigation | Verified terminal window/pane | Verified tab/pane in the same named session | Squire gives manual app guidance; Paseo desktop-open command exists but is not wired up |
 | Auto-exit | Closes its own pane after delivered result and processed nested work; window goes only if it was the last pane | Closes its own pane under the same conditions; tab goes only if it was the last pane | Archives agent under the same conditions; explicit close deletes it; workspace stays |
-| Resume | Exited direct child with session file and original cwd | Same, plus restore/session guard | Refused for Paseo hosts and sources; start fresh |
+| Resume | Exited direct child with session file and original cwd | Same, plus restore/session guard | Archived direct child; same agent/Pi session/cwd; frozen settings, id/task only |
 | Fork | Copies a direct child's history to a new session | Same | Refused for Paseo hosts and sources; start fresh |
 | `skills` / `context_files` switches | Pi flags honored | Same | Defaults load normally; `false` refused before reservation/mail/worktree |
-| `session:launch` flags | Passed to Pi | Passed to Pi | Only supported fields translated; other flags refused, never dropped |
+| `session:launch` flags | Passed to Pi | Passed to Pi | Fresh launch: supported fields translated; other flags refused. Native resume: no hook; original configuration retained |
 
 Paseo translates `--session-id`, `--name`, `--model`, `--thinking`,
 `--append-system-prompt`, `--session-dir`, `--tools` / `--no-tools` and

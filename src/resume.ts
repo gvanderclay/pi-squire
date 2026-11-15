@@ -14,9 +14,11 @@ import type { Identity } from "./identity.ts";
 import { openedIn } from "./location.ts";
 import { windowPresentation } from "./locators.ts";
 import { fallbackNote } from "./model-choice.ts";
+import { paseoLocator } from "./paseo-locator.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import { isStarted, type Results, recordedName, type StartedRecorded } from "./results.ts";
 import {
+	assertFrozenPaseoSource,
 	assertNoOwner,
 	assertSessionHost,
 	contextNotice,
@@ -25,6 +27,7 @@ import {
 	passes,
 	preflight,
 	recordCheck,
+	resumeSource,
 	type SessionFile,
 	sessionModel,
 	settleModel,
@@ -154,6 +157,8 @@ function newestStarted(results: Results, id: string): StartedRecorded {
 async function ensureExited(record: StartedRecorded, tmux: DelegateHost): Promise<void> {
 	const windows = await askWindowStates(tmux);
 	windowCheck(record, windows);
+	// Archived Paseo agents are the resource to revive, not an exited terminal to delete.
+	if (paseoLocator(record.locator)) return;
 	try {
 		await windows.close(record);
 	} catch (err) {
@@ -182,11 +187,41 @@ type Plan = {
 /** Settle the request's overrides against the record, and decide trust again for the session's directory. */
 async function planResume(
 	deps: ResumeDeps,
-	input: { record: StartedRecorded; agent: Agent; session: SessionFile; request: ResumeRequest },
+	input: { record: StartedRecorded; agent: Agent; session: SessionFile; request: ResumeRequest; client: DelegateHost },
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 ): Promise<Plan> {
 	const { record, agent, session, request } = input;
+	if (paseoLocator(record.locator)) {
+		assertFrozenPaseoSource(record, agent, session.path);
+		const client = input.client;
+		if (!client.resumeConfiguration) throw new Error("Paseo native resume configuration is unavailable");
+		const chosen = {
+			...(await client.resumeConfiguration(resumeSource(record, session))),
+			skipped: [],
+			notices: [
+				"Paseo resume reuses the original launch settings, including tools, trust, fallback and environment; current roster launch settings are not applied.",
+			],
+			rest: [],
+		};
+		const workspace = record.workspace;
+		if (!workspace || workspace.cwd !== session.cwd)
+			throw new Error("Paseo resume requires the original working directory");
+		return {
+			start: {
+				agent,
+				model: chosen.model,
+				thinking: chosen.thinking,
+				autoExit: record.identity?.autoExit === true,
+				rest: [],
+				notices: chosen.notices,
+			},
+			chosen,
+			workspace,
+			// Frozen native trust is intentionally not recomputed or replaced.
+			trusted: false,
+		};
+	}
 	const { thinking, chosen } = await settleModel(deps, input, ctx);
 	const autoExit = request.autoExit ?? record.autoExit === true;
 	const prepared = await deps.prepareDirectory(session.cwd, ctx, signal, agent.name);
@@ -231,7 +266,13 @@ async function startResume(
 			id,
 			name,
 			identity: record.identity,
-			session: { kind: "resume", id: record.id, path: session.path, sessionId },
+			session: {
+				kind: "resume",
+				id: record.id,
+				path: session.path,
+				sessionId,
+				...(paseoLocator(record.locator) ? { native: resumeSource(record, session) } : {}),
+			},
 			workspace,
 			trusted: plan.trusted,
 			sessionDir: session.dir,
@@ -309,7 +350,16 @@ async function resume(
 	if (request.task.trim() === "") throw new Error("a task is required");
 	deps.authorize?.(request.id, ctx);
 	const found = newestStarted(deps.results, request.id);
-	assertSessionHost(found);
+	assertSessionHost(found, client);
+	if (paseoLocator(found.locator)) {
+		const overrides = ["model", "thinking", "autoExit", "routing"].filter(
+			(key) => request[key as keyof ResumeRequest] !== undefined,
+		);
+		if (overrides.length)
+			throw new Error(
+				`Paseo resume reuses the original launch settings; overrides are refused: ${overrides.map((key) => (key === "autoExit" ? "auto_exit" : key)).join(", ")}. Pass only id and task.`,
+			);
+	}
 	const record = { ...found, identity: requiredIdentity(found) };
 	deps.admit?.(record.agent, ctx);
 	// Host evidence first, so a restored resource is named; the owner check still refuses any other live writer.
@@ -323,7 +373,7 @@ async function resume(
 		const { session, agent } = recordCheck(deps, record, ctx);
 		inFlight.add(record.id);
 		acquired = true;
-		const plan = await planResume(deps, { record, agent, session, request }, ctx, signal);
+		const plan = await planResume(deps, { record, agent, session, request, client }, ctx, signal);
 		return await startResume(
 			deps,
 			{

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { EventBus, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { globalAgentsDir, projectAgentsDir, type Roster } from "./agents.ts";
 import type { DelegateHost } from "./host.ts";
-import { HOST_ACTION } from "./host-admission.ts";
+import { hostAction } from "./host-admission.ts";
 import { probeMail } from "./mail-preflight.ts";
 import { MULTIPLEXER_ENV } from "./multiplexer.ts";
 import { multiplexerSetting, squireSettingsFile } from "./settings.ts";
@@ -48,9 +48,10 @@ export async function doctor(
 		lines.push(
 			`Host availability: ${unavailable ?? "launch preflight passed; connectivity and task success not proven"}`,
 		);
-		if (unavailable) lines.push(HOST_ACTION);
+		if (unavailable) lines.push(hostAction(unavailable));
 	} catch (error) {
-		lines.push(`Host selection/availability refused: ${(error as Error).message}`, HOST_ACTION);
+		const cause = (error as Error).message;
+		lines.push(`Host selection/availability refused: ${cause}`, hostAction(cause));
 	}
 	const trusted = ctx.isProjectTrusted();
 	lines.push(

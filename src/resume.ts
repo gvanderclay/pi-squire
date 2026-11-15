@@ -304,7 +304,7 @@ async function resume(
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 ): Promise<Resumed> {
-	const admission = await preflight(deps); // read once, before the exited window is killed or anything is mailed
+	const admission = await preflight(deps, request.toolCallId === undefined ? "command" : "tool"); // read once, before the exited window is killed or anything is mailed
 	const { client } = admission;
 	if (request.task.trim() === "") throw new Error("a task is required");
 	deps.authorize?.(request.id, ctx);

@@ -99,6 +99,32 @@ Other commands: `type --run <id> --text "<line>"` types any line into the root a
 
 The feature map in [`features/`](features/README.md) has the recipe for each user-facing feature.
 
+## First use (empty roster → doctor → starter → result)
+
+Use a fresh tmux run for this path; the helper normally seeds a verifier agent.
+
+1. Launch a run, then remove only its generated
+   `agent/agents/verifier.md`. Keep the run's settings and mail provider.
+   Type `/delegate-doctor` with `type`; capture the pane and check
+   `Roster: 0 usable agent(s)`, the user/project agent paths and host/mail
+   preflight lines. This command must open no delegate window.
+2. Type bare `/delegate`. Drive the dialogs in the private tmux pane
+   (`tmux -L squire-verify-<id> send-keys -t root:root …`):
+   choose User scope, check the exact path/content preview, then confirm.
+   Check `agent/agents/scout.md` matches the preview and has no model/thinking
+   override. The task editor should follow without a reload or a preceding
+   empty-roster error. Canceling either creation dialog should instead write
+   nothing; use a separate fresh run for that check.
+3. Enter a task asking for an exact unique nonce, accept the settings and
+   launch. Use `wait-result --run <id> --nonce <nonce>`; check the root and
+   scout sessions hold the nonce, the scout used the root's model and its
+   window auto-exited. Capture the final pane, then clean up the run.
+
+The `t4-head` run at `14407ac` proved the doctor → User starter → delivered
+`SQUIRE-T4-HEAD-RESULT` path on the inherited cheap model; its
+`evidence/result-SQUIRE-T4-HEAD-RESULT.json` records the root result.
+A new run is still required when verifying a different checkout.
+
 ## Evidence
 
 Everything goes to `.scratch/verify-pi-squire/<id>/evidence/`:

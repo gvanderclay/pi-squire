@@ -29,6 +29,7 @@ test("empty-roster bootstrap previews exact user file, inherits the model, and c
 	assert.equal(s.tmux.opened.length, 1);
 	assert.ok(s.tmux.opened[0].argv.includes("alpha/fast-model"));
 	assert.equal(readRoster(agentDir).agents[0].autoExit, true);
+	assert.deepEqual(s.errors, [], "the starter dialog is not preceded by an empty-roster error");
 });
 
 test("cancel at scope or confirmation writes no file or directory and starts nothing", async () => {
@@ -141,6 +142,38 @@ test("bootstrap is never offered in RPC, print, JSON or typed requests", async (
 	assert.equal(existsSync(rosterDir), false);
 });
 
+test("empty roster tells the tool to ask the user, not to run a slash command itself", async () => {
+	const s = session();
+	await assert.rejects(s.toolCall("delegate", { agent: "scout", task: "hello" }), (error: Error) => {
+		assert.match(error.message, /^no agents are defined; tell the user to run \/delegate in interactive Pi/);
+		assert.ok(error.message.includes(rosterDir));
+		assert.match(error.message, /Retry the delegate tool after an agent is saved/);
+		assert.doesNotMatch(error.message, /Retry \/delegate/);
+		return true;
+	});
+	assert.equal(s.selects.length, 0);
+	assert.equal(s.tmux.opened.length, 0);
+});
+
+test("delegate and resume tools get short host hints from cheap and full preflight", async () => {
+	writeAgent("scout", STARTER_AGENT);
+	for (const strict of [false, true]) {
+		const s = session();
+		if (strict) s.tmux.versionText = "tmux 3.1";
+		else s.tmux.inside = false;
+		for (const [tool, params] of [
+			["delegate", { agent: "scout", task: "hello" }],
+			["delegation_resume", { id: "missing", task: "hello" }],
+		] as const)
+			await assert.rejects(s.toolCall(tool, params), (error: Error) => {
+				assert.match(error.message, /Ask the user to fix the host; \/delegate-doctor shows details\.$/);
+				assert.doesNotMatch(error.message, /brew install|apt install|tmux new-session/);
+				return true;
+			});
+		assert.equal(s.tmux.opened.length, 0);
+	}
+});
+
 test("doctor reports roster paths, parse errors, settings, trust and session directory without launching or scanning", async () => {
 	writeAgent("scout", STARTER_AGENT);
 	writeAgent("broken", "---\nauto_exit: nope\n---\n");
@@ -214,7 +247,13 @@ test("doctor distinguishes selected tmux, Herdr and Paseo, availability failure,
 			env: {},
 		});
 		assert.ok(text.includes(reason));
-		assert.match(text, /Host prerequisite:.*tmux new-session/);
+		assert.match(
+			text,
+			reason.includes("both")
+				? /Host prerequisite: set "multiplexer": "tmux" or "herdr".*PI_DELEGATE_MULTIPLEXER/
+				: /Host prerequisite:.*tmux new-session/,
+		);
+		if (reason.includes("both")) assert.doesNotMatch(text, /brew install|apt install/);
 	}
 	const old = new FakeTmux();
 	old.versionText = "tmux 3.1";
@@ -236,8 +275,39 @@ test("doctor checks each mail hook separately with invalid payloads, not scan or
 		assert.fail("doctor must not claim inbox mail");
 	});
 	const text = await doctor(s.context, { agentDir, host: s.tmux, roster: () => readRoster(agentDir), events, env: {} });
-	assert.match(text, /message:send: a handler answered an invalid-input probe; delivery and reply were not tested/);
+	assert.match(
+		text,
+		/message:send: a handler answered an invalid-input probe; delivery and reply were not tested; provider error: invalid destination/,
+	);
 	assert.match(text, /message:reply: no handler answered;.*pi install npm:pi-session-mail.*\/reload/);
+});
+
+test("doctor includes bounded provider errors without claiming healthy mail", async () => {
+	for (const error of ["no active session has a mailbox address", "invalid destination", `bad\n${"x".repeat(500)}`]) {
+		const events = createEventBus();
+		events.on("message:send", (data) => {
+			(data as { error?: string }).error = error;
+		});
+		const s = session();
+		const text = await doctor(s.context, {
+			agentDir,
+			host: s.tmux,
+			roster: () => readRoster(agentDir),
+			events,
+			env: {},
+		});
+		const line = text.split("\n").find((line) => line.startsWith("message:send:")) ?? "";
+		assert.match(
+			line,
+			/a handler answered an invalid-input probe; delivery and reply were not tested; provider error:/,
+		);
+		if (error.length <= 300) assert.ok(line.endsWith(error));
+		else {
+			assert.ok(line.endsWith("… (truncated)"));
+			assert.ok(line.length < 500);
+			assert.ok(line.includes("bad xxx"), "provider control characters stay on one line");
+		}
+	}
 });
 
 test("doctor explains explicit settings and host refusals remain actionable for commands", async () => {

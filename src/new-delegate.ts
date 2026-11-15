@@ -418,7 +418,7 @@ async function pickAgent(ctx: ExtensionContext, deps: NewDelegateDeps): Promise<
 	let roster = deps.roster(ctx);
 	let created = false;
 	if (roster.agents.length === 0) {
-		fail(deps.noAgents());
+		if (ctx.mode !== "tui" || !ctx.hasUI) fail(deps.noAgents());
 		try {
 			created = (await deps.bootstrap?.(ctx)) ?? false;
 		} catch (error) {

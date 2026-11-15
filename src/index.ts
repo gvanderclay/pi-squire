@@ -396,7 +396,7 @@ export default function delegate(
 	/** Read the roster now, warning about every file left out. */
 	function rosterFor(ctx: ExtensionContext): Roster {
 		const roster = currentRoster(ctx);
-		for (const warning of roster.warnings) ctx.ui.notify(`delegate: ${warning}`, "warning");
+		for (const warning of roster.warnings) commandOutput(ctx, `delegate: ${warning}`, "warning");
 		return roster;
 	}
 
@@ -408,13 +408,15 @@ export default function delegate(
 		for (const warning of roster.warnings) {
 			if (announced.has(warning)) continue;
 			announced.add(warning);
-			ctx.ui.notify(`delegate: ${warning}`, "warning");
+			commandOutput(ctx, `delegate: ${warning}`, "warning");
 		}
 	}
 
 	/** The refusal for an empty roster. */
-	const noAgents = (): string =>
-		`no agents are defined; add ${whereAgentsGo(getAgentDir())}; or run /delegate in interactive Pi to create a starter. Retry /delegate after saving (no reload needed)`;
+	const noAgents = (byUser = true): string =>
+		byUser
+			? `no agents are defined; add ${whereAgentsGo(getAgentDir())}; or run /delegate in interactive Pi to create a starter. Retry /delegate after saving (no reload needed)`
+			: `no agents are defined; tell the user to run /delegate in interactive Pi to create a starter, or add ${whereAgentsGo(getAgentDir())}. Retry the delegate tool after an agent is saved (no reload needed)`;
 
 	/**
 	 * The request as a start, or an error naming what to fix. `byUser` marks the
@@ -426,7 +428,7 @@ export default function delegate(
 		results.checkStorage(true);
 		const disabled = disabledProblem(roster, request.agent);
 		if (disabled !== undefined) throw new Error(disabled);
-		if (roster.agents.length === 0) throw new Error(noAgents());
+		if (roster.agents.length === 0) throw new Error(noAgents(byUser));
 		const agent = roster.agents.find((candidate) => candidate.name === request.agent);
 		if (agent === undefined) {
 			throw new Error(
@@ -500,7 +502,7 @@ export default function delegate(
 	): Promise<Launched> {
 		admit(start.agent.name, currentRoster(ctx));
 		results.checkStorage(true);
-		const admitted = await admission.admit();
+		const admitted = await admission.admit(toolCallId === undefined ? "command" : "tool");
 		assertHostOptions(admitted.client, {
 			kind: fork ? "fork" : "launch",
 			skills: start.agent.skills,
@@ -944,7 +946,7 @@ export default function delegate(
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
 		) {
-			const refusal = admission.probe();
+			const refusal = admission.probe("tool");
 			if (refusal !== undefined) throw new Error(refusal);
 			// Some models fill every optional field with null or the string "null"; both mean unset.
 			const given = (value: string | null | undefined) => (value == null || value === "null" ? undefined : value);

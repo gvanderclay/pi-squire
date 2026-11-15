@@ -57,6 +57,15 @@ The `--auto-exit` / `--no-auto-exit` flags, `/auto-exit` command and
 `exclude-tools` is no longer read; a file that still has it gets a warning
 (use `tools` instead).
 
+The starter’s `read, grep, find, ls` selection uses Pi built-ins, not shell
+commands. Pi 1.5.2’s `grep` needs ripgrep (`rg`) and `find` needs `fd`
+(or `fdfind` on PATH). Pi uses its cached binaries or PATH and otherwise
+tries to download them automatically. On a fresh machine with downloads
+blocked or `PI_OFFLINE=1`, install ripgrep and fd before asking the scout
+to search; an unavailable binary makes that tool fail. Unsupported platforms
+and Android/Termux need system-provided binaries too. `read` and `ls` do not
+need those search binaries.
+
 `tools` lists the delegate's tools as a comma-separated or YAML list
 (`tools: read, grep` or `tools: [read, grep]`). Each entry of a YAML list
 names one tool: an entry holding a comma, such as `tools: ["read,-bash"]`,

@@ -39,6 +39,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Host refusal advice now follows the cause: ambiguous/invalid multiplexer
+  selection points to settings, Herdr failures to Herdr, and a stopped Paseo
+  daemon to starting it and checking `paseo status`. Tool results keep only
+  the original cause and a short user/doctor hint, without install commands.
+  `test/resume-picker.test.ts`’s old-tmux expectation deliberately now checks
+  the identical cause prefix plus audience-specific advice, rather than equal
+  command/tool text.
+- Empty-roster tool results ask the user to create an agent rather than telling
+  the model to run a slash command. The interactive starter opens without a
+  preceding empty-roster error; print/JSON users still get the refusal and now
+  also see agent-file warnings. Doctor mail probes include bounded provider
+  errors while still proving only that a handler answered invalid input.
 - A launch rolled back before dispatch no longer carries the requested Paseo
   agent id. Post-dispatch failures and interrupted attempts still retain the
   agent id and its recovery advice.

@@ -90,10 +90,15 @@ class PaseoHost implements DelegateHost {
 		if (!parentAgentId) throw new WindowOpenError(NOT_HOSTED, "not-opened");
 		const launch = paseoLaunch(spec);
 		const systemPrompt = promptOf(launch.promptFile);
+		// The requested id is a recovery target, not an acknowledgement that it exists.
+		// A failed pre-dispatch journal/tree write cannot have created a daemon resource.
+		try {
+			spec.onProgress?.({ locator: locatorOf(launch.agentId, spec.name) });
+		} catch (error) {
+			throw new WindowOpenError(`could not record Paseo agent ${launch.agentId}: ${messageOf(error)}`, "not-opened");
+		}
 		let created: Awaited<ReturnType<PaseoApi["create"]>>;
 		try {
-			// The requested id is a recovery target, not an acknowledgement that it exists.
-			spec.onProgress?.({ locator: locatorOf(launch.agentId, spec.name) });
 			created = await this.api.create(
 				{
 					agentId: launch.agentId,

@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Pi 1.5.2 is now the tested-against version; the minimum supported version
+  remains Pi 1.5.0.
+
 ### Fixed
 
 - Paseo resource-switch refusals now name the source: enable resources in the
@@ -26,22 +31,18 @@ follows [Semantic Versioning](https://semver.org/).
   pane defaults, API-key advice distinguishes tmux/Paseo from Herdr inheritance,
   and the focus-adapter note describes current pinned-version
   tests rather than claiming an obsolete bundled-CLI verification.
-
-### Changed
-
-- Pi 1.5.2 is now the tested-against version; the minimum supported version
-  remains Pi 1.5.0.
-
-### Fixed
-
 - Retain acknowledged Paseo workspace receipts and agent recovery targets in managed
   launch attempts and shared tree accounting before later launch steps can fail.
   Successful opens publish their receipts before configuration or task mailing;
-  restored retained attempts can authorize cleanup only with the original
-  `created` receipt and the usual no-live-user checks. Missing acknowledgements
-  remain uncertain, and opened/reused workspaces never gain creation authority.
-  `test/context-budget.test.ts` deliberately raises each metadata cap by the
-  measured 172 schema characters needed to expose partial-open recovery facts.
+  restored retained or interrupted-after-created attempts can authorize cleanup
+  only with the original `created` receipt and the usual no-live-user checks.
+  Missing acknowledgements remain uncertain, and opened/reused workspaces never
+  gain creation authority. Progress storage failures before any daemon call roll
+  back the worktree and refund the reservation; failures after dispatch stay
+  uncertain. Status passes through host-owned recovery facts and types the
+  assigned session id; `test/context-budget.test.ts` deliberately raises each
+  metadata cap by the measured 58 schema characters (114 fewer than the initial
+  opaque per-field declarations).
 
 ## [0.30.0] - 2026-11-15
 

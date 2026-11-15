@@ -15,8 +15,9 @@ import { agentDir, agentFile, DELEGATION_TOOLS, session, writeAgent } from "./ha
 // scripts must not mistake already-clean Git for a verified Paseo workspace.
 // Discoverable parents still defer cleanup, so their declaration caps do not grow.
 // T11 adds 57 characters of accurate fresh-launch/resource/fork guidance; no other text is cut.
-// T2 adds 172 measured schema characters for partial-open locator, receipt and assigned session recovery.
-const PASEO_PROGRESS_METADATA = 172;
+// Partial-open attempts pass host-owned recovery facts through and type the assigned session id.
+// The explicit open attempt schema costs 58 characters, not opaque per-field declarations.
+const PASEO_PROGRESS_METADATA = 58;
 const CLEANUP_RESOURCE_METADATA = 140;
 const BUDGET = 14_441 + CLEANUP_RESOURCE_METADATA + PASEO_PROGRESS_METADATA;
 // `delegation_fork` is deferred: a parent that can find it (codemode or

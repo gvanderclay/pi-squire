@@ -5,6 +5,7 @@ import { after, beforeEach, type TestContext, test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PaseoWorkspace } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { Value } from "typebox/value";
 import { ChildTasks, readChildRecords } from "../src/child-tasks.ts";
 import { cleanup as runCleanup } from "../src/cleanup.ts";
 import { createPaseoHost } from "../src/paseo.ts";
@@ -12,17 +13,27 @@ import { createPaseoApi, type PaseoApi, type PaseoProgress } from "../src/paseo-
 import { paseoLocator } from "../src/paseo-locator.ts";
 import { restoreRecords } from "../src/result-restore.ts";
 import { isStarted, type Recorded, START_TYPE } from "../src/result-types.ts";
+import { AttemptSchema } from "../src/tracking-attempt.ts";
 import { readTree, treeTransaction } from "../src/tree-registry.ts";
 import type { PaseoReceipt } from "../src/worktree.ts";
 import { fixture } from "./cleanup-fixture.ts";
-import { agentDir, agentFile, cleanup, resetRoot, root, session, writeAgent } from "./harness.ts";
+import { agentDir, agentFile, cleanup, type Entry, resetRoot, root, session, writeAgent } from "./harness.ts";
 import { FakePaseo } from "./paseo-fixture.ts";
+import { TreeProcess } from "./tree-process-harness.ts";
 
 beforeEach(() => {
 	resetRoot();
 	writeAgent("scout", agentFile({ model: "alpha/fast-model" }));
 });
 after(cleanup);
+
+test("the attempt schema passes through host recovery facts without opaque field declarations", () => {
+	assert.equal("locator" in AttemptSchema.properties, false);
+	assert.equal("paseo" in AttemptSchema.properties, false);
+	assert.ok("additionalProperties" in AttemptSchema);
+	assert.equal(AttemptSchema.additionalProperties, true);
+	assert.equal(AttemptSchema.properties.sessionId.type, "string");
+});
 
 type Provenance = "created" | "opened" | "reused" | "unobserved";
 type Boundary =
@@ -108,6 +119,43 @@ function partialApi(t: TestContext, source: string, mode: Provenance, boundary: 
 	return { api, observed, home, cwd: (): string => cwd };
 }
 
+test("a failed requested-locator journal write rolls back before any Paseo call", async (t) => {
+	const f = fixture();
+	const { api, observed, cwd } = partialApi(t, f.source, "created", "agent-ack");
+	const host = createPaseoHost(api, { PASEO_AGENT_ID: "11111111-1111-4111-8111-111111111111" });
+	const s = session({ cwd: f.source, multiplexer: host });
+	try {
+		await s.start();
+		const append = s.pi.appendEntry.bind(s.pi);
+		let failed = false;
+		t.mock.method(s.pi, "appendEntry", (kind: string, data: unknown) => {
+			if (!failed && data && typeof data === "object" && "locator" in data) {
+				failed = true;
+				throw new Error("injected requested-locator storage failure");
+			}
+			append(kind, data);
+		});
+		await assert.rejects(
+			s.toolCall("delegate", { agent: "scout", task: "work", worktree: "pre-progress" }),
+			/injected requested-locator storage failure.*outcome rolled-back/,
+		);
+		assert.equal(failed, true);
+		assert.equal(cwd(), "", "the create API must not be called");
+		assert.deepEqual(observed, []);
+		assert.deepEqual(api.removals, []);
+		const attempt = readChildRecords(s.parent).at(-1);
+		assert.ok(attempt && !isStarted(attempt));
+		assert.equal(attempt.attempt.phase, "rolled-back");
+		assert.equal(existsSync(attempt.plan.destination), false);
+		const tree = readTree(s.parent).entries.find((item) => item.id === attempt.id);
+		assert.ok(tree);
+		assert.equal(tree.phase, "not-started", "refund the pre-dispatch reservation");
+		assert.equal(tree.createPending, false);
+	} finally {
+		await s.shutdown();
+	}
+});
+
 test("a failed progress journal write stops launch and retains acknowledged placement", async (t) => {
 	const f = fixture();
 	const { api, home, cwd } = partialApi(t, f.source, "created", "agent-ack");
@@ -135,6 +183,10 @@ test("a failed progress journal write stops launch and retains acknowledged plac
 		const attempt = readChildRecords(s.parent).at(-1);
 		assert.ok(attempt && !isStarted(attempt));
 		assert.equal(attempt.attempt.phase, "retained");
+		const tree = readTree(s.parent).entries.find((item) => item.id === attempt.id);
+		assert.ok(tree);
+		assert.equal(tree.phase, "dispatched", "post-daemon uncertainty keeps its reservation");
+		assert.equal(tree.createPending, true);
 		assert.deepEqual(attempt.paseo, {
 			home,
 			workspaceId: "partial-workspace",
@@ -154,6 +206,89 @@ test("a failed progress journal write stops launch and retains acknowledged plac
 		}
 	} finally {
 		await s.shutdown();
+	}
+});
+
+test("a crashed opener restores created-phase attempts and preserves receipt-specific cleanup authority", async (t) => {
+	for (const provenance of ["created", "opened", "reused"] as const) {
+		await t.test(provenance, async () => {
+			resetRoot();
+			writeAgent("scout", agentFile({ model: "alpha/fast-model" }));
+			const f = fixture();
+			const home = realpathSync(mkdtempSync(join(root, "crash-daemon-")));
+			const receipt: PaseoReceipt = {
+				home,
+				workspaceId: "crash-workspace",
+				directory: f.cwd,
+				projectId: "project",
+				provenance,
+			};
+			const parent = `crash-parent-${provenance}-${process.pid}`;
+			const child = new TreeProcess(agentDir, "./fixtures/paseo-crash.ts");
+			let checkpoint: { entries: Entry[]; cwd: string; id: string };
+			try {
+				checkpoint = await child.command("launch", { parent, source: f.source, receipt });
+				const record = readChildRecords(parent).find((item) => item.id === checkpoint.id);
+				assert.ok(record && !isStarted(record));
+				assert.equal(record.attempt.phase, "created");
+				assert.deepEqual(record.paseo, { ...receipt, directory: checkpoint.cwd });
+			} finally {
+				await child.kill();
+			}
+			assert.equal(child.child.signalCode, "SIGKILL", "no catch/finally launch rollback may run");
+			const api = new FakePaseo();
+			api.workspaces.set(receipt.workspaceId, {
+				id: receipt.workspaceId,
+				workspaceDirectory: checkpoint.cwd,
+				projectId: receipt.projectId,
+				archivingAt: null,
+				scripts: [],
+			} as unknown as PaseoWorkspace);
+			const host = createPaseoHost(api, { PASEO_AGENT_ID: "11111111-1111-4111-8111-111111111111" });
+			const restored = session({ parent, cwd: f.source, multiplexer: host, entries: checkpoint.entries });
+			try {
+				await restored.start();
+				const records = restoreRecords(restored.context as unknown as ExtensionContext, new ChildTasks());
+				const record = records.find((item) => item.id === checkpoint.id);
+				assert.ok(record && !isStarted(record));
+				assert.equal(record.attempt.phase, "interrupted");
+				assert.equal(record.attempt.phase === "interrupted" && record.attempt.lastPhase, "created");
+				assert.deepEqual(record.paseo, { ...receipt, directory: checkpoint.cwd });
+				assert.ok(paseoLocator(record.locator));
+				assert.equal(record.sessionId, "crash-assigned-session");
+				// Also prove restoration with the crash transcript as the only source.
+				const path = join(agentDir, "squire", "child-tasks", `${parent}.json`);
+				renameSync(path, `${path}.saved`);
+				try {
+					const transcript = restoreRecords(restored.context as unknown as ExtensionContext, new ChildTasks());
+					assert.deepEqual(
+						transcript.find((item) => item.id === checkpoint.id),
+						record,
+					);
+				} finally {
+					renameSync(`${path}.saved`, path);
+				}
+				const status = await restored.toolCall("delegation_status", { id: checkpoint.id });
+				const details = status.structuredContent as { delegations: (Recorded & { state: string })[] };
+				assert.equal(details.delegations[0].state, "interrupted");
+				assert.deepEqual(details.delegations[0], { ...record, state: "interrupted" });
+				assert.match(status.content[0].text, /Paseo recovery target:/);
+				const schema = restored.tool("delegation_status").outputSchema;
+				assert.ok(schema);
+				assert.equal(Value.Check(schema, JSON.parse(JSON.stringify(status.structuredContent))), true);
+				const result = await runCleanup(
+					{ ids: [checkpoint.id] },
+					{ host, assertActive: () => {}, gh: () => ({ ok: false, message: "absent" }), paseoApi: () => api },
+					restored.context as unknown as ExtensionContext,
+				);
+				const created = provenance === "created";
+				assert.equal(result.items[0].outcome, created ? "removed" : "kept", result.items[0].reason);
+				assert.equal(api.calls.includes("archiveWorkspace"), created);
+				assert.equal(existsSync(checkpoint.cwd), !created);
+			} finally {
+				await restored.shutdown();
+			}
+		});
 	}
 });
 
@@ -253,6 +388,9 @@ test("partial Paseo opens persist exact receipts before each failure and restore
 					}
 					const status = await restored.toolCall("delegation_status", { id: attempt.id });
 					assert.match(status.content[0].text, /Paseo recovery target:/);
+					const schema = restored.tool("delegation_status").outputSchema;
+					assert.ok(schema);
+					assert.equal(Value.Check(schema, JSON.parse(JSON.stringify(status.structuredContent))), true);
 					// Model an exited opener and a positively closed agent, not a guessed create outcome.
 					treeTransaction(s.parent, (state) => {
 						const entry = state.entries.find((item) => item.id === attempt.id);

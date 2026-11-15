@@ -995,9 +995,9 @@ identities are saved as they become known, before configuration and task mail.
 `delegation_status` shows a partial launch's Paseo recovery target: inspect that
 id in Paseo before closing it manually. A lost creation acknowledgement proves
 neither creation nor absence, so an uncertain launch is not automatically deleted.
-Cleanup accepts a retained attempt's exact `created` receipt only after its normal
-Git and no-live-user checks; opened/reused receipts never authorize tool-triggered
-archive.
+Cleanup accepts an attempt's exact `created` receipt when retained, or interrupted
+with last phase `created`, only after its normal Git and no-live-user checks;
+opened/reused receipts never authorize tool-triggered archive.
 
 ### Cleanup
 

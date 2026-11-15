@@ -212,14 +212,14 @@ function usesDirectory(entry: { workspaceId?: string | null; cwd: string }, id: 
 	return entry.workspaceId === id || path === root || path.startsWith(`${root}${sep}`);
 }
 
-/** Each open workspace's folder and project, one page at a time over `client`. */
-async function openWorkspaces(client: PaseoClient): Promise<PaseoWorkspace[]> {
+/** Open workspaces, with hidden entries only for cleanup or provenance, never placement. */
+async function openWorkspaces(client: PaseoClient, includeHidden = false): Promise<PaseoWorkspace[]> {
 	const found: PaseoWorkspace[] = [];
 	const seen = new Set<string>();
 	let cursor: string | undefined;
 	for (;;) {
 		const { entries, pageInfo } = await client.workspaces.list({
-			filter: { includeInternal: true, includeBackground: true },
+			...(includeHidden ? { filter: { includeInternal: true, includeBackground: true } } : {}),
 			page: { limit: WORKSPACE_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }) },
 		});
 		found.push(...entries);
@@ -246,20 +246,22 @@ async function workspaceFor(
 	handle: PaseoWorkspaceHandle;
 	provenance: PaseoReceipt["provenance"];
 }> {
-	const open = await openWorkspaces(client);
+	// Provenance observes hidden workspaces too, but a failed observation must not
+	// change placement or fail an otherwise supported launch. Never infer creation from it.
+	const snapshot = (): Promise<PaseoWorkspace[] | undefined> => openWorkspaces(client, true).catch(() => undefined);
 	const opened = async (): Promise<{ handle: PaseoWorkspaceHandle; provenance: PaseoReceipt["provenance"] }> => {
+		const before = await snapshot();
 		const handle = await client.workspaces.open(cwd);
-		if (!(await openWorkspaces(client)).some((entry) => entry.id === handle.id))
-			throw new Error("Paseo did not list the opened workspace");
 		return {
 			handle,
-			provenance: open.some((entry) => entry.id === handle.id) ? ("reused" as const) : ("opened" as const),
+			provenance: before?.some((entry) => entry.id === handle.id) ? "reused" : "opened",
 		};
 	};
 	const git = inspectGit(cwd);
 	if (git.kind !== "git") return opened();
 	const { mainRoot, checkoutRoot } = git.identity;
 	if (checkoutRoot === mainRoot || realPath(cwd) !== checkoutRoot) return opened();
+	const open = await openWorkspaces(client);
 	// `open` reuses a folder's workspace; `create` never does (0.15.4
 	// protocol messages.js, WorkspaceCreateRequestSchema).
 	if (open.some((workspace) => workspace.workspaceDirectory && realPath(workspace.workspaceDirectory) === checkoutRoot))
@@ -275,6 +277,7 @@ async function workspaceFor(
 	const key = createHash("sha256")
 		.update(JSON.stringify([main.projectId, main.id, checkoutRoot]))
 		.digest("hex");
+	const before = await snapshot();
 	const deadline = Date.now() + CONNECT_TIMEOUT_MS;
 	for (let generation = 0; ; generation++) {
 		const workspace = await client.workspaces.create({
@@ -285,7 +288,10 @@ async function workspaceFor(
 		// workspaces (0.15.4). A new generation is a new placement operation;
 		// concurrent callers still share its daemon-owned idempotency key.
 		if ((await openWorkspaces(client)).some((entry) => entry.id === workspace.id))
-			return { handle: workspace, provenance: open.some((entry) => entry.id === workspace.id) ? "reused" : "created" };
+			return {
+				handle: workspace,
+				provenance: before && !before.some((entry) => entry.id === workspace.id) ? "created" : "reused",
+			};
 		if (Date.now() >= deadline) throw new Error("Paseo did not provide an active worktree workspace");
 	}
 }
@@ -392,12 +398,12 @@ export function createPaseoApi(homeInput: string = process.env.PASEO_HOME ?? joi
 		async workspace(id: string): Promise<PaseoWorkspace | null> {
 			return withClient(
 				home,
-				async (client) => (await openWorkspaces(client)).find((entry) => entry.id === id) ?? null,
+				async (client) => (await openWorkspaces(client, true)).find((entry) => entry.id === id) ?? null,
 			);
 		},
 		async workspaceAt(dir: string): Promise<PaseoWorkspace[]> {
 			return withClient(home, async (client) =>
-				(await openWorkspaces(client)).filter(
+				(await openWorkspaces(client, true)).filter(
 					(entry) => entry.workspaceDirectory !== undefined && realPath(entry.workspaceDirectory) === realPath(dir),
 				),
 			);

@@ -624,7 +624,12 @@ export default function delegate(
 			else if (directory !== undefined) workspace = directory;
 			else throw new Error("workspace preparation did not produce a launch directory");
 			const name = delegateName(start.agent.displayName ?? start.agent.name, id, start.label);
-			const { opened, requestId, forkSourcePath } = await starter.start(
+			const {
+				opened,
+				requestId,
+				forkSourcePath,
+				workspace: startedWorkspace,
+			} = await starter.start(
 				{
 					identity: own,
 					id,
@@ -668,7 +673,7 @@ export default function delegate(
 				requestId,
 				cwd: workspace.cwd,
 				sessionDir,
-				workspace,
+				workspace: startedWorkspace,
 				location: opened.location,
 			};
 		};

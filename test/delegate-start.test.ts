@@ -8,6 +8,8 @@ import { readIdentity } from "../src/identity.ts";
 import type { StartedRecorded } from "../src/results.ts";
 import { readTree } from "../src/tree-registry.ts";
 import type { WindowPlacement } from "../src/window-placement.ts";
+import type { PaseoReceipt } from "../src/worktree.ts";
+import { fixture } from "./cleanup-fixture.ts";
 import { FakeTmux } from "./fake-tmux.ts";
 import { agentFile, cleanup, resetRoot, root, session, sessionDir, writeAgent } from "./harness.ts";
 import { HerdrWire } from "./herdr-adapter-fixture.ts";
@@ -19,11 +21,11 @@ beforeEach(() => {
 });
 after(cleanup);
 
-function sessionFile(id: string): void {
+function sessionFile(id: string, cwd = root): void {
 	mkdirSync(sessionDir, { recursive: true });
 	writeFileSync(
 		join(sessionDir, `source_${id}.jsonl`),
-		`${JSON.stringify({ type: "session", version: 3, id, cwd: root, timestamp: "2026-10-26T00:00:00.000Z" })}\n`,
+		`${JSON.stringify({ type: "session", version: 3, id, cwd, timestamp: "2026-10-26T00:00:00.000Z" })}\n`,
 	);
 }
 function lastRecord(s: ReturnType<typeof session>): StartedRecorded {
@@ -137,6 +139,61 @@ test("memory host launch/resume/fork keep the same order as tmux, with no tmux m
 		[false, true, false],
 		"only the resume reopens a session file",
 	);
+});
+
+test("managed resume copies its source workspace and preserves created receipts only for the same home and id", async (t) => {
+	for (const change of ["same", "home", "id", "legacy"] as const)
+		await t.test(change, async () => {
+			resetRoot();
+			writeAgent("scout", agentFile({ model: "alpha/fast-model", auto_exit: "false" }));
+			const f = fixture();
+			const host = new MemoryHost();
+			const open = host.openWindow.bind(host);
+			let receipt: PaseoReceipt | undefined;
+			host.openWindow = async (spec, placement, companion) => {
+				const opened = await open(spec, placement, companion);
+				if (host.started.length === 1 && change !== "legacy")
+					receipt = {
+						home: "/paseo",
+						workspaceId: "original",
+						directory: spec.cwd,
+						projectId: "project",
+						provenance: "created",
+					};
+				return { ...opened, ...(receipt ? { paseo: receipt } : {}) };
+			};
+			const s = session({ cwd: f.source, multiplexer: host });
+			try {
+				await s.start();
+				const launch = await s.toolCall("delegate", { agent: "scout", task: "first", worktree: "receipt" });
+				const first = lastRecord(s);
+				assert.ok(first.workspace?.mode === "managed");
+				const source = first.workspace;
+				const before = structuredClone(source);
+				assert.deepEqual((launch.structuredContent as { workspace: unknown }).workspace, source);
+				if (change !== "legacy") assert.equal(source.paseo?.provenance, "created");
+				Object.freeze(source);
+				if (source.paseo) Object.freeze(source.paseo);
+				sessionFile(first.id, source.cwd);
+				host.exit(first);
+				receipt = {
+					home: change === "home" ? "/other-paseo" : "/paseo",
+					workspaceId: change === "id" ? "other" : "original",
+					directory: source.cwd,
+					projectId: "project",
+					provenance: "reused",
+				};
+				const resume = await s.toolCall("delegation_resume", { id: first.id, task: "second" });
+				const current = lastRecord(s);
+				assert.ok(current.workspace?.mode === "managed");
+				assert.notEqual(current.workspace, source);
+				assert.deepEqual(source, before, "the original record workspace and receipt are unchanged");
+				assert.deepEqual(current.workspace.paseo, change === "same" ? before.paseo : receipt);
+				assert.deepEqual((resume.structuredContent as { workspace: unknown }).workspace, current.workspace);
+			} finally {
+				await s.shutdown();
+			}
+		});
 });
 
 test("Herdr launch/resume/fork keep mail, identity, hook, dispatch, open and record order", async () => {

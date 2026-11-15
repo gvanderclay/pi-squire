@@ -5,7 +5,11 @@ import { createRequire, syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:net";
 import { join, relative } from "node:path";
 import { after, type TestContext, test } from "node:test";
-import { DaemonClient, type FetchAgentsOptions } from "@getpaseo/client/internal/daemon-client";
+import {
+	DaemonClient,
+	type FetchAgentsOptions,
+	type FetchWorkspacesOptions,
+} from "@getpaseo/client/internal/daemon-client";
 import { createPaseoApi } from "../src/paseo-api.ts";
 import type { PaseoReceipt } from "../src/worktree.ts";
 
@@ -379,7 +383,13 @@ function repositoryWithWorktree(): { main: string; worktree: string } {
 }
 
 type WorkspaceList = Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>;
-type Placement = { opened: string[]; created: unknown[]; agents: unknown[]; receipts: PaseoReceipt[] };
+type Placement = {
+	opened: string[];
+	created: unknown[];
+	agents: unknown[];
+	receipts: PaseoReceipt[];
+	listings: (FetchWorkspacesOptions | undefined)[];
+};
 type OpenWorkspace = { id: string; workspaceDirectory: string; projectId: string };
 
 /**
@@ -393,8 +403,9 @@ async function placement(
 	open: Record<string, string> | OpenWorkspace[],
 	concurrent = 1,
 	archivedReceipt = false,
+	observation: { hidden?: OpenWorkspace[]; failSnapshot?: boolean; failAfterOpen?: boolean } = {},
 ): Promise<Placement> {
-	const seen: Placement = { opened: [], created: [], agents: [], receipts: [] };
+	const seen: Placement = { opened: [], created: [], agents: [], receipts: [], listings: [] };
 	let workspace = { id: "wks_0000000000000000", workspaceDirectory: cwd, projectId: "prj_main" };
 	let registered = false;
 	let listings = 0;
@@ -407,18 +418,19 @@ async function placement(
 			}));
 	t.mock.method(DaemonClient.prototype, "connect", async () => {});
 	t.mock.method(DaemonClient.prototype, "close", async () => {});
-	t.mock.method(
-		DaemonClient.prototype,
-		"fetchWorkspaces",
-		async () =>
-			({
-				entries: [
-					...(listings++ % 2 === 0 ? entries : [...entries].reverse()),
-					...(registered ? [{ ...workspace, projectId: "prj_main" }] : []),
-				],
-				pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-			}) as unknown as WorkspaceList,
-	);
+	t.mock.method(DaemonClient.prototype, "fetchWorkspaces", async (options?: FetchWorkspacesOptions) => {
+		seen.listings.push(options);
+		if (observation.failSnapshot && options?.filter?.includeBackground) throw new Error("provenance unavailable");
+		if (observation.failAfterOpen && seen.opened.length) throw new Error("post-open listing failed");
+		return {
+			entries: [
+				...(listings++ % 2 === 0 ? entries : [...entries].reverse()),
+				...(options?.filter?.includeBackground ? (observation.hidden ?? []) : []),
+				...(registered ? [{ ...workspace, projectId: "prj_main" }] : []),
+			],
+			pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+		} as unknown as WorkspaceList;
+	});
 	t.mock.method(DaemonClient.prototype, "openProject", async (path: string) => {
 		seen.opened.push(path);
 		workspace = entries.find((entry) => entry.workspaceDirectory === path) ?? workspace;
@@ -542,6 +554,72 @@ test("a main checkout and a folder outside Git are opened by their folder", asyn
 	assert.deepEqual(seen.opened, [outside]);
 	assert.equal(seen.receipts[0].provenance, "opened");
 	assert.deepEqual(seen.created, []);
+});
+
+test("hidden workspaces do not change placement's create choice or main-checkout anchor", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const visible = [{ id: "wks_z_visible", workspaceDirectory: main, projectId: "prj_main" }];
+	const hidden = [
+		{ id: "wks_a_background", workspaceDirectory: main, projectId: "prj_background" },
+		{ id: "wks_b_internal", workspaceDirectory: worktree, projectId: "prj_background" },
+	];
+	const baseline = await placement(t, worktree, visible);
+	t.mock.restoreAll();
+	const seen = await placement(t, worktree, visible, 1, false, { hidden });
+	assert.deepEqual(seen.created, baseline.created, "same create request and anchor key as the original placement");
+	assert.deepEqual(seen.opened, []);
+	assert.equal(seen.receipts[0].provenance, "created");
+	assert.deepEqual(
+		seen.listings.map((request) => request?.filter),
+		[undefined, { includeInternal: true, includeBackground: true }, undefined],
+	);
+});
+
+test("a background-only main checkout does not become a placement anchor", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const seen = await placement(t, worktree, {}, 1, false, {
+		hidden: [{ id: "background", workspaceDirectory: main, projectId: "prj_background" }],
+	});
+	assert.deepEqual(seen.opened, [worktree]);
+	assert.deepEqual(seen.created, []);
+	assert.equal(seen.receipts[0].provenance, "opened");
+});
+
+test("a hidden pre-existing create result is reused, never claimed as Squire-created", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const seen = await placement(t, worktree, { [main]: "prj_main" }, 1, false, {
+		hidden: [{ id: "wks_0000000000000000", workspaceDirectory: worktree, projectId: "prj_main" }],
+	});
+	assert.equal(seen.created.length, 1, "hidden entries do not alter placement");
+	assert.equal(seen.receipts[0].provenance, "reused");
+});
+
+test("failed provenance listings do not fail open or create and never infer created", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const baseline = await placement(t, worktree, { [main]: "prj_main" });
+	t.mock.restoreAll();
+	const created = await placement(t, worktree, { [main]: "prj_main" }, 1, false, { failSnapshot: true });
+	assert.deepEqual(created.created, baseline.created);
+	assert.equal(created.receipts[0].provenance, "reused");
+	t.mock.restoreAll();
+	const opened = await placement(t, main, { [main]: "prj_main" }, 1, false, { failSnapshot: true });
+	assert.deepEqual(opened.opened, [main]);
+	assert.equal(opened.receipts[0].provenance, "opened");
+	t.mock.restoreAll();
+	const outside = realpathSync(emptyHome());
+	const nonGit = await placement(t, outside, {}, 1, false, { failSnapshot: true });
+	assert.deepEqual(nonGit.opened, [outside]);
+	assert.equal(nonGit.receipts[0].provenance, "opened");
+});
+
+test("opening a workspace does not require a post-open listing", async (t) => {
+	const { main, worktree } = repositoryWithWorktree();
+	const seen = await placement(t, worktree, { [main]: "prj_main", [worktree]: "prj_main" }, 1, false, {
+		failAfterOpen: true,
+	});
+	assert.deepEqual(seen.opened, [worktree]);
+	assert.equal(seen.receipts[0].provenance, "reused");
+	assert.equal(seen.listings.length, 2, "only the placement list and best-effort pre-open provenance list");
 });
 
 test("a startup command and native parent label are sent without a caller envelope or implicit placement", async (t) => {

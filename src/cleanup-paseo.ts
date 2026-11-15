@@ -1,4 +1,5 @@
 // Async Paseo preflight and archive; Git is synchronously re-proved after this returns.
+import { isAbsolute } from "node:path";
 import type { PaseoWorkspace } from "@getpaseo/client";
 import { type CleanupOutcome, type CleanupResource, cleanupRemains } from "./cleanup-git.ts";
 import { createPaseoApi, type PaseoApi } from "./paseo-api.ts";
@@ -11,9 +12,22 @@ type Progress = { dispatched: boolean; ids: Set<string> };
 const FOREIGN = "Paseo workspace not created by Squire; kept";
 const key = (receipt: PaseoReceipt): string => JSON.stringify([receipt.home, receipt.workspaceId]);
 function receipts(records: Recorded[]): PaseoReceipt[] {
-	return records.flatMap((record) =>
-		isStarted(record) && record.workspace?.mode === "managed" && record.workspace.paseo ? [record.workspace.paseo] : [],
-	);
+	return records.flatMap((record) => {
+		if (!isStarted(record) || record.workspace?.mode !== "managed" || record.workspace.paseo === undefined) return [];
+		const receipt = record.workspace.paseo;
+		if (
+			!receipt ||
+			typeof receipt !== "object" ||
+			typeof receipt.home !== "string" ||
+			!isAbsolute(receipt.home) ||
+			![receipt.workspaceId, receipt.directory, receipt.projectId].every(
+				(value) => typeof value === "string" && value !== "",
+			) ||
+			!["created", "opened", "reused"].includes(receipt.provenance)
+		)
+			throw new Error("Paseo workspace receipt unreadable");
+		return [receipt];
+	});
 }
 function blocker(workspace: PaseoWorkspace, resource: CleanupResource, receipt: PaseoReceipt): string | undefined {
 	if (
@@ -87,9 +101,10 @@ export async function cleanupPaseo(
 	archived: boolean;
 	outcome?: CleanupOutcome;
 }> {
-	const found = receipts(records);
-	const progress: Progress = { dispatched: false, ids: new Set(found.map((receipt) => receipt.workspaceId)) };
+	const progress: Progress = { dispatched: false, ids: new Set() };
 	try {
+		const found = receipts(records);
+		for (const receipt of found) progress.ids.add(receipt.workspaceId);
 		const factory = deps.paseoApi ?? createPaseoApi;
 		if (found.length) await archive(await proofs(found, resource, factory), resource.destination, progress);
 		else await legacyCheck(factory(), resource.destination, progress);

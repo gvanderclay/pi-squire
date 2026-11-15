@@ -36,6 +36,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Managed resumes no longer mutate the source workspace or lose its matching
+  Squire-created Paseo receipt. Cleanup keeps unreadable receipts without choosing
+  a daemon and reports successful workspace archives explicitly. Placement keeps
+  its original workspace visibility and anchor choice; best-effort provenance
+  observations cannot fail a launch or authorize archive when unavailable.
+
 - Cleanup reports a live started delegation and keeps its worktree even before
   its start record or session ownership is published, including a resume racing
   cleanup. Only records read before the window snapshot can prove a start gone;

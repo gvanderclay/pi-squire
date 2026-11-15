@@ -325,7 +325,10 @@ test("created Paseo workspace removed once, absent before archive also proceeds,
 	const s = instance();
 	await s.start();
 	const { f, api, run } = paseoFixture(s);
-	assert.equal((await run()).items[0].outcome, "removed");
+	const result = await run();
+	assert.equal(result.items[0].outcome, "removed");
+	assert.equal(result.items[0].reason, "merged, unused and clean; Paseo workspace archived");
+	assert.match(cleanupText(result), /Paseo workspace archived/);
 	assert.equal(existsSync(f.cwd), false);
 	assert.equal(api.calls.filter((call) => call === "archiveWorkspace").length, 1);
 	assert.equal((await run()).items[0].outcome, "already-clean");
@@ -364,6 +367,52 @@ test("opened and reused receipts keep; a created alias authorizes that exact wor
 			assert.equal(api.calls.filter((call) => call === "archiveWorkspace").length, 1);
 		});
 });
+test("unreadable Paseo receipts keep Git without choosing a daemon or archiving", async (t) => {
+	const malformed: Record<string, unknown> = {
+		"null receipt": null,
+		"false receipt": false,
+		"string receipt": "created",
+		"missing home": { home: undefined },
+		"relative home": { home: "relative/paseo" },
+		"non-string home": { home: 3 },
+		"missing workspaceId": { workspaceId: undefined },
+		"non-string workspaceId": { workspaceId: 3 },
+		"empty workspaceId": { workspaceId: "" },
+		"missing directory": { directory: undefined },
+		"non-string directory": { directory: 3 },
+		"missing projectId": { projectId: undefined },
+		"non-string projectId": { projectId: 3 },
+		"missing provenance": { provenance: undefined },
+		"unknown provenance": { provenance: "foreign" },
+	};
+	for (const [name, fields] of Object.entries(malformed))
+		await t.test(name, async () => {
+			resetRoot();
+			const s = instance();
+			await s.start();
+			const { f, api, record, receipt } = paseoFixture(s);
+			assert.ok(record.workspace?.mode === "managed");
+			record.workspace.paseo = (
+				fields && typeof fields === "object" ? { ...receipt, ...fields } : fields
+			) as PaseoReceipt;
+			save(s.parent, [record]);
+			const check = unchangedWorktree(f);
+			const result = await runCleanup(
+				{ all: true },
+				deps(s, {
+					paseoApi: () => {
+						throw new Error("invalid receipt reached daemon selection");
+					},
+				}),
+				context(s),
+			);
+			assert.equal(result.items[0].outcome, "kept");
+			assert.equal(result.items[0].reason, "Paseo workspace receipt unreadable");
+			assert.deepEqual(api.calls, []);
+			check();
+		});
+});
+
 test("each Paseo workspace or user blocker keeps unchanged Git and never archives", async (t) => {
 	const cases = [
 		"agent id",

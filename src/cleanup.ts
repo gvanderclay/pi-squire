@@ -242,7 +242,7 @@ async function finishGroup(current: Candidate, deps: CleanupDeps, liveCheck: () 
 	if (paseo.archived && result.outcome === "already-clean") {
 		result.outcome = "removed";
 		result.reason = "Paseo workspace archived; worktree and branch already absent";
-	}
+	} else if (paseo.archived) result.reason += "; Paseo workspace archived";
 	return result;
 }
 async function processGroup(

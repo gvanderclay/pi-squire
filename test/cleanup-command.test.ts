@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PaseoWorkspace } from "@getpaseo/client";
-import type { CleanupDeps } from "../src/cleanup.ts";
+import { type CleanupDeps, cleanupLiveCheck, discover } from "../src/cleanup.ts";
 import { cleanupCommand, previewCleanup, removeConfirmedCleanup } from "../src/cleanup-command.ts";
 import type { StartedRecorded } from "../src/result-types.ts";
 import { windowLocator } from "../src/tmux.ts";
-import { treePath, treeTransaction } from "../src/tree-registry.ts";
+import { readTreeDisplay, treePath, treeTransaction } from "../src/tree-registry.ts";
 import { commit, fixture, git } from "./cleanup-fixture.ts";
 import {
 	agentDir,
@@ -59,11 +59,11 @@ async function setup(ui: UiAnswers = {}, hasUI = true) {
 		locator: windowLocator({ id: "@77", name: "scout-fixture" }),
 		gone: true,
 	};
-	const publish = (): void => {
+	const publish = (records = [record]): void => {
 		mkdirSync(join(agentDir, "squire", "child-tasks"), { recursive: true });
 		writeFileSync(
 			join(agentDir, "squire", "child-tasks", `${s.parent}.json`),
-			JSON.stringify({ records: [record], outcomes: [] }),
+			JSON.stringify({ records, outcomes: [] }),
 		);
 	};
 	publish();
@@ -238,6 +238,180 @@ test("path-found workspace never enters confirm 1; D3 confirms exactly one forei
 	assert.equal(s.confirms[0].timeout, 60000);
 	assert.equal(api.calls.filter((call) => call === "archiveWorkspace").length, 1);
 	assert.equal(api.workspaces.size, 0);
+	assert.equal(existsSync(f.cwd), false);
+});
+test("volatile workspace observations changing at yes still allow D3 and created-workspace confirm 1", async (t) => {
+	for (const provenance of ["foreign", "created"]) {
+		await t.test(provenance, async () => {
+			const { s, f, api, run, record, publish, ctx } = await setup({
+				select: [foreignLabel],
+				confirm: [true],
+			});
+			const workspace = foreign(api, f.cwd);
+			workspace.scripts = [
+				{ scriptName: "build", lifecycle: "stopped", health: "healthy" },
+			] as PaseoWorkspace["scripts"];
+			if (provenance === "created") {
+				record.workspace = {
+					...f.workspace,
+					paseo: { home: "/fake", workspaceId: workspace.id, directory: f.cwd, projectId: "project", provenance },
+				};
+				publish();
+			}
+			const original = ctx.ui.confirm.bind(ctx.ui);
+			ctx.ui.confirm = async (...args) => {
+				const yes = await original(...args);
+				// Replace the descriptor as a real daemon response would; never mutate the preview.
+				api.workspaces.set(workspace.id, {
+					...workspace,
+					activityAt: "2026-02-01T00:00:00Z",
+					status: "running",
+					statusEnteredAt: "2026-02-01T00:00:00Z",
+					diffStat: { additions: 1, deletions: 2 },
+					gitRuntime: { aheadBehind: { ahead: 1, behind: 0 } },
+					githubRuntime: {
+						refreshedAt: "2026-02-01T00:00:00Z",
+						pullRequest: {
+							url: "https://example.invalid/pr/1",
+							state: "open",
+							title: "refreshed",
+							baseRefName: "main",
+							headRefName: "topic",
+							isMerged: false,
+							checks: [{ name: "check", status: "success", url: null }],
+						},
+					},
+					scripts: workspace.scripts.map((script) => ({ ...script, health: "unhealthy" })),
+				});
+				return yes;
+			};
+			await run();
+			assert.equal(s.selects.length, provenance === "foreign" ? 1 : 0);
+			assert.equal(s.confirms.length, 1);
+			assert.equal(
+				s.confirms[0].title,
+				provenance === "foreign" ? "Discard this worktree and local branch?" : "Remove 1 proven-safe items?",
+			);
+			assert.equal(api.workspaces.size, 0, s.notes.join("\n"));
+			assert.equal(existsSync(f.cwd), false);
+		});
+	}
+});
+test("stable workspace name and script identity changes at yes abort D3 and confirm 1", async (t) => {
+	for (const provenance of ["foreign", "created"]) {
+		for (const change of ["name", "scriptName"]) {
+			await t.test(`${provenance}: ${change}`, async () => {
+				const { f, api, run, record, publish, ctx, s } = await setup({ select: [foreignLabel], confirm: [true] });
+				const workspace = foreign(api, f.cwd);
+				workspace.scripts = [{ scriptName: "build", lifecycle: "stopped" }] as PaseoWorkspace["scripts"];
+				if (provenance === "created") {
+					record.workspace = {
+						...f.workspace,
+						paseo: {
+							home: "/fake",
+							workspaceId: workspace.id,
+							directory: f.cwd,
+							projectId: "project",
+							provenance,
+						},
+					};
+					publish();
+				}
+				const original = ctx.ui.confirm.bind(ctx.ui);
+				ctx.ui.confirm = async (...args) => {
+					const yes = await original(...args);
+					if (change === "name") workspace.name = "renamed";
+					else workspace.scripts[0].scriptName = "different";
+					return yes;
+				};
+				const check = untouched(f);
+				await run();
+				assert.equal(api.calls.includes("archiveWorkspace"), false);
+				assert.match(s.notes.join("\n"), /changed since you confirmed; nothing removed/);
+				check();
+			});
+		}
+	}
+});
+test("cleanup live check reads registries without taking the tree lock", async () => {
+	const { s, ctx } = await setup();
+	const group = discover(readTreeDisplay(s.parent), s.parent).groups[0];
+	const lock = `${treePath(s.parent)}.lock`;
+	mkdirSync(lock, { recursive: true });
+	// Any lock admission would parse this ticket and fail; display reads must ignore it.
+	writeFileSync(join(lock, "blocked.json"), "{unreadable ticket");
+	const before = readdirSync(lock);
+	try {
+		assert.doesNotThrow(() => cleanupLiveCheck(group, s.parent, ctx, new Map()));
+		assert.deepEqual(readdirSync(lock), before);
+	} finally {
+		unlinkSync(join(lock, "blocked.json"));
+	}
+});
+test("[gone] plus a foreign workspace uses the per-item selector, never confirm 2", async () => {
+	const { s, f, api, run } = await setup({ select: [foreignLabel], confirm: [false] });
+	gone(f);
+	foreign(api, f.cwd);
+	const check = untouched(f);
+	await run();
+	assert.deepEqual(s.selects[0].options, [foreignLabel, "Done"]);
+	assert.equal(s.confirms.length, 1);
+	assert.equal(s.confirms[0].title, "Discard this worktree and local branch?");
+	assert.match(s.confirms[0].message, /\[gone\]; unique commits: 1/);
+	assert.match(s.confirms[0].message, /Squire did not create this workspace/);
+	assert.equal(api.calls.includes("archiveWorkspace"), false);
+	check();
+});
+test("D3 confirmation lists every archived workspace id, including created workspaces across homes", async () => {
+	const { s, f, api, deps, run, record, publish } = await setup({
+		select: ["child, alias — topic; foreign Paseo workspace"],
+		confirm: [true],
+	});
+	const workspace = foreign(api, f.cwd);
+	api.workspaces.set("created-here", { ...workspace, id: "created-here" });
+	const other = new FakePaseo();
+	other.workspaces.set("created-elsewhere", { ...workspace, id: "created-elsewhere" });
+	record.workspace = {
+		...f.workspace,
+		paseo: {
+			home: "/fake",
+			workspaceId: "created-here",
+			directory: f.cwd,
+			projectId: "project",
+			provenance: "created",
+		},
+	};
+	publish([
+		record,
+		{
+			...record,
+			id: "alias",
+			workspace: {
+				...f.workspace,
+				paseo: {
+					home: "/other",
+					workspaceId: "created-elsewhere",
+					directory: f.cwd,
+					projectId: "project",
+					provenance: "created",
+				},
+			},
+		},
+	]);
+	deps.paseoApi = (home) => {
+		assert.ok(home === "/fake" || home === "/other");
+		return home === "/fake" ? api : other;
+	};
+	await run();
+	assert.equal(s.confirms.length, 1);
+	assert.equal(s.confirms[0].title, "Discard this worktree and local branch?");
+	assert.match(
+		s.confirms[0].message,
+		/workspaces to archive: .*created-here \(home: \/fake\).*foreign \(home: \/fake\).*created-elsewhere \(home: \/other\)/,
+	);
+	assert.equal(api.calls.filter((call) => call === "archiveWorkspace").length, 2);
+	assert.equal(other.calls.filter((call) => call === "archiveWorkspace").length, 1);
+	assert.equal(api.workspaces.size + other.workspaces.size, 0);
 	assert.equal(existsSync(f.cwd), false);
 });
 test("overrides offered only when every blocker is D2/D3", async (t) => {

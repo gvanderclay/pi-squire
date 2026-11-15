@@ -367,6 +367,50 @@ test("opened and reused receipts keep; a created alias authorizes that exact wor
 			assert.equal(api.calls.filter((call) => call === "archiveWorkspace").length, 1);
 		});
 });
+test("multiple foreign workspaces omit the unusable command pointer without extra daemon calls", async (t) => {
+	for (const mode of ["legacy", "created", "opened"] as const) {
+		await t.test(mode, async () => {
+			const s = instance();
+			await s.start();
+			const { f, api, record, run } = paseoFixture(s, mode === "opened" ? "opened" : "created");
+			const workspace = api.workspaces.get("workspace")!;
+			api.workspaces.set("second", { ...workspace, id: "second" });
+			if (mode === "created") api.workspaces.set("third", { ...workspace, id: "third" });
+			if (mode === "legacy") {
+				record.workspace = f.workspace;
+				save(s.parent, [record]);
+			} else if (mode === "opened") {
+				assert.ok(record.workspace?.mode === "managed");
+				save(s.parent, [
+					record,
+					{
+						...record,
+						id: "alias",
+						workspace: {
+							...record.workspace,
+							paseo: { ...record.workspace.paseo!, workspaceId: "second" },
+						},
+					},
+				]);
+			}
+			const result =
+				mode === "legacy" ? await runCleanup({ all: true }, deps(s, { paseoApi: () => api }), context(s)) : await run();
+			assert.equal(result.items[0].outcome, "kept");
+			assert.equal(result.items[0].reason, "Paseo workspace not created by Squire; kept");
+			assert.deepEqual(
+				api.calls,
+				mode === "opened"
+					? []
+					: mode === "legacy"
+						? ["unavailable", "workspaceAt"]
+						: ["unavailable", "workspace", "agentsUsing", "terminalsUsing", "workspaceAt"],
+			);
+			assert.equal(existsSync(f.cwd), true);
+			await s.shutdown();
+			resetRoot();
+		});
+	}
+});
 test("unreadable Paseo receipts keep Git without choosing a daemon or archiving", async (t) => {
 	const malformed: Record<string, unknown> = {
 		"null receipt": null,

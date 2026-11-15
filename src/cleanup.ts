@@ -178,7 +178,7 @@ function sessionDirs(entries: TreeEntry[], id: string, ctx: ExtensionContext): s
 export function cleanupLiveCheck(group: Candidate, actor: string, ctx: ExtensionContext, gone: GoneStarts): void {
 	const entries: TreeEntry[] = trees().flatMap((state) => state.entries);
 	const root = readIdentity(actor)?.root ?? actor;
-	const state = readTree(root);
+	const state = readTreeDisplay(root);
 	for (const entry of entries)
 		checkEntry(entry, group, actor, gone, entry.identity.root === root && below(state, entry.identity.parent, actor));
 	const owners: string = join(getAgentDir(), "squire", "owners");

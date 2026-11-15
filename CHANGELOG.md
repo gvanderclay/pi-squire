@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Cleanup confirmations bind stable Paseo identity and safety facts rather than
+  volatile daemon observations, and list every workspace id to be archived.
+  `[gone]` items with a foreign workspace retain per-item confirmation. Cleanup
+  live checks read registries without taking the tree lock. Kept reasons omit
+  the command pointer when no merge target or multiple known foreign workspaces
+  prevent an override; tests cover these deliberately refined reasons.
+
 ### Added
 
 - `/delegate-cleanup` previews descendant managed worktrees and confirms proven

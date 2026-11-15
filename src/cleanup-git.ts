@@ -212,9 +212,9 @@ export function proveMerged(resource: CleanupResource, tip: string, run: GhRunne
 		"--format=%(upstream:track)",
 		ref(resource),
 	]).trim();
-	if (track === "[gone]")
-		throw new Error("upstream branch deleted but merge not proved; fetch and retry; use /delegate-cleanup");
-	throw new Error(`merge not proved (${why}); fetch and retry; use /delegate-cleanup`);
+	const override = local.length ? "; use /delegate-cleanup" : "";
+	if (track === "[gone]") throw new Error(`upstream branch deleted but merge not proved; fetch and retry${override}`);
+	throw new Error(`merge not proved (${why}); fetch and retry${override}`);
 }
 /** Omit a branch only when Git proves it absent; a failed observation is not absence. */
 export function cleanupRemains(resource: CleanupResource): string[] {

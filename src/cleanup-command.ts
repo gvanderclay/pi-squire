@@ -128,6 +128,11 @@ function details(item: CleanupPreview): string {
 					`Paseo workspace: ${workspace.id}; title: ${workspace.title ?? workspace.name ?? "(untitled)"}; created: ${workspace.createdAt ?? "(unknown)"}`,
 				]
 			: []),
+		...(item.paseo.archives.length
+			? [
+					`Paseo workspaces to archive: ${item.paseo.archives.map(({ workspaceId, home }) => `${workspaceId} (home: ${home || "(current)"})`).join(", ")}`,
+				]
+			: []),
 		...(item.paseo.foreignId ? ["Squire did not create this workspace."] : []),
 	].join("\n");
 }
@@ -202,6 +207,7 @@ export async function cleanupCommand(deps: CleanupDeps, ctx: ExtensionContext): 
 			else report(ctx, item.ids, item.outcome);
 		}
 		const safe = available.filter((item) => item.git.merge === "merged" && !item.paseo.foreignId);
+		// [gone] plus a foreign workspace needs the stricter per-item override, not confirm 2.
 		const gone = available.filter((item) => item.git.merge === "gone" && !item.paseo.foreignId);
 		await applySelection(safe, `Remove ${safe.length} proven-safe items?`, deps, ctx);
 		await applySelection(

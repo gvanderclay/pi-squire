@@ -1032,14 +1032,18 @@ worktree candidates as `delegation_cleanup({ all: true })`, without removing any
 
 1. One confirmation lists proven-safe items with their paths, local branches
    and ignored-entry counts.
-2. A separate confirmation lists items whose upstream is marked `[gone]`,
-   including the upstream name, tip and unique-commit count. **Merge is not
-   proved**; accepting can discard work.
+2. A separate confirmation lists items whose upstream is marked `[gone]`
+   and that have no foreign Paseo workspace, including the upstream name, tip and
+   unique-commit count. **Merge is not proved**; accepting can discard work.
+   A `[gone]` item with a foreign workspace goes to the stricter per-item
+   selector instead.
 3. A selector offers kept items only when their remaining blockers are unmerged
    commits and/or a Paseo workspace Squire did not create. Pick one for its own
    confirmation, naming branch, tip and unique commits versus the local target,
-   plus the workspace id, title and creation time when applicable. There is no
-   "yes to all". Multiple foreign workspaces at one path stay kept; resolve them
+   plus the foreign workspace id, title and creation time when applicable, and
+   every workspace id to be archived (including Squire-created ones at the same
+   path or in other recorded daemon homes). There is no "yes to all".
+   Multiple foreign workspaces at one path stay kept; resolve them
    individually in Paseo before retrying.
 
 Each confirmation and selector expires after 60 seconds. Decline, Escape,
@@ -1049,8 +1053,9 @@ message or a new model turn. The preview processes at most 50 groups and stops
 starting new groups after about 120 seconds, like the tool.
 
 Each yes is bound to the worktree path, exact branch tip, upstream tracking
-state and exact Paseo workspace identity. Squire repeats the full proof before
-archiving or removing; changed facts abort that item with
+state and stable Paseo workspace identity/safety facts, not volatile daemon
+activity, status, diff, forge or script-health observations. Squire repeats the
+full proof before archiving or removing; changed facts abort that item with
 "changed since you confirmed; nothing removed". Ignored files are deleted here
 too. The command never forces Git, fetches, touches remote branches, or overrides
 dirty files, locks, live users or other safety blockers. A foreign workspace

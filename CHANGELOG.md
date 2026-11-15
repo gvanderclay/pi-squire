@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Pi 1.5.2 is now the tested-against version; the minimum supported version
+  remains Pi 1.5.0.
+
 ## [0.30.0] - 2026-11-15
 
 ### Fixed

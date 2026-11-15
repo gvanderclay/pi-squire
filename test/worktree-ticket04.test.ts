@@ -146,6 +146,11 @@ test("known pre-window failure rolls back a pristine managed worktree", async ()
 	assert.equal(attempt.attempt.phase, "rolled-back");
 	assert.equal(attempt.requestId, s.sendCalls[0].envelope?.id);
 	assert.equal("windowId" in attempt, false);
+	const status = await s.toolCall("delegation_status", { id: attempt.id });
+	const text = status.content[0].text;
+	assert.match(text, /state: rolled-back — nothing was dispatched/);
+	assert.match(text, /the open failed and no window was created/);
+	assert.doesNotMatch(text, /a window may still exist/);
 });
 
 test("status counts omitted rolled-back attempts as records, not delegations", async () => {

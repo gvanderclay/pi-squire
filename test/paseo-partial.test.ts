@@ -12,12 +12,22 @@ import { createPaseoHost } from "../src/paseo.ts";
 import { createPaseoApi, type PaseoApi, type PaseoProgress } from "../src/paseo-api.ts";
 import { paseoLocator } from "../src/paseo-locator.ts";
 import { restoreRecords } from "../src/result-restore.ts";
-import { isStarted, type Recorded, START_TYPE } from "../src/result-types.ts";
+import { isStarted, type Recorded, START_TYPE, type WorkspaceAttempt } from "../src/result-types.ts";
 import { AttemptSchema } from "../src/tracking-attempt.ts";
 import { readTree, treeTransaction } from "../src/tree-registry.ts";
 import type { PaseoReceipt } from "../src/worktree.ts";
 import { fixture } from "./cleanup-fixture.ts";
-import { agentDir, agentFile, cleanup, type Entry, resetRoot, root, session, writeAgent } from "./harness.ts";
+import {
+	agentDir,
+	agentFile,
+	cleanup,
+	type Entry,
+	resetRoot,
+	root,
+	session,
+	sessionDir,
+	writeAgent,
+} from "./harness.ts";
 import { FakePaseo } from "./paseo-fixture.ts";
 import { TreeProcess } from "./tree-process-harness.ts";
 
@@ -211,6 +221,62 @@ test("a failed progress journal write stops launch and retains acknowledged plac
 			assert.deepEqual(record.paseo, attempt.paseo);
 		} finally {
 			await restored.shutdown();
+		}
+	} finally {
+		await s.shutdown();
+	}
+});
+
+test("a rolled-back attempt gives no recovery advice even when an older record kept a requested id", async () => {
+	const f = fixture();
+	// 0.31.0 could store the requested id on an attempt it then rolled back; the
+	// phase, not the locator, decides whether an agent could exist.
+	const locator = {
+		adapter: "paseo",
+		version: 1,
+		kind: "window",
+		agent: "11111111-1111-4111-8111-111111111111",
+		name: "scout-legacy",
+	};
+	const resources = { kind: "worktree", cwd: f.cwd, branch: f.plan.branch, head: f.plan.baseCommit } as const;
+	const legacy = (phase: "rolled-back" | "retained" | "interrupted"): WorkspaceAttempt => ({
+		kind: "workspace-attempt",
+		id: `legacy-${phase}`,
+		parentId: "legacy-parent",
+		agent: "scout",
+		model: "alpha/fast-model",
+		thinking: "low",
+		sessionDir,
+		plan: f.plan,
+		attempt:
+			phase === "rolled-back"
+				? { phase, resources: { kind: "none" }, cause: "could not record Paseo agent" }
+				: phase === "retained"
+					? { phase, resources, cause: "window refused", recovery: [] }
+					: { phase, lastPhase: "created", resources, reason: "the parent session ended" },
+		locator,
+	});
+	const s = session({
+		parent: "legacy-parent",
+		cwd: f.source,
+		entries: (["rolled-back", "retained", "interrupted"] as const).map((phase) => ({
+			customType: "delegate",
+			data: legacy(phase),
+		})),
+	});
+	await s.start();
+	try {
+		const text = async (phase: string): Promise<string> =>
+			(await s.toolCall("delegation_status", { id: `legacy-${phase}` })).content[0].text;
+		const rolledBack = await text("rolled-back");
+		assert.match(rolledBack, /state: rolled-back — nothing was dispatched/);
+		assert.doesNotMatch(rolledBack, /Paseo recovery target:/);
+		assert.doesNotMatch(rolledBack, /an agent may still exist/);
+		assert.doesNotMatch(rolledBack, /a window may still exist/);
+		for (const phase of ["retained", "interrupted"]) {
+			const kept = await text(phase);
+			assert.match(kept, /an agent may still exist/);
+			assert.match(kept, /Paseo recovery target:/);
 		}
 	} finally {
 		await s.shutdown();

@@ -98,7 +98,11 @@ export function attemptLines({ plan, attempt, requestId }: WorkspaceAttempt): st
 			: []),
 		...(requestId === undefined
 			? []
-			: [`request: ${requestId} (the task was mailed; no window id/start was recorded and a window may still exist)`]),
+			: [
+					attempt.phase === "rolled-back"
+						? `request: ${requestId} (the task was mailed; the open failed and no window was created)`
+						: `request: ${requestId} (the task was mailed; no window id/start was recorded and a window may still exist)`,
+				]),
 	];
 }
 

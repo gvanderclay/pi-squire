@@ -11,7 +11,7 @@ agent and answers with one message, which the parent session shows as a result.
 
 You need:
 
-- Pi 1.5.0 or later, on macOS or Linux (not Windows). Pi 1.5.0 is the version
+- Pi 1.5.0 or later, on macOS or Linux (not Windows). Pi 1.5.2 is the version
   pi-squire is tested with. It provides configured keybinding hints for delegate
   results, blocked-input status for inline choice screens, and the extension
   APIs the package relies on. Pi supplies the peer dependencies

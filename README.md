@@ -1,8 +1,8 @@
 # pi-squire
 
 Hand a task to a named Pi agent, keep working, and get its result back in your
-parent session. Squire runs background delegates in **tmux windows, Herdr tabs
-or Paseo agents**, with optional managed Git worktrees for separate checkouts.
+parent session. Squire runs background delegates in **tmux windows, Herdr tabs,
+Rex windows or Paseo agents**, with optional managed Git worktrees for separate checkouts.
 It keeps task/result tracking across reopening, asks the attended user about
 unresolved project trust, and refuses cleanup when safety cannot be proved.
 It is orchestration, not a permissions sandbox.
@@ -15,6 +15,7 @@ It is orchestration, not a permissions sandbox.
 
 Requirements: **macOS or Linux**, **Pi ≥1.5.0** (tested on 1.5.2), and one host:
 **tmux ≥3.2** with Pi in a pane, **Herdr 0.9.5 / protocol 22** with Pi in a pane,
+**Rex 0.1.0-preview.20 / API revision 16** with Pi in a terminal,
 or a **Paseo 0.15.4-hosted Pi** with its CLI installed and daemon running.
 You also need a provider of all four `message:*` hooks, including
 `message:reply`: [pi-session-mail](https://github.com/gvanderclay/pi-session-mail)
@@ -40,7 +41,7 @@ tmux new-session -s pi
 pi
 ```
 
-Already in tmux? Just start Pi there. Already in **Herdr/Paseo**? See [Hosts](docs/hosts.md).
+Already in tmux? Just start Pi there. Already in **Herdr/Rex/Paseo**? See [Hosts](docs/hosts.md).
 
 1. Run `/delegate` with no arguments. An empty roster offers a starter scout:
    choose **User** scope, review the exact `<agent dir>/agents/scout.md` path
@@ -76,7 +77,7 @@ To keep tmux delegates in your current session rather than the default shared
 { "windowPlacement": "current" }
 ```
 
-It applies on the next launch; existing windows do not move. Herdr and Paseo
+It applies on the next launch; existing windows do not move. Herdr, Rex and Paseo
 ignore tmux placement. [Configuration](docs/configuration.md) gives every
 setting's type, default, scope, read time and invalid-value behavior.
 
@@ -150,17 +151,17 @@ held results, outbox retries, usage and storage repair; use the
 
 ## Host support
 
-| Capability | tmux | Herdr | Paseo |
-| --- | --- | --- | --- |
-| Background delegate | Window | Tab in root workspace | Child agent; Paseo-hosted coordinator required |
-| Navigation | Verified terminal switch/peek | Verified tab/pane switch/peek | App only; no terminal |
-| Auto-exit | Closes owned pane; window goes only if last pane | Same for tab | Archives agent; explicit close deletes it; workspace stays |
-| Resume / fork | Supported with checks | Supported with restore/session guards | Refused for hosts and sources; start fresh |
-| `skills: false` / `context_files: false` | Honored | Honored | Refused before dispatch |
-| Launch hook flags | Passed to Pi | Passed to Pi | Only supported fields translated; others refused |
+| Capability | tmux | Herdr | Rex | Paseo |
+| --- | --- | --- | --- | --- |
+| Background delegate | Window | Tab in root workspace | Window in same session | Child agent; Paseo-hosted coordinator required |
+| Navigation | Verified terminal switch/peek | Verified tab/pane switch/peek | Verified block switch/peek | App only; no terminal |
+| Auto-exit | Closes owned pane; window goes only if last pane | Same for tab | Closes owned block | Archives agent; explicit close deletes it; workspace stays |
+| Resume / fork | Supported with checks | Supported with restore/session guards | Supported with checks | Refused for hosts and sources; start fresh |
+| `skills: false` / `context_files: false` | Honored | Honored | Honored | Refused before dispatch |
+| Launch hook flags | Passed to Pi | Passed to Pi | Passed to Pi | Only supported fields translated; others refused |
 
 [Full host matrix, versions and restrictions](docs/hosts.md#host-capabilities).
-With both tmux and Herdr detected, set `multiplexer` explicitly; there is no
+With more than one of tmux, Herdr and Rex detected, set `multiplexer` explicitly; there is no
 fallback from an unusable host. A Paseo-hosted Pi always uses Paseo.
 
 ## Update and uninstall

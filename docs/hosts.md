@@ -4,9 +4,10 @@
 
 - [Install](#install)
 - [Herdr support](#herdr-support)
-  - [Choosing tmux or Herdr](#choosing-tmux-or-herdr)
+  - [Choosing a terminal host](#choosing-a-terminal-host)
   - [Tabs](#tabs)
   - [Resume, fork and Herdr restarts](#resume-fork-and-herdr-restarts)
+- [Rex support](#rex-support)
 - [Paseo support](#paseo-support)
   - [Host capabilities](#host-capabilities)
 - [Where delegate windows open](#where-delegate-windows-open)
@@ -25,8 +26,9 @@ You need:
   relative to the pane's session (see [Where delegate windows
   open](#where-delegate-windows-open)), so a client attached elsewhere does
   not matter. Alternatively, run Pi in a [Herdr](#herdr-support) pane:
-  pi-squire detects which one it is in. Or let [Paseo](#paseo-support) host
-  the Pi session; you then need neither.
+  pi-squire detects which one it is in. A [Rex terminal](#rex-support) is also
+  supported. Or let [Paseo](#paseo-support) host
+  the Pi session; you then need no terminal host.
 - A provider of the four `message:*` hooks, including `message:reply`;
   [pi-session-mail](https://github.com/gvanderclay/pi-session-mail) **0.6.0 or
   later** supplies them. Without a provider there is no way to send the task or get an
@@ -50,7 +52,7 @@ pi install git:github.com/gvanderclay/pi-squire
 
 The package has no build step. Its only runtime dependency is
 `@getpaseo/client` 0.15.4, the Paseo SDK. pi-squire imports that SDK, and runs
-the `paseo` command, only for Paseo operations; ordinary tmux/Herdr launches
+the `paseo` command, only for Paseo operations; ordinary tmux/Herdr/Rex launches
 need neither. Managed-worktree cleanup can check Paseo workspaces even from a
 terminal coordinator. A receipt-less cleanup skips the SDK only on positive
 daemon absence; ambiguous state keeps the item (see [Cleanup](workspaces.md#cleanup)).
@@ -62,7 +64,7 @@ status, close, resume, fork, nested delegates, the widget and
 `/delegate-open`. It targets Herdr 0.9.5, protocol 22, on macOS/Linux with a
 POSIX-compatible interactive shell (`sh -c` launch; tested with zsh).
 
-### Choosing tmux or Herdr
+### Choosing a terminal host
 
 With no setting, each launch looks at the session's environment:
 
@@ -70,8 +72,9 @@ With no setting, each launch looks at the session's environment:
 | --- | --- |
 | tmux only (`TMUX` set) | tmux |
 | a Herdr pane only (`HERDR_ENV=1` and its pane context), in a named or the default session | Herdr |
-| both, for example Herdr started from a tmux pane | refuses, naming the setting |
-| neither | refuses, naming both |
+| a Rex terminal only (`REX_SERVER`, `REX_SESSION` and `REX_BLOCK` set) | Rex |
+| more than one of tmux, Herdr and Rex | refuses, naming the setting |
+| none | refuses, naming all three |
 
 To choose, set `multiplexer` in `<agent dir>/squire/settings.json` (not Pi's
 own settings):
@@ -83,14 +86,14 @@ own settings):
 A Pi that Paseo hosts uses Paseo instead and never reads this setting (see
 [Paseo support](#paseo-support)).
 
-Outside Paseo, `"tmux"` or `"herdr"` wins over detection in every case. The
+Outside Paseo, `"tmux"`, `"herdr"` or `"rex"` wins over detection in every case. The
 setting is read at every launch, resume and fork, and the choice is frozen
 before anything is created or mailed. If the chosen multiplexer is unusable
 (not inside it, server down, incompatible API), the launch refuses; pi-squire
-never falls back to the other. An invalid value refuses and names the file.
+never falls back to another host. An invalid value refuses and names the file.
 A delegate records the backend that opened it in `PI_DELEGATE_MULTIPLEXER`,
 so its own delegates use the same one when no setting is present, even if its
-environment shows both. Existing delegations keep using the multiplexer they
+environment shows several hosts. Existing delegations keep using the multiplexer they
 started in, whatever the setting says now.
 
 ### Tabs
@@ -174,6 +177,37 @@ now refuse instead of using tmux. Set `{ "multiplexer": "tmux" }` to keep tmux.
 Apart from that, and the refusal wording when Pi runs in neither multiplexer,
 tmux behaviour and its controls are unchanged.
 
+## Rex support
+
+Rex opens each delegate in a background window in the coordinator's Rex
+session. Tested with Rex 0.1.0-preview.20, API revision 16; older API revisions
+are refused. Run Pi in a Rex terminal with the `rex` CLI available. Detection
+requires `REX_SERVER`, `REX_SESSION` and `REX_BLOCK`; set
+`{ "multiplexer": "rex" }` explicitly when another terminal host is also
+detected. Tmux placement settings do not apply.
+
+Launches run a staged argv/environment file directly, without typing into a
+shell. Like Herdr, Rex inherits the parent's environment except host routing
+and previous delegation identity; the new terminal keeps its own Rex context.
+The CLI always targets the recorded server endpoint with autostart disabled.
+The coordinator's block must still belong to its original session.
+
+Status, peek and navigation verify the server, session and block id, not the
+window title. Moving a delegate's block between windows in the same session
+does not change its identity. Navigation requires an attached Rex app.
+Explicit close removes only the owned block, leaving user-added panes alone.
+
+Auto-exit follows the same result-delivery and nested-work rules as tmux.
+Rex normally removes a terminal when its program exits, but retains one after
+a quick startup failure. Squire records the runner's exit separately so that
+a retained failed terminal is not mistaken for running work; explicit close
+can remove it.
+
+Resume and fork use the ordinary terminal-host checks and open a new window.
+Rex has no Herdr-style restored-session guard: its block ids are the identity
+fence, and a missing block is gone. An unavailable server or a different
+server/session is unknown, not proof of exit.
+
 ## Paseo support
 
 Paseo can host the coordinator Pi, and then pi-squire starts each delegate as a
@@ -251,7 +285,7 @@ reading activity and explicitly closing an agent run that command.
 - On fresh launch, agents with `skills: false` or `context_files: false` are refused before
   reservations, task mail or managed-worktree creation. Paseo 0.15.4 cannot
   pass these Pi resource switches per agent; changing the child's prompt
-  would not stop resource loading. Launch that agent from tmux or Herdr, or
+  would not stop resource loading. Launch that agent from tmux, Herdr or Rex, or
   enable those resources in its agent file. Neither switch is silently dropped.
 - Fresh Paseo launches honor the roster's and call's `auto_exit` (default on);
   native resume retains the original setting. After the
@@ -288,17 +322,17 @@ for nested workers.
 
 ### Host capabilities
 
-| Capability | tmux | Herdr | Paseo |
-| --- | --- | --- | --- |
-| Fresh launch | Background window | Background tab | Child agent; coordinator must be Paseo-hosted |
-| Nested delegates | With explicit grant and tree caps | Same | Same; native parent link retained |
-| Live usage | Pi in its terminal; result/status totals | Same | Native context usage during first mailed run; later autonomous runs update at completion; result/status totals retained |
-| Navigation | Verified terminal window/pane | Verified tab/pane in the same named session | Squire gives manual app guidance; Paseo desktop-open command exists but is not wired up |
-| Auto-exit | Closes its own pane after delivered result and processed nested work; window goes only if it was the last pane | Closes its own pane under the same conditions; tab goes only if it was the last pane | Archives agent under the same conditions; explicit close deletes it; workspace stays |
-| Resume | Exited direct child with session file and original cwd | Same, plus restore/session guard | Archived direct child; same agent/Pi session/cwd; frozen settings, id/task only |
-| Fork | Copies a direct child's history to a new session | Same | Refused for Paseo hosts and sources; start fresh |
-| `skills` / `context_files` switches | Pi flags honored | Same | Defaults load normally; `false` refused before reservation/mail/worktree |
-| `session:launch` flags | Passed to Pi | Passed to Pi | Fresh launch: supported fields translated; other flags refused. Native resume: no hook; original configuration retained |
+| Capability | tmux | Herdr | Rex | Paseo |
+| --- | --- | --- | --- | --- |
+| Fresh launch | Background window | Background tab | Background window | Child agent; coordinator must be Paseo-hosted |
+| Nested delegates | With explicit grant and tree caps | Same | Same | Same; native parent link retained |
+| Live usage | Pi in its terminal; result/status totals | Same | Same | Native context usage during first mailed run; later autonomous runs update at completion; result/status totals retained |
+| Navigation | Verified terminal window/pane | Verified tab/pane in the same named session | Verified block in the same server/session | Squire gives manual app guidance; Paseo desktop-open command exists but is not wired up |
+| Auto-exit | Closes its own pane after delivered result and processed nested work; window goes only if it was the last pane | Closes its own pane under the same conditions; tab goes only if it was the last pane | Closes its own block under the same conditions | Archives agent under the same conditions; explicit close deletes it; workspace stays |
+| Resume | Exited direct child with session file and original cwd | Same, plus restore/session guard | Exited direct child with session file and original cwd | Archived direct child; same agent/Pi session/cwd; frozen settings, id/task only |
+| Fork | Copies a direct child's history to a new session | Same | Same | Refused for Paseo hosts and sources; start fresh |
+| `skills` / `context_files` switches | Pi flags honored | Same | Same | Defaults load normally; `false` refused before reservation/mail/worktree |
+| `session:launch` flags | Passed to Pi | Passed to Pi | Passed to Pi | Fresh launch: supported fields translated; other flags refused. Native resume: no hook; original configuration retained |
 
 Paseo translates `--session-id`, `--name`, `--model`, `--thinking`,
 `--append-system-prompt`, `--session-dir`, `--tools` / `--no-tools` and
@@ -307,7 +341,7 @@ only after the hook runs with the final existing cwd, not during static
 admission: no task is mailed or Paseo agent/workspace created, and a newly
 created managed worktree and reservation are rolled back. A failed rollback
 is retained and reported for recovery. Remove the unsupported flag or launch
-from tmux or Herdr; the hook still runs once at its existing lifecycle point.
+from tmux, Herdr or Rex; the hook still runs once at its existing lifecycle point.
 
 ## Where delegate windows open
 

@@ -160,7 +160,7 @@ function cleanEnv(p, keepPaseo = process.env.SQUIRE_VERIFY_KEEP_PASEO === "1") {
 	if (opencode) env.OPENCODE_API_KEY = opencode;
 	return env;
 }
-const DRIVER_CONTEXT = /^(PI_|TMUX|HERDR|PASEO_)/;
+const DRIVER_CONTEXT = /^(PI_|TMUX|HERDR|PASEO_|REX_)/;
 /**
  * The only probes the generic `herdr` command passes through, always under this
  * run's `--session`. Session lifecycle lives in herdr-restart and cleanup.

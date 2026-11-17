@@ -6,34 +6,38 @@ import type { windowSettings } from "./window-placement.ts";
 
 /** The action for a host with no usable terminal; two causes need it. */
 const TMUX_INSTALL =
-	"install tmux >=3.2 (brew install tmux or sudo apt install tmux), run tmux new-session -s pi, then pi; or restart Pi in Herdr/Paseo";
+	"install tmux >=3.2 (brew install tmux or sudo apt install tmux), run tmux new-session -s pi, then pi; or restart Pi in Herdr/Rex/Paseo";
 
 /**
  * Each action keyed by the start of the refusal it answers (src/multiplexer.ts,
- * src/settings.ts, src/tmux.ts, src/herdr.ts, src/paseo.ts,
+ * src/settings.ts, src/tmux.ts, src/herdr.ts, src/rex.ts, src/paseo.ts,
  * src/paseo-availability.ts). Causes embed paths and nested errors, so only a
  * prefix may choose the advice; the first matching prefix wins.
  */
 const ACTIONS: readonly (readonly [readonly string[], string])[] = [
 	[
 		["invalid PI_DELEGATE_MULTIPLEXER "],
-		'fix PI_DELEGATE_MULTIPLEXER in the launcher (valid values: tmux, herdr, paseo), or override it with "multiplexer": "tmux" or "herdr" in the Squire settings file named above',
+		'fix PI_DELEGATE_MULTIPLEXER in the launcher (valid values: tmux, herdr, rex, paseo), or override it with "multiplexer": "tmux", "herdr" or "rex" in the Squire settings file named above',
 	],
 	[
-		["this session is inside both tmux and Herdr", "invalid multiplexer settings "],
-		'set "multiplexer": "tmux" or "herdr" in the Squire settings file named above; PI_DELEGATE_MULTIPLEXER from the launcher is used only when that setting is absent',
+		["this session is inside both ", "this session is inside tmux, Herdr and Rex", "invalid multiplexer settings "],
+		'set "multiplexer": "tmux", "herdr" or "rex" in the Squire settings file named above; PI_DELEGATE_MULTIPLEXER from the launcher is used only when that setting is absent',
 	],
 	[
 		["could not read squire settings", "invalid squire settings"],
 		"fix the Squire settings file named above, then retry",
 	],
 	[
-		["this session is inside neither tmux nor Herdr", "this session is not inside tmux", "delegate windows need tmux"],
+		[
+			"this session is inside none of tmux, Herdr or Rex",
+			"this session is not inside tmux",
+			"delegate windows need tmux",
+		],
 		TMUX_INSTALL,
 	],
 	[
 		["this session is not hosted by Paseo"],
-		'run Pi inside a Paseo agent, or fix/unset a stale PI_DELEGATE_MULTIPLEXER=paseo in the launcher; a "multiplexer": "tmux" or "herdr" setting can override it for a terminal-hosted Pi',
+		'run Pi inside a Paseo agent, or fix/unset a stale PI_DELEGATE_MULTIPLEXER=paseo in the launcher; a "multiplexer": "tmux", "herdr" or "rex" setting can override it for a terminal-hosted Pi',
 	],
 	[["Paseo is not running:"], "start the Paseo daemon, check paseo status, then retry from the Paseo-hosted Pi"],
 	[["Paseo "], "check paseo status and the Paseo daemon connection/descriptor named above, then retry"],
@@ -44,6 +48,10 @@ const ACTIONS: readonly (readonly [readonly string[], string])[] = [
 	[
 		["this session is not inside a Herdr pane", "Herdr ", "could not ask Herdr for the parent pane/server:"],
 		"start Pi in a Herdr pane with a running compatible Herdr server; if its pane/session changed, restart Pi there, then retry",
+	],
+	[
+		["this session is not inside a Rex terminal", "this Pi's Rex block ", "Rex ", "could not ask Rex "],
+		"start Pi in a Rex terminal with a running Rex server (API revision 16 or later); if its session changed, restart Pi there, then retry",
 	],
 ];
 

@@ -103,7 +103,7 @@ test("auto-detect: tmux only, Herdr only, both refuses naming the setting, neith
 	);
 	assert.throws(
 		() => chooseMultiplexer({ ...base, inTmux: false, inHerdr: false }),
-		/inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane/,
+		/inside none of tmux, Herdr or Rex; start Pi in a tmux pane, a Herdr pane or a Rex terminal/,
 	);
 });
 
@@ -151,8 +151,8 @@ test("createMultiplexer routes launches by detection and a forced unusable backe
 	h.unavailable = false;
 	assert.equal(mux.forLaunch?.(), h.client, "Herdr only");
 	h.unavailable = true;
-	assert.match(mux.unavailable() ?? "", /neither tmux nor Herdr/);
-	assert.match((await mux.unavailable(true)) ?? "", /neither tmux nor Herdr/);
+	assert.match(mux.unavailable() ?? "", /none of tmux, Herdr or Rex/);
+	assert.match((await mux.unavailable(true)) ?? "", /none of tmux, Herdr or Rex/);
 	tmux.inside = true;
 	h.unavailable = false;
 	assert.match(mux.unavailable() ?? "", /both tmux and Herdr/);

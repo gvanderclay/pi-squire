@@ -1,7 +1,7 @@
 {
 	"name": "pi-squire",
 	"version": "0.32.0",
-	"description": "Run background Pi delegates in tmux, Herdr or Paseo, get results back, and isolate checkouts with optional managed worktrees",
+	"description": "Run background Pi delegates in tmux, Herdr, Rex or Paseo, get results back, and isolate checkouts with optional managed worktrees",
 	"keywords": [
 		"pi-package",
 		"pi",
@@ -11,6 +11,7 @@
 		"tmux",
 		"worktrees",
 		"herdr",
+		"rex",
 		"paseo"
 	],
 	"license": "MIT",

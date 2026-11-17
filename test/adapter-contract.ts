@@ -89,6 +89,17 @@ const FOREIGN: readonly object[] = [
 		name: "foreign",
 		launchFile: "/foreign/launch.mjs",
 	},
+	{
+		adapter: "rex",
+		version: 1,
+		kind: "window",
+		server: "unix:///foreign/rex.sock",
+		session: "session:foreign",
+		window: "window:foreign",
+		block: "block:foreign",
+		name: "foreign",
+		launchFile: "/foreign/launch.mjs",
+	},
 	{ adapter: "unregistered", version: 1, kind: "window", id: "x", name: "foreign" },
 ];
 

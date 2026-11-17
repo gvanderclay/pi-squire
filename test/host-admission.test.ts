@@ -71,20 +71,20 @@ test("host actions follow each refusal cause, preserve it verbatim first, and ke
 		["delegate windows need tmux 3.2 or later; this is tmux 3.1", /install tmux >=3\.2/],
 		[
 			// The settings path holds both host words; only the cause prefix may choose the advice.
-			'this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in /home/u/paseo-herdr/agent/squire/settings.json)',
+			'this session is inside none of tmux, Herdr or Rex; start Pi in a tmux pane, a Herdr pane or a Rex terminal to open a delegate (or set "multiplexer" in /home/u/paseo-herdr/agent/squire/settings.json)',
 			/install tmux >=3\.2.*tmux new-session/,
 		],
 		[
 			'this session is inside both tmux and Herdr, so pi-squire will not guess; set "multiplexer" in /agent/squire/settings.json',
-			/set "multiplexer": "tmux" or "herdr".*PI_DELEGATE_MULTIPLEXER/,
+			/set "multiplexer": "tmux", "herdr" or "rex".*PI_DELEGATE_MULTIPLEXER/,
 		],
 		[
-			'invalid multiplexer settings /agent/squire/settings.json: multiplexer must be "tmux" or "herdr", not "bad"',
-			/set "multiplexer": "tmux" or "herdr"/,
+			'invalid multiplexer settings /agent/squire/settings.json: multiplexer must be "tmux", "herdr" or "rex", not "bad"',
+			/set "multiplexer": "tmux", "herdr" or "rex"/,
 		],
 		[
 			'invalid PI_DELEGATE_MULTIPLEXER "bad" from this delegate\'s launcher',
-			/fix PI_DELEGATE_MULTIPLEXER.*valid values: tmux, herdr, paseo/,
+			/fix PI_DELEGATE_MULTIPLEXER.*valid values: tmux, herdr, rex, paseo/,
 		],
 		["could not read squire settings /agent/squire/settings.json: invalid JSON", /fix the Squire settings file/],
 		["invalid squire settings /agent/squire/settings.json: expected an object", /fix the Squire settings file/],
@@ -108,7 +108,7 @@ test("host actions follow each refusal cause, preserve it verbatim first, and ke
 			/fix the Squire settings file/,
 		],
 		[
-			'this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in /home/invalid PI_DELEGATE_MULTIPLEXER/agent/squire/settings.json)',
+			'this session is inside none of tmux, Herdr or Rex; start Pi in a tmux pane, a Herdr pane or a Rex terminal to open a delegate (or set "multiplexer" in /home/invalid PI_DELEGATE_MULTIPLEXER/agent/squire/settings.json)',
 			/install tmux >=3\.2.*tmux new-session/,
 		],
 		[
@@ -135,7 +135,7 @@ test("host actions follow each refusal cause, preserve it verbatim first, and ke
 		assert.match(command.slice(cause.length), action);
 		// Only a host with no usable terminal tells the user to install tmux.
 		if (
-			/^(this session is not inside tmux|delegate windows need tmux|this session is inside neither)/.test(cause) ===
+			/^(this session is not inside tmux|delegate windows need tmux|this session is inside none of)/.test(cause) ===
 			false
 		)
 			assert.doesNotMatch(command, /brew install|apt install|tmux new-session/);

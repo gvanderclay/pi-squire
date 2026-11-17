@@ -357,13 +357,23 @@ class RexClient implements DelegateHost {
 	async show(target: WindowTarget, verify: () => Promise<boolean>): Promise<ShowResult> {
 		const own = this.caller();
 		if (!own) return { text: this.refusal, brief: "no Rex terminal context" };
+		let client: string;
 		try {
 			const attached = object(JSON.parse(await this.run(own, ["client", "ls", "-s", own.session, "--json"]))).clients;
-			if (!Array.isArray(attached) || attached.length === 0)
+			if (!Array.isArray(attached)) throw new Error("invalid Rex client list");
+			const apps = attached.map(object).filter((entry) => object(entry.info).kind === "app");
+			if (apps.length === 0)
 				return {
 					text: `no Rex app is attached to session ${own.session}, so nothing can show the window; open that session in Rex`,
 					brief: "no Rex app attached",
 				};
+			if (apps.length !== 1)
+				return {
+					text: `several Rex apps are attached to session ${own.session}; select the delegate in the intended app yourself`,
+					brief: "ambiguous Rex app",
+				};
+			if (!text(apps[0].client_id)) throw new Error("Rex app lacks client identity");
+			client = apps[0].client_id;
 		} catch (cause) {
 			return {
 				text: `could not ask Rex which apps show this session: ${String(cause)}`,
@@ -375,7 +385,23 @@ class RexClient implements DelegateHost {
 		if (!(await verify())) return { shown: false };
 		const locator = await this.verifiedTarget(target.locator);
 		if (!locator) throw new Error("no verified open window for this delegation; window changed or unavailable");
-		// Focusing the block makes its window the session's active one, wherever the block now sits.
+		const block = (await this.snapshot(own)).find((entry) => entry.block_id === locator.block);
+		if (!block?.window_id) throw new Error("the Rex block is no longer in a window");
+		// Rex's session.focus_block changes server state, not the app's displayed
+		// tab. Use the app's session.select action (rex -C CLIENT actions --json,
+		// preview.20), then focus the exact block. Select first so a denied Remote
+		// Control request cannot leave keyboard actions targeting an invisible tab.
+		await this.run(own, [
+			"-C",
+			client,
+			"do",
+			"session.select",
+			`session_id=${locator.session}`,
+			`window_id=${block.window_id}`,
+		]);
+		const current = (await this.snapshot(own)).find((entry) => entry.block_id === locator.block);
+		if (current?.window_id !== block.window_id)
+			throw new Error("Rex showed the window, but the delegate block moved or closed; retry navigation");
 		await this.run(own, ["focus", "-s", locator.session, locator.block]);
 		return {
 			shown: true,

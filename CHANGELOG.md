@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Rex delegate-list Enter and `/delegate-open` now select the window in the
+  attached app before focusing its block. Server-only focus could leave the
+  visible tab unchanged and send session-picker actions to an invisible tab.
+  Navigation refuses ambiguous attached apps and reports Remote Control
+  failures without falling back to server-only focus. The Rex conformance
+  fixture now distinguishes app-visible selection from server focus.
+
 ## [0.34.0] - 2026-11-17
 
 ### Added

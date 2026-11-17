@@ -196,6 +196,92 @@ test("another session's or server's locator is unknown and never closed", async 
 	assert.equal(r.blocks.has(own.block), true);
 });
 
+test("navigation selects the app's current target window before focusing its exact block", async () => {
+	const r = wire();
+	const record = await r.open("show");
+	const own = rexLocator(record.locator);
+	assert.ok(own);
+	// Window identity is presentation: the block can move after launch.
+	r.blocks.get(own.block)!.window_id = "window:moved";
+	const result = await r.client.show({ windowId: own.window, locator: own }, async () => true);
+	assert.ok("shown" in result && result.shown);
+	assert.equal(r.visible, "window:moved");
+	assert.equal(r.active, "window:moved");
+	const select = r.calls.findIndex((call) => call.args[0] === "-C");
+	const focus = r.calls.findIndex((call) => call.args[0] === "focus");
+	assert.deepEqual(r.calls[select].args, [
+		"-C",
+		"client:app",
+		"do",
+		"session.select",
+		"session_id=session:test",
+		"window_id=window:moved",
+	]);
+	assert.ok(select < focus, "a denied app action must not leave server-only focus changed");
+});
+
+test("app selection failure does not change server focus", async () => {
+	const r = wire();
+	const record = await r.open("denied");
+	const own = rexLocator(record.locator);
+	assert.ok(own);
+	r.failSelect = true;
+	await assert.rejects(
+		r.client.show({ windowId: own.window, locator: own }, async () => true),
+		/Remote Control/,
+	);
+	assert.equal(r.active, "window:main");
+	assert.equal(r.visible, "window:main");
+	assert.equal(
+		r.calls.some((call) => call.args[0] === "focus"),
+		false,
+	);
+});
+
+test("a block moved during app selection is not focused in an invisible window", async () => {
+	const r = wire();
+	const record = await r.open("moving");
+	const own = rexLocator(record.locator);
+	assert.ok(own);
+	const run = r.run.bind(r);
+	r.run = async (route, args) => {
+		const result = await run(route, args);
+		if (args[0] === "-C") r.blocks.get(own.block)!.window_id = "window:other";
+		return result;
+	};
+	await assert.rejects(
+		r.client.show({ windowId: own.window, locator: own }, async () => true),
+		/moved or closed/,
+	);
+	assert.equal(r.visible, own.window);
+	assert.equal(
+		r.calls.some((call) => call.args[0] === "focus"),
+		false,
+	);
+});
+
+test("navigation refuses ambiguous apps and ignores non-app clients before verification", async () => {
+	const r = wire();
+	const record = await r.open("apps");
+	const own = rexLocator(record.locator);
+	assert.ok(own);
+	for (const clients of [
+		[{ client_id: "client:cli", info: { kind: "cli" } }],
+		[
+			{ client_id: "client:one", info: { kind: "app" } },
+			{ client_id: "client:two", info: { kind: "app" } },
+		],
+	]) {
+		r.clients = clients;
+		const result = await r.client.show({ windowId: own.window, locator: own }, async () => {
+			assert.fail("no unambiguous viewer");
+		});
+		assert.ok("text" in result);
+	}
+	assert.equal(r.active, "window:main");
+	assert.equal(r.visible, "window:main");
+});
+
 test("peek keeps only the recent rows of the whole scrollback", async () => {
 	const r = wire();
 	const record = await r.open("long");

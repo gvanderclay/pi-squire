@@ -194,7 +194,11 @@ The coordinator's block must still belong to its original session.
 
 Status, peek and navigation verify the server, session and block id, not the
 window title. Moving a delegate's block between windows in the same session
-does not change its identity. Navigation requires an attached Rex app.
+does not change its identity. Navigation requires exactly one attached Rex app
+with Remote Control enabled. Squire selects the block's current window through
+that app, then focuses the block; server focus alone does not select the app's
+visible tab. Multiple attached apps or a denied app action refuse with guidance,
+without falling back to server-only focus.
 Explicit close removes only the owned block, leaving user-added panes alone.
 
 Auto-exit follows the same result-delivery and nested-work rules as tmux.

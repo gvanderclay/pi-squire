@@ -31,6 +31,9 @@ export class RexWire {
 	endpoint: string | undefined;
 	clients: unknown[] = [{ client_id: "client:app", info: { kind: "app" } }];
 	active = "window:main";
+	/** The app does not follow server-only focus changes. */
+	visible = "window:main";
+	failSelect = false;
 	next = 1;
 	beforeClose: (() => void) | undefined;
 	readonly client = createRexClient({
@@ -81,6 +84,12 @@ export class RexWire {
 			this.beforeClose?.();
 			if (this.failClose) throw new Error("block close refused");
 			if (!this.blocks.delete(args[4])) throw new Error(`block target "${args[4]}" not found`);
+			return "";
+		}
+		if (args[0] === "-C" && args[2] === "do" && args[3] === "session.select") {
+			if (this.failSelect) throw new Error("Remote Control is disabled");
+			if (args[4] !== `session_id=${this.context.session}`) throw new Error("wrong app session");
+			this.visible = args[5].replace("window_id=", "");
 			return "";
 		}
 		if (args[0] === "focus") {
@@ -154,7 +163,7 @@ export async function rexAdapter(): Promise<AdapterFixture> {
 		setUnavailable: (value) => {
 			wire.unavailable = value;
 		},
-		isShown: async (record) => wire.active === wire.blocks.get(located(record).block)?.window_id,
+		isShown: async (record) => wire.visible === wire.blocks.get(located(record).block)?.window_id,
 		async dispose() {
 			wire.dispose();
 		},

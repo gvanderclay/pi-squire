@@ -49,7 +49,7 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   cross-process arbitration. `tree-close.ts` is the shared explicit subtree-close
   runner and `tree-fence.ts` composes close/resume admission; `result-close.ts`
   words missing/canceled work for the direct parent's processing inbox. `session-owner.ts` owns exact-session process
-  arbitration and staged Squire ingress; `tree-view.ts` projects descendants
+  arbitration and staged Squire ingress (`owner-refusal.ts` words a duplicate's refusal); `tree-view.ts` projects descendants
   read-only. Local result
   processing stays in `child-tasks.ts`.
   `test/tree-process-harness.ts` and `test/fixtures/tree-coordinator.ts` provide

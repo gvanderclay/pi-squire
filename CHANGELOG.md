@@ -15,6 +15,20 @@ follows [Semantic Versioning](https://semver.org/).
   refusal-message tests in `first-use`, `first-use-print`, `herdr-parity`,
   `host-admission` and `paseo-choice` deliberately track the new wording.
 
+## [0.33.1] - 2026-11-17
+
+### Changed
+
+- A Pi that opens a session another process already owns still quits, but its
+  refusal now names the owner's PID, command, start time and parent process,
+  and gives the `kill <pid>` and `pi --session` commands that move the session
+  here. In the TUI the refusal is printed again after Pi exits, where it was
+  previously cleared with the screen.
+
+## [0.33.0] - 2026-11-15
+
+### Added
+
 - `delegation_resume` and `/delegate-resume` support archived Paseo delegates,
   including existing receiptless records, through the public SDK reload path.
   The same Paseo agent and Pi session/file/conversation are retained; exact
@@ -2009,7 +2023,9 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.33.1...HEAD
+[0.33.1]: https://github.com/gvanderclay/pi-squire/compare/v0.33.0...v0.33.1
+[0.33.0]: https://github.com/gvanderclay/pi-squire/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/gvanderclay/pi-squire/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/gvanderclay/pi-squire/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/gvanderclay/pi-squire/compare/v0.29.0...v0.30.0

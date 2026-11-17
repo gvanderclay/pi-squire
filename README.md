@@ -69,16 +69,16 @@ no terminal: open the agent in its app. See [navigation](docs/delegation.md#navi
 
 ## One setting
 
-To keep tmux delegates in your current session rather than the default shared
-`<project>-delegates` companion, save this as
+To keep tmux or Rex delegates in your current session rather than the default
+shared `<project>-delegates` companion, save this as
 `<agent dir>/squire/settings.json` (not Pi's own settings file):
 
 ```json
 { "windowPlacement": "current" }
 ```
 
-It applies on the next launch; existing windows do not move. Herdr, Rex and Paseo
-ignore tmux placement. [Configuration](docs/configuration.md) gives every
+It applies on the next launch; existing windows do not move. Herdr and Paseo keep
+their own placement rules. [Configuration](docs/configuration.md) gives every
 setting's type, default, scope, read time and invalid-value behavior.
 
 ## Commands and tools
@@ -153,8 +153,8 @@ held results, outbox retries, usage and storage repair; use the
 
 | Capability | tmux | Herdr | Rex | Paseo |
 | --- | --- | --- | --- | --- |
-| Background delegate | Window | Tab in root workspace | Window in same session | Child agent; Paseo-hosted coordinator required |
-| Navigation | Verified terminal switch/peek | Verified tab/pane switch/peek | Verified block switch/peek | App only; no terminal |
+| Background delegate | Window | Tab in root workspace | Window in the project companion session or the caller's session | Child agent; Paseo-hosted coordinator required |
+| Navigation | Verified terminal switch/peek | Verified tab/pane switch/peek | Verified block switch/peek, across sessions of one server | App only; no terminal |
 | Auto-exit | Closes owned pane; window goes only if last pane | Same for tab | Closes owned block | Archives agent; explicit close deletes it; workspace stays |
 | Resume / fork | Supported with checks | Supported with restore/session guards | Supported with checks | Refused for hosts and sources; start fresh |
 | `skills: false` / `context_files: false` | Honored | Honored | Honored | Refused before dispatch |

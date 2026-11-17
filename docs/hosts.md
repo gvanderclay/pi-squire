@@ -8,6 +8,9 @@
   - [Tabs](#tabs)
   - [Resume, fork and Herdr restarts](#resume-fork-and-herdr-restarts)
 - [Rex support](#rex-support)
+  - [Companion ownership](#companion-ownership)
+  - [Status, navigation and close](#status-navigation-and-close)
+  - [Lifecycle](#lifecycle)
 - [Paseo support](#paseo-support)
   - [Host capabilities](#host-capabilities)
 - [Where delegate windows open](#where-delegate-windows-open)
@@ -101,7 +104,7 @@ started in, whatever the setting says now.
 Each delegate opens as a named, unfocused **tab in the workspace the root Pi
 started in**: nested delegates are flat tabs next to their parents, never
 splits, and worktree launches are the same. `windowPlacement` and
-`companionSuffix` affect only tmux placement. If you move a Pi's pane to
+`companionSuffix` affect tmux and Rex placement, not Herdr tabs. If you move a Pi's pane to
 another workspace after it started, its launches refuse and name both
 workspaces, since Herdr's pane context no longer says where to open; move it
 back, or start Pi in the workspace you want. A moved delegate pane reads as
@@ -179,27 +182,89 @@ tmux behaviour and its controls are unchanged.
 
 ## Rex support
 
-Rex opens each delegate in a background window in the coordinator's Rex
-session. Tested with Rex 0.1.0-preview.20, API revision 16; older API revisions
-are refused. Run Pi in a Rex terminal with the `rex` CLI available. Detection
-requires `REX_SERVER`, `REX_SESSION` and `REX_BLOCK`; set
+Rex opens each delegate as one full background window (a tab) in a **managed
+project companion session** named `<project>-delegates`, selected from the
+owning root Pi's project exactly as tmux does. `windowPlacement: "current"`
+opens the window in the invoking Pi's own Rex session instead.
+`companionSuffix` sets the preferred name suffix for a new root; it never
+renames an existing session. Both settings apply to tmux and Rex; Herdr and
+Paseo keep their own rules. Tested with Rex
+0.1.0-preview.20, API revision 16; older API revisions are refused. Run Pi in
+a Rex terminal with the `rex` CLI available. Detection requires
+`REX_SERVER`, `REX_SESSION` and `REX_BLOCK`; set
 `{ "multiplexer": "rex" }` explicitly when another terminal host is also
-detected. Tmux placement settings do not apply.
+detected.
 
 Launches run a staged argv/environment file directly, without typing into a
 shell. Like Herdr, Rex inherits the parent's environment except host routing
 and previous delegation identity; the new terminal keeps its own Rex context.
 The CLI always targets the recorded server endpoint with autostart disabled.
-The coordinator's block must still belong to its original session.
+The coordinator's block must still belong to its original session. A launch
+never splits a window, adds an unused shell tab, moves or renames a session, or
+switches the app.
+
+### Companion ownership
+
+Rex has no session metadata marker, so Squire records a **creation receipt**:
+the exact session id Rex returned from an empty `session.create`, saved
+durably before any delegate window is dispatched there. Only a receipt proves
+ownership. A matching label, a familiar first tab or a task title is never
+proof, and sessions are never adopted by name.
+
+- Receipts live under `<agent dir>/squire/rex-companions/`, one private
+  directory per exact server endpoint and preferred base. Another Pi agent
+  directory never shares ownership proof, even when its labels match, and it
+  skips sessions it cannot prove.
+- The first launch creates an empty session, proves the returned id exists
+  with the intended label, saves the receipt, and only then opens the delegate
+  window. If another Pi is acquiring the same companion, retry the launch
+  after it finishes. Acquisitions for different project bases do not block one
+  another.
+- An occupied base name is skipped: an unproved session at `<base>` or
+  `<base>-2` is left untouched and the next free number is used. A proved
+  numbered companion is preferred even after a lower name becomes free.
+  Duplicate labels never collapse two sessions into one.
+- A companion the user renamed outside its numbered family is left alone for
+  new placement; delegates already recorded there still report, peek and
+  close by their exact ids.
+- A malformed, unreadable or unwritable receipt file refuses the launch with
+  the path to repair. It is never reset silently.
+- A receipt write failure or a lost `session.create` acknowledgement starts
+  no delegate. The launch refuses before any delegate window is requested and
+  reports that an empty session may remain; that session is not adopted by its
+  label and is not deleted.
+
+Rex has no atomic "destroy only if empty" call, so Squire never destroys a
+session. An empty companion is kept for reuse and counts toward the server's
+session limit (default 64); windows count toward the per-session window limit.
+Rex normally restores saved sessions on restart. This differs from tmux, which
+removes a companion with its last window.
+
+### Status, navigation and close
 
 Status, peek and navigation verify the server, session and block id, not the
-window title. Moving a delegate's block between windows in the same session
-does not change its identity. Navigation requires exactly one attached Rex app
-with Remote Control enabled. Squire selects the block's current window through
-that app, then focuses the block; server focus alone does not select the app's
-visible tab. Multiple attached apps or a denied app action refuse with guidance,
-without falling back to server-only focus.
-Explicit close removes only the owned block, leaving user-added panes alone.
+window title. Because a delegate may be in another session of the same server,
+one observation sweep lists the server's sessions and then each session's
+blocks; a session whose block query fails is `unknown`, never `gone`, and a
+session the successful list omits is positively gone. Moving a delegate's
+block between windows of its session does not change its identity.
+
+Navigation requires exactly one connected Rex app attached to the **invoking
+Pi's** session; the delegate's session may have no app attached yet. Squire
+selects the delegate's session and current window through that app, rechecks
+the block, then focuses the exact block. Server focus alone does not select the
+app's visible tab. No app, several apps, a CLI-only client, a lost-only app or a
+denied app action refuse with guidance, without falling back to server-only
+focus. The return hint names the originating session and window. A child in a
+companion session can navigate back to its parent in the original session the
+same way. Peek reads the delegate's own session and changes no selection.
+
+Explicit close rechecks the exact session and block immediately before acting
+and removes only the owned block. It never closes a window or a companion
+session, so user-added blocks, other roots' delegates and the original root
+survive.
+
+### Lifecycle
 
 Auto-exit follows the same result-delivery and nested-work rules as tmux.
 Rex normally removes a terminal when its program exits, but retains one after
@@ -207,10 +272,12 @@ a quick startup failure. Squire records the runner's exit separately so that
 a retained failed terminal is not mistaken for running work; explicit close
 can remove it.
 
-Resume and fork use the ordinary terminal-host checks and open a new window.
-Rex has no Herdr-style restored-session guard: its block ids are the identity
-fence, and a missing block is gone. An unavailable server or a different
-server/session is unknown, not proof of exit.
+Resume and fork use the ordinary terminal-host checks and open a new window in
+the saved root's companion (or the caller's session in `current` mode). A
+mode change affects only future windows; existing windows never move. Rex has
+no Herdr-style restored-session guard: its block ids are the identity fence,
+and a missing block is gone. An unavailable server or a different server is
+unknown, not proof of exit.
 
 ## Paseo support
 
@@ -331,7 +398,7 @@ for nested workers.
 | Fresh launch | Background window | Background tab | Background window | Child agent; coordinator must be Paseo-hosted |
 | Nested delegates | With explicit grant and tree caps | Same | Same | Same; native parent link retained |
 | Live usage | Pi in its terminal; result/status totals | Same | Same | Native context usage during first mailed run; later autonomous runs update at completion; result/status totals retained |
-| Navigation | Verified terminal window/pane | Verified tab/pane in the same named session | Verified block in the same server/session | Squire gives manual app guidance; Paseo desktop-open command exists but is not wired up |
+| Navigation | Verified terminal window/pane | Verified tab/pane in the same named session | Verified block, across sessions of one server | Squire gives manual app guidance; Paseo desktop-open command exists but is not wired up |
 | Auto-exit | Closes its own pane after delivered result and processed nested work; window goes only if it was the last pane | Closes its own pane under the same conditions; tab goes only if it was the last pane | Closes its own block under the same conditions | Archives agent under the same conditions; explicit close deletes it; workspace stays |
 | Resume | Exited direct child with session file and original cwd | Same, plus restore/session guard | Exited direct child with session file and original cwd | Archived direct child; same agent/Pi session/cwd; frozen settings, id/task only |
 | Fork | Copies a direct child's history to a new session | Same | Same | Refused for Paseo hosts and sources; start fresh |
@@ -349,11 +416,14 @@ from tmux, Herdr or Rex; the hook still runs once at its existing lifecycle poin
 
 ## Where delegate windows open
 
-The rest of this section describes **tmux** placement.
+The naming, identity and selection rules below are shared by **tmux and Rex**.
+Where they differ, the tmux-only details are marked, and
+[Rex support](#rex-support) describes how Rex proves ownership of a companion
+without tmux's session marker.
 
 By default a delegate's window opens in a shared **project companion session**
-named `<project>-delegates` on your existing tmux server. The owning
-root Pi session's project chooses it, not the parent tmux session or the
+named `<project>-delegates` on your existing tmux server (or Rex server). The
+owning root Pi session's project chooses it, not the parent tmux session or the
 delegate's working directory. Launching into another repository or creating a
 worktree there still uses the root's companion; resuming a delegate does too.
 
@@ -386,15 +456,21 @@ normalize identically intentionally share it. This groups windows only:
 delegation records, task mail, results, limits and close-all remain scoped to
 each root.
 
-pi-squire verifies the tmux session option `@squire-companion` before reusing
-an occupied name. An unmarked session is left untouched; numbered alternatives
-start at `<project>-<suffix>-2`, skipping unmarked alternatives too.
-Later launches reuse an existing managed alternative even if a lower name
-becomes free. Unexpected duplicate managed candidates use the first in numeric
-order, without moving windows or repairing sessions. Existing companions,
-live windows and saved identities keep their names, including the former
-`<project>-delegate-session` default. Nested launches and resumes retain the
-saved preference; companions are not renamed or migrated.
+Squire proves ownership before reusing an occupied name, and the proof is
+host-specific: **tmux** checks the session option `@squire-companion`, while
+**Rex** uses a durable exact-id creation receipt (see
+[Companion ownership](#companion-ownership)). Either way an unproven session is
+left untouched; numbered alternatives start at `<project>-<suffix>-2`,
+skipping unproven alternatives too. Later launches reuse an existing proved
+alternative even if a lower name becomes free. Unexpected duplicate proved
+candidates use the first in numeric order, without moving windows or repairing
+sessions. Existing companions, live windows and saved identities keep their
+names, including the former `<project>-delegate-session` default. Nested
+launches and resumes retain the saved preference; companions are not renamed or
+migrated.
+
+The following lifecycle details are **tmux-only**; Rex keeps an empty companion
+and never destroys a session.
 
 - The session is created on demand, by the launch that needs it, and tmux
   removes it with its last window, so it does not outlive its delegates.

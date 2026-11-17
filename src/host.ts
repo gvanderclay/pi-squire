@@ -92,7 +92,7 @@ export interface DelegateHost extends LiveNavigation {
 	/** Accept owned identity; with a navigation target, also validate its adapter-specific routing fields. */
 	ownsLocator(value: unknown, target?: WindowTarget): boolean;
 	readonly windowNoun?: string;
-	/** Whether launch uses the caller's tmux placement policy. */
+	/** Whether launch uses the caller's window placement policy (tmux and Rex). */
 	readonly usesWindowPlacement: boolean;
 	/** Whether resume needs the session file before other checks. */
 	readonly requiresSessionGuard: boolean;

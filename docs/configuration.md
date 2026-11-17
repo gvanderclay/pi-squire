@@ -67,8 +67,8 @@ not all keys on every call.
 | --- | --- |
 | Type | `"companion"` or `"current"` |
 | Default | `"companion"` |
-| Scope | Tmux placement; existing windows unchanged |
-| When read | Each launch/resume/fork |
+| Scope | tmux and Rex placement; existing windows unchanged, and Herdr/Paseo keep their own rules |
+| When read | Each launch/resume/fork; frozen at admission before anything is mailed or created |
 | Invalid value / file | Refuses launch and names file. |
 
 [Placement](hosts.md#where-delegate-windows-open).
@@ -79,8 +79,8 @@ not all keys on every call.
 | --- | --- |
 | Type | String: 1–32 ASCII letters, digits, `_`, `-`; no edge hyphen or numeric final segment |
 | Default | `"delegates"` |
-| Scope | New root companion preference; does not replace saved nested/resume preference |
-| When read | With tmux placement at launch |
+| Scope | New root tmux/Rex companion preference; does not replace saved nested/resume preference |
+| When read | With tmux or Rex placement at launch |
 | Invalid value / file | Refuses launch and names file, even if placement is current. |
 
 [Companions](hosts.md#where-delegate-windows-open).

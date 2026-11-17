@@ -6,6 +6,7 @@ import { WindowOpenError } from "./host.ts";
 export type { DelegateHost, NoViewer, OpenedWindow, ShowResult, WindowSpec, WindowTarget } from "./host.ts";
 export { WindowOpenError } from "./host.ts";
 
+import { companionCandidate } from "./companion-names.ts";
 import { runTmux } from "./tmux-command.ts";
 import type { WindowLocator } from "./tmux-locator.ts";
 import { liveLocator, paneLocator, tmuxLocator, tmuxLocators, verifyTmuxPaneWindow } from "./tmux-locator.ts";
@@ -37,6 +38,9 @@ export {
 	windowPresentation,
 } from "./tmux-locator.ts";
 
+/** Shared with Rex: naming is common, ownership proof is not. */
+export { companionCandidate };
+
 export const MIN_TMUX = { major: 3, minor: 2 } as const;
 
 export type TmuxVersion = { text: string; major: number; minor: number };
@@ -58,25 +62,6 @@ export async function requireTmuxVersion(tmux: { version(): Promise<TmuxVersion>
 	if (found.major < MIN_TMUX.major || (found.major === MIN_TMUX.major && found.minor < MIN_TMUX.minor)) {
 		throw new Error(`delegate windows need tmux ${MIN_TMUX.major}.${MIN_TMUX.minor} or later; this is ${found.text}`);
 	}
-}
-
-/** Pick a managed candidate before any free name, in numeric candidate order. */
-export function companionCandidate(base: string, sessions: ReadonlyMap<string, boolean>): string {
-	const candidates = [...sessions.keys()]
-		.filter(
-			(name) =>
-				name === base || (name.startsWith(`${base}-`) && /^[2-9]$|^[1-9][0-9]+$/.test(name.slice(base.length + 1))),
-		)
-		.sort((a, b) => candidateNumber(base, a) - candidateNumber(base, b));
-	const managed = candidates.find((name) => sessions.get(name) === true);
-	if (managed !== undefined) return managed;
-	let number = 1;
-	while (sessions.has(number === 1 ? base : `${base}-${number}`)) number++;
-	return number === 1 ? base : `${base}-${number}`;
-}
-
-function candidateNumber(base: string, name: string): number {
-	return name === base ? 1 : Number(name.slice(base.length + 1));
 }
 
 export type OwnSession = { id: string; name: string };

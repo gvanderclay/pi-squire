@@ -74,7 +74,10 @@ test("outside Paseo every detection, setting and terminal launcher answer is unc
 	assert.equal(chooseMultiplexer({ ...base, inTmux: true, inHerdr: false }), "tmux");
 	assert.equal(chooseMultiplexer({ ...base, inTmux: false, inHerdr: true }), "herdr");
 	assert.throws(() => chooseMultiplexer({ ...base, inTmux: true, inHerdr: true }), /inside both tmux and Herdr/);
-	assert.throws(() => chooseMultiplexer({ ...base, inTmux: false, inHerdr: false }), /inside neither tmux nor Herdr/);
+	assert.throws(
+		() => chooseMultiplexer({ ...base, inTmux: false, inHerdr: false }),
+		/inside none of tmux, Herdr or Rex/,
+	);
 	for (const forced of ["tmux", "herdr"] as const) {
 		setSetting({ multiplexer: forced });
 		assert.equal(

@@ -48,16 +48,16 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 // --- multiplexer ---
 
-export type Multiplexer = "tmux" | "herdr";
+export type Multiplexer = "tmux" | "herdr" | "rex";
 
 /** The explicit `multiplexer` setting, or undefined when absent (auto-detect). Refuses. */
 export function multiplexerSetting(agentDir: string): Multiplexer | undefined {
 	const { file, settings } = read(agentDir);
 	const value = settings.multiplexer;
 	if (value === undefined) return undefined;
-	if (value === "tmux" || value === "herdr") return value;
+	if (value === "tmux" || value === "herdr" || value === "rex") return value;
 	throw new Error(
-		`invalid multiplexer settings ${file}: multiplexer must be "tmux" or "herdr", not ${JSON.stringify(value)}`,
+		`invalid multiplexer settings ${file}: multiplexer must be "tmux", "herdr" or "rex", not ${JSON.stringify(value)}`,
 	);
 }
 

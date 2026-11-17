@@ -247,12 +247,12 @@ test("doctor distinguishes selected tmux, Herdr and Paseo, availability failure,
 	const both = refusal(() =>
 		chooseMultiplexer({ agentDir, inherited: undefined, inTmux: true, inHerdr: true, inPaseo: false }),
 	);
-	assert.match(neither, /^this session is inside neither tmux nor Herdr/);
+	assert.match(neither, /^this session is inside none of tmux, Herdr or Rex/);
 	for (const reason of [
 		neither,
 		both,
 		// The settings path inside the cause must not steer the advice to Paseo or Herdr.
-		'this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in /home/u/paseo-herdr/agent/squire/settings.json)',
+		'this session is inside none of tmux, Herdr or Rex; start Pi in a tmux pane, a Herdr pane or a Rex terminal to open a delegate (or set "multiplexer" in /home/u/paseo-herdr/agent/squire/settings.json)',
 	]) {
 		const host = createHostRouter(
 			[],
@@ -273,7 +273,7 @@ test("doctor distinguishes selected tmux, Herdr and Paseo, availability failure,
 		assert.match(
 			text,
 			reason.includes("both")
-				? /Host prerequisite: set "multiplexer": "tmux" or "herdr".*PI_DELEGATE_MULTIPLEXER/
+				? /Host prerequisite: set "multiplexer": "tmux", "herdr" or "rex".*PI_DELEGATE_MULTIPLEXER/
 				: /Host prerequisite:.*tmux new-session/,
 		);
 		if (reason.includes("both")) assert.doesNotMatch(text, /brew install|apt install/);

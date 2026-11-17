@@ -53,13 +53,13 @@ not all keys on every call.
 
 | Property | Value |
 | --- | --- |
-| Type | `"tmux"` or `"herdr"` |
+| Type | `"tmux"`, `"herdr"` or `"rex"` |
 | Default | Auto-detect, or inherited delegate backend |
 | Scope | Terminal host for new launches; ignored when Paseo hosts Pi |
 | When read | Each launch/resume/fork, frozen before effects |
 | Invalid value / file | Refuses terminal launch and names file; chosen unusable host never falls back. |
 
-[Host selection](hosts.md#choosing-tmux-or-herdr).
+[Host selection](hosts.md#choosing-a-terminal-host).
 
 ### windowPlacement
 
@@ -234,8 +234,8 @@ server's environment plus `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`
 - `PI_DELEGATE_CHAIN`: comma-separated agent names, root downward, including
   the child last, e.g. `coordinator,worker`; names label requests, session ids route them;
 - `PI_DELEGATE_AUTO_EXIT`: `1` or `0`;
-- `PI_DELEGATE_MULTIPLEXER`: `tmux`, `herdr` or `paseo`, the backend that
-  opened it (see [Choosing tmux or Herdr](hosts.md#choosing-tmux-or-herdr) and
+- `PI_DELEGATE_MULTIPLEXER`: `tmux`, `herdr`, `rex` or `paseo`, the backend that
+  opened it (see [Choosing a terminal host](hosts.md#choosing-a-terminal-host) and
   [Paseo support](hosts.md#paseo-support));
 - `PI_DELEGATE_FALLBACK`: remaining model candidates, when any.
 
@@ -243,13 +243,13 @@ Every host copies `PI_SESSION_MAIL_ROOT` and `XDG_STATE_HOME` on new launches
 (and on resumes and forks where supported) when present in the launching Pi's
 environment, including empty or relative values; Squire does not resolve them.
 Tmux and Paseo receive selected parent variables, not the whole environment.
-Herdr starts with the parent's full environment, excluding routing/launch
-identity as described under [Tabs](hosts.md#tabs).
+Herdr and Rex start with the parent's full environment, excluding routing/launch
+identity as described under [Tabs](hosts.md#tabs) and [Rex support](hosts.md#rex-support).
 With pi-session-mail, only absolute values select a location: an absolute
 `PI_SESSION_MAIL_ROOT` wins, otherwise an absolute `XDG_STATE_HOME` selects its
 `pi-session-mail/` subdirectory, otherwise the provider uses its home default.
 Unset keys are not overridden in the host environment, including the new
-Herdr pane's own environment. If that pane, the tmux server or the Paseo daemon
+Herdr or Rex terminal's own environment. If that pane, the tmux server or the Paseo daemon
 supplies different values or defaults (including a different home directory),
 unset or non-absolute parent values can still split the mailboxes. Set an absolute
 `PI_SESSION_MAIL_ROOT` in the parent to keep mail in the same namespace;
@@ -262,7 +262,7 @@ it to skip a dialog or confirmation instead of waiting on one, and any other
 runner that starts Pi unattended can set it too. Anything else the
 parent process has, such as a `CLAUDE_CONFIG_DIR` set by a shell alias,
 reaches a tmux or Paseo child only through a `session:launch` contributor;
-Herdr also inherits the parent's environment as described above. `--model` and
+Herdr and Rex also inherit the parent's environment as described above. `--model` and
 `--thinking` override the agent's defaults for one call, unless the agent
 locks them (see [Agents](agents.md#agents)). For a bound role, `--model` without
 `--routing` launches it outside its routing profile; with `--routing`, the
@@ -272,6 +272,6 @@ An unknown value is refused with close matches, and so is a model with no
 configured credentials. For tmux and Paseo, an API key present only in the
 parent's environment does not reach the delegate: log in through Pi, supply it
 through a `session:launch` contributor, or set it in the tmux server's or
-Paseo daemon's environment respectively. Herdr inherits API keys from the
+Paseo daemon's environment respectively. Herdr and Rex inherit API keys from the
 parent's environment. `--auto-exit` and `--no-auto-exit` override the agent's
 `auto_exit`.

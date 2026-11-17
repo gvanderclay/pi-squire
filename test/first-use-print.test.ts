@@ -7,7 +7,9 @@ import { test } from "node:test";
 
 test("real Pi print/JSON command diagnostics use stderr without messages or a model run", { timeout: 90_000 }, () => {
 	const home = mkdtempSync(join(tmpdir(), "squire-first-print-"));
-	const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(PI_|TMUX|HERDR|PASEO_)/.test(key)));
+	const env = Object.fromEntries(
+		Object.entries(process.env).filter(([key]) => !/^(PI_|TMUX|HERDR|PASEO_|REX_)/.test(key)),
+	);
 	const agent = join(home, "agent");
 	mkdirSync(agent);
 	try {

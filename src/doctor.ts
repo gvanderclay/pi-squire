@@ -28,7 +28,7 @@ function selectionReason(agentDir: string, env: NodeJS.ProcessEnv): string {
 	const explicit = multiplexerSetting(agentDir);
 	if (explicit) return `multiplexer=${explicit} in ${squireSettingsFile(agentDir)}`;
 	if (env[MULTIPLEXER_ENV]) return `${MULTIPLEXER_ENV}=${env[MULTIPLEXER_ENV]} from the launcher`;
-	return "environment detection (TMUX / HERDR_ENV and Herdr pane identity)";
+	return "environment detection (TMUX / HERDR_ENV and Herdr pane identity / REX_SERVER, REX_SESSION and REX_BLOCK)";
 }
 
 /** Read-only preflight: no launch, scan, mail delivery, settings repair, or trust change. */

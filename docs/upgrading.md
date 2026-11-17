@@ -54,7 +54,7 @@ Move retired `<agent dir>/squire/agents/<name>/AGENT.md` files to
 Without `multiplexer`, detecting both tmux and Herdr now refuses rather than
 assuming tmux. Set `{ "multiplexer": "tmux" }` to keep that choice; Paseo-hosted
 Pi always uses Paseo. Existing records continue using their recorded backend.
-See [host selection](hosts.md#choosing-tmux-or-herdr).
+See [host selection](hosts.md#choosing-a-terminal-host).
 
 Tmux companions now default to `<project>-delegates`; existing names (including
 `<project>-delegate-session`) are not renamed. Nested launches and resumes keep

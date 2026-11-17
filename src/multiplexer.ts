@@ -9,6 +9,7 @@ import { createHerdrClient } from "./herdr.ts";
 import type { DelegateHost, OpenedWindow, WindowSpec, WindowTarget } from "./host.ts";
 import { recordLocator, type WindowRecord } from "./locators.ts";
 import { createPaseoHost } from "./paseo.ts";
+import { createRexClient } from "./rex.ts";
 import { type Multiplexer, multiplexerSetting, squireSettingsFile as settingsFile } from "./settings.ts";
 import { createTmuxClient } from "./tmux.ts";
 import type { WindowPlacement } from "./window-placement.ts";
@@ -20,14 +21,15 @@ export const MULTIPLEXER_ENV = "PI_DELEGATE_MULTIPLEXER";
 
 /**
  * The backend a launch uses now. Paseo hosting this Pi > explicit setting > the
- * launcher-recorded backend of this delegate > environment detection (tmux
- * only, Herdr only). Both or neither present refuses; nothing falls back.
+ * launcher-recorded backend of this delegate > environment detection (exactly
+ * one of tmux, Herdr and Rex). Several or none present refuses; nothing falls back.
  */
 export function chooseMultiplexer(input: {
 	agentDir: string;
 	inherited: string | undefined;
 	inTmux: boolean;
 	inHerdr: boolean;
+	inRex?: boolean;
 	/** Whether Paseo hosts this Pi; a setting cannot move a delegate off its host. */
 	inPaseo: boolean;
 }): Multiplexer | "paseo" {
@@ -36,21 +38,44 @@ export function chooseMultiplexer(input: {
 	if (setting) return setting;
 	if (input.inherited !== undefined && input.inherited !== "") {
 		// A Paseo delegate's launcher records "paseo"; it has no terminal to fall back to.
-		if (input.inherited === "tmux" || input.inherited === "herdr" || input.inherited === "paseo")
+		if (
+			input.inherited === "tmux" ||
+			input.inherited === "herdr" ||
+			input.inherited === "rex" ||
+			input.inherited === "paseo"
+		)
 			return input.inherited;
 		throw new Error(
-			`invalid ${MULTIPLEXER_ENV} ${JSON.stringify(input.inherited)} from this delegate's launcher; set "multiplexer": "tmux" or "herdr" in ${settingsFile(input.agentDir)}`,
+			`invalid ${MULTIPLEXER_ENV} ${JSON.stringify(input.inherited)} from this delegate's launcher; set "multiplexer": "tmux", "herdr" or "rex" in ${settingsFile(input.agentDir)}`,
 		);
 	}
-	if (input.inTmux && input.inHerdr)
-		throw new Error(
-			`this session is inside both tmux and Herdr, so pi-squire will not guess where to open delegates; set "multiplexer": "tmux" or "herdr" in ${settingsFile(input.agentDir)}`,
-		);
-	if (input.inTmux) return "tmux";
-	if (input.inHerdr) return "herdr";
-	throw new Error(
-		`this session is inside neither tmux nor Herdr; start Pi in a tmux pane or a Herdr pane to open a delegate (or set "multiplexer" in ${settingsFile(input.agentDir)})`,
+	const present = TERMINALS.filter(
+		({ id }) => ({ tmux: input.inTmux, herdr: input.inHerdr, rex: input.inRex === true })[id],
 	);
+	if (present.length === 1) return present[0].id;
+	if (present.length > 1)
+		throw new Error(
+			`this session is inside ${present.length === 2 ? "both " : ""}${list(
+				present.map(({ name }) => name),
+				"and",
+			)}, so pi-squire will not guess where to open delegates; set "multiplexer": ${list(
+				present.map(({ id }) => JSON.stringify(id)),
+				"or",
+			)} in ${settingsFile(input.agentDir)}`,
+		);
+	throw new Error(
+		`this session is inside none of tmux, Herdr or Rex; start Pi in a tmux pane, a Herdr pane or a Rex terminal to open a delegate (or set "multiplexer" in ${settingsFile(input.agentDir)})`,
+	);
+}
+
+const TERMINALS: readonly { id: Multiplexer; name: string }[] = [
+	{ id: "tmux", name: "tmux" },
+	{ id: "herdr", name: "Herdr" },
+	{ id: "rex", name: "Rex" },
+];
+/** "a", "a and b", "a, b and c". */
+function list(items: readonly string[], joiner: string): string {
+	return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} ${joiner} ${items[items.length - 1]}`;
 }
 
 async function observe(client: DelegateHost, strict: boolean): Promise<ClosableStates> {
@@ -211,8 +236,9 @@ export function createMultiplexer(
 	agentDir = getAgentDir,
 	inherited: () => string | undefined = () => process.env[MULTIPLEXER_ENV],
 	paseo: DelegateHost = createPaseoHost(),
+	rex: DelegateHost = createRexClient(),
 ): DelegateHost {
-	const adapters = [tmux, herdr, paseo];
+	const adapters = [tmux, herdr, paseo, rex];
 	const hosted = (): boolean => paseo.unavailable() === undefined;
 	const present = (): DelegateHost[] => adapters.filter((adapter) => adapter.unavailable() === undefined);
 	const host = (): DelegateHost | undefined => {
@@ -233,6 +259,7 @@ export function createMultiplexer(
 				inherited: inherited(),
 				inTmux: tmux.unavailable() === undefined,
 				inHerdr: herdr.unavailable() === undefined,
+				inRex: rex.unavailable() === undefined,
 				inPaseo: hosted(),
 			}),
 		host,

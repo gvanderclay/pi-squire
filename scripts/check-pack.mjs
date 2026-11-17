@@ -24,10 +24,10 @@ const files = new Set(packed);
 
 // The host a developer runs check-pack from must not reach the Pi that loads
 // the bundle: Paseo's agent id overrides terminal host selection, and TMUX and
-// HERDR decide which multiplexer a delegate would use. Pi sets PI_CODING_AGENT
+// HERDR/REX decide which multiplexer a delegate would use. Pi sets PI_CODING_AGENT
 // itself and check-pack sets PI_CODING_AGENT_DIR for the throwaway home, so
 // neither can prove a leak.
-const DRIVER_CONTEXT = /^(PI_|TMUX|HERDR|PASEO_)/;
+const DRIVER_CONTEXT = /^(PI_|TMUX|HERDR|PASEO_|REX_)/;
 const PI_OWNED = new Set(["PI_CODING_AGENT", "PI_CODING_AGENT_DIR"]);
 
 /** A probe extension whose command name reports whether a stripped variable reached Pi. */

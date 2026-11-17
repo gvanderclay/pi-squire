@@ -67,6 +67,10 @@ const LAUNCH_ENV = [
 	"PASEO_AGENT_CWD",
 	"PI_DELEGATE_PASEO_TOOLS",
 	"PI_DELEGATE_PASEO_TRUST",
+	// A Rex terminal's context, inherited by the suite when it runs inside Rex.
+	"REX_SERVER",
+	"REX_SESSION",
+	"REX_BLOCK",
 ] as const;
 
 /** Delete every launch variable a delegate session exports. */

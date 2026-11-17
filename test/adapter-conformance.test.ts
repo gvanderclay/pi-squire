@@ -3,6 +3,7 @@ import { adapterConformance } from "./adapter-contract.ts";
 import { herdrAdapter } from "./herdr-adapter-fixture.ts";
 import { memoryAdapter, paneFreeMemoryAdapter } from "./memory-adapter.ts";
 import { paseoAdapter } from "./paseo-fixture.ts";
+import { rexAdapter } from "./rex-adapter-fixture.ts";
 import { tmuxAdapter } from "./tmux-adapter-fixture.ts";
 
 // Runs by default whenever tmux is installed. Existing opt-in tmux-real tests
@@ -12,6 +13,7 @@ const noTmux = (probe.error as NodeJS.ErrnoException | undefined)?.code === "ENO
 adapterConformance("memory", memoryAdapter);
 adapterConformance("memory pane-free", paneFreeMemoryAdapter);
 adapterConformance("Herdr wire", herdrAdapter);
+adapterConformance("Rex wire", rexAdapter);
 // An API host creates an agent from fields, so there is no argv to compare.
 const noArgv = "an API host passes argv as create fields; there is no argv to compare";
 adapterConformance("Paseo fake", paseoAdapter, false, {

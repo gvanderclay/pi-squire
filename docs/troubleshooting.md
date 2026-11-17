@@ -19,7 +19,7 @@ not permission to delete records or launch another copy.
 ## Delegate doctor
 
 Run `/delegate-doctor` before a first launch or after a prerequisite refusal.
-It reports the selected tmux/Herdr/Paseo host and selection source (Paseo host,
+It reports the selected tmux/Herdr/Rex/Paseo host and selection source (Paseo host,
 explicit Squire setting, launcher inheritance or environment), the selected
 adapter’s availability preflight, usable agent count and paths, agent parse
 warnings, project-agent trust, Squire/Pi settings parsing, and Pi’s reported
@@ -52,7 +52,7 @@ Look for the actual `[delegate]` result.
 ## Task or result never arrives: mail namespaces
 
 **Read-only check:** confirm that both runtimes load a provider of all four
-`message:*` hooks. Compare the parent, tmux server/Herdr pane/Paseo daemon's
+`message:*` hooks. Compare the parent, tmux server/Herdr pane/Rex terminal/Paseo daemon's
 mail-root settings without dumping credentials or the whole environment.
 With pi-session-mail, only an absolute `PI_SESSION_MAIL_ROOT` selects that root;
 otherwise an absolute `XDG_STATE_HOME` selects its `pi-session-mail/` directory,
@@ -84,7 +84,7 @@ a worktree merely because the daemon cannot be contacted. See
 
 **Read-only check:** inspect status and the host's window/tab/pane listing.
 Verify the exact recorded locator, not just a title. Check that the same tmux
-server or Herdr session is reachable. A moved Herdr pane or replaced terminal,
+server, Herdr session or Rex server/session is reachable. A moved Herdr pane or replaced terminal,
 changed live locator, failed host query, or absent attached tmux client can
 explain refusal. Transcript mtime and quiet telemetry are only hints.
 
@@ -100,7 +100,7 @@ and [navigation](delegation.md#navigation).
 **Read-only check:** check the chosen model, agent defaults/fallbacks and active
 usage-limit marks in status. Check credential readiness in the child's host
 context, not only the parent's. Avoid printing API keys into logs or chat.
-Tmux and Paseo do not copy all parent environment variables; Herdr inherits
+Tmux and Paseo do not copy all parent environment variables; Herdr and Rex inherit
 its parent's environment, excluding host-routing keys.
 
 **Fix:** log in through Pi, configure the tmux server/Paseo daemon environment,

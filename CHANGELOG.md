@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Rex terminal host support (tested with 0.1.0-preview.20, API revision 16):
+  background windows, verified navigation/peek, owned-block close, auto-exit,
+  resume and fork. Select `multiplexer: "rex"` or use Rex-only detection.
+  Ambiguous/no-host refusals now name Rex alongside tmux and Herdr; the
+  refusal-message tests in `first-use`, `first-use-print`, `herdr-parity`,
+  `host-admission` and `paseo-choice` deliberately track the new wording.
+
 ## [0.33.1] - 2026-11-17
 
 ### Changed

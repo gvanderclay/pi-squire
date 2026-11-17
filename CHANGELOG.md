@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-11-17
+
 ### Changed
 
 - A Pi that opens a session another process already owns still quits, but its
@@ -2012,7 +2014,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.33.1...HEAD
+[0.33.1]: https://github.com/gvanderclay/pi-squire/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/gvanderclay/pi-squire/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/gvanderclay/pi-squire/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/gvanderclay/pi-squire/compare/v0.30.0...v0.31.0

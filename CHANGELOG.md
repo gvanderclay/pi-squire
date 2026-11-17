@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A Pi that opens a session another process already owns still quits, but its
+  refusal now names the owner's PID, command, start time and parent process,
+  and gives the `kill <pid>` and `pi --session` commands that move the session
+  here. In the TUI the refusal is printed again after Pi exits, where it was
+  previously cleared with the screen.
+
 ## [0.33.0] - 2026-11-15
 
 ### Added

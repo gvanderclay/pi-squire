@@ -4,11 +4,9 @@
 // the terminal when its program exits and keeps it only after a start that
 // fails at once; terminal state is never task state.
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
 	type DelegateHost,
+	type NoViewer,
 	type OpenedWindow,
 	type ShowResult,
 	type StartKind,
@@ -17,16 +15,31 @@ import {
 	type WindowTarget,
 } from "./host.ts";
 import type { VerifiedLiveWindow, WindowRecord } from "./locator-rules.ts";
+import { type AcquiredCompanion, createRexCompanions, type RexCompanions } from "./rex-companions.ts";
+import { launchEnvironment, readLaunchStatus, stageLaunch } from "./rex-launch.ts";
 import { type RexLocator, type RexPaneLocator, rexLocator, rexLocators, rexPaneLocator } from "./rex-locator.ts";
+import type { WindowPlacement } from "./window-placement.ts";
 import type { ClosableStates, WindowLook } from "./window-state.ts";
+
+/** Launch staging lives in its own module; re-exported for the existing imports. */
+export { launchEnvironment };
 
 /** The lowest API revision these commands and reply fields were verified on. */
 const API_REVISION = 16;
 /** The rows a peek keeps; `rex capture` has no tail option and returns the whole scrollback. */
 const PEEK_LINES = 500;
+/** Block lists are read for every live session each sweep; keep the fan-out bounded. */
+const SNAPSHOT_CONCURRENCY = 4;
 
 type Json = Record<string, unknown>;
 type Block = { block_id: string; window_id?: string };
+type LiveSession = { id: string; label: string };
+/**
+ * One observation sweep of the pinned endpoint. `sessions` is undefined when
+ * the session list failed, which makes every record unknown. A listed session
+ * maps to its blocks, or to undefined when that session's own query failed.
+ */
+type ServerSnapshot = { sessions: LiveSession[] | undefined; blocks: Map<string, Block[] | undefined> };
 /** Which Rex server a call reaches: the endpoint Rex put in the terminal's REX_SERVER. */
 export type RexRoute = { server: string };
 export type RexRun = (route: RexRoute, args: string[]) => Promise<string>;
@@ -37,8 +50,7 @@ function object(value: unknown): Json {
 	return value as Json;
 }
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0;
-const routing = (key: string): boolean => /^(?:TMUX|HERDR|REX_)/.test(key);
-const launchIdentity = (key: string): boolean => key.startsWith("PI_DELEGATE_") || key === "PI_SQUIRE_LIVE_LAUNCH";
+const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 function context(): RexContext | undefined {
 	const { REX_SERVER, REX_SESSION, REX_BLOCK } = process.env;
@@ -75,82 +87,57 @@ function runRex(timeout: number): RexRun {
 		});
 }
 
-type LaunchStatus = { pid: number; child?: number; exit?: number };
-function launchStatus(locator: RexLocator): LaunchStatus | undefined {
-	try {
-		const value = object(JSON.parse(readFileSync(`${locator.launchFile}.status`, "utf8")));
-		if (
-			!Number.isSafeInteger(value.pid) ||
-			(value.pid as number) <= 0 ||
-			(value.exit !== undefined &&
-				(!Number.isSafeInteger(value.exit) || (value.exit as number) < 0 || (value.exit as number) > 255))
-		)
-			throw new Error("invalid launch status");
-		return value as LaunchStatus;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		throw error;
-	}
-}
-/**
- * The parent's environment without any multiplexer's routing or this
- * coordinator's delegation identity, then the launch's own additions. Rex
- * gives the new terminal its own REX_* values, which the runner keeps.
- */
-export function launchEnvironment(
-	spec: Pick<WindowSpec, "env">,
-	parent: Readonly<Record<string, string | undefined>> = process.env,
-): Record<string, string> {
-	const kept = (
-		source: Readonly<Record<string, string | undefined>>,
-		drop: (key: string) => boolean,
-	): [string, string][] =>
-		Object.entries(source).filter(
-			(entry): entry is [string, string] => !routing(entry[0]) && !drop(entry[0]) && entry[1] !== undefined,
-		);
-	return Object.fromEntries([...kept(parent, launchIdentity), ...kept(spec.env, () => false)]);
-}
-/** Stage argv/env in an owner-only file: Rex starts node on it directly, with no shell line. */
-function stage(spec: WindowSpec): string {
-	const path = join(mkdtempSync(join(tmpdir(), "pi-squire-rex-")), "launch.mjs");
-	const data = JSON.stringify({ argv: spec.argv, env: launchEnvironment(spec), cwd: spec.cwd });
-	writeFileSync(
-		path,
-		`import {spawn} from 'node:child_process';
-import {writeFileSync,renameSync} from 'node:fs';
-const spec = ${data};
-const statusFile = ${JSON.stringify(`${path}.status`)};
-const status = {pid:process.pid};
-function publish(){writeFileSync(statusFile+'.next',JSON.stringify(status),{mode:0o600});renameSync(statusFile+'.next',statusFile);}
-const env = {...process.env};
-for(const key of Object.keys(env)) if(key.startsWith('TMUX') || key.startsWith('HERDR') || key.startsWith('PI_DELEGATE_') || key==='PI_SQUIRE_LIVE_LAUNCH') delete env[key];
-Object.assign(env,spec.env);
-publish();
-const child=spawn(spec.argv[0],spec.argv.slice(1),{cwd:spec.cwd,env,stdio:'inherit'});
-status.child=child.pid;publish();
-function finish(code){status.exit=code;publish();process.exitCode=code;if(code!==0) console.error('pi-squire: delegate exited with status '+code);}
-child.on('error',(error)=>{console.error('pi-squire: failed to start delegate: '+error.message);finish(1);});
-child.on('exit',(code,signal)=>{if(signal) console.error('pi-squire: delegate terminated by '+signal);finish(code??1);});
-`,
-		{ mode: 0o600 },
-	);
-	return path;
+/** Rex reports a session without blocks as null; anything else must be a block array. */
+function parseBlocks(raw: string): Block[] {
+	const listed = object(JSON.parse(raw)).blocks;
+	const blocks = listed === null ? [] : listed;
+	if (!Array.isArray(blocks)) throw new Error("invalid Rex block list");
+	const found = blocks.map((item): Block => {
+		const block = object(item);
+		if (!text(block.block_id)) throw new Error("Rex block list lacks block identity");
+		return { block_id: block.block_id, ...(text(block.window_id) ? { window_id: block.window_id } : {}) };
+	});
+	if (new Set(found.map((block) => block.block_id)).size !== found.length) throw new Error("ambiguous Rex block list");
+	return found;
 }
 
-type RexOptions = { run?: RexRun; context?: () => RexContext | undefined; timeoutMs?: number };
+/** Rex reports no sessions as null; labels are not unique and are never identity. */
+function parseSessions(raw: string): LiveSession[] {
+	const listed = object(JSON.parse(raw)).sessions;
+	const sessions = listed === null ? [] : listed;
+	if (!Array.isArray(sessions)) throw new Error("invalid Rex session list");
+	const found = sessions.map((item): LiveSession => {
+		const session = object(item);
+		if (!text(session.session_id) || typeof session.label !== "string")
+			throw new Error("Rex session list lacks session identity");
+		return { id: session.session_id, label: session.label };
+	});
+	if (new Set(found.map((session) => session.id)).size !== found.length) throw new Error("ambiguous Rex session list");
+	return found;
+}
+
+type RexOptions = {
+	run?: RexRun;
+	context?: () => RexContext | undefined;
+	timeoutMs?: number;
+	/** Companion receipt ownership; defaults to this agent directory and the same runner. */
+	companions?: RexCompanions;
+};
 class RexClient implements DelegateHost {
 	readonly id = "rex";
 	readonly windowNoun = "window";
-	readonly usesWindowPlacement = false;
+	readonly usesWindowPlacement = true;
 	readonly requiresSessionGuard = rexLocators.requiresSessionGuard;
 	readonly windowListRefusal = "could not ask Rex for its delegate windows";
 	readonly refusal =
 		"this session is not inside a Rex terminal (needs REX_SERVER, REX_SESSION and REX_BLOCK); start Pi in Rex to open a delegate window (multiplexer: rex)";
 	readonly run: RexRun;
 	readonly caller: () => RexContext | undefined;
+	readonly companions: RexCompanions;
 	constructor(options: RexOptions) {
 		this.run = options.run ?? runRex(options.timeoutMs ?? 10_000);
 		this.caller = options.context ?? context;
+		this.companions = options.companions ?? createRexCompanions({ run: this.run });
 	}
 	taskMailTiming(kind: StartKind): "before-open" | "after-open" {
 		return kind === "resume" ? "after-open" : "before-open";
@@ -166,9 +153,9 @@ class RexClient implements DelegateHost {
 			if (!Number.isSafeInteger(server.api_revision) || (server.api_revision as number) < API_REVISION)
 				return `Rex delegation needs a server with API revision ${API_REVISION} or later (verified with Rex 0.1.0-preview.20); no other host was tried`;
 			if (server.endpoint !== own.server) return "Rex server identity changed; launch refused";
-			// Delegates open in the session this Pi's terminal belongs to.
+			// The parent's own block must still be in the session Pi started in.
 			if (!(await this.snapshot(own)).some((block) => block.block_id === own.block))
-				return `this Pi's Rex block ${own.block} is no longer in session ${own.session}; delegates open only in the session Pi started in, so launch refused. Restart Pi in the Rex session you want`;
+				return `this Pi's Rex block ${own.block} is no longer in session ${own.session}; delegates open relative to the session Pi started in, so launch refused. Restart Pi in the Rex session you want`;
 			return undefined;
 		} catch (error) {
 			return `could not ask Rex for the parent block/server: ${String(error)}; no other host was tried`;
@@ -180,79 +167,140 @@ class RexClient implements DelegateHost {
 		if (check) return this.available();
 		return this.caller() ? undefined : this.refusal;
 	}
-	/** Every block of the caller's session, detached ones included. */
-	async snapshot(own: RexContext): Promise<Block[]> {
-		const listed = object(JSON.parse(await this.run(own, ["block", "ls", "-s", own.session, "--json"]))).blocks;
-		// Rex reports a session without blocks as null.
-		const blocks = (listed === null ? [] : listed) as unknown;
-		if (!Array.isArray(blocks)) throw new Error("invalid Rex block list");
-		const found = blocks.map((item): Block => {
-			const block = object(item);
-			if (!text(block.block_id)) throw new Error("Rex block list lacks block identity");
-			return { block_id: block.block_id, ...(text(block.window_id) ? { window_id: block.window_id } : {}) };
-		});
-		if (new Set(found.map((block) => block.block_id)).size !== found.length)
-			throw new Error("ambiguous Rex block list");
-		return found;
+	/** Every block of one session, detached ones included. */
+	async sessionBlocks(own: RexContext, session: string): Promise<Block[]> {
+		return parseBlocks(await this.run(own, ["block", "ls", "-s", session, "--json"]));
 	}
-	/** A locator this Pi can act on: same server and session as its own terminal. */
-	private reachable<T extends RexLocator | RexPaneLocator>(
+	/** The caller's own session, as availability checks it. */
+	snapshot(own: RexContext): Promise<Block[]> {
+		return this.sessionBlocks(own, own.session);
+	}
+	/** Every live session on the pinned endpoint. */
+	async sessions(own: RexContext): Promise<LiveSession[]> {
+		return parseSessions(await this.run(own, ["api", "call", "session.list"]));
+	}
+	/**
+	 * One sweep of the pinned endpoint: the live session ids, then each one's
+	 * blocks. A failed session list makes every record unknown; a failed
+	 * per-session block query leaves that session unknown, never gone.
+	 */
+	async serverSnapshot(own: RexContext): Promise<ServerSnapshot> {
+		let sessions: LiveSession[];
+		try {
+			sessions = await this.sessions(own);
+		} catch {
+			return { sessions: undefined, blocks: new Map() };
+		}
+		const blocks = new Map<string, Block[] | undefined>();
+		const queue = [...sessions];
+		const sweep = async (): Promise<void> => {
+			for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+				try {
+					blocks.set(next.id, await this.sessionBlocks(own, next.id));
+				} catch {
+					blocks.set(next.id, undefined);
+				}
+			}
+		};
+		await Promise.all(Array.from({ length: Math.min(SNAPSHOT_CONCURRENCY, queue.length) }, sweep));
+		return { sessions, blocks };
+	}
+	/** A locator this Pi can act on: the same endpoint. Sessions differ by placement. */
+	private sameServer<T extends RexLocator | RexPaneLocator>(
 		locator: T | undefined,
 		own: RexContext | undefined,
 	): T | undefined {
-		return locator && own && locator.server === own.server && locator.session === own.session ? locator : undefined;
+		return locator && own && locator.server === own.server ? locator : undefined;
 	}
 	async states(): Promise<ClosableStates> {
 		const own = this.caller();
-		let blocks: Block[] | undefined;
-		try {
-			if (own) blocks = await this.snapshot(own);
-		} catch {
-			/* unavailable is unknown, never gone */
-		}
-		const locate = (record: WindowRecord): RexLocator | undefined => this.reachable(rexLocator(record.locator), own);
+		const observed: ServerSnapshot = own
+			? await this.serverSnapshot(own).catch(() => ({ sessions: undefined, blocks: new Map() }))
+			: { sessions: undefined, blocks: new Map() };
+		const locate = (record: WindowRecord): RexLocator | RexPaneLocator | undefined =>
+			this.sameServer(rexLocator(record.locator) ?? rexPaneLocator(record.locator), own);
+		/** The blocks this sweep read for the locator's session; undefined when it could not read them. */
+		const blocksOf = (locator: RexLocator | RexPaneLocator): Block[] | undefined =>
+			observed.blocks.get(locator.session);
 		const listed = (record: WindowRecord): boolean => {
-			const locator = locate(record) ?? this.reachable(rexPaneLocator(record.locator), own);
-			return !!locator && !!blocks?.some((block) => block.block_id === locator.block);
-		};
-		const look = (record: WindowRecord): WindowLook => {
 			const locator = locate(record);
-			if (!locator || !blocks) return { state: "unknown" };
-			if (!listed(record)) return { state: "gone" };
-			try {
-				// A retained terminal whose runner published an exit is no longer running.
-				return { state: launchStatus(locator)?.exit === undefined ? "running" : "gone", session: locator.session };
-			} catch {
-				return { state: "unknown" };
-			}
+			return locator !== undefined && blocksOf(locator)?.some((block) => block.block_id === locator.block) === true;
 		};
+		const look = (record: WindowRecord): WindowLook => this.recordLook(observed, locate(record));
 		return {
-			answered: blocks !== undefined,
+			answered: observed.sessions !== undefined,
 			look,
 			state: (record: WindowRecord): WindowLook["state"] => look(record).state,
 			listed,
 			close: async (record: WindowRecord): Promise<boolean> => {
 				const locator = locate(record);
-				if (!locator || !blocks || !own) throw new Error("could not verify Rex block identity; no block was closed");
-				if (!listed(record)) return false;
-				// Fresh observation immediately before close. Close only the owned
-				// block, never its window, which may now hold blocks the user added.
-				const present = async (): Promise<boolean> =>
-					(await this.snapshot(own)).some((block) => block.block_id === locator.block);
-				if (!(await present())) return false;
-				try {
-					await this.run(own, ["block", "close", "-s", locator.session, locator.block]);
-				} catch (error) {
-					// The program may have exited between the observation and the close.
-					if (await present()) throw error;
-					return false;
-				}
-				return true;
+				if (!locator || !own || !observed.sessions)
+					throw new Error("could not verify Rex block identity; no block was closed");
+				if (listed(record)) return this.closeBlock(own, locator);
+				// A failed per-session query is unknown, not proof of absence.
+				if (blocksOf(locator) === undefined && observed.blocks.has(locator.session))
+					throw new Error("could not read that Rex session's blocks; no block was closed");
+				return false;
 			},
 		};
 	}
+	/** One record's state from a completed sweep: unknown is never gone. */
+	private recordLook(observed: ServerSnapshot, locator: RexLocator | RexPaneLocator | undefined): WindowLook {
+		if (!locator || !observed.sessions) return { state: "unknown" };
+		// A session the successful list did not name is positively gone; a listed
+		// session whose block query failed is unknown, never gone.
+		if (!observed.blocks.has(locator.session)) return { state: "gone" };
+		const blocks = observed.blocks.get(locator.session);
+		if (blocks === undefined) return { state: "unknown" };
+		if (!blocks.some((block) => block.block_id === locator.block)) return { state: "gone" };
+		// A pane locator is this Pi's own live terminal: no launch file to read.
+		if (locator.kind === "pane") return { state: "running", session: locator.session };
+		try {
+			// A retained terminal whose runner published an exit is no longer running.
+			return {
+				state: readLaunchStatus(locator.launchFile)?.exit === undefined ? "running" : "gone",
+				session: locator.session,
+			};
+		} catch {
+			return { state: "unknown" };
+		}
+	}
+	/**
+	 * Fresh observation immediately before close, in the locator's own session.
+	 * Close only the owned block, never its window or session.
+	 */
+	private async closeBlock(own: RexContext, locator: RexLocator | RexPaneLocator): Promise<boolean> {
+		const present = async (): Promise<boolean> => {
+			try {
+				return (await this.sessionBlocks(own, locator.session)).some((block) => block.block_id === locator.block);
+			} catch (error) {
+				// The whole session may have gone; only a successful list that omits it
+				// proves that, and a transport failure stays unknown.
+				if (await this.sessionGone(own, locator.session)) return false;
+				throw error;
+			}
+		};
+		if (!(await present())) return false;
+		try {
+			await this.run(own, ["block", "close", "-s", locator.session, locator.block]);
+		} catch (error) {
+			// The program may have exited between the observation and the close.
+			if (await present()) throw error;
+			return false;
+		}
+		return true;
+	}
 
-	async openWindow(spec: WindowSpec): Promise<OpenedWindow> {
+	/** The proved companion session for this base, or the caller's own session. */
+	private async target(
+		own: RexContext,
+		placement: WindowPlacement,
+		companion: string,
+	): Promise<AcquiredCompanion | { session: string }> {
+		if (placement === "current") return { session: own.session };
+		return this.companions.acquire({ server: own.server }, companion);
+	}
+	async openWindow(spec: WindowSpec, placement: WindowPlacement, companion: string): Promise<OpenedWindow> {
 		const problem = await this.available();
 		if (problem) throw new WindowOpenError(problem, "not-opened");
 		const own = this.caller();
@@ -262,18 +310,22 @@ class RexClient implements DelegateHost {
 			throw new WindowOpenError(`Rex cannot label a window ${JSON.stringify(spec.name)}`, "not-opened");
 		let launchFile: string;
 		try {
-			launchFile = stage(spec);
+			launchFile = stageLaunch(spec);
 		} catch (error) {
-			throw new WindowOpenError(String(error), "not-opened");
+			throw new WindowOpenError(message(error), "not-opened");
 		}
+		// Receipt, session-list and readback failures all happen before a delegate
+		// window is requested, so none of them can have started a delegate.
+		const target = await this.target(own, placement, companion);
+		let created: Json;
 		try {
-			const created = object(
+			created = object(
 				JSON.parse(
 					await this.run(own, [
 						"window",
 						"new",
 						"-s",
-						own.session,
+						target.session,
 						spec.name,
 						"-c",
 						spec.cwd,
@@ -287,30 +339,31 @@ class RexClient implements DelegateHost {
 					]),
 				),
 			);
-			const ids = created.block_ids;
-			if (!text(created.window_id) || !Array.isArray(ids) || ids.length !== 1 || !text(ids[0]))
-				throw new Error("Rex create response has inconsistent identity");
-			const locator: RexLocator = {
-				adapter: "rex",
-				version: 1,
-				kind: "window",
-				server: own.server,
-				session: own.session,
-				window: created.window_id,
-				block: ids[0],
-				name: spec.name,
-				launchFile,
-			};
-			return {
-				id: locator.window,
-				session: locator.session,
-				locator,
-				location: `window ${spec.name} (${locator.window}) in Rex session ${locator.session}`,
-			};
 		} catch (error) {
 			// A lost or malformed reply does not say whether Rex created the window.
-			throw new WindowOpenError(String(error), "unknown");
+			throw new WindowOpenError(message(error), "unknown");
 		}
+		const ids = created.block_ids;
+		if (!text(created.window_id) || !Array.isArray(ids) || ids.length !== 1 || !text(ids[0]))
+			throw new WindowOpenError("Rex create response has inconsistent identity", "unknown");
+		const locator: RexLocator = {
+			adapter: "rex",
+			version: 1,
+			kind: "window",
+			server: own.server,
+			session: target.session,
+			window: created.window_id,
+			block: ids[0],
+			name: spec.name,
+			launchFile,
+		};
+		const label = "label" in target ? `${target.label} (${locator.session})` : locator.session;
+		return {
+			id: locator.window,
+			session: locator.session,
+			locator,
+			location: `window ${spec.name} (${locator.window}) in Rex session ${label}`,
+		};
 	}
 	async closeTaskless(opened: OpenedWindow): Promise<void> {
 		const closed = await this.states()
@@ -322,7 +375,7 @@ class RexClient implements DelegateHost {
 			`the resumed delegate's ${opened.location ?? `window ${opened.id}`} could not be closed and may still run Pi with no task. Check it is the delegate, then close its terminal yourself (rex block close -s ${own?.session} ${own?.block})`,
 		);
 	}
-	/** The caller's window id and label, read from the session's view. */
+	/** The caller's window id and label, read from its own session's view. */
 	private async window(own: RexContext, block: string): Promise<{ id: string; label: string } | undefined> {
 		const view = object(JSON.parse(await this.run(own, ["window", "ls", "-s", own.session, "--json"])));
 		for (const item of Array.isArray(view.windows) ? view.windows : []) {
@@ -343,37 +396,47 @@ class RexClient implements DelegateHost {
 		if (!live) return undefined;
 		return { adapter: "rex", version: 1, kind: "pane", ...own, window: live.id, name: live.label };
 	}
+	/** Positive proof the exact session no longer exists: a successful list that omits it. */
+	private async sessionGone(own: RexContext, session: string): Promise<boolean> {
+		try {
+			return !(await this.sessions(own)).some((item) => item.id === session);
+		} catch {
+			// A failed list proves nothing about the session.
+			return false;
+		}
+	}
+	/** The locator's block as its recorded session lists it now, across sessions of this endpoint. */
+	private async blockIn(own: RexContext, locator: RexLocator | RexPaneLocator): Promise<Block | undefined> {
+		return (await this.sessionBlocks(own, locator.session)).find((block) => block.block_id === locator.block);
+	}
 	async verifiedTarget(value: unknown): Promise<RexLocator | RexPaneLocator | undefined> {
 		const own = this.caller();
-		const locator = this.reachable(rexLocator(value) ?? rexPaneLocator(value), own);
+		const locator = this.sameServer(rexLocator(value) ?? rexPaneLocator(value), own);
 		if (!locator || !own) return undefined;
-		return (await this.snapshot(own)).some((block) => block.block_id === locator.block) ? locator : undefined;
+		return (await this.blockIn(own, locator)) ? locator : undefined;
 	}
 	async verifyLivePane(value: object): Promise<VerifiedLiveWindow | undefined> {
 		if (!rexPaneLocator(value)) return undefined;
 		const locator = await this.verifiedTarget(value);
 		return locator ? { locator, paneTarget: locator.block } : undefined;
 	}
-	async show(target: WindowTarget, verify: () => Promise<boolean>): Promise<ShowResult> {
-		const own = this.caller();
-		if (!own) return { text: this.refusal, brief: "no Rex terminal context" };
-		let client: string;
+	/**
+	 * The one app attached to the calling Pi's session. The delegate's session
+	 * may have no app attached yet, so viewer selection never looks there.
+	 */
+	private async viewer(own: RexContext): Promise<{ client: string } | NoViewer> {
+		let apps: Json[];
 		try {
 			const attached = object(JSON.parse(await this.run(own, ["client", "ls", "-s", own.session, "--json"]))).clients;
 			if (!Array.isArray(attached)) throw new Error("invalid Rex client list");
-			const apps = attached.map(object).filter((entry) => object(entry.info).kind === "app");
-			if (apps.length === 0)
-				return {
-					text: `no Rex app is attached to session ${own.session}, so nothing can show the window; open that session in Rex`,
-					brief: "no Rex app attached",
-				};
-			if (apps.length !== 1)
-				return {
-					text: `several Rex apps are attached to session ${own.session}; select the delegate in the intended app yourself`,
-					brief: "ambiguous Rex app",
-				};
-			if (!text(apps[0].client_id)) throw new Error("Rex app lacks client identity");
-			client = apps[0].client_id;
+			apps = attached.map(object).filter((entry) => {
+				// `info` is optional: a client that said nothing is not an app.
+				const info = entry.info;
+				if (!info || typeof info !== "object" || Array.isArray(info)) return false;
+				if ((info as Json).kind !== "app") return false;
+				// Rex lists a lost client for up to 60 seconds; a missing state counts as connected.
+				return entry.connection_state !== "lost";
+			});
 		} catch (cause) {
 			return {
 				text: `could not ask Rex which apps show this session: ${String(cause)}`,
@@ -381,11 +444,29 @@ class RexClient implements DelegateHost {
 				cause,
 			};
 		}
+		if (apps.length === 0)
+			return {
+				text: `no Rex app is attached to session ${own.session}, so nothing can show the window; open that session in Rex`,
+				brief: "no Rex app attached",
+			};
+		if (apps.length !== 1)
+			return {
+				text: `several Rex apps are attached to session ${own.session}; select the delegate in the intended app yourself`,
+				brief: "ambiguous Rex app",
+			};
+		if (!text(apps[0].client_id)) throw new Error("Rex app lacks client identity");
+		return { client: apps[0].client_id };
+	}
+	async show(target: WindowTarget, verify: () => Promise<boolean>): Promise<ShowResult> {
+		const own = this.caller();
+		if (!own) return { text: this.refusal, brief: "no Rex terminal context" };
+		const viewer = await this.viewer(own);
+		if ("text" in viewer) return viewer;
 		const origin = await this.observeLivePane().catch(() => undefined);
 		if (!(await verify())) return { shown: false };
 		const locator = await this.verifiedTarget(target.locator);
 		if (!locator) throw new Error("no verified open window for this delegation; window changed or unavailable");
-		const block = (await this.snapshot(own)).find((entry) => entry.block_id === locator.block);
+		const block = await this.blockIn(own, locator);
 		if (!block?.window_id) throw new Error("the Rex block is no longer in a window");
 		// Rex's session.focus_block changes server state, not the app's displayed
 		// tab. Use the app's session.select action (rex -C CLIENT actions --json,
@@ -393,19 +474,22 @@ class RexClient implements DelegateHost {
 		// Control request cannot leave keyboard actions targeting an invisible tab.
 		await this.run(own, [
 			"-C",
-			client,
+			viewer.client,
 			"do",
 			"session.select",
 			`session_id=${locator.session}`,
 			`window_id=${block.window_id}`,
 		]);
-		const current = (await this.snapshot(own)).find((entry) => entry.block_id === locator.block);
+		const current = await this.blockIn(own, locator);
 		if (current?.window_id !== block.window_id)
 			throw new Error("Rex showed the window, but the delegate block moved or closed; retry navigation");
 		await this.run(own, ["focus", "-s", locator.session, locator.block]);
 		return {
 			shown: true,
-			returnHint: `select ${origin ? `window ${origin.name}` : "your previous window"} in Rex to return`,
+			// "Previous window" alone is ambiguous when the delegate is in another session.
+			returnHint: origin
+				? `select window ${origin.name} in Rex session ${origin.session} to return`
+				: `select your previous window in Rex session ${own.session} to return`,
 		};
 	}
 	async peek(target: WindowTarget): Promise<string> {

@@ -1,6 +1,7 @@
-// Call-time choice of where delegate windows open. `companion` (the default)
-// opens them in a shared project session named `<project>-<companionSuffix>`
-// (default suffix `delegates`); `current` opens in the parent's own session. Read from
+// Call-time choice of where delegate windows open, for hosts with window
+// placement (tmux and Rex). `companion` (the default) opens them in a shared
+// project session named `<project>-<companionSuffix>` (default suffix
+// `delegates`); `current` opens in the parent's own session. Read from
 // `<agent dir>/squire/settings.json` at every launch, like `worktreeRoot`.
 import { basename } from "node:path";
 
@@ -15,7 +16,7 @@ import {
 
 export { type WindowPlacement, windowSettings };
 
-/** A preferred base, never a selected numbered companion or a tmux locator. */
+/** A preferred base, never a selected numbered companion or a host locator. */
 export function assertRootPlacement(value: unknown): asserts value is string {
 	if (typeof value !== "string" || !safeName.test(value) || !value.includes("-") || numberedEnding.test(value))
 		throw new Error(

@@ -6,6 +6,33 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Rex delegates now use the same `windowPlacement`/`companionSuffix` choice
+  as tmux. The default `companion` opens one full background window per
+  delegate in a managed project companion session (`<project>-delegates`);
+  `current` opens it in the invoking Pi's own Rex session. Rex has no session
+  metadata marker, so a companion is proved by a durable exact-id creation
+  receipt under `<agent dir>/squire/rex-companions/`, never by its label.
+  Occupied or unproven names are skipped and numbered, and receipts are scoped
+  to one agent directory and one server endpoint. Empty companion sessions are
+  retained rather than removed, because Rex has no atomic empty-only destroy.
+- Rex status, widget, peek, navigation and close now work when the delegate is
+  in another session of the same server. One observation sweep lists the
+  server's sessions and each session's blocks; a failed per-session query is
+  unknown, never gone, and a session the successful list omits is gone.
+  Navigation still selects through exactly one connected app attached to the
+  invoking Pi's session, then focuses the exact block, and the return hint
+  names the originating session and window.
+- Invalid `windowPlacement`/`companionSuffix` values now refuse a Rex launch
+  at admission, before task mail or a window. Deliberate test changes:
+  `test/rex.test.ts`'s "Rex delegate opens an unfocused window…" now expects a
+  managed companion session, and "another session's or server's locator is
+  unknown and never closed" now expects a same-server other-session locator to
+  be observed and closed while a foreign endpoint stays unknown. New
+  `test/rex-companions.test.ts` covers receipts, numbering, races, storage
+  failures and separate-process contention.
+
 ### Fixed
 
 - Rex delegate-list Enter and `/delegate-open` now select the window in the

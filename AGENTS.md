@@ -34,7 +34,10 @@ window: the `/delegate` command and the `delegate`, `delegation_status` and
   the parent's available tools, `tool-bundles.ts` reads the `toolBundles`
   setting, and `tmux.ts` talks to tmux (`tmux-locator.ts` owns its opaque locator encoding and matching,
   `tmux-command.ts` runs each tmux command and escapes its arguments for tmux's own parser);
-  `rex.ts` is the Rex terminal host and `rex-locator.ts` owns its block identity;
+  `rex.ts` is the Rex terminal host, `rex-launch.ts` stages its launch file and
+  runner status, `rex-companions.ts` owns Rex companion receipts and
+  acquisition (`companion-names.ts` holds the numbering tmux and Rex share),
+  and `rex-locator.ts` owns its block identity;
   `paseo-locator.ts` owns the Paseo agent locator, `paseo-api.ts` talks to the
   Paseo daemon and CLI and loads both only inside a call, `paseo-resume-api.ts`
   verifies native reload and confirmed rollback, `paseo-availability.ts`

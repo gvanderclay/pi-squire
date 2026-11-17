@@ -116,7 +116,16 @@ export function resetRoot(): void {
 	rmSync(join(agentDir, "squire", "settings.json"), CLEAR);
 	rmSync(join(agentDir, "squire", "routing.json"), CLEAR);
 	rmSync(join(agentDir, "squire", "routing-state"), CLEAR);
-	for (const name of ["identity", "child-tasks", "trees", "trust", "session-titles", "live-sessions", "owners"])
+	for (const name of [
+		"identity",
+		"child-tasks",
+		"trees",
+		"trust",
+		"session-titles",
+		"live-sessions",
+		"owners",
+		"rex-companions",
+	])
 		rmSync(join(agentDir, "squire", name), CLEAR);
 	clearLaunchEnv();
 }

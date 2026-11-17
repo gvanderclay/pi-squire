@@ -132,12 +132,24 @@ and [completion holds](integrations.md#process-local-completion-holds-v1).
 
 ## “This Pi session is already open in another process”
 
+Squire allows one Pi process per session, because two processes appending to
+one session file corrupt it. A second Pi that opens the session shows this
+refusal and quits. In the TUI the refusal is printed again after the terminal is
+restored, so it stays readable. It names the owner's PID, command, start time
+and parent process, which tells a forgotten terminal from a Pi a host started:
+Paseo, for example, can start a Pi for an agent it has just archived.
+
 **Read-only check:** inspect the named PID and owner record under
 `<agent dir>/squire/owners/`. Verify whether that process is live/paused and owns
 this exact Pi session id in this agent directory. This protection is Squire's
 process ownership, not a detector for every unrelated Pi process.
 
-**Fix:** return to the existing owner and shut down the duplicate. For a truly
+**Fix:** return to the existing owner and shut down the duplicate. To use the
+session here instead, quit the owner with the `kill <pid>` the refusal prints.
+Pi treats SIGTERM as an orderly shutdown, which ends any turn that process is
+running and releases the owner record; then reopen with the printed
+`pi --session` command. `kill -9 <pid>` skips that shutdown; its record stays
+but no longer blocks once the PID has exited. For a truly
 stale/corrupt owner record, first verify that the original owner has ended and
 stop affected Squire runtimes, then repair only that record and reopen once.
 Never evict a live owner, remove live lock tickets, force adoption, or clear the

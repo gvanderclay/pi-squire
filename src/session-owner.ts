@@ -7,6 +7,7 @@ import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil
 import { readChildRecords } from "./child-tasks.ts";
 import { readIdentity } from "./identity.ts";
 import { readState, writeState } from "./local-state.ts";
+import { describeProcess, ownerRefusal } from "./owner-refusal.ts";
 import { type Inbound, isStarted, sessionIdOf } from "./results.ts";
 import { processAlive, withTreeLock } from "./tree-lock.ts";
 import { readTree } from "./tree-registry.ts";
@@ -103,19 +104,15 @@ export class SessionOwner {
 		this.failed = false;
 		this.warned.clear();
 		this.owned = false;
-		this.owned = lock(this.session, () => {
+		// The live owner's PID, or undefined once this process holds the record.
+		const live: number | undefined = lock(this.session, () => {
 			const saved: OwnerRecord | undefined = ownerRecord(this.session as string);
-			if (saved && saved.token !== this.token && processAlive(saved.pid)) return false;
+			if (saved && saved.token !== this.token && processAlive(saved.pid)) return saved.pid;
 			writeState(`${base(this.session as string)}.json`, { pid: process.pid, token: this.token });
-			return true;
+			return undefined;
 		});
-		if (!this.owned) {
-			ctx.ui.notify(
-				`delegate: this Pi session is already open in another process: ${ownerDetails(this.session)}. Squire actions are disabled here; return to the existing owner. Inspect the PID/record if stale; never evict a live owner.`,
-				"error",
-			);
-			ctx.shutdown();
-		}
+		this.owned = live === undefined;
+		if (live !== undefined) refuse(ctx, this.session, live);
 	}
 	listen(callback: Callback): () => void {
 		this.inbound.push(callback);
@@ -217,6 +214,19 @@ export class SessionOwner {
 			this.ctx = undefined;
 		}
 	}
+}
+
+/**
+ * Quit a duplicate. The TUI clears notifications when it stops, so in the TUI the
+ * refusal is also printed to stderr after the terminal is restored.
+ */
+function refuse(ctx: ExtensionContext, session: string, pid: number): void {
+	// The file path reopens a session outside the default session directory too.
+	const reopen: string = ctx.sessionManager.getSessionFile() ?? session;
+	const message: string = ownerRefusal(reopen, pid, `${base(session)}.json`, describeProcess(pid));
+	ctx.ui.notify(message, "error");
+	if (ctx.mode === "tui") process.once("exit", () => process.stderr.write(`\n${message}\n`));
+	ctx.shutdown();
 }
 
 function arrivalName(payload: Inbound): string {

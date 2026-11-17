@@ -73,6 +73,10 @@ for (const last of [false, true])
 				await loser.command("release");
 				const refused = await boot;
 				assert.equal(refused.shutdowns, 1);
+				const refusal: string | undefined = refused.errors.find((error) => error.includes("already open"));
+				assert.match(refusal ?? "", new RegExp(`Owner: PID ${owner.child.pid}[ ,.(]`));
+				assert.match(refusal ?? "", new RegExp(`kill ${owner.child.pid}\\n`));
+				assert.match(refusal ?? "", new RegExp(`pi --session \\S*${parent}`));
 			}
 			owner.child.kill("SIGCONT");
 			// Explicit owner scan may find no new mail: drain must consume staged input.

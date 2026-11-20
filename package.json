@@ -68,6 +68,6 @@
 		"typescript": "7.0.2"
 	},
 	"dependencies": {
-		"@getpaseo/client": "0.15.4"
+		"@getpaseo/client": "0.16.1"
 	}
 }

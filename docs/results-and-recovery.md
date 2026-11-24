@@ -502,6 +502,33 @@ outcome before its final report). A tick declares nothing when nobody answers
 still delivered and makes the delegation done. A resumed session polls again
 for every delegation it restores as running.
 
+### Squire-run checks
+
+If the launch or resume named [`check`](delegation.md#delegate-checks), Squire
+runs the approved commands in order after claiming the child's reply and
+before delivering it. It uses `/bin/sh -c` in the approved directory, with the
+parent's environment plus `CI=1` and `FORCE_COLOR=0`, and with no stdin.
+It stops at the first failure or error and allows five minutes per command.
+
+The result adds a separate `check (run by Squire): pass`, `fail` or `error`
+section. A failure gives the exit code or signal and, when available, up to
+20 short output lines from the last 1 MiB of combined output. A start error or
+timeout is reported alongside the child's answer rather than replacing it.
+The result details also carry `check.status`, `check.runs` (command, cwd,
+exit code, signal and elapsed milliseconds), and a tail when available.
+The child's own result status is unchanged.
+
+A delegation already closed or recorded gone does not run checks, even if a
+reply later arrives. Closing during a check kills its process group and
+delivers the already-claimed answer. A graceful parent shutdown also kills
+running checks. When the parent reopens, Squire can restart an interrupted
+check using the recorded approval and reply. Use retry-safe commands: a crash
+can interrupt delivery after a command has already had effects.
+
+The observation is the command's outcome in that workspace at result time.
+Squire does not freeze the checkout or sandbox the command; project files can
+change between approval and execution.
+
 ### Reopening a delegate's session
 
 `delegation_status` and every result name the delegate's session file by its
@@ -533,7 +560,9 @@ should receive mail instead.
 Every explicit `model`, `thinking`, `auto_exit` or `routing` override is
 refused, even if unchanged. Native reload preserves original tools, trust,
 prompt, fallback and launch environment; current roster launch-setting edits
-are **not** applied. Recorded auto-exit is retained. `session:launch` is not
+are **not** applied. A tool-initiated resume may still name a parent-run
+[`check`](delegation.md#delegate-checks); it does not change native launch
+settings. Recorded auto-exit is retained. `session:launch` is not
 emitted on native resume: its original hook-produced arguments/environment are
 reused. Identity notifications, completion holds and result delivery still run.
 
@@ -573,7 +602,7 @@ An exited terminal delegate can continue its own session with a follow-up task:
 ```
 
 The model does the same with `delegation_resume` (`id` and `task`, optionally
-`model`, `thinking`, `routing` and `auto_exit`), which returns the `delegate` tool's result
+`model`, `thinking`, `routing`, `auto_exit` and `check`), which returns the `delegate` tool's result
 plus `resumedFrom`. The command completes the ids that can still be resumed.
 
 `/delegate-resume` with no arguments opens a picker instead: the delegations

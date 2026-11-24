@@ -2,6 +2,7 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readMarks } from "./limits.ts";
 import { cwdLine, modelLabel, snapshotLines } from "./render.ts";
+import { checkLines } from "./result-check.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import type { StartedRecorded } from "./result-types.ts";
 import type { Inbound, MessageDetails, TaskQuote } from "./results.ts";
@@ -213,6 +214,7 @@ export function resultText(details: ResultDetails): string {
 		...(details.workspaceSnapshot === undefined ? [] : checkoutText(details.workspaceSnapshot)),
 		`Envelope: ${details.envelopePath}`,
 		`Delegate session: ${details.sessionPath ?? details.sessionId ?? details.id}`,
+		...(details.check === undefined ? [] : ["", ...checkLines(details.check)]),
 		"",
 		...(details.bodyOmitted === undefined ? [] : [incompleteNotice(details.bodyOmitted, details.envelopePath)]),
 		details.body,

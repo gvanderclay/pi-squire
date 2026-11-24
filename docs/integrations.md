@@ -10,6 +10,7 @@
   - [message:reply](#messagereply)
   - [message:inbound](#messageinbound)
   - [message:scan](#messagescan)
+- [`delegate_check` permission contract](#delegate_check)
 - [Testing limits](#testing-limits)
 - [Compatibility](#compatibility)
 
@@ -230,6 +231,37 @@ written just before a window closed is never mistaken for no reply. **If
 `scanned` is not set, nobody answered**, and the tick declares nothing closed,
 because a waiting reply cannot be ruled out. The provider's README carries the
 contract.
+
+## `delegate_check`
+
+Squire registers `delegate_check` with deferred exposure; it is not declared
+to the model by default. For each requested check, `delegate` or
+`delegation_resume` calls this tool through Pi's `ctx.executeTool` with
+`{ command, cwd, delegation }`. Pi applies validation and the usual
+`tool_call` and `tool_result` hooks. The tool acknowledges approval; it never
+executes the command, even if called directly. Squire starts the child only
+if all approvals succeed and match the requested commands and directory.
+
+The permission extension **must** treat `delegate_check` as a shell tool to
+apply its `bash` rules to `command` in `cwd`. For example, in
+pi-permission-system 42.2.1's configuration:
+
+```json
+{
+  "shellTools": {
+    "delegate_check": {
+      "commandArgument": "command",
+      "workdirArgument": "cwd"
+    }
+  }
+}
+```
+
+Squire can detect a missing nested-tool API or unreachable approval tool, not
+whether your permission extension has shell rules configured. Without this
+integration, a successful tool call is not evidence that shell policy ran.
+Checks run later, without a second permission call, using only the approved
+command strings and working directory.
 
 ## Testing limits
 

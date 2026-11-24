@@ -2,6 +2,7 @@
 // Any incomplete authoritative read latches a failure until a fresh restore.
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildTasks } from "./child-tasks.ts";
+import { validateApprovedCheck } from "./delegate-check.ts";
 import {
 	isStarted,
 	isV2Start,
@@ -52,6 +53,7 @@ function accept(record: Recorded, ctx: ExtensionContext, tasks: ChildTasks, loca
 		if (isStarted(record)) {
 			validateRoutingMetadata(record);
 			validateSettledAt(record);
+			validateApprovedCheck(record.check, record.cwd);
 			validateSessionUsage(record.result?.usage);
 		}
 		return belongsTo(record, ctx);

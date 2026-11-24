@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `delegate` and `delegation_resume` accept a per-task `check` list. Squire
+  submits each command for shell-tool approval before launch, then runs the
+  approved checks in the child's working directory before delivering its
+  result, with pass/fail or error and a bounded failure tail. Permission
+  extensions must apply their shell rules to `delegate_check`.
+
 ## [0.35.0] - 2026-11-17
 
 ### Changed

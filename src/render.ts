@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { inSession, windowDetail } from "./location.ts";
+import { checkLine, checkLines } from "./result-check.ts";
 import type { Delegation, MessageDetails, ResourceFacts, WorkspaceAttempt } from "./results.ts";
 import { servedSummary } from "./routing-provenance.ts";
 import { usageText } from "./session-usage.ts";
@@ -235,6 +236,7 @@ function headerLine(details: MessageDetails, status: string, theme: Theme): stri
 function collapsedLines(details: MessageDetails, theme: Theme, keyHint: MessageRenderOptions["keyHint"]): Component[] {
 	const children: Component[] = [];
 	if (details.kind === "result") {
+		if (details.check) children.push(new Text(theme.fg("dim", checkLine(details.check)), 0, 0));
 		const lines = plainLines(details.body);
 		for (const line of lines.slice(0, PREVIEW_LINES)) children.push(new TruncatedText(theme.fg("dim", line)));
 		if (lines.length > PREVIEW_LINES)
@@ -250,6 +252,7 @@ function expandedLines(details: MessageDetails, theme: Theme): Component[] {
 	const children: Component[] = [];
 	if (details.kind === "result") {
 		if (details.usage !== undefined) children.push(dim([`Usage: ${usageText(details.usage)}`]));
+		if (details.check) children.push(dim(checkLines(details.check)));
 		const { task } = details;
 		const quote = "note" in task ? [task.note] : [`Task (${tilde(task.path)}):`, ...task.text.split("\n")];
 		children.push(new Spacer(1), new Markdown(details.body, 0, 0, getMarkdownTheme()), new Spacer(1), dim(quote));

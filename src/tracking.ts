@@ -136,6 +136,7 @@ export type ToolDef = {
 	label: string;
 	description: string;
 	parameters: unknown;
+	reachesTools?: (input: Record<string, unknown>) => readonly string[];
 	outputSchema: unknown;
 	annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
 	execute: (...args: never[]) => Promise<ReturnType<typeof toolResult>>;

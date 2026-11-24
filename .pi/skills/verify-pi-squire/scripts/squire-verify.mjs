@@ -269,7 +269,8 @@ function launch(opts) {
 	const multiplexer = opts.herdr ? "herdr" : "tmux";
 	writeFileSync(p.meta, JSON.stringify({ run, repo: REPO, commit, srcDirty: dirty, model: MODEL, thinking: THINKING, socket: p.socket, multiplexer, ...(opts.herdr ? { herdrSession: p.herdrSession } : {}) }, null, 2) + "\n");
 	// The root model only needs Squire's and mail's tools; no bash/edit/write in the scratch run.
-	const tools = "read,ls,delegate,delegation_*,session_mail_*";
+	// Squire's deferred delegate_check approval tool must be named here to stay callable.
+	const tools = "read,ls,delegate,delegation_*,delegate_check,session_mail_*";
 	const argv = [PI, "--model", MODEL, "--thinking", THINKING, "--tools", tools];
 	if (opts.herdr) {
 		// Private config: no onboarding or network checks; agent restore stays at Herdr's default (on).

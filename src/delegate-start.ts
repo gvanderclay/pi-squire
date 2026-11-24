@@ -3,6 +3,7 @@
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Agent } from "./agents.ts";
 import { AGENT_ENV, AUTO_EXIT_ENV, FALLBACK_ENV } from "./child.ts";
+import { type ApprovedCheck, approveChecks } from "./delegate-check.ts";
 import {
 	delegatePrompt,
 	parentCommand,
@@ -11,7 +12,7 @@ import {
 	writePromptFile,
 } from "./delegate-composition.ts";
 import { publishOpenedProgress, publishOpenProgress } from "./delegate-progress.ts";
-import { closeAfterFailure, mailTask } from "./delegate-start-mail.ts";
+import { closeAfterFailure, mailTask, publishRequest } from "./delegate-start-mail.ts";
 import {
 	type DelegateHost,
 	type NativeResumeRollback,
@@ -84,6 +85,8 @@ type StartInput = {
 	sessionDir: string;
 	start: ChildStart;
 	task: string;
+	check?: readonly string[];
+	signal?: AbortSignal;
 	toolCallId: string | undefined;
 	admission: AdmittedHost;
 	tools: readonly string[];
@@ -194,18 +197,12 @@ function launchPayload(input: StartInput): LaunchPayload {
 	return payload;
 }
 
-function publishRequest(token: Reservation, requestId: string, windowId: string, ctx: ExtensionContext): void {
-	try {
-		bindTree(token, { requestId });
-	} catch (error) {
-		ctx.ui.notify(
-			`delegate: window ${windowId} opened and task mail was sent, but shared request publication failed: ${String(error)}. Local tracking continues; accounting reconciles before the next admission.`,
-			"warning",
-		);
-	}
-}
-
-function startRecord(input: StartInput, opened: OpenedWindow, requestId: string): Delegation {
+function startRecord(
+	input: StartInput,
+	opened: OpenedWindow,
+	requestId: string,
+	check: ApprovedCheck | undefined,
+): Delegation {
 	const { id, name, session, start, workspace } = input;
 	const sessionId = sessionIdFor(input);
 	return {
@@ -223,6 +220,7 @@ function startRecord(input: StartInput, opened: OpenedWindow, requestId: string)
 		cwd: workspace.cwd,
 		sessionDir: input.sessionDir,
 		workspace,
+		...(check === undefined ? {} : { check }),
 		...(session.kind === "fork" ? { forkedFrom: session.id } : {}),
 		...(session.kind === "resume" ? { resumedFrom: session.id, sessionId } : {}),
 		...(opened.sessionId === undefined ? {} : { sessionId: opened.sessionId }),
@@ -289,6 +287,10 @@ export class DelegateStarter {
 	async start(input: StartInput, ctx: ExtensionContext): Promise<Started> {
 		const client = input.admission.client;
 		const token = { root: input.identity.root, id: input.id };
+		const check =
+			input.check === undefined
+				? undefined
+				: await approveChecks(input.check, input.workspace.cwd, input.id, ctx, input.signal);
 		if (input.session.kind === "fork" && input.start.routing)
 			input.session = {
 				...input.session,
@@ -303,7 +305,7 @@ export class DelegateStarter {
 		const opened = await this.openSession(input, token, ctx, payload);
 		if (client.configureStart) await this.configure(input, opened);
 		const requestId = mailed ?? (await this.mailAfterOpen(input, opened, token, ctx));
-		this.deps.results.recordStart(startRecord(input, opened, requestId), ctx);
+		this.deps.results.recordStart(startRecord(input, opened, requestId, check), ctx);
 		this.deps.startPolling();
 		return {
 			opened,

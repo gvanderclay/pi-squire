@@ -9,6 +9,7 @@
   - [Navigation](#navigation)
 - [Reaching delegates](#reaching-delegates)
 - [Tools](#tools)
+  - [Delegate checks](#delegate-checks)
 - [Explicit subtree close](#explicit-subtree-close)
 
 ## New-delegate form
@@ -304,11 +305,11 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd`, `worktree`, `worktree_source`, `worktree_base` and `auto_exit` (boolean) | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](workspaces.md#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
+| `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd`, `worktree`, `worktree_source`, `worktree_base`, `auto_exit` (boolean) and `check` | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](workspaces.md#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |
 | `delegation_status` | optional `id`, `all` | Reports each delegation as running, done, closed or closed without a result, with the window, the delegate's session and the result envelope's path. By default it lists running, unfinished and the 5 newest settled records; `all: true` lists every record. |
 | `delegation_close` | `id` | Explicitly fences and closes a descendant subtree using current verified windows. Returns per-member outcomes and complete/partial status; retains worktrees and branches. |
 | `delegation_cleanup` | `ids` (1–50 unique ids) or `all: true` | Removes merged, unused, clean Squire-created worktrees and their local branches; ignored files are deleted too. Unproved items are kept with reasons (see [Cleanup](workspaces.md#cleanup)). |
-| `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing` and `auto_exit` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](results-and-recovery.md#resuming-a-delegation)). |
+| `delegation_resume` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit` and `check` | Reopens an exited delegate's own session in a new window with a follow-up task, and returns the new delegation's id at once (see [Resuming a delegation](results-and-recovery.md#resuming-a-delegation)). |
 | `delegation_fork` | `id`, `task`, optional `model`, `thinking`, `routing`, `auto_exit`, `worktree` and `worktree_base` | Starts a new delegation from a copy of a direct child's context, leaving the original untouched (see [Forking a delegation](results-and-recovery.md#forking-a-delegation)). |
 
 The `delegate` tool's description lists the current roster, one line per agent:
@@ -343,6 +344,26 @@ nothing starts.
 
 For status selection, outcome meanings and usage-limit marks, see
 [Statuses](results-and-recovery.md#statuses).
+
+### Delegate checks
+
+Pass `check` to the `delegate` or `delegation_resume` tool, for example
+`check: ["pnpm test"]`. It takes one to five non-empty shell command strings;
+the slash commands and forms do not take it. A resume can name new checks for
+its follow-up task; it does not inherit an earlier task's check list.
+
+Before Squire mails the task or starts the child, it submits each command, in
+order, to Pi's nested `delegate_check` tool with the actual child working
+directory. For a managed worktree, this happens after creation and verification
+of its root. If any approval fails, the delegation is refused with the command
+and reason, and any new worktree goes through the usual pre-start rollback.
+A missing nested tool API or an unavailable approval tool also refuses the call.
+
+Set up your [shell permission integration](integrations.md#delegate_check)
+before using this option. Squire runs approved checks in the parent process's
+environment, outside the delegate's tool permissions. Use commands you trust to run
+against the child's workspace. See
+[how checks are reported](results-and-recovery.md#squire-run-checks).
 
 ## Explicit subtree close
 

@@ -368,6 +368,8 @@ export type SessionOptions = {
 	toolExposures?: Record<string, "direct" | "model-only" | "codemode" | "deferred" | "hidden">;
 	/** The tool names `pi.getActiveTools()` reports; default `DEFAULT_TOOLS` and the delegation tools. `pi.setActiveTools` changes them. */
 	activeTools?: readonly string[];
+	/** Enable nested tool calls and expose only these registered tools to them. */
+	nestedTools?: readonly string[];
 	/** Models, as `provider/id`, the fake registry reports no credentials for. Every other model is configured. */
 	noCredentials?: readonly string[];
 	/** Models only this session's registry also knows, on top of `FAKE_MODELS`. */
@@ -797,7 +799,31 @@ export function session(options: SessionOptions = {}) {
 		if (!bound) await ensureStarted();
 		const tool = tools[name];
 		if (tool === undefined) return Promise.reject(new Error(`no tool named ${name} is registered`));
-		return tool.execute(`call-${++calls}`, params as never, abort, undefined, ctx).then((result) => {
+		const callId = `call-${++calls}`;
+		const nested = options.nestedTools;
+		let childCalls = 0;
+		const toolContext =
+			nested === undefined
+				? ctx
+				: {
+						...ctx,
+						tools: nested.flatMap((name) => (tools[name] ? [tools[name]] : [])),
+						executeTool: async (name: string, input: unknown) => {
+							const child = nested.includes(name) ? tools[name] : undefined;
+							const toolCallId = `${callId}/${++childCalls}`;
+							const error = (text: string) => ({ isError: true, result: { content: [{ type: "text", text }] } });
+							if (!child) return error(`unknown tool ${name}`);
+							for (const handler of handlers.tool_call ?? []) {
+								const response = (await handler(
+									{ type: "tool_call", toolCallId, toolName: name, input, parentToolCallId: callId },
+									ctx,
+								)) as { block?: boolean; reason?: string } | undefined;
+								if (response?.block) return error(response.reason ?? "blocked");
+							}
+							return { isError: false, result: await child.execute(toolCallId, input as never, abort, undefined, ctx) };
+						},
+					};
+		return tool.execute(callId, params as never, abort, undefined, toolContext).then((result) => {
 			checkStructured(tool, result);
 			return result;
 		});

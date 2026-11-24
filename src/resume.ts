@@ -5,8 +5,8 @@
 // Eligibility/model/trust stay here; DelegateStarter owns the start sequence.
 import { randomUUID } from "node:crypto";
 import type { ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { type TObject, Type } from "typebox";
-import { type Agent, type Roster, THINKING_LEVELS } from "./agents.ts";
+import type { TObject } from "typebox";
+import type { Agent, Roster } from "./agents.ts";
 import type { ChildStart, DelegateStarter } from "./delegate-start.ts";
 import type { DelegateHost, OpenedWindow } from "./host.ts";
 import { type AdmittedHost, callAudience, type HostAdmission } from "./host-admission.ts";
@@ -34,10 +34,10 @@ import {
 	windowCheck,
 } from "./resume-checks.ts";
 import { supportsResume } from "./resume-support.ts";
+import { resumeTool } from "./resume-tool.ts";
 import type { RoutedChoice, RouteOptions } from "./routing-dispatch.ts";
-import { RoutingRequestSchema } from "./routing-schema.ts";
 import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
-import { type ToolDef, toolResult } from "./tracking.ts";
+import type { ToolDef } from "./tracking.ts";
 import type { Reservation } from "./tree-registry.ts";
 import { recordedIdentity } from "./tree-view.ts";
 import { askWindowStates } from "./window-state.ts";
@@ -51,6 +51,7 @@ export type ResumeRequest = {
 	model?: string;
 	thinking?: string;
 	autoExit?: boolean;
+	check?: string[];
 	/** The `delegation_resume` tool call that asked for it; undefined from the command. */
 	toolCallId?: string;
 };
@@ -168,14 +169,6 @@ async function ensureExited(record: StartedRecorded, tmux: DelegateHost): Promis
 	}
 }
 
-/** The tool's result: the `delegate` tool's plus the delegation it resumed. */
-function resultSchema(delegateSchema: TObject): TObject {
-	return Type.Object({
-		...delegateSchema.properties,
-		resumedFrom: Type.String(),
-	});
-}
-
 /** The model, thinking and auto-exit a resume runs with, and the directory and workspace it opens in. */
 type Plan = {
 	start: ChildStart;
@@ -250,6 +243,8 @@ async function startResume(
 		session: SessionFile;
 		plan: Plan;
 		task: string;
+		check?: string[];
+		signal?: AbortSignal;
 		toolCallId: string | undefined;
 		admission: AdmittedHost;
 		reservation: Reservation;
@@ -278,6 +273,8 @@ async function startResume(
 			sessionDir: session.dir,
 			start,
 			task,
+			check: input.check,
+			signal: input.signal,
 			toolCallId,
 			admission,
 			// Read before open; a terminal resume mails only after it opens.
@@ -381,6 +378,8 @@ async function resume(
 				session,
 				plan,
 				task: request.task,
+				check: request.check,
+				signal,
 				toolCallId: request.toolCallId,
 				admission,
 				reservation,
@@ -424,72 +423,6 @@ export function startedLine(resumed: Resumed): string {
 	return `delegate: resumed ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} in ${openedIn(resumed)}${resumed.fallbackNote === "" ? "" : `. ${resumed.fallbackNote}`}${resumed.notices.map((line) => `. ${line}`).join("")}`;
 }
 
-/** The `delegation_resume` tool. */
-function resumeTool(deps: ResumeDeps, includeRouting: boolean): ToolDef {
-	return {
-		name: "delegation_resume",
-		label: "Resume delegation",
-		description:
-			"Continue an exited direct child in its own session, so it keeps the context it built, with a follow-up task in a new window. It is recorded as a new delegation whose result arrives as a message. For unrelated work, use delegate. delegation_fork copies a child's context into a new child; find it with tool search. Refuses a running delegation (mail it instead), an open window, an older link of a resumed chain (it names the newest) and a missing working directory.",
-		parameters: Type.Object({
-			id: Type.String({ description: "The newest delegation id of the child." }),
-			...(includeRouting ? { routing: Type.Optional(RoutingRequestSchema) } : {}),
-			task: Type.String(),
-			model: Type.Optional(Type.String({ description: "provider/id; defaults to the model it finished on." })),
-			thinking: Type.Optional(
-				Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the level it last ran on.` }),
-			),
-			auto_exit: Type.Optional(Type.Boolean({ description: "Defaults to the delegation's setting." })),
-		}),
-		outputSchema: resultSchema(deps.delegateSchema),
-		// Opens a window and removes nothing but an exited window of the old run; each call starts another run.
-		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-		async execute(
-			toolCallId: string,
-			params: {
-				id: string;
-				task: string;
-				routing?: RoutingRequest;
-				model?: string | null;
-				thinking?: string | null;
-				auto_exit?: boolean | null;
-			},
-			signal: AbortSignal | undefined,
-			_onUpdate: unknown,
-			ctx: ExtensionContext,
-		): Promise<ReturnType<typeof toolResult>> {
-			const resumed = await resume(deps, { ...requestFrom(params), toolCallId }, ctx, signal);
-			const { fallbackNote, location: _location, ...details } = resumed;
-			ctx.ui.notify(startedLine(resumed), "info");
-			return toolResult(
-				`Resumed delegation ${resumed.resumedFrom} as ${resumed.id}: ${resumed.agent} (${resumed.model}, thinking ${resumed.thinking}) in ${openedIn(resumed)}. It runs in the background, and its result arrives as a message that starts your next turn on its own; delegation_close ends it.${fallbackNote === "" ? "" : ` ${fallbackNote}`}${resumed.notices.map((line) => ` ${line}`).join("")}`,
-				{ outcome: "started", ...details },
-			);
-		},
-	};
-}
-
-/** The request a tool call makes; some models fill every optional field with null or the string "null", and both mean unset. */
-function requestFrom(params: {
-	routing?: RoutingRequest;
-	id: string;
-	task: string;
-	model?: string | null;
-	thinking?: string | null;
-	auto_exit?: boolean | null;
-}): ResumeRequest {
-	const given = (value: string | null | undefined): string | undefined =>
-		value == null || value === "null" ? undefined : value;
-	return {
-		id: params.id,
-		routing: params.routing,
-		task: params.task ?? "",
-		model: given(params.model),
-		thinking: given(params.thinking),
-		autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
-	};
-}
-
 /** Resuming as a function for the command, and the tool for the model. */
 export function createResume(deps: ResumeDeps): {
 	resume(request: ResumeRequest, ctx: ExtensionContext, signal?: AbortSignal): Promise<Resumed>;
@@ -500,6 +433,12 @@ export function createResume(deps: ResumeDeps): {
 	return {
 		eligible: (ctx: ExtensionContext) => eligible(deps, ctx),
 		resume: (request: ResumeRequest, ctx: ExtensionContext, signal?: AbortSignal) => resume(deps, request, ctx, signal),
-		tool: (includeRouting = true) => resumeTool(deps, includeRouting),
+		tool: (includeRouting = true) =>
+			resumeTool(
+				deps.delegateSchema,
+				includeRouting,
+				(request, ctx, signal) => resume(deps, request, ctx, signal),
+				startedLine,
+			),
 	};
 }

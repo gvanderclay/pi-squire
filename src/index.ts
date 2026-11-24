@@ -70,6 +70,7 @@ import { cleanupTool } from "./cleanup.ts";
 import { cleanupCommand } from "./cleanup-command.ts";
 import { commandOutput } from "./command-output.ts";
 import { registerCompletionHost } from "./completion-holds.ts";
+import { CHECK_TOOL_NAME, checkTool, checkToolsReached } from "./delegate-check.ts";
 import {
 	DELEGATION_TOOLS,
 	delegateVisible,
@@ -79,11 +80,13 @@ import {
 	whereAgentsGo,
 } from "./delegate-composition.ts";
 import {
+	CheckCommandsSchema,
 	completions,
 	LABEL_MAX,
 	labelProblem,
 	type Parsed,
 	parse,
+	parseChecks,
 	parseResume,
 	RESUME_USAGE,
 	resumeCompletions,
@@ -161,6 +164,7 @@ type Start = {
 	worktree?: string;
 	worktree_base?: string;
 	worktree_source?: string;
+	check?: string[];
 	autoExit: boolean;
 	task: string;
 };
@@ -333,7 +337,7 @@ export default function delegate(
 	function childTools(agent: Agent): string[] {
 		const selected = toolSelection(
 			agent,
-			agent.tools === undefined ? availableTools(pi) : [],
+			agent.tools === undefined ? availableTools(pi).filter((name) => name !== CHECK_TOOL_NAME) : [],
 			delegateTools(getAgentDir()),
 		);
 		if (grantsNesting(agent, (identity.current()?.depth ?? 0) + 1)) selected.push(...DELEGATION_TOOLS);
@@ -478,6 +482,7 @@ export default function delegate(
 			worktree: request.worktree,
 			worktree_base: request.worktree_base,
 			worktree_source: request.worktree_source,
+			check: request.check,
 			autoExit: request.autoExit ?? agent.autoExit,
 			task: request.task,
 		};
@@ -662,6 +667,8 @@ export default function delegate(
 					sessionDir,
 					start,
 					task: start.task,
+					check: start.check,
+					signal: combined,
 					toolCallId,
 					admission: admitted,
 					tools,
@@ -891,6 +898,7 @@ export default function delegate(
 		name: "delegate",
 		label: "Delegate",
 		description,
+		reachesTools: checkToolsReached,
 		parameters: Type.Object({
 			agent: Type.String({ description: "Roster agent name." }),
 			task: Type.String(),
@@ -899,26 +907,27 @@ export default function delegate(
 			thinking: Type.Optional(Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the agent's.` })),
 			label: Type.Optional(
 				Type.String({
-					description: `Window and session name suffix: letters, digits, _ or -, at most ${LABEL_MAX}.`,
+					description: `Window/session suffix: up to ${LABEL_MAX} letters, digits, _ or -.`,
 				}),
 			),
 			cwd: Type.Optional(
-				Type.Union([Type.String(), Type.Null()], { description: "Existing directory to run in. Not with worktree." }),
+				Type.Union([Type.String(), Type.Null()], { description: "Existing child directory; excludes worktree." }),
 			),
 			worktree: Type.Optional(
 				Type.Union([Type.String(), Type.Null()], {
-					description: "New branch name: creates a managed worktree from HEAD or worktree_base. Not with cwd.",
+					description: "New branch and managed worktree from HEAD or worktree_base; excludes cwd.",
 				}),
 			),
 			worktree_source: Type.Optional(
-				Type.Union([Type.String(), Type.Null()], { description: "Git checkout to create the worktree from." }),
+				Type.Union([Type.String(), Type.Null()], { description: "Git checkout to branch from." }),
 			),
 			worktree_base: Type.Optional(
-				Type.Union([Type.String(), Type.Null()], { description: "Local commit-ish for the worktree branch." }),
+				Type.Union([Type.String(), Type.Null()], { description: "Local worktree base commit-ish." }),
 			),
+			check: Type.Optional(CheckCommandsSchema),
 			auto_exit: Type.Optional(
 				Type.Boolean({
-					description: "Close the window when it finishes; defaults to the agent's. False keeps it open for mail.",
+					description: "Close on completion; defaults to the agent's. False keeps it open for mail.",
 				}),
 			),
 		}),
@@ -941,6 +950,7 @@ export default function delegate(
 				worktree?: unknown;
 				worktree_base?: unknown;
 				worktree_source?: unknown;
+				check?: unknown;
 			},
 			signal: AbortSignal | undefined,
 			_onUpdate: unknown,
@@ -965,6 +975,7 @@ export default function delegate(
 					worktree,
 					worktree_base,
 					worktree_source,
+					check: parseChecks(params.check),
 					autoExit: typeof params.auto_exit === "boolean" ? params.auto_exit : undefined,
 					task: params.task ?? "",
 				},
@@ -1198,6 +1209,7 @@ export default function delegate(
 	}
 	registerDelegate(toolDescription(currentRoster().agents, getAgentDir()));
 	tracking.registerTools();
+	pi.registerTool(checkTool());
 	pi.registerTool(cleanupTool({ host: tmux, assertActive: () => owner.assert() }) as never);
 	registerRoutingTools(currentRoster());
 }

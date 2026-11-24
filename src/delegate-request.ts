@@ -1,7 +1,27 @@
+import { Type } from "typebox";
 import { isThinking, THINKING_LEVELS } from "./agents.ts";
 import type { ResumeRequest } from "./resume.ts";
 import { parseRoutingRequest } from "./routing-policy.ts";
 import type { RoutingRequest } from "./routing-types.ts";
+
+const CHECK_MAX = 5;
+const CHECK_PROBLEM = `check must be an array of 1 to ${CHECK_MAX} non-empty command strings without NUL bytes`;
+
+export const CheckCommandsSchema = Type.Array(Type.String({ pattern: "\\S" }), {
+	minItems: 1,
+	maxItems: CHECK_MAX,
+	description: "Shell checks approved at launch, run in child cwd at result time.",
+});
+
+export function parseChecks(value: unknown): string[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value) || value.length < 1 || value.length > CHECK_MAX) throw new Error(CHECK_PROBLEM);
+	const commands = Array.from(value, (command: unknown) => {
+		if (typeof command !== "string" || !/\S/.test(command) || command.includes("\0")) throw new Error(CHECK_PROBLEM);
+		return command;
+	});
+	return commands;
+}
 
 /** The longest label a delegation can carry. */
 export const LABEL_MAX = 32;
@@ -46,6 +66,7 @@ export type Parsed = {
 	worktree?: string;
 	worktree_base?: string;
 	worktree_source?: string;
+	check?: string[];
 	autoExit?: boolean;
 	task: string;
 };

@@ -7,18 +7,22 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { ChildTasks } from "./child-tasks.ts";
+import { type ChildOutcome, ChildTasks } from "./child-tasks.ts";
+import type { ApprovedCheck } from "./delegate-check.ts";
 import type { DelegateHost } from "./host.ts";
-import type { Identity } from "./identity.ts";
 import { renderMessage } from "./render.ts";
+import { type CheckResult, runChecks } from "./result-check.ts";
 import { closeOutcome, goneOutcome } from "./result-close.ts";
 import { resultBodyBudget, resultDetails, resultText } from "./result-message.ts";
 import { restoreRecords } from "./result-restore.ts";
 import { finishedModel, locateSession, sessionIdOf } from "./result-sessions.ts";
 import {
 	type AttemptState,
+	type Delegation,
+	type Inbound,
 	isStarted,
 	type Recorded,
+	type Result,
 	recordedName,
 	START_TYPE,
 	type StartedRecorded,
@@ -26,17 +30,21 @@ import {
 } from "./result-types.ts";
 import { ResultsPresentation } from "./results-presentation.ts";
 import { routingEvidence } from "./routing-provenance.ts";
-import { type SessionUsage, sessionUsage } from "./session-usage.ts";
-import { inspectWorkspace, type WorkspaceSnapshot } from "./snapshot.ts";
-import { locatedRecord, type WindowRecord } from "./tmux.ts";
-import type { Workspace } from "./workspace.ts";
+import { sessionUsage } from "./session-usage.ts";
+import { inspectWorkspace } from "./snapshot.ts";
+import { locatedRecord } from "./tmux.ts";
 
 export { findSession, finishedModel, sessionHeaderCwd, sessionIdOf } from "./result-sessions.ts";
 export type {
 	AttemptState,
+	Delegation,
+	Envelope,
+	Inbound,
 	MessageDetails,
 	Recorded,
+	RequestCopy,
 	ResourceFacts,
+	Result,
 	StartedRecorded,
 	TaskQuote,
 	WorkspaceAttempt,
@@ -49,85 +57,6 @@ export const CUSTOM_TYPE = "delegate";
 export const STATUS_KEY = "delegate";
 /** The `pi.events` channel a provider emits claimed envelopes on. */
 const INBOUND = "message:inbound";
-
-/** One delegation, as recorded and rebuilt on resume. It holds no task text. */
-export type Delegation = WindowRecord & {
-	/** Read-only registry projection with no authoritative launch/result record. Never local tracking. */
-	accountingOnly?: boolean;
-	/** Durable launch identity; older single-level records may lack it. */
-	identity?: Identity;
-	id: string;
-	agent: string;
-	/** The agent's `display_name` at launch, shown instead of `agent`; absent when it had none. */
-	displayName?: string;
-	model: string;
-	thinking: string;
-	/** Presence survives a missing routing payload, so restoration cannot downgrade a routed attempt to legacy. */
-	routingVersion?: 1;
-	routing?: import("./routing-types.ts").RoutingRecord;
-	/** The delegate's session and window name; absent in records from before labels, where it was `<agent>-<8 id characters>`. */
-	name?: string;
-	requestId: string;
-	/** Whether the delegate closes its own window after a normal completion; absent in records from before auto-exit. */
-	autoExit?: boolean;
-	/** The directory its window opened in; absent in records from before it was recorded, where it is unknown. */
-	cwd?: string;
-	/** The session-storage directory passed as `--session-dir`; absent in older records. */
-	sessionDir?: string;
-	/** The delegate's session file once found; never set at launch, when the file may not exist yet. */
-	sessionPath?: string;
-	/** How its directory was chosen and its Git checkout at launch; absent in older records. */
-	workspace?: Workspace;
-	/** The delegation this one resumed, when it reopened that delegation's session. */
-	resumedFrom?: string;
-	/** The delegation whose context this new session copied. */
-	forkedFrom?: string;
-	/** The Pi session id; absent means `id`. A resumed delegation holds the session id of the one it resumed. */
-	sessionId?: string;
-};
-
-/**
- * An envelope on the `message:inbound` payload. `delegate` declares its own
- * copy of the provider's shape; the provider's README owns the contract.
- */
-export type Envelope = {
-	id: string;
-	from: string;
-	to: string;
-	in_reply_to: string[];
-	status: string;
-	ts: string;
-	body: string;
-};
-
-/** A reply's request copy from the parent's `sent/`. */
-export type RequestCopy = { envelope: Envelope; path: string };
-
-/** A result, appended to the session so it is shown once and survives a resume. */
-export type Result = {
-	usage?: SessionUsage;
-	routingEvidence?: import("./routing-types.ts").RoutingEvidence;
-	/** The envelope's status: `done`, `failed` or `stopped`. */
-	status: string;
-	/** The reply envelope's id, so the same reply is never shown twice. */
-	replyId: string;
-	/** The reply envelope's path in the parent's `cur/`. */
-	envelopePath: string;
-	/** The delegate's session file, when it could be found. */
-	sessionPath?: string;
-	/** The `provider/model` of the delegate's last assistant message, when its session file holds one. */
-	finishedModel?: string;
-	/** The checkout as observed when the result arrived; absent in results from before it was kept. */
-	workspaceSnapshot?: WorkspaceSnapshot;
-};
-
-/** The provider's payload on `message:inbound`. */
-export type Inbound = {
-	envelope: Envelope;
-	path: string;
-	requests: RequestCopy[];
-	handled: boolean;
-};
 
 export type Results = {
 	/** Presentation-only observers; never part of task accounting or the completion barrier. */
@@ -213,6 +142,12 @@ export function createResults(
 	const byRequest = new Map<string, StartedRecorded>();
 	/** Reply envelope ids a result message has already been sent for. */
 	const shown = new Set<string>();
+	const checking = new Map<string, { controller: AbortController; ids: Set<string> }>();
+	const checkFor = (id: string) => [...checking.values()].find((check) => check.ids.has(id));
+	function stopChecks(): void {
+		for (const check of checking.values()) check.controller.abort();
+		checking.clear();
+	}
 	/** The latest session context, for the footer and the session directory. */
 	let ctx: ExtensionContext | undefined;
 	const presentation = new ResultsPresentation();
@@ -249,6 +184,7 @@ export function createResults(
 	/** Rebuild the records from the session's entries, so a resume still recognises replies. */
 	function restore(context: ExtensionContext): void {
 		if (replay) clearImmediate(replay);
+		stopChecks();
 		ctx = context;
 		byId.clear();
 		byRequest.clear();
@@ -267,15 +203,18 @@ export function createResults(
 			);
 		syncCloses(false);
 		updateFooter();
-		// Mail is already claimed; replay only outcomes not processed by a
-		// settled coordinator run. No live worker is recreated.
-		if (!tasks.failed && tasks.outcomes.length) {
+		// Mail is already claimed. Recover unfinished checks and unprocessed
+		// outcomes without recreating any worker.
+		if (!tasks.failed && (tasks.outcomes.length || tasks.checkReplies.size)) {
 			const session = context.sessionManager.getSessionId();
 			replay = setImmediate(() => {
 				replay = undefined;
 				if (!active() || ctx?.sessionManager.getSessionId() !== session) return;
-				tasks.replay(pi, processesChildren());
-				save();
+				if (tasks.outcomes.length) {
+					tasks.replay(pi, processesChildren());
+					save();
+				}
+				for (const payload of tasks.checkReplies.values()) takeReply({ ...payload, handled: false });
 			});
 		}
 	}
@@ -301,7 +240,9 @@ export function createResults(
 		const record = startedById(id);
 		if (record === undefined || record.closed === true) return;
 		record.closed = true;
-		const settled = record.result !== undefined || record.gone === true;
+		const checking = checkFor(id);
+		checking?.controller.abort();
+		const settled = record.result !== undefined || record.gone === true || checking !== undefined;
 		if (!settled) record.settledAt = Date.now(); // a close after a result or gone keeps the earlier time
 		const at = record.settledAt;
 		const outcome = settled ? undefined : closeOutcome(record, ctx, host);
@@ -322,21 +263,29 @@ export function createResults(
 		updateFooter();
 	}
 
-	function syncCloses(wake = true): void {
-		if (!ctx || !active() || tasks.failed) return;
+	function syncCloses(wake = true): boolean {
+		if (!ctx || !active() || tasks.failed) return false;
 		try {
 			for (const id of closedChildren(ctx)) recordClose(id, wake);
+			return true;
 		} catch (error) {
 			ctx.ui.notify(
 				`delegate: confirmed close import unavailable: ${String(error)}; pending children remain unresolved.`,
 				"warning",
 			);
+			return false;
 		}
 	}
 
 	function recordGone(id: string): boolean {
 		const record = startedById(id);
-		if (record === undefined || record.result !== undefined || record.closed === true || record.gone === true)
+		if (
+			record === undefined ||
+			record.result !== undefined ||
+			record.closed === true ||
+			record.gone === true ||
+			checkFor(id) !== undefined
+		)
 			return false;
 		const session = locateSession(record, ctx?.sessionManager.getSessionDir());
 		const settledAt = Date.now();
@@ -375,7 +324,7 @@ export function createResults(
 		// Transport retries have fresh envelope ids. Correlate on every task id,
 		// not just the envelope, and never present an already answered task again.
 		const pending = matches.filter((record) => record.result === undefined);
-		if (shown.has(reply.id) || pending.length === 0) return;
+		if (shown.has(reply.id) || pending.length === 0 || pending.some((record) => checkFor(record.id))) return;
 		const delegation = pending.at(-1) as StartedRecorded;
 		shown.add(reply.id);
 		const session = locateSession(delegation, ctx?.sessionManager.getSessionDir());
@@ -397,6 +346,47 @@ export function createResults(
 			...(finished === undefined ? {} : { finishedModel: finished }),
 			workspaceSnapshot: snapshot,
 		};
+		const approved = delegation.check;
+		const closingKnown = approved === undefined || syncCloses();
+		if (!approved || delegation.closed === true || delegation.gone === true) {
+			finishReply(pending, result, details);
+		} else if (!closingKnown) {
+			const check: CheckResult = { status: "error", runs: [], error: "could not verify the delegation was still open" };
+			finishReply(pending, { ...result, check }, { ...details, check });
+		} else {
+			tasks.checkReplies.set(reply.id, { ...payload, handled: false });
+			save(); // The owner may remove its staged envelope as soon as this handler returns.
+			checkReply(approved, pending, result, details);
+		}
+	}
+
+	type ReplyDetails = Extract<ChildOutcome["details"], { kind: "result" }>;
+
+	function checkReply(
+		approved: ApprovedCheck,
+		pending: StartedRecorded[],
+		result: Result,
+		details: ReplyDetails,
+	): void {
+		const id = result.replyId;
+		const job = { controller: new AbortController(), ids: new Set(pending.map((record) => record.id)) };
+		checking.set(id, job);
+		void runChecks(approved, job.controller.signal)
+			.catch((error: unknown): CheckResult => ({ status: "error", runs: [], error: String(error) }))
+			.then((check) => {
+				if (checking.get(id) !== job || !ctx || !active()) return;
+				try {
+					syncCloses();
+					finishReply(pending, { ...result, check }, { ...details, check });
+				} catch (error) {
+					ctx.ui.notify(`delegate: checked result ${id} could not be delivered: ${String(error)}`, "error");
+				} finally {
+					checking.delete(id);
+				}
+			});
+	}
+
+	function finishReply(pending: StartedRecorded[], result: Result, details: ReplyDetails): void {
 		const settledAt = Date.now();
 		for (const record of pending) {
 			pi.appendEntry(CUSTOM_TYPE, { id: record.id, result, settledAt });
@@ -409,7 +399,8 @@ export function createResults(
 			(outcome) => outcome.details.kind !== "gone" || !answered.has(outcome.details.id),
 		);
 		tasks.paused = false; // Only old replay is held by a root stop, not a new live result.
-		tasks.outcomes.push({ key: reply.id, content, details });
+		tasks.checkReplies.delete(result.replyId);
+		tasks.outcomes.push({ key: result.replyId, content, details });
 		save();
 		// Persist first, then steer. A crash before injection is recovered from
 		// the processing inbox, not from the provider's already-claimed mail.
@@ -417,14 +408,20 @@ export function createResults(
 			{ customType: CUSTOM_TYPE, content, details, display: true },
 			{ triggerTurn: true, deliverAs: "steer" },
 		);
-		tasks.delivered(reply.id);
+		tasks.delivered(result.replyId);
 		save();
 		updateFooter();
 	}
 
-	pi.on("context", () => syncCloses());
-	pi.on("agent_before_settle", () => syncCloses());
-	pi.on("agent_settled", () => syncCloses());
+	pi.on("context", () => {
+		syncCloses();
+	});
+	pi.on("agent_before_settle", () => {
+		syncCloses();
+	});
+	pi.on("agent_settled", () => {
+		syncCloses();
+	});
 	tasks.register(
 		pi,
 		() => [...byId.values()],
@@ -435,6 +432,7 @@ export function createResults(
 	pi.on("session_shutdown", () => {
 		if (replay) clearImmediate(replay);
 		replay = undefined;
+		stopChecks();
 		ctx = undefined;
 	});
 	pi.events.on(INBOUND, (data) => takeReply(data as Inbound));
@@ -451,7 +449,8 @@ export function createResults(
 		recordGone,
 		list: () => [...byId.values()],
 		find: (id) => byId.get(id),
-		completionReady: () => !tasks.failed && running().length === 0 && tasks.outcomes.length === 0,
+		completionReady: () =>
+			!tasks.failed && running().length === 0 && tasks.outcomes.length === 0 && tasks.checkReplies.size === 0,
 		checkStorage: (write = false) => {
 			const problem = tasks.storageProblem();
 			if (problem) throw new Error(problem);

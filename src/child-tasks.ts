@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { readState, writeState } from "./local-state.ts";
 import { isStarted, isV2Start, type Recorded } from "./result-types.ts";
-import type { MessageDetails } from "./results.ts";
+import type { Inbound, MessageDetails } from "./results.ts";
 import { locatedRecord } from "./tmux.ts";
 
 export type ChildOutcome = {
@@ -20,7 +20,7 @@ export type ChildOutcome = {
 	/** Display was queued; processing still waits for a model request/settle. */
 	delivered?: boolean;
 };
-type State = { records: Recorded[]; outcomes: ChildOutcome[]; paused?: boolean };
+type State = { records: Recorded[]; outcomes: ChildOutcome[]; checkReplies?: Inbound[]; paused?: boolean };
 type StoredState = { version: 2; state: State };
 /** Released readers require top-level arrays; this wrapper makes their restore/save fail closed. */
 function childState(value: unknown): State | undefined {
@@ -42,6 +42,7 @@ function childState(value: unknown): State | undefined {
 	}
 	if (!Array.isArray(state.records) || !Array.isArray(state.outcomes))
 		throw new Error("invalid child task record: expected records and outcomes arrays");
+	validateCheckReplies(state.checkReplies);
 	if (state.paused !== undefined && typeof state.paused !== "boolean") throw new Error("invalid root stop state");
 	if (
 		versioned &&
@@ -50,6 +51,20 @@ function childState(value: unknown): State | undefined {
 		throw new Error("invalid v2 child task record; restoration blocked");
 	return state as State;
 }
+function validateCheckReplies(replies: Inbound[] | undefined): void {
+	if (replies === undefined) return;
+	if (
+		!Array.isArray(replies) ||
+		replies.some(
+			(payload) =>
+				typeof payload?.envelope?.id !== "string" ||
+				!Array.isArray(payload.envelope.in_reply_to) ||
+				!Array.isArray(payload.requests),
+		)
+	)
+		throw new Error("invalid pending delegate check replies");
+}
+
 export function readChildRecords(session: string): Recorded[] {
 	const path = join(getAgentDir(), "squire", "child-tasks", `${encodeURIComponent(session)}.json`);
 	const state = childState(readState<unknown>(path));
@@ -58,6 +73,7 @@ export function readChildRecords(session: string): Recorded[] {
 export class ChildTasks {
 	path: string | undefined;
 	outcomes: ChildOutcome[] = [];
+	checkReplies = new Map<string, Inbound>();
 	observed = new Set<string>();
 	failed = false;
 	unreadable = false;
@@ -72,6 +88,7 @@ export class ChildTasks {
 	restore(session: string): Recorded[] {
 		this.path = join(getAgentDir(), "squire", "child-tasks", `${encodeURIComponent(session)}.json`);
 		this.outcomes = [];
+		this.checkReplies.clear();
 		this.paused = false;
 		this.observed.clear();
 		this.failed = false;
@@ -81,6 +98,7 @@ export class ChildTasks {
 			const state = childState(readState<unknown>(this.path));
 			this.paused = state?.paused === true;
 			this.outcomes = state?.outcomes ?? [];
+			for (const payload of state?.checkReplies ?? []) this.checkReplies.set(payload.envelope.id, payload);
 			return (state?.records ?? []).map((record) => (isStarted(record) ? locatedRecord(record) : record));
 		} catch (error) {
 			this.failed = true;
@@ -97,7 +115,12 @@ export class ChildTasks {
 			if (!this.path) throw new Error("child task state has not been restored");
 			writeState(this.path, {
 				version: 2,
-				state: { records, outcomes: this.outcomes, paused: this.paused },
+				state: {
+					records,
+					outcomes: this.outcomes,
+					paused: this.paused,
+					...(this.checkReplies.size ? { checkReplies: [...this.checkReplies.values()] } : {}),
+				},
 			} satisfies StoredState);
 			this.failed = false;
 		} catch (error) {

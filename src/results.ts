@@ -348,7 +348,9 @@ export function createResults(
 		};
 		const approved = delegation.check;
 		const closingKnown = approved === undefined || syncCloses();
-		if (!approved || delegation.closed === true || delegation.gone === true) {
+		// A check on a failed or stopped reply can pass on half-done work, so only
+		// a done reply runs one; the others deliver as if nothing was approved.
+		if (!approved || reply.status !== "done" || delegation.closed === true || delegation.gone === true) {
 			finishReply(pending, result, details);
 		} else if (!closingKnown) {
 			const check: CheckResult = { status: "error", runs: [], error: "could not verify the delegation was still open" };

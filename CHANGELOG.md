@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A `check` no longer runs when the child's reply status is `failed` or
+  `stopped`. The result is delivered without a check section, like a
+  delegation that named no check, because a check on unfinished work can
+  report a misleading pass.
+
 ## [0.36.0] - 2026-11-24
 
 ### Added

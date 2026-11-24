@@ -36,11 +36,11 @@ async function delegate(s: Session, params: Record<string, unknown> = {}): Promi
 	return (await s.toolCall("delegate", { ...task, ...params })).structuredContent as Start;
 }
 
-function reply(s: Session, from: string, index = 0, body = "child answer") {
+function reply(s: Session, from: string, index = 0, body = "child answer", status = "done") {
 	const request = s.sendCalls[index].envelope?.id;
 	assert.equal(typeof request, "string");
 	const payload = {
-		envelope: { id: `reply-${request}`, from, to: s.parent, in_reply_to: [request], status: "done", ts: "", body },
+		envelope: { id: `reply-${request}`, from, to: s.parent, in_reply_to: [request], status, ts: "", body },
 		path: "/mail/cur/reply.json",
 		requests: [],
 		handled: false,
@@ -227,6 +227,25 @@ test("invalid check lists are refused before opening a child", async () => {
 	for (const check of [[], [""], [" \n "], [null], "true", Array(6).fill("true")])
 		await assert.rejects(delegate(s, { check }), /check.*1 to 5.*non-empty/);
 	assert.deepEqual(s.tmux.opened, []);
+});
+
+test("a failed or stopped reply is delivered without running the approved check", async (t) => {
+	for (const status of ["failed", "stopped"]) {
+		await t.test(status, async () => {
+			resetRoot();
+			writeAgent("scout", agentFile({ description: "Looks things up", model: "alpha/fast-model", thinking: "low" }));
+			const cwd = workspace();
+			const s = session(approval);
+			const start = await delegate(s, { cwd, check: [marker] });
+			reply(s, start.id, 0, "child answer", status);
+			const message = await until(() => result(s));
+			assert.match(message.content, new RegExp(`^Status: ${status}$`, "m"));
+			assert.match(message.content, /child answer/);
+			assert.doesNotMatch(message.content, /check \(run by Squire\)/);
+			assert.equal(message.details.check, undefined);
+			assert.ok(!existsSync(join(cwd, "check-marker")), "the approved command never ran");
+		});
+	}
 });
 
 test("a late result after explicit close is delivered without running a check", async () => {

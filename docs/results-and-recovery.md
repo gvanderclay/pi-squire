@@ -506,9 +506,12 @@ for every delegation it restores as running.
 
 If the launch or resume named [`check`](delegation.md#delegate-checks), Squire
 runs the approved commands in order after claiming the child's reply and
-before delivering it. It uses `/bin/sh -c` in the approved directory, with the
-parent's environment plus `CI=1` and `FORCE_COLOR=0`, and with no stdin.
-It stops at the first failure or error and allows five minutes per command.
+before delivering it. It runs them only when that reply's status is `done`: a
+`failed` or `stopped` reply means the child did not finish the task, so a pass
+could mislead, and Squire delivers it as if the delegation named no check. It
+uses `/bin/sh -c` in the approved directory, with the parent's environment
+plus `CI=1` and `FORCE_COLOR=0`, and with no stdin. It stops at the first
+failure or error and allows five minutes per command.
 
 The result adds a separate `check (run by Squire): pass`, `fail` or `error`
 section. A failure gives the exit code or signal and, when available, up to

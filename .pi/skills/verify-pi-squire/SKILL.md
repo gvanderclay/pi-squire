@@ -36,7 +36,7 @@ Every command prints one JSON object. `"ok": false` means it failed, with the re
    | `evidence/` | Proof artifacts; cleanup never touches it |
    | `run.json` | Commit under test, whether `src/` was dirty, model, tmux socket, root session file |
 
-   It starts tmux on socket `squire-verify-<id>` (`tmux -L squire-verify-<id>`), session `root`, window `root`, running the root Pi with `--tools read,ls,delegate,delegation_*,session_mail_*` (no bash, edit or write). The environment has every `PI_*`, `TMUX*`, `HERDR*` and `PASEO_*` variable removed by default (`self-test` checks this without starting anything), so an agent running this from inside Pi or tmux does not leak its own session into the run.
+   It starts tmux on socket `squire-verify-<id>` (`tmux -L squire-verify-<id>`), session `root`, window `root`, running the root Pi with `--tools read,ls,delegate,delegation_*,delegate_check,session_mail_*` (no bash, edit or write). `delegate_check` must be named because Pi's allowlist gates registration of even a deferred tool; it is not declared to the model, but `delegate`'s `check` refuses to launch without it. The environment has every `PI_*`, `TMUX*`, `HERDR*` and `PASEO_*` variable removed by default (`self-test` checks this without starting anything), so an agent running this from inside Pi or tmux does not leak its own session into the run.
 
    Ready means the root's footer shows `deepseek-v4.1-flash • low`, which appears once the TUI has its model. Launch waits up to 60 s and saves the pane to `evidence/launch-pane.txt`.
 

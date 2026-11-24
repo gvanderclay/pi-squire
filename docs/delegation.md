@@ -358,6 +358,8 @@ directory. For a managed worktree, this happens after creation and verification
 of its root. If any approval fails, the delegation is refused with the command
 and reason, and any new worktree goes through the usual pre-start rollback.
 A missing nested tool API or an unavailable approval tool also refuses the call.
+A session started with a `--tools` allowlist must name `delegate_check`: Pi
+registers only allowlisted tools, and the model never sees this one.
 
 Set up your [shell permission integration](integrations.md#delegate_check)
 before using this option. Squire runs approved checks in the parent process's

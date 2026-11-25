@@ -14,6 +14,11 @@ follows [Semantic Versioning](https://semver.org/).
   it. A model-initiated `delegation_close` leaves its tool result as the
   report and writes nothing else; if Pi never saved that result, one
   cancellation is written on reopen.
+- A `delegation_close` a codemode script calls appends its close report to that
+  script's own tool result before Pi saves it, and the result is the close
+  receipt: the model sees what closed, with no separate notice, wake or
+  cancellation copy. If Pi never saved that result, the fallback still writes
+  the close once on reopen.
 - A `check` no longer runs when the child's reply status is `failed` or
   `stopped`. The result is delivered without a check section, like a
   delegation that named no check, because a check on unfinished work can

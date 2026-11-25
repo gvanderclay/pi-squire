@@ -9,6 +9,8 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	getAgentDir,
+	type ToolResultEvent,
+	type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { readState, writeState } from "./local-state.ts";
 import { isStarted, isV2Start, type Recorded } from "./result-types.ts";
@@ -28,21 +30,89 @@ export type ChildOutcome = {
 };
 
 /** What a request message or a restored branch entry shows the presence check. */
-type Carried = { role?: string; customType?: string; details?: unknown; toolName?: string };
+type Carried = {
+	role?: string;
+	customType?: string;
+	content?: unknown;
+	details?: unknown;
+	toolName?: string;
+};
+
+/** The label that separates a nested close report from the script output it joins. */
+const NESTED_CLOSE_LABEL = "[delegate] Close report for the delegation_close this tool called:";
+
+/** One nested close: the report text the model was shown, and the members it confirmed. */
+type CloseReceipt = { text: string; closed: string[] };
+
+/** The text one tool result shows the model. */
+function shownText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((item) =>
+			item !== null && typeof item === "object" && typeof (item as { text?: unknown }).text === "string"
+				? [(item as { text: string }).text]
+				: [],
+		)
+		.join("\n");
+}
+
+function isCloseReceipt(value: unknown): value is CloseReceipt {
+	if (value === null || typeof value !== "object") return false;
+	const { text, closed } = value as { text?: unknown; closed?: unknown };
+	return typeof text === "string" && Array.isArray(closed) && closed.every((id) => typeof id === "string");
+}
+
+/** The nested close reports a tool result appended, each with the members it confirmed. */
+function closeReceipts(details: unknown): CloseReceipt[] {
+	const found = (details as { squireClose?: unknown } | undefined)?.squireClose;
+	return Array.isArray(found) ? found.filter(isCloseReceipt) : [];
+}
+
+/** The members one close result details confirmed, by id. */
+function confirmedMembers(details: unknown): string[] {
+	const members = (details as { members?: unknown } | undefined)?.members;
+	if (!Array.isArray(members)) return [];
+	return members.flatMap((member) =>
+		member !== null &&
+		typeof member === "object" &&
+		typeof (member as { id?: unknown }).id === "string" &&
+		(member as { closed?: unknown }).closed === true
+			? [(member as { id: string }).id]
+			: [],
+	);
+}
+
+/** The report one nested `delegation_close` showed, whenever it confirmed a member. */
+function nestedCloseReceipt(event: ToolResultEvent): CloseReceipt | undefined {
+	if (event.toolName !== "delegation_close") return undefined;
+	const closed = confirmedMembers(event.details);
+	const report = shownText(event.content);
+	if (closed.length === 0 || report === "") return undefined;
+	return { text: `${NESTED_CLOSE_LABEL}\n${report}`, closed };
+}
 
 /**
  * Whether one message already tells the model this outcome: its own delegate
- * message, or the `delegation_close` tool result that reported the close.
+ * message, the `delegation_close` tool result that reported the close, or a
+ * tool result that appended a nested close report for it.
  */
 function carries(message: Carried, details: MessageDetails): boolean {
 	if (message.role === "custom") {
 		const found = message.details as MessageDetails | undefined;
 		return message.customType === "delegate" && found?.id === details.id && found.kind === details.kind;
 	}
-	if (details.kind !== "gone" || details.reason !== "explicit-close" || message.toolName !== "delegation_close")
-		return false;
-	const members = (message.details as { members?: { id?: string; closed?: boolean }[] } | undefined)?.members ?? [];
-	return members.some((member) => member.id === details.id && member.closed === true);
+	if (details.kind !== "gone" || details.reason !== "explicit-close") return false;
+	if (message.toolName === "delegation_close") {
+		const members = (message.details as { members?: { id?: string; closed?: boolean }[] } | undefined)?.members ?? [];
+		if (members.some((member) => member.id === details.id && member.closed === true)) return true;
+	}
+	// A nested close reaches the model only inside the enclosing tool result's
+	// text, so its receipt counts only while that text still shows the report.
+	const receipts = closeReceipts(message.details);
+	if (receipts.length === 0) return false;
+	const shown = shownText(message.content);
+	return receipts.some((receipt) => receipt.closed.includes(details.id) && shown.includes(receipt.text));
 }
 
 /** The outcomes these messages carry; the session entry is the only carrier, never a request rewrite. */
@@ -136,6 +206,8 @@ export class ChildTasks {
 	ran = false;
 	/** Settlement continuations asked for per outcome, bounded so a dropped carrier cannot loop. */
 	continuations = new Map<string, number>();
+	/** Nested close reports waiting for the tool result that encloses them, by tool call id. */
+	nestedCloses = new Map<string, CloseReceipt[]>();
 
 	blockRestore(error: unknown): void {
 		this.restoreFailure ??= String(error);
@@ -151,6 +223,7 @@ export class ChildTasks {
 		this.observed.clear();
 		this.ran = false;
 		this.continuations.clear();
+		this.nestedCloses.clear();
 		this.failed = false;
 		this.unreadable = false;
 		this.restoreFailure = undefined;
@@ -264,6 +337,39 @@ export class ChildTasks {
 	}
 
 	/**
+	 * Pi's `tool_result` hook. A `delegation_close` another tool called leaves
+	 * no transcript of its own, so its report joins the result of the call that
+	 * made it, before Pi saves it: that result is the close receipt. A result
+	 * with no such call is returned unchanged.
+	 */
+	toolResult(event: ToolResultEvent): ToolResultEventResult | undefined {
+		const waiting = this.nestedCloses.get(event.toolCallId) ?? [];
+		const own = event.parentToolCallId === undefined ? undefined : nestedCloseReceipt(event);
+		if (event.parentToolCallId !== undefined) {
+			// A script call nested inside another carries its reports up to the result the model reads.
+			this.nestedCloses.delete(event.toolCallId);
+			const carried = [...waiting, ...(own === undefined ? [] : [own])];
+			if (carried.length)
+				this.nestedCloses.set(event.parentToolCallId, [
+					...(this.nestedCloses.get(event.parentToolCallId) ?? []),
+					...carried,
+				]);
+			return undefined;
+		}
+		if (waiting.length === 0) return undefined;
+		this.nestedCloses.delete(event.toolCallId);
+		return {
+			content: [...event.content, ...waiting.map(({ text }) => ({ type: "text" as const, text }))],
+			details: {
+				...(typeof event.details === "object" && event.details !== null ? event.details : {}),
+				squireClose: [...closeReceipts(event.details), ...waiting],
+			},
+			// Replacing content alone would drop the structured content it no longer matches.
+			...(event.structuredContent === undefined ? {} : { structuredContent: event.structuredContent }),
+		};
+	}
+
+	/**
 	 * Ask for one continuation request that carries every unread outcome, and
 	 * draft what the projection no longer holds. Nothing is left to do once
 	 * every outcome was read.
@@ -298,6 +404,7 @@ export class ChildTasks {
 	): void {
 		let stopped = false;
 		pi.on("context", (event) => this.context(event));
+		pi.on("tool_result", (event) => this.toolResult(event));
 		pi.on("before_agent_start", (event) => {
 			this.ran = true;
 			// A user prompt is the input that releases a stopped root's held outcomes.
@@ -305,6 +412,8 @@ export class ChildTasks {
 			this.publishMissing(pi, coordinator());
 		});
 		pi.on("agent_end", (event, ctx) => {
+			// A call whose result never arrived, as on an abort, has no enclosing result left to join.
+			this.nestedCloses.clear();
 			const last = event.messages.findLast((message) => message.role === "assistant");
 			stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 			if (stopped && !coordinator()) {

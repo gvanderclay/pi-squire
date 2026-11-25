@@ -28,6 +28,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
+import { Type } from "typebox";
 import type { ChildOutcome } from "../src/child-tasks.ts";
 
 import { FakeTmux } from "./fake-tmux.ts";
@@ -466,6 +467,225 @@ test("a partial close whose direct child is confirmed still covers that child's 
 	await owner.fire("agent_before_settle", { entries: [], continue: false });
 	await owner.fire("agent_settled");
 	assert.deepEqual(queued(), [], "the confirmed row acknowledges the obligation");
+});
+
+/**
+ * A tool shaped like codemode: one script call whose model-visible result is
+ * only what the script returned. `delegation_close` runs through
+ * `ctx.executeTool`, so its own result never enters the transcript.
+ */
+function scriptTool() {
+	return {
+		name: "script",
+		label: "Run a script",
+		description: "Runs one script that may close a delegation.",
+		parameters: Type.Object({ id: Type.String(), fail: Type.Optional(Type.Boolean()) }),
+		outputSchema: Type.Object({
+			calls: Type.Array(Type.Object({ name: Type.String(), status: Type.String() })),
+		}),
+		async execute(
+			_toolCallId: string,
+			params: { id: string; fail?: boolean },
+			_signal: unknown,
+			_onUpdate: unknown,
+			ctx: { executeTool: (name: string, input: unknown) => Promise<{ isError: boolean }> },
+		) {
+			const closed = await ctx.executeTool("delegation_close", { id: params.id });
+			const calls = [{ name: "delegation_close", status: closed.isError ? "error" : "ok" }];
+			return {
+				content: [{ type: "text" as const, text: `script output: ${JSON.stringify(calls)}` }],
+				details: { calls },
+				structuredContent: { calls },
+				...(params.fail ? { isError: true } : {}),
+			};
+		},
+	};
+}
+
+/** A parent that can run such a script, with `delegation_close` callable inside it. */
+function scripted(options: Parameters<typeof session>[0] = {}): Session {
+	const tool = scriptTool();
+	return session({
+		...options,
+		nestedTools: ["delegation_close"],
+		beforeSquire: (pi) => pi.registerTool(tool as never),
+	});
+}
+
+/** The text one tool result showed the model. */
+const body = (result: { content: { type: string; text: string }[] }): string =>
+	result.content.map((item) => item.text).join("\n");
+
+/** The namespaced receipt a nested close leaves on the result of the call that made it. */
+type Receipt = { text: string; closed: string[] };
+const receipts = (result: { details: unknown }): Receipt[] =>
+	((result.details as { squireClose?: Receipt[] } | undefined)?.squireClose ?? []).slice();
+
+/** The messages a tool result and its call add to the transcript. */
+function scriptedClose(id: string, result: { content: { type: string; text: string }[]; details: unknown }) {
+	const call: Carried = {
+		role: "assistant",
+		content: [{ type: "toolCall", id: "call-script", name: "script", arguments: { id } }],
+	};
+	const reply: Carried = {
+		role: "toolResult",
+		toolCallId: "call-script",
+		toolName: "script",
+		content: result.content,
+		details: result.details,
+		isError: false,
+	};
+	return { call, reply };
+}
+
+test("a close a script made is reported in that script's tool result, with no notice and no wake", async () => {
+	const s = scripted();
+	const { id } = await delegation(s);
+	const outer = await s.toolCall("script", { id });
+	const shown = body(outer);
+	assert.ok(shown.startsWith("script output:"), "the script's own output is preserved");
+	assert.ok(shown.includes("Close report for the delegation_close this tool called:"));
+	assert.ok(shown.includes(`- ${id}: killed`), "the report names the member it confirmed");
+	assert.deepEqual(s.sent, [], "the enclosing result is the only close message");
+	const queued = inbox(s);
+	assert.equal(queued()[0]?.key, `closed:${id}`, "the close keeps one durable processing obligation");
+	assert.equal(queued()[0]?.delivered, undefined, "the enclosing result carries it, not a custom message");
+	const [receipt, ...more] = receipts(outer);
+	assert.ok(receipt, "the result carries the namespaced receipt");
+	assert.deepEqual(more, [], "one receipt per nested close");
+	assert.deepEqual(receipt.closed, [id], "the receipt names the confirmed member");
+	assert.ok(shown.includes(receipt.text), "the receipt matches the report the model can read");
+
+	const user: Carried = { role: "user", content: "q" };
+	const { call, reply } = scriptedClose(id, outer);
+	const first = await pipeline(s, [user, call, reply]).request();
+	assert.deepEqual(
+		first.map(shape),
+		[user, call, reply].map(shape),
+		"the request adds nothing to the saved transcript",
+	);
+	assert.equal(
+		first.some((message) => message.customType === "delegate"),
+		false,
+		"no custom cancellation copy",
+	);
+
+	// The model read the receipt in that request, so settlement acknowledges it.
+	await s.fire("agent_start");
+	await pipeline(s, [user, call, reply]).request();
+	await s.fire("agent_end", TURN);
+	const settle = await s.fire("agent_before_settle", { entries: [], continue: false });
+	assert.ok(
+		settle.every((value) => value === undefined),
+		"the receipt needs no continuation and no rewrite",
+	);
+	await s.fire("agent_settled");
+	assert.deepEqual(queued(), [], "the receipt acknowledges the obligation");
+	assert.deepEqual(s.sent, [], "still no notice and no wake");
+
+	const answer: Carried = { role: "assistant", content: [{ type: "text", text: "closed it" }] };
+	const second = await pipeline(s, [user, call, reply, answer]).request();
+	assert.deepEqual(
+		second.slice(0, first.length).map(shape),
+		first.map(shape),
+		"the next request begins with every message of the first, in order",
+	);
+	assert.deepEqual(second.map(shape).slice(2, 3), first.map(shape).slice(2, 3), "the report keeps its index");
+});
+
+test("a script that fails after the close still reports it in its tool result", async () => {
+	const s = scripted();
+	const { id } = await delegation(s);
+	const outer = await s.toolCall("script", { id, fail: true });
+	assert.equal(outer.isError, true, "the script failed");
+	assert.ok(body(outer).includes(`- ${id}: killed`), "the report survives the script failure");
+	assert.equal(receipts(outer).length, 1);
+	assert.deepEqual(s.sent, [], "the enclosing result is the only close message");
+	const queued = inbox(s);
+	assert.equal(queued()[0]?.key, `closed:${id}`, "the confirmed close keeps its obligation");
+
+	const user: Carried = { role: "user", content: "q" };
+	const { call, reply } = scriptedClose(id, outer);
+	await s.fire("agent_start");
+	const request = await pipeline(s, [user, call, reply]).request();
+	assert.ok(request.some((message) => text(message).includes("Close report for the delegation_close")));
+	await s.fire("agent_end", TURN);
+	await s.fire("agent_before_settle", { entries: [], continue: false });
+	await s.fire("agent_settled");
+	assert.deepEqual(queued(), [], "the failed script's result still acknowledges the obligation");
+	assert.deepEqual(s.sent, [], "no notice and no wake");
+});
+
+test("a reopened session carries a nested close from its saved outer result, without a second body", async () => {
+	const s = scripted();
+	const { id } = await delegation(s);
+	const outer = await s.toolCall("script", { id });
+	assert.deepEqual(s.sent, [], "the live close stayed silent");
+	const user: Carried = { role: "user", content: "q" };
+	const { call, reply } = scriptedClose(id, outer);
+	await s.shutdown();
+
+	// Pi saved the enriched result: the branch already shows the report.
+	const reopened = session({ parent: s.parent, entries: s.entries, messages: [user, call, reply] });
+	await reopened.start();
+	await nextTurn();
+	assert.deepEqual(
+		reopened.sent.filter(({ message }) => message.customType === "delegate"),
+		[],
+		"the saved receipt is the one report",
+	);
+	const wakes = reopened.sent.filter(({ message }) => message.customType === "delegate-recovery");
+	assert.equal(wakes.length, 1, "reopening still asks for the processing run");
+	assert.equal(wakes[0].message.display, false);
+
+	const carried: Carried[] = [
+		user,
+		call,
+		reply,
+		...reopened.sent.map(({ message }) => ({ role: "custom", ...message })),
+	];
+	const request = await pipeline(reopened, [user, call, reply]).request();
+	assert.deepEqual(request.map(shape), carried.map(shape), "the request carries the saved receipt and adds nothing");
+	await reopened.fire("agent_start");
+	await pipeline(reopened, [user, call, reply]).request();
+	await reopened.fire("agent_end", TURN);
+	await reopened.fire("agent_before_settle", { entries: [], continue: false });
+	await reopened.fire("agent_settled");
+	assert.deepEqual(inbox(reopened)(), [], "processing acknowledges the restored receipt");
+	await reopened.shutdown();
+});
+
+test("a nested close whose enclosing result Pi never saved is written once on reopen", async () => {
+	const s = scripted();
+	const { id } = await delegation(s);
+	await s.toolCall("script", { id });
+	assert.deepEqual(s.sent, [], "the live close stayed silent");
+	assert.equal(inbox(s)()[0]?.key, `closed:${id}`, "the obligation is durable before anything is written");
+	// Pi died before it saved the script's result: the branch has the call but no result.
+	await s.shutdown();
+	const reopened = session({ parent: s.parent, entries: s.entries });
+	await reopened.start();
+	await nextTurn();
+	const written = reopened.sent.filter(({ message }) => message.customType === "delegate");
+	assert.equal(written.length, 1, "one cancellation copy, written once");
+	assert.match(String(written[0].message.content), /canceled by explicit close/);
+	assert.deepEqual(written[0].options, { triggerTurn: false }, "the copy is saved, not steered into a run");
+	const wakes = reopened.sent.filter(({ message }) => message.customType === "delegate-recovery");
+	assert.equal(wakes.length, 1, "one wake asks for the processing run");
+
+	await reopened.fire("agent_start");
+	const request = await pipeline(reopened).request();
+	assert.ok(request.some((message) => text(message).includes("canceled by explicit close")));
+	await reopened.fire("agent_end", TURN);
+	await reopened.fire("agent_before_settle", { entries: [], continue: false });
+	await reopened.fire("agent_settled");
+	assert.deepEqual(inbox(reopened)(), [], "processing acknowledges the recovered cancellation");
+	await reopened.shutdown();
+
+	const again = session({ parent: s.parent, entries: reopened.entries, messages: request });
+	await again.start();
+	await nextTurn();
+	assert.deepEqual(again.sent, [], "a second reopen writes and wakes nothing");
 });
 
 for (const transcriptPresent of [true, false]) {

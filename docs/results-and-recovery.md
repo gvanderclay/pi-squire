@@ -132,11 +132,13 @@ precedes Squire task handling. If mail claims before that restoration
 (including delayed startup or a duplicate process), matching Squire input is
 staged durably for the sole owner.
 An outcome reaches the model only as a saved session entry: a delegate message,
-or the `delegation_close` tool result for a close that tool reported. Squire
-never appends it to a request, so every request starts with the messages of the
-one before it and only grows. Each unprocessed outcome is written once; only an
-outcome a request carried and a non-stopped settlement followed is
-acknowledged. The task reply gate requires no unfinished children and no
+or the `delegation_close` tool result for a close that tool reported. A
+`delegation_close` a codemode script calls has no transcript of its own, so
+Squire appends its close report to the script's own tool result before Pi
+saves it, and that result is the receipt. Squire never appends it to a
+request, so every request starts with the messages of the one before it and
+only grows. Each unprocessed outcome is written once; only an outcome a
+request carried and a non-stopped settlement followed is acknowledged. The task reply gate requires no unfinished children and no
 unprocessed outcomes. Storage failures, including incomplete
 transcript/child-identity restoration, block final completion/auto-exit and new
 launch/resume admission in roots and coordinators. Read-only admission checks the restored store health; a write
@@ -484,9 +486,10 @@ Delegate session: <session file or id>
   already-displayed result wakes one recovery turn without writing it again,
   and an outcome the restored transcript does not hold is written once before
   that turn's first request. A close reported by `delegation_close` keeps its
-  tool result as the report and is not written again; one that Pi never saved
-  is recovered this way. An explicit root user stop is persisted: reopening
-  does not start that work again automatically. Previously held outcomes wait
+  tool result as the report and is not written again, including one a codemode
+  script called, whose report joins the script's own result; a close whose
+  result Pi never saved is recovered this way. An explicit root user stop is
+  persisted: reopening does not start that work again automatically. Previously held outcomes wait
   for a later input or a genuinely fresh outcome, which writes them once
   before its own messages. New live results still steer/start a turn, and new
   gone outcomes keep their normal wake delivery; they clear the held replay

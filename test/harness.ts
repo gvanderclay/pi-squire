@@ -171,8 +171,13 @@ type Command = {
 	handler: (args: string, ctx: unknown) => Promise<void>;
 };
 
-/** One tool result, the shape `execute` returns. */
-export type ToolResult = { content: { type: string; text: string }[]; details: unknown; structuredContent?: unknown };
+/** One tool result, the shape `execute` returns and Pi saves. */
+export type ToolResult = {
+	content: { type: string; text: string }[];
+	details: unknown;
+	structuredContent?: unknown;
+	isError?: boolean;
+};
 
 /** One registered tool, as much of it as the tests drive. */
 export type Tool = {
@@ -818,6 +823,45 @@ export function session(options: SessionOptions = {}) {
 		bound = true;
 		await fire("session_start", { reason: "startup" });
 	};
+	/**
+	 * Pi's `tool_result` hooks and the result it saves: every handler's patch chains
+	 * onto the one before, and replacing content drops the structured content it no
+	 * longer matches (extensions/runner.js `emitToolResult`, agent-session.js
+	 * `_afterToolCall`).
+	 */
+	const afterToolCall = async (
+		toolName: string,
+		toolCallId: string,
+		input: unknown,
+		result: ToolResult,
+		parentToolCallId?: string,
+	): Promise<ToolResult> => {
+		const event: Record<string, unknown> = {
+			type: "tool_result",
+			toolCallId,
+			toolName,
+			input,
+			content: result.content,
+			details: result.details,
+			isError: result.isError ?? false,
+			...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }),
+			...(parentToolCallId === undefined ? {} : { parentToolCallId }),
+		};
+		let modified = false;
+		for (const handler of handlers.tool_result ?? []) {
+			const patch = (await handler(event, ctx)) as Partial<ToolResult> | undefined;
+			if (patch === undefined) continue;
+			modified = true;
+			if (patch.content !== undefined) {
+				event.content = patch.content;
+				if (patch.structuredContent === undefined) delete event.structuredContent;
+			}
+			if (patch.details !== undefined) event.details = patch.details;
+			if (patch.structuredContent !== undefined) event.structuredContent = patch.structuredContent;
+			if (patch.isError !== undefined) event.isError = patch.isError;
+		}
+		return modified ? (event as unknown as ToolResult) : result;
+	};
 	const callTool = async (name: string, params: unknown, abort?: AbortSignal): Promise<ToolResult> => {
 		if (!bound) await ensureStarted();
 		const tool = tools[name];
@@ -843,12 +887,14 @@ export function session(options: SessionOptions = {}) {
 								)) as { block?: boolean; reason?: string } | undefined;
 								if (response?.block) return error(response.reason ?? "blocked");
 							}
-							return { isError: false, result: await child.execute(toolCallId, input as never, abort, undefined, ctx) };
+							const result = await child.execute(toolCallId, input as never, abort, undefined, ctx);
+							return { isError: false, result: await afterToolCall(name, toolCallId, input, result, callId) };
 						},
 					};
-		return tool.execute(callId, params as never, abort, undefined, toolContext).then((result) => {
-			checkStructured(tool, result);
-			return result;
+		return tool.execute(callId, params as never, abort, undefined, toolContext).then(async (result) => {
+			const saved = await afterToolCall(name, callId, params, result);
+			checkStructured(tool, saved);
+			return saved;
 		});
 	};
 	return {

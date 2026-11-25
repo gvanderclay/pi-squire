@@ -70,9 +70,14 @@ export function parentCommand(execPath = process.execPath, argv = process.argv):
 	return [execPath];
 }
 
-/** Whether this run exposes `delegate` after tool selection and hidden declarations. */
+/**
+ * Whether this run can call `delegate`. Pi's `hiddenTools` holds only
+ * `prepareLoadout` hidden declarations, as `codemode.mode: "only"` makes of a
+ * direct tool, and a hidden tool stays active and callable from a script; a
+ * disabled or inactive tool is absent from `selectedTools` instead.
+ */
 export function delegateVisible(options: { selectedTools: string[]; hiddenTools: string[] }): boolean {
-	return options.selectedTools.includes("delegate") && !options.hiddenTools.includes("delegate");
+	return options.selectedTools.includes("delegate");
 }
 
 /** Where agent files go, for the messages that say how to add one. */

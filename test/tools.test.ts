@@ -185,7 +185,7 @@ test("an unreadable prompt warns with its path, removes stale guidance, and leav
 	assert.equal(s.tmux.opened.length, 1);
 });
 
-test("a prompt read error is reported and clears guidance even when delegation is inactive or hidden", async () => {
+test("a prompt read error is reported and clears guidance for an active run", async () => {
 	writeAgent("scout", SCOUT);
 	writeDelegationPrompt(GUIDE);
 	const s = session();
@@ -204,52 +204,64 @@ test("a prompt read error is reported and clears guidance even when delegation i
 	assert.deepEqual(hidden.systemPromptOptions.sections, { other: "keep" });
 	assert.deepEqual(hidden.systemPromptOptions.selectedTools, [...DEFAULT_TOOLS, "delegate"]);
 	assert.deepEqual(hidden.systemPromptOptions.hiddenTools, ["delegate"]);
-	assert.equal(s.registrations.length, before, "a hidden tool is not re-registered");
+	assert.equal(s.registrations.length, before + 1, "a hidden declaration stays active, so its roster refreshes");
 	assert.equal(s.warnings.length, 1);
 	assert.ok(s.warnings[0].includes(delegationPromptPath), s.warnings[0]);
 
+	const refreshed = s.registrations.length;
 	const inactive = await s.prepare({
 		selectedTools: DEFAULT_TOOLS,
 		sections: { other: "keep", [PARENT_SECTION]: "stale" },
 	});
 	assert.deepEqual(inactive.systemPromptOptions.sections, { other: "keep" });
 	assert.deepEqual(inactive.systemPromptOptions.selectedTools, DEFAULT_TOOLS);
-	assert.equal(s.registrations.length, before, "an inactive tool is not re-registered");
+	assert.equal(s.registrations.length, refreshed, "an inactive tool is not re-registered");
 	assert.equal(s.warnings.length, 2);
 	assert.ok(s.warnings[1].includes(delegationPromptPath), s.warnings[1]);
 	await assert.doesNotReject(s.toolCall("delegate", { agent: "scout", task: "do it" }));
 	assert.equal(s.tmux.opened.length, 1);
 });
 
-test("inactive or hidden delegation removes only the owned section and preserves selection", async () => {
+test("a codemode-only hidden declaration keeps guidance and refreshes the roster", async () => {
+	writeAgent("scout", SCOUT);
 	writeDelegationPrompt(GUIDE);
 	const s = session();
 	await s.start();
+	const before = s.registrations.length;
 	const hidden = await s.prepare({
 		selectedTools: [...DEFAULT_TOOLS, "delegate"],
 		hiddenTools: ["delegate"],
 		sections: { other: "keep", [PARENT_SECTION]: "stale" },
 	});
-	assert.deepEqual(hidden.systemPromptOptions.sections, { other: "keep" });
+	assert.equal(hidden.systemPromptOptions.sections[PARENT_SECTION], GUIDE);
+	assert.equal(hidden.systemPromptOptions.sections.other, "keep");
 	assert.deepEqual(hidden.systemPromptOptions.selectedTools, [...DEFAULT_TOOLS, "delegate"]);
 	assert.deepEqual(hidden.systemPromptOptions.hiddenTools, ["delegate"]);
+	assert.equal(s.registrations.length, before, "unchanged metadata does not re-register");
 
+	writeAgent("researcher", RESEARCHER);
+	await s.prepare({ selectedTools: [...DEFAULT_TOOLS, "delegate"], hiddenTools: ["delegate"] });
+	assert.equal(
+		s.registrations.length,
+		before + 1,
+		"codemode still calls a hidden declaration, so its roster refreshes",
+	);
+	assert.match(s.tool("delegate").description, /researcher — Digs deeper/);
+});
+
+test("inactive delegation removes only the owned section and preserves selection", async () => {
+	writeDelegationPrompt(GUIDE);
+	const s = session();
+	await s.start();
+	const before = s.registrations.length;
+	writeAgent("researcher", RESEARCHER);
 	const inactive = await s.prepare({
 		selectedTools: DEFAULT_TOOLS,
 		sections: { other: "keep", [PARENT_SECTION]: "stale" },
 	});
 	assert.deepEqual(inactive.systemPromptOptions.sections, { other: "keep" });
 	assert.deepEqual(inactive.systemPromptOptions.selectedTools, DEFAULT_TOOLS);
-});
-
-test("a hidden tool's changed roster is not re-registered until it is active again", async () => {
-	writeAgent("scout", SCOUT);
-	const s = session();
-	await s.start();
-	const before = s.registrations.length;
-	writeAgent("researcher", RESEARCHER);
-	await s.prepare({ hiddenTools: ["delegate"] });
-	assert.equal(s.registrations.length, before, "re-registering a hidden tool could reactivate it");
+	assert.equal(s.registrations.length, before, "re-registering an inactive tool would declare it");
 	assert.doesNotMatch(s.tool("delegate").description, /researcher/);
 	await s.prepare();
 	assert.equal(s.registrations.length, before + 1);

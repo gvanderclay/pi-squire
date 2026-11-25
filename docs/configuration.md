@@ -212,13 +212,17 @@ not all keys on every call.
 a run started by an idle delegate result. It is not a conversation or user
 message, is not duplicated in the `delegate` tool description or guidelines,
 and is not copied into the launched child's prompt. An opted-in coordinator
-reads this same file for its own parent role. The guidance is added only while the `delegate`
-tool is active and not hidden; when delegation is inactive or hidden, the
-section is removed and tool selection is left as it was. A missing or whitespace-only
-file adds no section. Editing the file replaces the section at the next run;
-deleting it removes the section. A read failure other than a missing file
-warns with the path, removes stale guidance for that run, and leaves otherwise
-valid delegation working. The package ships no default delegation or approval
+reads this same file for its own parent role. The guidance is added while the
+`delegate` tool is active, including when `codemode.mode: "only"` hides its
+top-level declaration from the model, because a script still calls the tool.
+When delegation is inactive or disabled, the section is removed and tool
+selection is left as it was. The `delegate` tool's roster description is
+refreshed on the same condition, so a roster edit reaches the next run while
+the tool is active either way. A missing or whitespace-only file adds no
+section. Editing the file replaces the section at the next run; deleting it
+removes the section. A read failure other than a missing file warns with the
+path, removes stale guidance for that run, and leaves otherwise valid
+delegation working. The package ships no default delegation or approval
 policy.
 
 Refresh happens before a new run, not before every model request in a tool

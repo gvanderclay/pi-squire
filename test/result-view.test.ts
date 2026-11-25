@@ -61,7 +61,7 @@ function deliver(s: Session, status = "done", body = "the answer", task?: string
 }
 
 const resultMessage = (s: Session) => {
-	const found = s.sent.find((m) => /^\[delegate\] Result from/.test(String(m.message.content)));
+	const found = s.sent.find((m) => (m.message as { details?: { kind?: string } }).details?.kind === "result");
 	assert.ok(found, "a result message was sent");
 	return found.message as { content: string; details?: Record<string, unknown> };
 };
@@ -126,7 +126,8 @@ test("result usage stays in the header outside the body budget; full status read
 	const body = `START-${"x".repeat(40_000)}-END`;
 	deliver(s, "done", body);
 	const message = resultMessage(s);
-	assert.equal(message.content.split("\n")[2], USAGE_LINE);
+	assert.match(firstLine(s), / · done$/);
+	assert.doesNotMatch(message.content, /^Usage:/m);
 	assert.deepEqual(message.details?.usage, USAGE);
 	assert.match(message.content, /KiB omitted here/);
 	assert.match(message.content, /Incomplete reply: 7242 UTF-8 bytes omitted from the middle/);
@@ -218,10 +219,7 @@ test("a delegate that finished on another model is named launched → finished i
 		{ type: "message", message: { role: "user", content: "later" } },
 	]);
 	deliver(s);
-	assert.equal(
-		firstLine(s),
-		`[delegate] Result from scout (alpha/fast-model → beta/slow-model), delegation ${delegationId(s)}, request ${requestId(s)}.`,
-	);
+	assert.equal(firstLine(s), `[delegate] scout ${delegationId(s)} (alpha/fast-model → beta/slow-model) · done`);
 	const details = resultMessage(s).details;
 	assert.equal(details?.model, "alpha/fast-model");
 	assert.equal(details?.finishedModel, "beta/slow-model");
@@ -241,19 +239,19 @@ test("the finishing model survives a resume", async () => {
 	assert.match((await statusTool(resumed)).content[0].text, /alpha\/fast-model → beta\/slow-model/);
 });
 
-test("a delegate that finished on its launch model shows the launch model alone", async () => {
+test("a delegate that finished on its launch model omits the model from result text and shows it in status", async () => {
 	const s = await started();
 	writeDelegateSession(s, [assistant("alpha", "fast-model")]);
 	deliver(s);
-	assert.match(firstLine(s), /^\[delegate\] Result from scout \(alpha\/fast-model\), delegation/);
+	assert.equal(firstLine(s), `[delegate] scout ${delegationId(s)} · done`);
 	assert.match((await statusTool(s)).content[0].text, /scout \(alpha\/fast-model, thinking low\)/);
 });
 
-test("with no session file, or one with no assistant message or bad lines, the launch model shows alone", async (t: TestContext) => {
+test("with no session file, or one with no assistant message or bad lines, no model switch is shown", async (t: TestContext) => {
 	await t.test("no file", async () => {
 		const s = await started();
 		deliver(s);
-		assert.match(firstLine(s), /\(alpha\/fast-model\), delegation/);
+		assert.equal(firstLine(s), `[delegate] scout ${delegationId(s)} · done`);
 		assert.equal(resultMessage(s).details?.finishedModel, undefined);
 	});
 	await t.test("no assistant message, one unparseable line", async () => {
@@ -261,7 +259,7 @@ test("with no session file, or one with no assistant message or bad lines, the l
 		const s = await started();
 		writeDelegateSession(s, ["{not json", { type: "message", message: { role: "user", content: "x" } }]);
 		deliver(s);
-		assert.match(firstLine(s), /\(alpha\/fast-model\), delegation/);
+		assert.equal(firstLine(s), `[delegate] scout ${delegationId(s)} · done`);
 	});
 });
 
@@ -319,13 +317,14 @@ test("emitted completion messages preserve long results and errors without quoti
 			assert.equal(message.content.split("\n\n").slice(1).join("\n\n"), body);
 			assert.equal(message.details?.body, body);
 			assert.doesNotMatch(message.content, /Incomplete reply/);
-			assert.match(message.content, new RegExp(`^Status: ${status}$`, "m"));
-			assert.match(message.content, /^Task: \/mail\/sent\/task.json$/m);
-			assert.doesNotMatch(message.content, /Task, quoted|> Inspect|Task cut|^Workspace:/m);
-			assert.ok(message.content.includes(`Working directory: ${root}`));
-			assert.ok(message.content.includes("Checkout when the result arrived: not a Git checkout"));
-			assert.ok(message.content.includes("Envelope: /mail/cur/reply.json"));
-			assert.ok(message.content.includes(`Delegate session: ${file}`));
+			assert.match(firstLine(s), new RegExp(` · ${status}$`));
+			assert.doesNotMatch(
+				message.content,
+				/Task:|Task, quoted|> Inspect|Task cut|^Workspace:|Envelope:|Delegate session:/m,
+			);
+			assert.doesNotMatch(message.content, /^cwd:/m);
+			assert.equal(message.details?.envelopePath, "/mail/cur/reply.json");
+			assert.equal(message.details?.sessionPath, file);
 			const taskDetails = message.details?.task as { text: string; path: string };
 			assert.ok(taskDetails.text.startsWith(task.slice(0, 100)));
 			assert.match(taskDetails.text, /Task cut at 2 KiB/);
@@ -350,8 +349,7 @@ test("a completion for a legacy launch keeps missing-task and unknown-checkout d
 	assert.ok(
 		message.content.includes(`[delegate] The task ${requestId(resumed)} has no copy in sent/; only its id is known.`),
 	);
-	assert.match(message.content, /Working directory: unknown \(not recorded\)/);
-	assert.match(message.content, /Checkout when the result arrived: Git state unknown/);
+	assert.match(message.content, /cwd: unknown \(not recorded\) \(Git state unknown:/);
 	assert.ok(message.content.endsWith(`\n\n${body}`));
 	assert.equal(message.details?.cwd, undefined);
 	assert.equal(message.details?.workspace, undefined);
@@ -370,8 +368,8 @@ test("recovery replays saved legacy result text without rewriting it or filling 
 	};
 	const outcome = state.outcomes[0];
 	const legacyContent = resultMessage(s).content.replace(
-		"Task: /mail/sent/task.json",
-		"Task, quoted from /mail/sent/task.json:\n> The original task.",
+		`cwd: ${root}`,
+		`Task, quoted from /mail/sent/task.json:\n> The original task.\nWorking directory: ${root}`,
 	);
 	outcome.content = legacyContent;
 	outcome.delivered = false;
@@ -408,7 +406,7 @@ test("result and gone messages name the recorded cwd, and a legacy record's cwd 
 	t.mock.timers.enable({ apis: ["setInterval"] });
 	const s = await started();
 	deliver(s);
-	assert.ok(resultMessage(s).content.includes(`Working directory: ${root}`), resultMessage(s).content);
+	assert.doesNotMatch(resultMessage(s).content, /^cwd:/m);
 	assert.equal(resultMessage(s).details?.cwd, root);
 
 	const legacy = structuredClone(s.entries.slice(0, 1));

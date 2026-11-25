@@ -365,21 +365,17 @@ A delegate answers its task with one reply through the `message:*` provider.
 the parent one message labelled delegate output:
 
 ```
-[delegate] Result from scout (provider/model), delegation <id>, request <request id>.
-Status: done
-Usage: 24 turns, 1.8M tokens in (1.7M cached), 9.2k out, $0.39; context at finish 181k.
-Task: <sent/ copy>
-Working directory: <the directory its window opened in>
-Checkout when the result arrived: <branch, head, launch commit, commits since launch, clean or dirty>
-Envelope: <cur/ path>
-Delegate session: <session file or id>
+[delegate] scout <id> · done
 
 <the result>
 ```
 
-- The header carries the agent, the model, the delegation id and the request
-  id; the status is the envelope's (`done`, `failed` or
-  `stopped`).
+- The header carries the agent, the delegation id, any `launched → finished`
+  model change, any `resumed from` / `forked from` link, and the envelope
+  status (`done`, `failed` or `stopped`). Full provenance (launched model,
+  request id, routing policy/reason, usage/cost breakdown,
+  task/envelope/session paths, and full commit SHAs) stays in structured
+  message details, the expanded view, and `delegation_status`.
 - The model is the one the delegation was launched on. When the delegate's
   session file shows it finished on another (a fallback after a usage limit,
   or `/model` in its window), it reads `launched → finished`, for example
@@ -431,26 +427,21 @@ Delegate session: <session file or id>
   delegations skip it.` (a model scope reads `on model provider/id`; a mark
   that has since cleared reads `it was marked until …`). A failed reply with
   no such mark is unchanged.
-- `Task:` points to the full request copy in `sent/`. The message details
-  and expanded view retain a task preview capped at 2 KiB. A request with no
-  copy gets a diagnostic with its request id.
-- The working directory is the one recorded at launch, or
-  `unknown (not recorded)` for a delegation recorded before it was kept.
-  The recorded [workspace](workspaces.md#working-directory) remains in message details
-  and the expanded view, but the model-facing result omits its launch summary.
-  Closed-without-a-result messages still include that summary when recorded.
-- `Checkout when the result arrived:` summarizes the
-  [snapshot](workspaces.md#checkout-snapshots) taken as the reply was claimed. Git summaries
-  keep the branch or detached HEAD, full head and launch commit, commits since
-  launch, and working-tree state. Path categories remain in the saved snapshot,
-  message details, and expanded view, not the model-facing result.
-  The reply is claimed first, so a slow or failing Git cannot lose or duplicate
-  it. An unknown snapshot includes the reason. A non-Git directory reads
-  `not a Git checkout`.
-- The envelope path is the claimed reply in the parent's `cur/`; the
-  delegate's session path is found by the delegation id in the session
-  directory recorded at launch (the parent's current one for older records),
-  and the id alone is shown when no file exists yet.
+- The message details and expanded view retain a task preview capped at
+  2 KiB and its `sent/` path. The model-facing result omits that path when
+  present; a request with no copy in `sent/` still prints a diagnostic with
+  its request id.
+- `cwd:` is shown only when the delegate ran outside the parent's cwd
+  (a managed worktree or explicit directory) or left notable Git state
+  (`dirty`, `+N commits`, moved HEAD `@ <short head>`, or an unknown
+  snapshot). It is omitted for clean, unchanged runs in the inherited cwd.
+  Full commit SHAs, launch workspace summary, and path categories remain in
+  the saved snapshot, message details, and expanded view.
+  Closed-without-a-result messages still include the launch summary when
+  recorded.
+- The envelope path (`cur/`) and delegate session path stay in message details,
+  the expanded view, and `delegation_status`. When a long reply is cut, the
+  model-facing incomplete-reply notice names the envelope path directly.
 - The body keeps its first 8 KiB and its last 24 KiB, 32 KiB in all. A reply
   within the budget is kept whole. A longer reply is cut, and before the body,
   outside any Markdown fence the reply opens, the result says so and names the

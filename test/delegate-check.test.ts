@@ -51,7 +51,7 @@ function reply(s: Session, from: string, index = 0, body = "child answer", statu
 }
 
 function result(s: Session) {
-	return s.sent.find((item) => String(item.message.content).startsWith("[delegate] Result from"))?.message as
+	return s.sent.find((item) => (item.message as { details?: { kind?: string } }).details?.kind === "result")?.message as
 		| { content: string; details: { check?: Check } }
 		| undefined;
 }
@@ -239,7 +239,7 @@ test("a failed or stopped reply is delivered without running the approved check"
 			const start = await delegate(s, { cwd, check: [marker] });
 			reply(s, start.id, 0, "child answer", status);
 			const message = await until(() => result(s));
-			assert.match(message.content, new RegExp(`^Status: ${status}$`, "m"));
+			assert.match(message.content, new RegExp(`^\\[delegate\\] .* · ${status}$`, "m"));
 			assert.match(message.content, /child answer/);
 			assert.doesNotMatch(message.content, /check \(run by Squire\)/);
 			assert.equal(message.details.check, undefined);
@@ -333,13 +333,9 @@ test("a result without check keeps its exact text and synchronous delivery", asy
 	assert.equal(
 		message?.content,
 		[
-			`[delegate] Result from scout (alpha/fast-model), delegation ${start.id}, request ${request}.`,
-			"Status: done",
+			`[delegate] scout ${start.id} · done`,
 			`[delegate] The task ${request} has no copy in sent/; only its id is known.`,
-			`Working directory: ${cwd}`,
-			"Checkout when the result arrived: not a Git checkout",
-			"Envelope: /mail/cur/reply.json",
-			`Delegate session: ${start.id}`,
+			`cwd: ${cwd} (not a Git checkout)`,
 			"",
 			"child answer",
 		].join("\n"),

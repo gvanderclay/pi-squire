@@ -155,7 +155,7 @@ function reply(s: Session, from: string, requestId: string, id = `reply-${reques
 }
 
 const resultMessages = (s: Session) =>
-	s.sent.filter((m) => /^\[delegate\] Result from/.test(String(m.message.content)));
+	s.sent.filter((m) => (m.message as { details?: { kind?: string } }).details?.kind === "result");
 
 test("the resume opens the session file with --session, never --session-id or --name", async () => {
 	const d = await exitedDelegate();
@@ -343,11 +343,8 @@ test("the resumed run's reply, from the old session id, makes the new record don
 	const [, record] = starts(d.s) as { id: string; requestId: string }[];
 	d.s.events.emit("message:inbound", reply(d.s, d.id, record.requestId));
 	const [message] = resultMessages(d.s);
-	assert.match(
-		String(message.message.content),
-		new RegExp(`delegation ${record.id} \\(resumed from ${d.id}\\), request`),
-	);
-	assert.match(String(message.message.content), new RegExp(`Delegate session: ${d.file.replaceAll(".", "\\.")}`));
+	assert.match(String(message.message.content), new RegExp(`${record.id} \\(resumed from ${d.id}\\) · done`));
+	assert.equal((message.message as { details?: { sessionPath?: string } }).details?.sessionPath, d.file);
 	const results = d.s.entries.filter((entry) => "result" in entry.data);
 	assert.deepEqual(
 		results.map((entry) => entry.data.id),
@@ -683,7 +680,7 @@ test("old records without sessionId match replies, find sessions and usage-limit
 	});
 	const [message] = resultMessages(d.s);
 	assert.match(String(message.message.content), /Usage limit: the delegate hit a usage limit on provider alpha/);
-	assert.match(String(message.message.content), new RegExp(`Delegate session: ${d.file.replaceAll(".", "\\.")}`));
+	assert.equal((message.message as { details?: { sessionPath?: string } }).details?.sessionPath, d.file);
 	assert.doesNotMatch(String(message.message.content), /resumed from/);
 });
 

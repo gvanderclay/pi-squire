@@ -1,14 +1,14 @@
 // The text and details of the one message the parent receives for a settled delegation.
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readMarks } from "./limits.ts";
-import { cwdLine, modelLabel, snapshotLines } from "./render.ts";
+import { cwdLine, modelLabel } from "./render.ts";
 import { checkLines } from "./result-check.ts";
 import { sessionIdOf } from "./result-sessions.ts";
 import type { StartedRecorded } from "./result-types.ts";
 import type { Inbound, MessageDetails, TaskQuote } from "./results.ts";
 import { servedSummary } from "./routing-provenance.ts";
 import type { RoutingEvidence } from "./routing-types.ts";
-import { type SessionUsage, usageText } from "./session-usage.ts";
+import type { SessionUsage } from "./session-usage.ts";
 import { DEFAULT_RESULT_BODY_BYTES, resultBodyBytes } from "./settings.ts";
 import type { WorkspaceSnapshot } from "./snapshot.ts";
 
@@ -174,46 +174,73 @@ export function resultDetails(
 	};
 }
 
-function checkoutText(snapshot: WorkspaceSnapshot): string[] {
-	const [first] = snapshotLines(snapshot);
-	return [`Checkout when the result arrived: ${first}`];
+const displayReason = (reason: string): string => JSON.stringify(reason).slice(1, -1);
+
+function checkoutSummary(snapshot: WorkspaceSnapshot): string {
+	if (snapshot.kind === "non-git") return "not a Git checkout";
+	if (snapshot.kind === "unknown") return `Git state unknown: ${displayReason(snapshot.reason)}`;
+	const at = snapshot.position.detached ? "detached HEAD" : snapshot.position.branch;
+	const parts = [at];
+	if (snapshot.ahead > 0) parts.push(`+${snapshot.ahead} commit${snapshot.ahead === 1 ? "" : "s"}`);
+	else if (snapshot.head !== snapshot.baseline) parts.push(`@ ${snapshot.head.slice(0, 7)}`);
+	parts.push(snapshot.workingState);
+	return parts.join(", ");
+}
+
+/** Shown only when the child ran outside the parent's cwd or left notable Git state (dirty, moved HEAD, or unknown). */
+function cwdSummary(details: ResultDetails): string | undefined {
+	const snapshot = details.workspaceSnapshot;
+	const nonInherited = details.workspace !== undefined && details.workspace.mode !== "inherited";
+	const notableGit =
+		snapshot?.kind === "unknown" ||
+		(snapshot?.kind === "git" &&
+			(snapshot.workingState !== "clean" || snapshot.ahead > 0 || snapshot.head !== snapshot.baseline));
+	if (!nonInherited && !notableGit) return undefined;
+	const dir = cwdLine(details.cwd);
+	return snapshot === undefined ? `cwd: ${dir}` : `cwd: ${dir} (${checkoutSummary(snapshot)})`;
+}
+
+/** Shown only when a routed attempt served another or multiple models; the single launched model is already in the header. */
+function servedLine(launched: string, evidence: RoutingEvidence | undefined): string | undefined {
+	const served = evidence?.served;
+	if (!served?.length) return undefined;
+	const distinctModels = new Set(served.map((item) => item.model));
+	if (distinctModels.size === 1 && distinctModels.has(launched)) return undefined;
+	return `Served: ${servedSummary(served)}.`;
 }
 
 /**
- * The independent-review line. Its caveat qualifies a verdict, so a run that
- * asked for no review prints the verdict without advice that cannot apply. Its
- * reasons stay: they report unreadable or out-of-route provenance on any run.
+ * The independent-review line. Omitted when no review was requested and provenance
+ * is clean; kept with reasons when provenance had warnings, and kept with its
+ * caller caveat whenever an independent review was requested.
  */
-function reviewLine(evidence: RoutingEvidence | undefined): string {
+function reviewLine(evidence: RoutingEvidence | undefined): string | undefined {
 	const verdict = evidence?.independent ?? "unverified";
 	const reasons = evidence?.reasons.length ? ` (${evidence.reasons.join("; ")})` : "";
-	if (verdict === "not-required") return `Independent review: ${verdict}${reasons}.`;
+	if (verdict === "not-required") return reasons ? `Independent review: ${verdict}${reasons}.` : undefined;
 	return `Independent review: ${verdict}${reasons}. Caller must identify all author sources and keep the candidate stable; this verifies family disjointness relative to supplied active-branch histories, not exhaustive artifact attribution, error independence, review quality or isolation.`;
 }
 
 /** The one message the parent model reads for a settled delegation. */
 export function resultText(details: ResultDetails): string {
 	const { task } = details;
-	const taskLine = "note" in task ? task.note : `Task: ${task.path}`;
+	const modelPart =
+		details.finishedModel !== undefined && details.finishedModel !== details.model
+			? ` (${modelLabel(details.model, details.finishedModel)})`
+			: "";
+	const resumed = details.resumedFrom === undefined ? "" : ` (resumed from ${details.resumedFrom})`;
+	const forked = details.forkedFrom === undefined ? "" : ` (forked from ${details.forkedFrom})`;
+	const origin = `${resumed}${forked}`;
+	const served = details.routing ? servedLine(details.model, details.routingEvidence) : undefined;
+	const review = details.routing ? reviewLine(details.routingEvidence) : undefined;
+	const cwd = cwdSummary(details);
 	return [
-		`[delegate] Result from ${details.agent} (${modelLabel(details.model, details.finishedModel)}), delegation ${details.id}${details.resumedFrom === undefined ? "" : ` (resumed from ${details.resumedFrom})`}${details.forkedFrom === undefined ? "" : ` (forked from ${details.forkedFrom})`}, request ${details.requestId}.`,
-		`Status: ${details.status}`,
-		...(details.routing
-			? [
-					`Routing: ${details.routing.profile}/${details.routing.request.category}, policy v${details.routing.policyVersion} ${details.routing.policyDigest}; ${details.routing.reason}.`,
-					`Actual served models/efforts: ${servedSummary(details.routingEvidence?.served)}.`,
-					reviewLine(details.routingEvidence),
-				]
-			: []),
+		`[delegate] ${details.agent} ${details.id}${modelPart}${origin} · ${details.status}`,
 		...(details.limit === undefined ? [] : [details.limit]),
-		...(details.usage === undefined
-			? []
-			: [`Usage: ${usageText(details.usage, (details.resumedFrom ?? details.forkedFrom) !== undefined)}`]),
-		taskLine,
-		`Working directory: ${cwdLine(details.cwd)}`,
-		...(details.workspaceSnapshot === undefined ? [] : checkoutText(details.workspaceSnapshot)),
-		`Envelope: ${details.envelopePath}`,
-		`Delegate session: ${details.sessionPath ?? details.sessionId ?? details.id}`,
+		...(served === undefined ? [] : [served]),
+		...(review === undefined ? [] : [review]),
+		...("note" in task ? [task.note] : []),
+		...(cwd === undefined ? [] : [cwd]),
 		...(details.check === undefined ? [] : ["", ...checkLines(details.check)]),
 		"",
 		...(details.bodyOmitted === undefined ? [] : [incompleteNotice(details.bodyOmitted, details.envelopePath)]),

@@ -59,7 +59,7 @@ function reply(s: Session, status = "done") {
 
 const closedMessages = (s: Session) => s.sent.filter((m) => /closed without a result/.test(String(m.message.content)));
 const resultMessages = (s: Session) =>
-	s.sent.filter((m) => /^\[delegate\] Result from/.test(String(m.message.content)));
+	s.sent.filter((m) => (m.message as { details?: { kind?: string } }).details?.kind === "result");
 const statusText = async (s: Session) => (await s.toolCall("delegation_status", {})).content[0].text;
 
 test("a gone window whose reply the scan delivers is done, with no closed message", async (t) => {

@@ -78,7 +78,9 @@ function deliver(s: ReturnType<typeof session>, id: string): void {
 }
 /** The result text sent for one delegation. */
 function resultFor(s: ReturnType<typeof session>, id: string): string {
-	const found = s.sent.find((message) => String(message.message.content).includes(`delegation ${id},`));
+	const found = s.sent.find(
+		(message) => (message.message as { details?: { kind?: string; id?: string } }).details?.id === id,
+	);
 	assert.ok(found, "a result message was sent");
 	return String(found.message.content);
 }
@@ -391,12 +393,14 @@ test("a multi-turn routed result and status collapse each served-model run to on
 		requests: [],
 		handled: false,
 	});
-	const result = s.sent.find((message) => /^\[delegate\] Result from/.test(String(message.message.content)));
+	const result = s.sent.find(
+		(message) => (message.message as { details?: { kind?: string } }).details?.kind === "result",
+	);
 	assert.ok(result, "a result message was sent");
 	const servedLine = String(result.message.content)
 		.split("\n")
-		.find((line) => line.startsWith("Actual served models/efforts:"));
-	assert.equal(servedLine, `Actual served models/efforts: ${MODEL_A}:high ×100, ${MODEL_B}:high ×2.`);
+		.find((line) => line.startsWith("Served:"));
+	assert.equal(servedLine, `Served: ${MODEL_A}:high ×100, ${MODEL_B}:high ×2.`);
 	assert.ok(servedLine.length < 120, servedLine);
 	const status = await s.toolCall("delegation_status", { id: started.id });
 	const statusLine = status.content[0].text.split("\n").find((line) => line.includes("served this attempt:"));
@@ -412,7 +416,9 @@ test("a not-required routed result prints the review verdict without the caveat"
 	const readable = await routed(s);
 	sessionFile(readable.id, recordedRoute(s, readable.id));
 	deliver(s, readable.id);
-	assert.equal(reviewLineOf(resultFor(s, readable.id)), "Independent review: not-required.");
+	const readableText = resultFor(s, readable.id);
+	assert.equal(reviewLineOf(readableText), undefined);
+	assert.doesNotMatch(readableText, /^Routing:|^Served:/m);
 	// Unreadable provenance keeps the verdict and its reason, without the caveat.
 	const unknown = await routed(s);
 	const evidence = routingEvidence(recordedRoute(s, unknown.id), undefined);

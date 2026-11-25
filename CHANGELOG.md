@@ -6,6 +6,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Slimmed the model-facing delegate result header (`resultText`) from ~11
+  metadata lines to a single line (`[delegate] <agent> <id> · <status>`) on
+  normal runs, omitting redundant model, usage, routing boilerplate, clean
+  inherited `cwd`, full commit SHAs, and `Task:`/`Envelope:`/`Delegate session:`
+  paths. Conditional lines still appear when actionable: model switch
+  (`launched → finished`), `Usage limit:`, `Served:`, `Independent review:`,
+  `cwd:` (for non-inherited workspaces, dirty trees, moved HEAD, or unknown Git
+  state), approved `check` output, and truncated-reply notices. All full
+  metadata remains in structured message details, the expanded view, and
+  `delegation_status`.
+
 ## [0.36.1] - 2026-11-24
 
 ### Fixed

@@ -777,7 +777,7 @@ test("selected-directory facts reach the child prompt, results, status and resum
 	});
 	const message = s.sent[0].message as unknown as { content: string; details: Data };
 	assert.deepEqual(message.details.workspace, record.workspace);
-	assert.ok(message.content.includes(`Working directory: ${main}`), message.content);
+	assert.ok(message.content.includes(`cwd: ${main}`), message.content);
 	assert.ok(!message.content.includes("Workspace:"), message.content);
 
 	await s.shutdown();
@@ -951,19 +951,14 @@ test("status separates clean committed changes from pending conflicts", async ()
 	assert.ok(text.includes("6 changed paths; details in the structured result"), text);
 	assert.ok(text.includes("1 changed path; details in the structured result"), text);
 	assert.doesNotMatch(text, /committed since launch:|staged:|unstaged:|untracked:|conflicted:/);
-	for (const [record, snapshot, position] of [
-		[cleanRecord, cleanSnap, "branch main"],
-		[launchRecord, snap, "branch main"],
-		[detachedRecord, detachedSnap, "detached HEAD"],
+	for (const [record, snapshot, expected] of [
+		[cleanRecord, cleanSnap, "main, +1 commit, clean"],
+		[launchRecord, snap, "main, +2 commits, dirty"],
+		[detachedRecord, detachedSnap, "detached HEAD, clean"],
 	] as const) {
 		s.events.emit("message:inbound", replyTo(s, record, `reply-${record.id}`));
 		const message = delegateMessages(s).at(-1)?.message as unknown as { content: string; details: Data };
-		assert.ok(
-			message.content.includes(
-				`Checkout when the result arrived: ${position}, head ${snapshot.head}, launch commit ${snapshot.baseline}, ${snapshot.ahead} commit${snapshot.ahead === 1 ? "" : "s"} since launch, working tree ${snapshot.workingState}`,
-			),
-			message.content,
-		);
+		assert.ok(message.content.includes(`(${expected})`), message.content);
 		assert.doesNotMatch(
 			message.content,
 			/committed since launch:|staged:|unstaged:|untracked:|conflicted:|^Workspace:/m,
@@ -1002,7 +997,7 @@ test("completion snapshot stays historical while fresh status changes", async ()
 	assert.ok(!resultMessage.content.includes('"first.txt"'), resultMessage.content);
 	assert.doesNotMatch(resultMessage.content, /committed since launch:|staged:|unstaged:|untracked:|conflicted:/);
 	assert.equal(resultMessage.content.includes("late.txt"), false);
-	assert.ok(resultMessage.content.includes(historical.head), resultMessage.content);
+	assert.ok(resultMessage.content.includes(`cwd: ${main} (main, dirty)`), resultMessage.content);
 	assert.ok(text.includes("2 changed paths; details in the structured result"), text);
 	assert.equal(text.includes("late.txt"), false);
 	const expanded = expandedView(resultMessage);
@@ -1075,7 +1070,7 @@ test("inspection failure cannot lose duplicate or late replies or other status",
 	const resultMessage = delegateMessages(s)[0].message as unknown as { content: string; details: Data };
 	assert.equal(resultMessage.details.workspaceSnapshot.kind, "unknown");
 	assert.ok(resultMessage.details.workspaceSnapshot.reason.length > 0);
-	assert.match(resultMessage.content, /Checkout when the result arrived: Git state unknown/);
+	assert.match(resultMessage.content, /cwd: .* \(Git state unknown:/);
 	assert.ok(resultMessage.content.includes(resultMessage.details.workspaceSnapshot.reason), resultMessage.content);
 
 	// The late delegation's window goes, the poll records it gone, then its reply arrives while Git hangs there.
@@ -1094,7 +1089,8 @@ test("inspection failure cannot lose duplicate or late replies or other status",
 	);
 	assert.equal(lateReply.handled, true);
 	const lateMessage = delegateMessages(s).at(-1)?.message as unknown as { content: string; details: Data };
-	assert.match(lateMessage.content, /^\[delegate\] Result from/);
+	assert.equal(lateMessage.details.kind, "result");
+	assert.match(lateMessage.content, /^\[delegate\] scout /);
 	assert.equal(lateMessage.details.workspaceSnapshot.kind, "unknown");
 	assert.match(lateMessage.details.workspaceSnapshot.reason, /time|limit/i);
 

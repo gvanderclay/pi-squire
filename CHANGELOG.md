@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Delegate outcomes are written to the session once instead of being appended
+  to each model request. A request's prefix no longer changes between calls,
+  so a provider that binds signed reasoning to the exact earlier prefix keeps
+  it. A model-initiated `delegation_close` leaves its tool result as the
+  report and writes nothing else; if Pi never saved that result, one
+  cancellation is written on reopen.
 - A `check` no longer runs when the child's reply status is `failed` or
   `stopped`. The result is delivered without a check section, like a
   delegation that named no check, because a check on unfinished work can

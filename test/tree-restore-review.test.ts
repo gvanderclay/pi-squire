@@ -341,10 +341,22 @@ test("root user stop survives reopen without automatic work; a later request rec
 		(await reopened.fire("agent_before_settle")).some((value) => (value as { continue?: boolean })?.continue),
 		false,
 	);
-	const context = await reopened.fire("context", { messages: [] });
-	assert.match(JSON.stringify(context), /answer/);
-	await reopened.fire("agent_settled");
-	assert.doesNotMatch(JSON.stringify(await reopened.fire("context", { messages: [] })), /answer/);
+	// A user prompt releases the held outcome: it is written once before the
+	// run's starting messages, and its request adds no copy of its own.
+	await reopened.prepare({ messageType: "user" });
+	const written = reopened.sent.filter(({ message }) => message.customType === "delegate");
+	assert.equal(written.length, 1, "the held outcome is written once");
+	assert.deepEqual(written[0].options, { triggerTurn: false });
+	assert.ok(
+		(await reopened.fire("context", { messages: reopened.transcript() })).every((value) => value === undefined),
+	);
+	await reopened.run();
+	assert.equal(
+		reopened.transcript().filter((message) => String((message as { content?: unknown }).content).includes("answer"))
+			.length,
+		1,
+		"one saved copy, not one per request",
+	);
 	assert.equal(coordinator.shutdowns(), 0);
 });
 test("root late-outcome continuation uses root wording, not coordinator final-task-report instructions", async () => {

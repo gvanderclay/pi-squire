@@ -244,13 +244,19 @@ test("root pending outcomes survive queued-display loss without presenting its f
 	const reopened = instance({ parent: owner.parent, tmux });
 	await reopened.start();
 	await nextTurn();
-	assert.equal(reopened.sent.filter((item) => item.message.customType === "delegate").length, 0);
+	// The queued display never reached the transcript: recovery writes the
+	// result once and wakes one processing run, and no request adds a copy.
+	assert.equal(reopened.sent.filter((item) => item.message.customType === "delegate").length, 1);
 	assert.equal(reopened.sent.filter((item) => item.message.customType === "delegate-recovery").length, 1);
-	const context = await reopened.fire("context", { messages: [] });
-	assert.match(JSON.stringify(context), /answer/);
+	assert.ok(
+		(await reopened.fire("context", { messages: reopened.transcript() })).every((value) => value === undefined),
+	);
+	const written = (): number =>
+		reopened.transcript().filter((message) => String((message as { content?: unknown }).content).includes("answer"))
+			.length;
+	assert.equal(written(), 1);
 	await reopened.fire("agent_settled");
-	const again = await reopened.fire("context", { messages: [] });
-	assert.doesNotMatch(JSON.stringify(again), /answer/);
+	assert.equal(written(), 1, "settlement adds and removes nothing");
 });
 test("direct-parent resume restores coordinator children and offline replies before the new follow-up can settle", async () => {
 	const { owner, coordinator, worker, c, tmux } = await tree();

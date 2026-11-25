@@ -377,7 +377,7 @@ test("crash after envelope write before completion persistence resends, but pare
 	await parent.shutdown();
 	await child.shutdown();
 	writeFileSync(taskStatePath(childId), crashState);
-	const restoredParent = instance({ parent: parent.parent, entries: parent.entries });
+	const restoredParent = instance({ parent: parent.parent, entries: parent.entries, messages: parent.transcript() });
 	await restoredParent.start();
 	const restoredChild = instance({ parent: childId, parentEnv: parent.parent });
 	await restoredChild.start();

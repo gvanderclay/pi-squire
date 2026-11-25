@@ -188,13 +188,14 @@ test("pending child facts and identity restore with no launch env or transcript;
 	const again = instance({ parent: coordinator.parent });
 	await again.start();
 	await nextTurn();
-	assert.ok(again.sent.some(({ message }) => message.customType === "delegate-recovery"));
-	assert.ok(!again.sent.some(({ message }) => String(message.content).includes("answer")));
-	// A queued display may be absent from the transcript. The recovery wake
-	// starts processing; the next request receives the saved outcome once.
-	const context = await again.fire("context", { messages: [] });
-	const recovered = context.find((value) => value !== undefined) as { messages: { content: unknown }[] };
-	assert.equal(recovered.messages.filter((message) => String(message.content).includes("answer")).length, 1);
+	// A queued display may be absent from the transcript. Recovery writes it
+	// once, then wakes the processing run; no request adds a copy.
+	const written = again.sent.filter(({ message }) => message.customType === "delegate");
+	assert.equal(written.length, 1, "the missing display is written once");
+	assert.deepEqual(written[0].options, { triggerTurn: false });
+	assert.ok(String(written[0].message.content).includes("answer"));
+	assert.equal(again.sent.filter(({ message }) => message.customType === "delegate-recovery").length, 1);
+	assert.ok((await again.fire("context", { messages: again.transcript() })).every((value) => value === undefined));
 	assert.equal(finals(rootSession).length, 0, "recovery still waits for a successful processing run");
 	await again.run();
 	assert.equal(finals(rootSession).length, 1);

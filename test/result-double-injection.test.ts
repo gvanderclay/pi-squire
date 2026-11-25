@@ -1,29 +1,28 @@
-// Spike 12: can one parent model request carry a delegate result twice?
+// How a delegate outcome reaches the parent's next model request.
 //
-// `takeReply` (src/results.ts:406-459) records the outcome in the durable
-// processing inbox, calls `pi.sendMessage` and then marks it delivered. The
-// inbox's `context` handler (src/child-tasks.ts:168-190) appends every outcome
-// that is not already among `event.messages`. The question is whether one
-// request can carry the result from both places.
+// Pi rebuilds every request from the saved projection (agent-session.js:492-505)
+// and never writes a `context` handler's messages back (runner.js:1019-1077),
+// so a message added per request has no place in the transcript and moves as
+// the transcript grows. Squire therefore writes each outcome into the session
+// once and adds nothing at request time: the `context` handler only records
+// which outcomes a request carried. A provider that binds signed reasoning to
+// the exact earlier prefix then keeps it.
 //
 // Each test delivers one reply at one moment of a parent run and counts the
 // copies of the result body in the messages the next request would carry.
 //
-// Pi places a delivered custom message in `context.messages` before
-// `transformContext` runs, at every moment. Paths below are inside
-// `@earendil-works/pi-coding-agent/dist/core/` and
-// `@earendil-works/pi-agent-core/dist/`:
-// - idle: the send starts a run whose starting message it is
-//   (agent-session.js:1888 `_startRun`, agent-loop.js:44-52);
-// - streaming: it is queued on the agent's steering queue and drained into the
-//   next request (agent-session.js:1875-1881, agent-loop.js:89-90 and 120-125);
-// - `agent_before_settle`: `isStreaming` is still true, so it steers, and
-//   `hasQueuedMessages()` continues the run (agent-session.js:1081, 1596);
+// Paths below are inside `@earendil-works/pi-coding-agent/dist/core/`:
+// - idle: the send is appended to the session at once (agent-session.js:1991);
+// - streaming: it is appended after the turn's tool results (agent-session.js:838-861);
+// - `agent_before_settle`: `isStreaming` is still true, so it is appended at
+//   the boundary (agent-session.js:1631-1649);
 // - `agent_settled`: the send is deferred until the emit ends and then starts a
-//   run (agent-session.js:696-716, 1883-1887).
-// `transformContext` is `emitContext` (sdk.js:277-281), which hands the handlers
-// `context.messages` (runner.js:1006-1014), so the delivered message is in
-// `event.messages` and the inbox's presence check suppresses the copy.
+//   run (agent-session.js:744, 1975-1979);
+// - `before_agent_start`: a send made while the run starts is placed before the
+//   run's starting messages (agent-session.js:1499-1505).
+// `turn_end` and `agent_before_settle` also commit a handler's `entries`
+// drafts (agent-session.js:568, 1636), which is where an outcome the transcript
+// lacks is written.
 
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -31,6 +30,7 @@ import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 import type { ChildOutcome } from "../src/child-tasks.ts";
 
+import { FakeTmux } from "./fake-tmux.ts";
 import { agentDir, agentFile, cleanup, resetRoot, session, writeAgent } from "./harness.ts";
 import { envelopes, mailSession, nextTurn, scan } from "./mail-harness.ts";
 
@@ -45,7 +45,15 @@ const MARK = "spike-12-result-marker";
 const BODY = `${MARK} ${"x".repeat(33_000)}`;
 
 /** One message as `context.messages` carries it; `details` rides along untyped. */
-type Carried = { role: string; customType?: string; content?: unknown; details?: unknown };
+type Carried = {
+	role: string;
+	customType?: string;
+	content?: unknown;
+	details?: unknown;
+	toolCallId?: string;
+	toolName?: string;
+	isError?: boolean;
+};
 
 /** The text a custom message sends the model; `convertToLlm` drops `details` (messages.js:89-95). */
 const text = (message: Carried): string =>
@@ -58,9 +66,10 @@ function copies(messages: Carried[]): { count: number; bytes: number } {
 }
 
 /**
- * The parent's request pipeline as Pi drives it. The transcript holds every
- * delivered custom message and every committed `agent_before_settle` entry;
- * one request adds whatever the `context` handler appends for it.
+ * The parent's request pipeline as Pi drives it. `restored` is what the session
+ * already held, `s.sent` what this process wrote, and `committed` the boundary
+ * drafts Pi saved. A request is exactly those messages: the `context` handler
+ * adds none of its own.
  */
 function pipeline(s: Session, restored: Carried[] = []) {
 	const committed: Carried[] = [];
@@ -79,7 +88,7 @@ function pipeline(s: Session, restored: Carried[] = []) {
 		},
 		committed: () => committed.length,
 		transcript: carried,
-		/** One model request: what the `context` handler makes of the carried messages. */
+		/** One model request: what Pi would send, and what the `context` handlers add to it. */
 		request: async (): Promise<Carried[]> => {
 			const before = carried();
 			const results = await s.fire("context", { messages: before });
@@ -223,46 +232,240 @@ test("a reply that arrives during agent_settled reaches the next request once", 
 	assert.equal(copies(await parent.request()).count, 1);
 });
 
-// Pi builds every request from the saved projection again (agent-session.js:492-505)
-// and never writes a `context` handler's messages back, so the inbox re-appends
-// an unsaved outcome at the end of each request. `delegation_close` produces one:
-// `recordClose(id, false)` queues the outcome without a message
-// (src/results.ts:248-261). The assistant turn that answered a request ending in
-// that outcome is signed against a prefix the next request lacks, so Anthropic
-// drops its thinking blocks (prefix_binding_mismatch).
-test("a close outcome with no transcript message moves as the transcript grows, so the request prefix changes", async () => {
+/** The tool result Pi saves after one `delegation_close` call. */
+function closeReceipt(
+	closed: { content: { type: string; text: string }[]; details?: unknown },
+	toolCallId: string,
+	isError = false,
+): Carried {
+	return {
+		role: "toolResult",
+		toolCallId,
+		toolName: "delegation_close",
+		content: closed.content,
+		details: closed.details,
+		isError,
+	};
+}
+
+/** What the provider sees of a carried message; request-only fields stay out of the comparison. */
+const shape = ({ role, customType, content, details }: Carried) => ({ role, customType, content, details });
+
+/** The durable processing inbox this parent session keeps. */
+function inbox(s: Session): () => ChildOutcome[] {
+	const path = join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`);
+	return () => (JSON.parse(readFileSync(path, "utf8")) as { state: { outcomes: ChildOutcome[] } }).state.outcomes;
+}
+
+const CLOSE_CALL: Carried = {
+	role: "assistant",
+	content: [{ type: "toolCall", id: "call-close", name: "delegation_close", arguments: {} }],
+};
+
+test("a tool close is its own receipt: the next request extends the first, with no notice and no wake", async () => {
 	const s = session();
 	const { id } = await delegation(s);
 	const closed = await s.toolCall("delegation_close", { id });
 	assert.equal((closed.structuredContent as { closed?: boolean }).closed, true, "the close completed");
-	const inbox = join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`);
-	const queued = (): ChildOutcome[] =>
-		(JSON.parse(readFileSync(inbox, "utf8")) as { state: { outcomes: ChildOutcome[] } }).state.outcomes;
-	const [outcome] = queued();
-	assert.equal(outcome?.details.id, id, "the close queued an outcome");
-	assert.equal(outcome?.delivered, undefined, "the close wrote no transcript message");
-	assert.deepEqual(s.sent, [], "nothing carried the outcome into the transcript");
+	assert.deepEqual(s.sent, [], "the tool result is the only close message");
+	const queued = inbox(s);
+	assert.equal(queued()[0]?.key, `closed:${id}`, "the close keeps one durable processing obligation");
+	assert.equal(queued()[0]?.delivered, undefined, "the tool result carries it, not a custom message");
 
 	const user: Carried = { role: "user", content: "q" };
-	const firstReply: Carried = { role: "assistant", content: [{ type: "text", text: "one" }] };
-	const secondReply: Carried = { role: "assistant", content: [{ type: "text", text: "two" }] };
-	const toolResult: Carried = { role: "toolResult", content: [{ type: "text", text: "file" }] };
-	const position = (messages: Carried[]): number =>
-		messages.findIndex((message) => (message.details as { id?: string } | undefined)?.id === id);
-	const first = await pipeline(s, [user, firstReply]).request();
-	const second = await pipeline(s, [user, firstReply, secondReply, toolResult]).request();
-	assert.equal(first.length, 3, "the first request ends with the outcome");
-	assert.equal(position(first), 2);
-	assert.equal(second.length, 5, "the second request ends with it again, a turn and a tool result later");
-	assert.equal(position(second), 4);
+	const call: Carried = {
+		...CLOSE_CALL,
+		content: [{ type: "toolCall", id: "call-close", name: "delegation_close", arguments: { id } }],
+	};
+	const receipt = closeReceipt(closed, "call-close");
+	const first = await pipeline(s, [user, call, receipt]).request();
+	assert.deepEqual(
+		first.map(shape),
+		[user, call, receipt].map(shape),
+		"the request adds nothing to the saved transcript",
+	);
 
-	/** What the provider sees of each message; the injection's timestamp is freshly made per request. */
-	const shape = ({ role, customType, content, details }: Carried) => ({ role, customType, content, details });
+	const reply: Carried = { role: "assistant", content: [{ type: "text", text: "closed it" }] };
+	const file: Carried = {
+		role: "toolResult",
+		toolCallId: "call-read",
+		toolName: "read",
+		content: [{ type: "text", text: "file" }],
+		isError: false,
+	};
+	const second = await pipeline(s, [user, call, receipt, reply, file]).request();
 	assert.deepEqual(
 		second.slice(0, first.length).map(shape),
 		first.map(shape),
-		"the second request begins with the first request's messages in order; the outcome moved from index 2 to index 4",
+		"the second request begins with every message of the first, in order",
 	);
+	assert.deepEqual(second.map(shape).slice(2, 3), first.map(shape).slice(2, 3), "the close report keeps its index");
+	assert.equal(second.length, first.length + 2, "the request adds no copy of its own");
+	assert.equal(
+		second.some((message) => message.customType === "delegate"),
+		false,
+		"no custom cancellation copy",
+	);
+
+	// The model read the receipt in the second request, so settlement acknowledges it.
+	await s.fire("agent_start");
+	await pipeline(s, second).request();
+	await s.fire("agent_end", TURN);
+	await s.fire("agent_before_settle", { entries: [], continue: false });
+	await s.fire("agent_settled");
+	assert.deepEqual(queued(), [], "the receipt acknowledges the obligation");
+	assert.deepEqual(s.sent, [], "still no notice and no wake");
+	const third = await pipeline(s, second).request();
+	assert.deepEqual(third.slice(0, second.length).map(shape), second.map(shape), "a later request extends it again");
+	assert.deepEqual(third.map(shape).slice(2, 3), first.map(shape).slice(2, 3), "the original tool result is unchanged");
+});
+
+test("an outcome its projection lost is written again, hidden, and the retries are bounded", async () => {
+	const s = session();
+	const { id } = await delegation(s);
+	await s.toolCall("delegation_close", { id });
+	const queued = inbox(s);
+	const settle = async (contextMessages: Carried[]) => {
+		const results = await s.fire("agent_before_settle", {
+			entries: [],
+			continue: false,
+			context: { contextMessages, canContinue: true },
+		});
+		return results.find((value) => value !== undefined) as
+			| {
+					continue?: boolean;
+					entries?: { customType: string; content: unknown; details?: unknown; display?: boolean }[];
+			  }
+			| undefined;
+	};
+
+	// Pi compaction dropped the tool result before any request carried it: write
+	// the cancellation into what is left of the transcript.
+	const first = await settle([]);
+	assert.equal(first?.continue, true);
+	assert.equal(first?.entries?.length, 1);
+	assert.equal(first?.entries?.[0]?.display, true, "the first write is shown");
+	assert.equal((first?.entries?.[0]?.details as { id?: string } | undefined)?.id, id);
+
+	// The same projection again: the model has still not read it, and the copy
+	// it was shown once is not shown twice.
+	const second = await settle([]);
+	assert.equal(second?.entries?.[0]?.display, false, "a rewrite stays hidden");
+
+	// A projection that carries it needs no copy, only the request.
+	const carried = { role: "custom" as const, customType: "delegate", content: "", details: queued()[0]?.details };
+	const third = await settle([carried]);
+	assert.deepEqual(third, { continue: true, entries: [] }, "the transcript carries it; no copy is written");
+
+	// Bounded: an outcome no carrier ever delivers cannot hold the run forever.
+	await settle([]);
+	await settle([]);
+	assert.equal(await settle([]), undefined, "the settle boundary stops asking after bounded attempts");
+});
+
+test("a crash before Pi saved the close tool result writes one cancellation on reopen", async () => {
+	const s = session();
+	const { id } = await delegation(s);
+	await s.toolCall("delegation_close", { id });
+	assert.deepEqual(s.sent, [], "the live close stayed silent");
+	const queued = inbox(s);
+	assert.equal(queued()[0]?.key, `closed:${id}`, "the obligation is durable before anything is written");
+	assert.equal(queued()[0]?.delivered, undefined);
+	// Pi died before it saved the tool result: the branch has the call but no result.
+	await s.shutdown();
+	const reopened = session({ parent: s.parent, entries: s.entries });
+	await reopened.start();
+	await nextTurn();
+	const written = reopened.sent.filter(({ message }) => message.customType === "delegate");
+	assert.equal(written.length, 1, "one cancellation copy, written once");
+	assert.match(String(written[0].message.content), /canceled by explicit close/);
+	assert.equal((written[0].message as { details?: { id?: string } }).details?.id, id);
+	assert.deepEqual(written[0].options, { triggerTurn: false }, "the copy is saved, not steered into a run");
+	const wake = reopened.sent.filter(({ message }) => message.customType === "delegate-recovery");
+	assert.equal(wake.length, 1, "one wake asks for the processing run");
+	assert.deepEqual(wake[0].options, { triggerTurn: true, deliverAs: "steer" });
+	const transcript = reopened.sent.map(({ message }) => ({ role: "custom", ...message }));
+	assert.equal(copies(transcript).count, 0, "the cancellation body is not the result marker");
+
+	await reopened.fire("agent_start");
+	const request = await pipeline(reopened).request();
+	assert.deepEqual(request.map(shape), transcript.map(shape), "the request carries the saved copy and adds nothing");
+	await reopened.fire("agent_end", TURN);
+	await reopened.fire("agent_before_settle", { entries: [], continue: false });
+	await reopened.fire("agent_settled");
+	assert.deepEqual(inbox(reopened)(), [], "processing acknowledges the recovered cancellation");
+	await reopened.shutdown();
+
+	const again = session({ parent: s.parent, entries: reopened.entries, messages: transcript });
+	await again.start();
+	await nextTurn();
+	assert.deepEqual(again.sent, [], "a second reopen writes and wakes nothing");
+	assert.deepEqual(
+		(await pipeline(again, transcript).request()).map(shape),
+		transcript.map(shape),
+		"and its request still carries the one saved copy",
+	);
+});
+
+test("a partial close whose direct child is confirmed still covers that child's outcome", async (t) => {
+	const active: Session[] = [];
+	const instance = (options: Parameters<typeof mailSession>[0] = {}): Session => {
+		const created = mailSession(options);
+		active.push(created);
+		return created;
+	};
+	t.after(async () => {
+		for (const s of active) await s.shutdown();
+	});
+	mkdirSync(join(agentDir, "squire"), { recursive: true });
+	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ maxDepth: 2 }));
+	writeAgent(
+		"coordinator",
+		agentFile({ allow_nested_delegation: "[worker]", model: "alpha/fast-model", auto_exit: "false" }),
+	);
+	writeAgent("worker", agentFile({ model: "alpha/fast-model", auto_exit: "false" }));
+	const tmux = new FakeTmux();
+	const owner = instance({ tmux });
+	await owner.start();
+	const child = (await owner.toolCall("delegate", { agent: "coordinator", task: "coordinate" })).structuredContent as {
+		id: string;
+		windowId: string;
+	};
+	const coordinator = instance({ parent: child.id, tmux });
+	await coordinator.start();
+	scan(coordinator);
+	const worker = (await coordinator.toolCall("delegate", { agent: "worker", task: "look into it" }))
+		.structuredContent as {
+		id: string;
+		windowId: string;
+	};
+	const kill = tmux.kill.bind(tmux);
+	tmux.kill = async (id) => {
+		if (id === worker.windowId) throw new Error("injected worker failure");
+		await kill(id);
+	};
+	const closed = await owner.toolCall("delegation_close", { id: child.id });
+	assert.deepEqual((closed as { isError?: boolean }).isError, true, "the operation is partial");
+	const details = closed.structuredContent as { closed: boolean; complete: boolean };
+	assert.equal(details.closed, false);
+	assert.equal(details.complete, false);
+	assert.deepEqual(owner.sent, [], "the tool result is the only close message");
+	const queued = inbox(owner);
+	assert.equal(queued()[0]?.key, `closed:${child.id}`, "the confirmed direct child keeps its obligation");
+
+	const reply: Carried = { role: "assistant", content: [{ type: "text", text: "partial" }] };
+	const second = await pipeline(owner, [CLOSE_CALL, closeReceipt(closed, "call-close", true), reply]).request();
+	assert.equal(
+		second.some((message) => message.customType === "delegate"),
+		false,
+		"the confirmed row is the receipt",
+	);
+	await owner.fire("agent_start");
+	await pipeline(owner, second).request();
+	await owner.fire("agent_end", TURN);
+	await owner.fire("agent_before_settle", { entries: [], continue: false });
+	await owner.fire("agent_settled");
+	assert.deepEqual(queued(), [], "the confirmed row acknowledges the obligation");
 });
 
 for (const transcriptPresent of [true, false]) {
@@ -272,8 +475,8 @@ for (const transcriptPresent of [true, false]) {
 			: "a coordinator recovers a queued delivered outcome missing from its restored transcript",
 		async (t) => {
 			const active: Session[] = [];
-			const instance = (parent?: string): Session => {
-				const created = mailSession(parent ? { parent } : {});
+			const instance = (options: Parameters<typeof mailSession>[0] = {}): Session => {
+				const created = mailSession(options);
 				active.push(created);
 				return created;
 			};
@@ -290,12 +493,12 @@ for (const transcriptPresent of [true, false]) {
 			const root = instance();
 			await root.start();
 			await root.toolCall("delegate", { agent: "coordinator", task: "coordinate" });
-			const coordinator = instance(root.entries[0].data.id as string);
+			const coordinator = instance({ parent: root.entries[0].data.id as string });
 			await coordinator.start();
 			scan(coordinator);
 			assert.ok(coordinator.pi.getActiveTools().includes("delegate"));
 			await coordinator.toolCall("delegate", { agent: "worker", task: "look into it" });
-			const worker = instance(coordinator.entries[0].data.id as string);
+			const worker = instance({ parent: coordinator.entries[0].data.id as string });
 			await worker.start();
 			scan(worker);
 
@@ -336,38 +539,37 @@ for (const transcriptPresent of [true, false]) {
 			const transcript = transcriptPresent ? original.transcript() : [];
 			await coordinator.shutdown();
 
-			const reopened = instance(coordinator.parent);
+			const reopened = instance({ parent: coordinator.parent, messages: transcript });
 			const resumed = pipeline(reopened, transcript);
 			await reopened.start();
 			scan(reopened);
-			await reopened.fire("agent_start");
-			// Startup replay uses setImmediate. A resumed task can make its first
-			// request before that callback; do not stop measuring at this request.
-			assert.equal(fullCopies(await resumed.request()), 1, "first resumed request");
+			// Startup replay runs on setImmediate: one saved copy or one new copy,
+			// then one wake. Nothing is appended to a request.
 			await nextTurn();
-			const replay = reopened.sent[0];
+			const written = reopened.sent.filter(({ message }) => message.customType === "delegate");
+			const replay = reopened.sent.find(({ message }) => message.customType === "delegate-recovery");
 			assert.ok(replay, "startup recovery must wake even an idle coordinator");
 			assert.deepEqual(replay.options, { triggerTurn: true, deliverAs: "steer" });
-			// Drain replay/steering and any committed settle-boundary entries.
+			assert.equal(replay.message.display, false);
+			assert.equal(fullCopies([{ role: "custom", ...replay.message }]), 0, "wake carries no full result");
+			assert.equal(written.length, transcriptPresent ? 0 : 1, "the missing result is written once");
+			if (!transcriptPresent) assert.deepEqual(written[0].options, { triggerTurn: false });
+			await reopened.fire("agent_start");
+			assert.equal(fullCopies(await resumed.request()), 1, "first resumed request");
+			const steady = await resumed.request();
+			assert.deepEqual(steady, await resumed.request(), "a repeated request adds nothing");
 			await reopened.fire("agent_end", TURN);
 			resumed.commit(await reopened.fire("agent_before_settle", { entries: [], continue: false }));
-			assert.equal(fullCopies(await resumed.request()), 1, "the following steering request");
-			assert.equal(
-				fullCopies(resumed.transcript()),
-				transcriptPresent ? 1 : 0,
-				"recovery does not persist another full result; missing context is supplied per request",
-			);
+			assert.equal(fullCopies(await resumed.request()), 1, "the following request carries the same one copy");
+			assert.equal(fullCopies(resumed.transcript()), 1, "exactly one full result is persisted");
 			assert.equal(
 				resumed
 					.transcript()
 					.filter((message) => (message.details as ChildOutcome["details"] | undefined)?.id === saved.details.id)
 					.length,
-				transcriptPresent ? 1 : 0,
-				"only the original result-bearing transcript entry survives",
+				1,
+				"one result-bearing transcript entry",
 			);
-			assert.equal(replay.message.customType, "delegate-recovery");
-			assert.equal(replay.message.display, false);
-			assert.equal(fullCopies([{ role: "custom", ...replay.message }]), 0, "wake carries no full result");
 			await reopened.fire("agent_end", TURN);
 			resumed.commit(await reopened.fire("agent_before_settle", { entries: [], continue: false }));
 			await reopened.fire("agent_settled", { aborted: false });
@@ -376,13 +578,13 @@ for (const transcriptPresent of [true, false]) {
 			assert.equal(finals()[0].status, "done");
 			await reopened.shutdown();
 
-			const again = instance(coordinator.parent);
+			const again = instance({ parent: coordinator.parent, messages: resumed.transcript() });
 			const settled = pipeline(again, resumed.transcript());
 			await again.start();
 			scan(again);
 			await nextTurn();
 			assert.equal(again.sent.length, 0, "a second reopen resends and wakes nothing");
-			assert.equal(fullCopies(await settled.request()), transcriptPresent ? 1 : 0);
+			assert.equal(fullCopies(await settled.request()), 1, "the one saved copy is still the whole delivery");
 			assert.equal(finals().length, 1, "the parent task is answered only once");
 		},
 	);

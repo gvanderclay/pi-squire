@@ -21,7 +21,7 @@ export function restoreRecords(ctx: ExtensionContext, tasks: ChildTasks): Record
 	const byId: Map<string, Recorded> = new Map();
 	let local: Recorded[] = [];
 	try {
-		local = tasks.restore(ctx.sessionManager.getSessionId());
+		local = tasks.restore(ctx.sessionManager.getSessionId(), carriedMessages(ctx));
 	} catch (error) {
 		tasks.blockRestore(error);
 	}
@@ -47,6 +47,19 @@ export function restoreRecords(ctx: ExtensionContext, tasks: ChildTasks): Record
 		tasks.blockRestore(error);
 	}
 	return [...byId.values()];
+}
+/**
+ * What the restored active branch already shows the model: delegate outcome
+ * copies and close tool results. Other branches and dropped entries never
+ * prove an outcome was written or read.
+ */
+function carriedMessages(ctx: ExtensionContext): unknown[] {
+	const carried: unknown[] = [];
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (entry.type === "custom_message") carried.push({ ...entry, role: "custom" });
+		else if (entry.type === "message") carried.push(entry.message);
+	}
+	return carried;
 }
 function accept(record: Recorded, ctx: ExtensionContext, tasks: ChildTasks, local: boolean): boolean {
 	try {

@@ -289,18 +289,18 @@ export function createResults(
 			return false;
 		const session = locateSession(record, ctx?.sessionManager.getSessionDir());
 		const settledAt = Date.now();
+		record.gone = true;
+		record.settledAt = settledAt;
+		const outcome = goneOutcome(record, session, host);
+		tasks.paused = false; // A fresh outcome is new work, not replay of the stopped turn.
+		tasks.outcomes.push(outcome);
+		save(); // The obligation persists before the semantic fact and any transcript effect.
 		pi.appendEntry(CUSTOM_TYPE, {
 			id,
 			gone: true,
 			settledAt,
 			...(session === undefined ? {} : { sessionPath: session }),
 		});
-		record.gone = true;
-		record.settledAt = settledAt;
-		const outcome = goneOutcome(record, session, host);
-		tasks.paused = false; // A fresh outcome is new work, not replay of the stopped turn.
-		tasks.outcomes.push(outcome);
-		save();
 		pi.sendMessage(
 			{ customType: CUSTOM_TYPE, details: outcome.details, content: outcome.content, display: true },
 			{ triggerTurn: true, deliverAs: processesChildren() ? "steer" : "followUp" },
@@ -391,7 +391,6 @@ export function createResults(
 	function finishReply(pending: StartedRecorded[], result: Result, details: ReplyDetails): void {
 		const settledAt = Date.now();
 		for (const record of pending) {
-			pi.appendEntry(CUSTOM_TYPE, { id: record.id, result, settledAt });
 			record.result = result;
 			record.settledAt = settledAt;
 		}
@@ -403,7 +402,8 @@ export function createResults(
 		tasks.paused = false; // Only old replay is held by a root stop, not a new live result.
 		tasks.checkReplies.delete(result.replyId);
 		tasks.outcomes.push({ key: result.replyId, content, details });
-		save();
+		save(); // The obligation persists before the semantic fact and the steer.
+		for (const record of pending) pi.appendEntry(CUSTOM_TYPE, { id: record.id, result, settledAt });
 		// Persist first, then steer. A crash before injection is recovered from
 		// the processing inbox, not from the provider's already-claimed mail.
 		pi.sendMessage(

@@ -21,6 +21,16 @@ follows [Semantic Versioning](https://semver.org/).
   metadata remains in structured message details, the expanded view, and
   `delegation_status`.
 
+### Fixed
+
+- With `codemode.mode: "only"`, Pi hides the `delegate` tool's top-level
+  declaration from the model while the tool stays active and callable from a
+  script. The `squire_parent_delegation` section and the roster description
+  refresh are now kept for such a run instead of being dropped. Deliberate test
+  changes: `test/delegate-composition.test.ts` and `test/tools.test.ts` treat a
+  hidden declaration as active, and `test/parent-guidance-codemode.test.ts`
+  checks the section in a real Pi with codemode in mode `only`.
+
 ## [0.36.1] - 2026-11-24
 
 ### Fixed

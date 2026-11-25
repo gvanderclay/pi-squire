@@ -99,10 +99,11 @@ test("parent trust guidance preserves worker and coordinator reporting instructi
 	);
 });
 
-test("delegate guidance is visible only when selected and not hidden", () => {
+test("delegate guidance follows selection, and a hidden declaration still exposes it", () => {
 	assert.equal(delegateVisible({ selectedTools: ["delegate"], hiddenTools: [] }), true);
+	assert.equal(delegateVisible({ selectedTools: ["delegate"], hiddenTools: ["delegate"] }), true);
 	assert.equal(delegateVisible({ selectedTools: [], hiddenTools: [] }), false);
-	assert.equal(delegateVisible({ selectedTools: ["delegate"], hiddenTools: ["delegate"] }), false);
+	assert.equal(delegateVisible({ selectedTools: [], hiddenTools: ["delegate"] }), false);
 });
 
 test("roster descriptions preserve defaults, display names, locks and tool details", () => {

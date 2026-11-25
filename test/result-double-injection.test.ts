@@ -223,6 +223,48 @@ test("a reply that arrives during agent_settled reaches the next request once", 
 	assert.equal(copies(await parent.request()).count, 1);
 });
 
+// Pi builds every request from the saved projection again (agent-session.js:492-505)
+// and never writes a `context` handler's messages back, so the inbox re-appends
+// an unsaved outcome at the end of each request. `delegation_close` produces one:
+// `recordClose(id, false)` queues the outcome without a message
+// (src/results.ts:248-261). The assistant turn that answered a request ending in
+// that outcome is signed against a prefix the next request lacks, so Anthropic
+// drops its thinking blocks (prefix_binding_mismatch).
+test("a close outcome with no transcript message moves as the transcript grows, so the request prefix changes", async () => {
+	const s = session();
+	const { id } = await delegation(s);
+	const closed = await s.toolCall("delegation_close", { id });
+	assert.equal((closed.structuredContent as { closed?: boolean }).closed, true, "the close completed");
+	const inbox = join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`);
+	const queued = (): ChildOutcome[] =>
+		(JSON.parse(readFileSync(inbox, "utf8")) as { state: { outcomes: ChildOutcome[] } }).state.outcomes;
+	const [outcome] = queued();
+	assert.equal(outcome?.details.id, id, "the close queued an outcome");
+	assert.equal(outcome?.delivered, undefined, "the close wrote no transcript message");
+	assert.deepEqual(s.sent, [], "nothing carried the outcome into the transcript");
+
+	const user: Carried = { role: "user", content: "q" };
+	const firstReply: Carried = { role: "assistant", content: [{ type: "text", text: "one" }] };
+	const secondReply: Carried = { role: "assistant", content: [{ type: "text", text: "two" }] };
+	const toolResult: Carried = { role: "toolResult", content: [{ type: "text", text: "file" }] };
+	const position = (messages: Carried[]): number =>
+		messages.findIndex((message) => (message.details as { id?: string } | undefined)?.id === id);
+	const first = await pipeline(s, [user, firstReply]).request();
+	const second = await pipeline(s, [user, firstReply, secondReply, toolResult]).request();
+	assert.equal(first.length, 3, "the first request ends with the outcome");
+	assert.equal(position(first), 2);
+	assert.equal(second.length, 5, "the second request ends with it again, a turn and a tool result later");
+	assert.equal(position(second), 4);
+
+	/** What the provider sees of each message; the injection's timestamp is freshly made per request. */
+	const shape = ({ role, customType, content, details }: Carried) => ({ role, customType, content, details });
+	assert.deepEqual(
+		second.slice(0, first.length).map(shape),
+		first.map(shape),
+		"the second request begins with the first request's messages in order; the outcome moved from index 2 to index 4",
+	);
+});
+
 for (const transcriptPresent of [true, false]) {
 	test(
 		transcriptPresent

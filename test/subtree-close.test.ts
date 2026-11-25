@@ -186,6 +186,9 @@ test("UI cancellation wakes a stopped root, but stopped prior outcomes stay held
 	assert.equal(again.sent.length, 0, "explicit stop holds prior replay on reopen");
 	const path = join(agentDir, "squire", "child-tasks", `${owner.parent}.json`);
 	assert.equal(childState(JSON.parse(readFileSync(path, "utf8"))).outcomes.length, 1);
+	// A user prompt releases the hold; the held outcome is written once, then read.
+	await again.prepare({ messageType: "user" });
+	assert.equal(again.sent.filter(({ message }) => message.customType === "delegate").length, 1);
 	await again.run();
 	assert.equal(childState(JSON.parse(readFileSync(path, "utf8"))).outcomes.length, 0);
 });

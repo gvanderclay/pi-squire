@@ -2,11 +2,15 @@
 // index: the shared registry can publish these facts without owning answers.
 import { join } from "node:path";
 import {
+	type AgentBeforeSettleEvent,
+	type AgentBeforeSettleEventResult,
 	type ContextEvent,
-	type ContextEventResult,
+	type CustomMessageEntryDraft,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getAgentDir,
+	type ToolResultEvent,
+	type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { readState, writeState } from "./local-state.ts";
 import { isStarted, isV2Start, type Recorded } from "./result-types.ts";
@@ -17,9 +21,128 @@ export type ChildOutcome = {
 	key: string;
 	content: string;
 	details: MessageDetails;
-	/** Display was queued; processing still waits for a model request/settle. */
+	/**
+	 * This process asked Pi to write the outcome into the session. It records
+	 * what was attempted, never what the transcript holds: a restart recomputes
+	 * it from the restored branch.
+	 */
 	delivered?: boolean;
 };
+
+/** What a request message or a restored branch entry shows the presence check. */
+type Carried = {
+	role?: string;
+	customType?: string;
+	content?: unknown;
+	details?: unknown;
+	toolName?: string;
+};
+
+/** The label that separates a nested close report from the script output it joins. */
+const NESTED_CLOSE_LABEL = "[delegate] Close report for the delegation_close this tool called:";
+
+/** One nested close: the report text the model was shown, and the members it confirmed. */
+type CloseReceipt = { text: string; closed: string[] };
+
+/** The text one tool result shows the model. */
+function shownText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((item) =>
+			item !== null && typeof item === "object" && typeof (item as { text?: unknown }).text === "string"
+				? [(item as { text: string }).text]
+				: [],
+		)
+		.join("\n");
+}
+
+function isCloseReceipt(value: unknown): value is CloseReceipt {
+	if (value === null || typeof value !== "object") return false;
+	const { text, closed } = value as { text?: unknown; closed?: unknown };
+	return typeof text === "string" && Array.isArray(closed) && closed.every((id) => typeof id === "string");
+}
+
+/** The nested close reports a tool result appended, each with the members it confirmed. */
+function closeReceipts(details: unknown): CloseReceipt[] {
+	const found = (details as { squireClose?: unknown } | undefined)?.squireClose;
+	return Array.isArray(found) ? found.filter(isCloseReceipt) : [];
+}
+
+/** The members one close result details confirmed, by id. */
+function confirmedMembers(details: unknown): string[] {
+	const members = (details as { members?: unknown } | undefined)?.members;
+	if (!Array.isArray(members)) return [];
+	return members.flatMap((member) =>
+		member !== null &&
+		typeof member === "object" &&
+		typeof (member as { id?: unknown }).id === "string" &&
+		(member as { closed?: unknown }).closed === true
+			? [(member as { id: string }).id]
+			: [],
+	);
+}
+
+/** The report one nested `delegation_close` showed, whenever it confirmed a member. */
+function nestedCloseReceipt(event: ToolResultEvent): CloseReceipt | undefined {
+	if (event.toolName !== "delegation_close") return undefined;
+	const closed = confirmedMembers(event.details);
+	const report = shownText(event.content);
+	if (closed.length === 0 || report === "") return undefined;
+	return { text: `${NESTED_CLOSE_LABEL}\n${report}`, closed };
+}
+
+/**
+ * Whether one message already tells the model this outcome: its own delegate
+ * message, the `delegation_close` tool result that reported the close, or a
+ * tool result that appended a nested close report for it.
+ */
+function carries(message: Carried, details: MessageDetails): boolean {
+	if (message.role === "custom") {
+		const found = message.details as MessageDetails | undefined;
+		return message.customType === "delegate" && found?.id === details.id && found.kind === details.kind;
+	}
+	if (details.kind !== "gone" || details.reason !== "explicit-close") return false;
+	if (message.toolName === "delegation_close") {
+		const members = (message.details as { members?: { id?: string; closed?: boolean }[] } | undefined)?.members ?? [];
+		if (members.some((member) => member.id === details.id && member.closed === true)) return true;
+	}
+	// A nested close reaches the model only inside the enclosing tool result's
+	// text, so its receipt counts only while that text still shows the report.
+	const receipts = closeReceipts(message.details);
+	if (receipts.length === 0) return false;
+	const shown = shownText(message.content);
+	return receipts.some((receipt) => receipt.closed.includes(details.id) && shown.includes(receipt.text));
+}
+
+/** The outcomes these messages carry; the session entry is the only carrier, never a request rewrite. */
+function carried(outcomes: readonly ChildOutcome[], messages: readonly unknown[]): ChildOutcome[] {
+	return outcomes.filter((outcome) => messages.some((message) => carries(message as Carried, outcome.details)));
+}
+
+/** A boundary draft that writes the whole outcome into the session. */
+function outcomeDraft({ content, details }: ChildOutcome, display = true): CustomMessageEntryDraft {
+	return { type: "custom_message", customType: "delegate", content, details, display };
+}
+
+/**
+ * Settlement continuations one outcome may cause. Pi keeps only the last
+ * handler's boundary entries, so an outcome another extension's entry drops
+ * must not hold the run in the settle boundary forever; it stays pending.
+ */
+const MAX_SETTLE_CONTINUATIONS = 3;
+
+/** A body-free request to process carried outcomes when the transcript ends on an assistant. */
+function continuationNotice(coordinator: boolean): CustomMessageEntryDraft {
+	return {
+		type: "custom_message",
+		customType: "delegate",
+		content: coordinator
+			? "[delegate] Child outcomes arrived after the last model request. Process them before your final task report."
+			: "[delegate] Delegate outcomes arrived after the last model request. Process them before finishing this response.",
+		display: true,
+	};
+}
 type State = { records: Recorded[]; outcomes: ChildOutcome[]; checkReplies?: Inbound[]; paused?: boolean };
 type StoredState = { version: 2; state: State };
 /** Released readers require top-level arrays; this wrapper makes their restore/save fail closed. */
@@ -79,18 +202,28 @@ export class ChildTasks {
 	unreadable = false;
 	restoreFailure: string | undefined;
 	paused = false;
+	/** A run started after restore, so its own first request carries the saved outcomes. */
+	ran = false;
+	/** Settlement continuations asked for per outcome, bounded so a dropped carrier cannot loop. */
+	continuations = new Map<string, number>();
+	/** Nested close reports waiting for the tool result that encloses them, by tool call id. */
+	nestedCloses = new Map<string, CloseReceipt[]>();
 
 	blockRestore(error: unknown): void {
 		this.restoreFailure ??= String(error);
 		this.failed = true;
 	}
 
-	restore(session: string): Recorded[] {
+	/** Rebuild the inbox; `branch` is what the restored active transcript already carries. */
+	restore(session: string, branch: readonly unknown[] = []): Recorded[] {
 		this.path = join(getAgentDir(), "squire", "child-tasks", `${encodeURIComponent(session)}.json`);
 		this.outcomes = [];
 		this.checkReplies.clear();
 		this.paused = false;
 		this.observed.clear();
+		this.ran = false;
+		this.continuations.clear();
+		this.nestedCloses.clear();
 		this.failed = false;
 		this.unreadable = false;
 		this.restoreFailure = undefined;
@@ -98,6 +231,8 @@ export class ChildTasks {
 			const state = childState(readState<unknown>(this.path));
 			this.paused = state?.paused === true;
 			this.outcomes = state?.outcomes ?? [];
+			const shown = carried(this.outcomes, branch);
+			for (const outcome of this.outcomes) outcome.delivered = shown.includes(outcome);
 			for (const payload of state?.checkReplies ?? []) this.checkReplies.set(payload.envelope.id, payload);
 			return (state?.records ?? []).map((record) => (isStarted(record) ? locatedRecord(record) : record));
 		} catch (error) {
@@ -146,35 +281,32 @@ export class ChildTasks {
 		return coordinator || !this.paused;
 	}
 
-	replay(pi: ExtensionAPI, coordinator: boolean): void {
-		if (!this.wakeAllowed(coordinator)) return;
-		let wake = false;
-		for (const outcome of this.outcomes) {
-			// Queued is not necessarily persisted: wake processing without adding
-			// another transcript copy; context() supplies any missing result.
-			if (outcome.delivered) {
-				wake = true;
-				continue;
-			}
-			pi.sendMessage(
-				{ customType: "delegate", content: outcome.content, details: outcome.details, display: true },
-				{ triggerTurn: true, deliverAs: "steer" },
-			);
-			this.delivered(outcome.key);
-		}
-		if (wake)
-			pi.sendMessage(
-				{
-					customType: "delegate-recovery",
-					display: false,
-					content: "[delegate] Saved delegate outcomes still need processing. Continue with them before settling.",
-				},
-				{ triggerTurn: true, deliverAs: "steer" },
-			);
+	/** Ask Pi to write one outcome into the session; the transcript carries it, not a request. */
+	publish(pi: ExtensionAPI, outcome: ChildOutcome): void {
+		pi.sendMessage(
+			{ customType: "delegate", content: outcome.content, details: outcome.details, display: true },
+			{ triggerTurn: false },
+		);
+		outcome.delivered = true;
 	}
 
-	observe(): void {
-		this.observed = new Set(this.outcomes.map(({ key }) => key));
+	replay(pi: ExtensionAPI, coordinator: boolean): void {
+		if (!this.wakeAllowed(coordinator) || this.ran || !this.outcomes.length) return;
+		for (const outcome of this.outcomes) if (!outcome.delivered) this.publish(pi, outcome);
+		pi.sendMessage(
+			{
+				customType: "delegate-recovery",
+				display: false,
+				content: "[delegate] Saved delegate outcomes still need processing. Continue with them before settling.",
+			},
+			{ triggerTurn: true, deliverAs: "steer" },
+		);
+	}
+
+	/** Write every outcome this process has not published yet; a held root stays held. */
+	publishMissing(pi: ExtensionAPI, coordinator: boolean): void {
+		if (!this.wakeAllowed(coordinator)) return;
+		for (const outcome of this.outcomes) if (!outcome.delivered) this.publish(pi, outcome);
 	}
 
 	settled(records: Recorded[], stopped: boolean): void {
@@ -182,41 +314,86 @@ export class ChildTasks {
 		if (stopped) return;
 		this.outcomes = this.outcomes.filter(({ key }) => !this.observed.has(key));
 		this.observed.clear();
+		this.continuations.clear();
 		this.save(records);
 	}
 
-	needsProcessing(): boolean {
-		return this.outcomes.some(({ key }) => !this.observed.has(key));
+	/**
+	 * Record which outcomes this request carries. It never changes the request:
+	 * an outcome reaches the model only as a saved session message or tool
+	 * result, so a request's prefix is the growing transcript itself.
+	 */
+	context(event: ContextEvent): undefined {
+		this.mark(this.outcomes, event.messages, this.observed);
+		return undefined;
 	}
 
-	/** Each exact model request receives all unprocessed direct-child outcomes. */
-	context(event: ContextEvent): ContextEventResult | undefined {
-		this.paused = false;
-		this.observe();
-		const missing = this.outcomes.filter(
-			({ details }) =>
-				!event.messages.some(
-					(message) =>
-						message.role === "custom" &&
-						message.customType === "delegate" &&
-						(message.details as MessageDetails | undefined)?.id === details.id &&
-						(message.details as MessageDetails | undefined)?.kind === details.kind,
-				),
-		);
-		if (!missing.length) return;
+	/** Mark the outcomes these messages carry as written, and optionally as read by a request. */
+	mark(outcomes: readonly ChildOutcome[], messages: readonly unknown[], read?: Set<string>): void {
+		for (const outcome of carried(outcomes, messages)) {
+			outcome.delivered = true;
+			read?.add(outcome.key);
+		}
+	}
+
+	/**
+	 * Pi's `tool_result` hook. A `delegation_close` another tool called leaves
+	 * no transcript of its own, so its report joins the result of the call that
+	 * made it, before Pi saves it: that result is the close receipt. A result
+	 * with no such call is returned unchanged.
+	 */
+	toolResult(event: ToolResultEvent): ToolResultEventResult | undefined {
+		const waiting = this.nestedCloses.get(event.toolCallId) ?? [];
+		const own = event.parentToolCallId === undefined ? undefined : nestedCloseReceipt(event);
+		if (event.parentToolCallId !== undefined) {
+			// A script call nested inside another carries its reports up to the result the model reads.
+			this.nestedCloses.delete(event.toolCallId);
+			const carried = [...waiting, ...(own === undefined ? [] : [own])];
+			if (carried.length)
+				this.nestedCloses.set(event.parentToolCallId, [
+					...(this.nestedCloses.get(event.parentToolCallId) ?? []),
+					...carried,
+				]);
+			return undefined;
+		}
+		if (waiting.length === 0) return undefined;
+		this.nestedCloses.delete(event.toolCallId);
 		return {
-			messages: [
-				...event.messages,
-				...missing.map(({ content, details }) => ({
-					role: "custom" as const,
-					customType: "delegate",
-					content,
-					details,
-					display: true,
-					timestamp: Date.now(),
-				})),
-			],
+			content: [...event.content, ...waiting.map(({ text }) => ({ type: "text" as const, text }))],
+			details: {
+				...(typeof event.details === "object" && event.details !== null ? event.details : {}),
+				squireClose: [...closeReceipts(event.details), ...waiting],
+			},
+			// Replacing content alone would drop the structured content it no longer matches.
+			...(event.structuredContent === undefined ? {} : { structuredContent: event.structuredContent }),
 		};
+	}
+
+	/**
+	 * Ask for one continuation request that carries every unread outcome, and
+	 * draft what the projection no longer holds. Nothing is left to do once
+	 * every outcome was read.
+	 */
+	settle(event: AgentBeforeSettleEvent, coordinator: boolean): AgentBeforeSettleEventResult | undefined {
+		const shown = event.context?.contextMessages;
+		if (shown !== undefined) this.mark(this.outcomes, shown);
+		const pending = this.outcomes.filter(
+			({ key }) => !this.observed.has(key) && (this.continuations.get(key) ?? 0) < MAX_SETTLE_CONTINUATIONS,
+		);
+		if (pending.length === 0) return undefined;
+		for (const { key } of pending) this.continuations.set(key, (this.continuations.get(key) ?? 0) + 1);
+		// A compacted or never-written outcome is written again, hidden when it
+		// was displayed once before; an unrecognised projection writes what this
+		// process has not written yet.
+		const missing = pending.filter((outcome) =>
+			shown === undefined ? !outcome.delivered : !carried([outcome], shown).length,
+		);
+		const entries = missing.map((outcome) => outcomeDraft(outcome, !outcome.delivered));
+		for (const outcome of missing) outcome.delivered = true;
+		// Ending on an assistant message leaves nothing runnable, so name the
+		// work that forced another request instead.
+		if (entries.length === 0 && event.context?.canContinue !== true) entries.push(continuationNotice(coordinator));
+		return { continue: true, entries };
 	}
 
 	register(
@@ -227,7 +404,16 @@ export class ChildTasks {
 	): void {
 		let stopped = false;
 		pi.on("context", (event) => this.context(event));
+		pi.on("tool_result", (event) => this.toolResult(event));
+		pi.on("before_agent_start", (event) => {
+			this.ran = true;
+			// A user prompt is the input that releases a stopped root's held outcomes.
+			if (event.messageType === "user") this.paused = false;
+			this.publishMissing(pi, coordinator());
+		});
 		pi.on("agent_end", (event, ctx) => {
+			// A call whose result never arrived, as on an abort, has no enclosing result left to join.
+			this.nestedCloses.clear();
 			const last = event.messages.findLast((message) => message.role === "assistant");
 			stopped = last?.stopReason === "aborted" || ctx.signal?.aborted === true;
 			if (stopped && !coordinator()) {
@@ -242,23 +428,9 @@ export class ChildTasks {
 				}
 			}
 		});
-		pi.on("agent_before_settle", () => {
-			if (stopped || this.failed || !this.wakeAllowed(coordinator()) || !this.needsProcessing()) return;
-			// A bare continue can be rejected when the transcript ends with an
-			// assistant. Supply runnable context; context() supplies the outcomes.
-			return {
-				continue: true,
-				entries: [
-					{
-						type: "custom_message",
-						customType: "delegate",
-						content: coordinator()
-							? "[delegate] Child outcomes arrived after the last model request. Process them before your final task report."
-							: "[delegate] Delegate outcomes arrived after the last model request. Process them before finishing this response.",
-						display: true,
-					},
-				],
-			};
+		pi.on("agent_before_settle", (event) => {
+			if (stopped || this.failed || !this.wakeAllowed(coordinator())) return;
+			return this.settle(event, coordinator());
 		});
 		pi.on("agent_settled", () => {
 			try {

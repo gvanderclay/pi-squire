@@ -1087,10 +1087,36 @@ test("delegation_close kills the window and records the close without a message 
 	);
 	assert.deepEqual(s.statuses.at(-1), { key: "delegate", text: undefined });
 	assert.deepEqual(s.sent, [], "the tool result is the only close message");
+	// The saved tool result is the receipt: a boundary needs one processing
+	// request, not another copy of the cancellation.
+	const receipt = {
+		role: "toolResult",
+		toolCallId: "call-1",
+		toolName: "delegation_close",
+		content: closed.content,
+		details: closed.details,
+		isError: false,
+	};
 	await s.fire("context", { messages: [] });
-	await s.fire("agent_before_settle", { entries: [], continue: false });
+	const gate = await s.fire("agent_before_settle", {
+		entries: [],
+		continue: false,
+		context: { contextMessages: [receipt], canContinue: true },
+	});
+	assert.deepEqual(
+		gate.filter((value) => value !== undefined),
+		[{ continue: true, entries: [] }],
+		"the receipt needs no second copy, only the request that reads it",
+	);
+	await s.fire("context", { messages: [receipt] });
 	await s.fire("agent_settled");
 	assert.deepEqual(s.sent, [], "later close imports do not wake the model");
+	const inbox = join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`);
+	assert.deepEqual(
+		(JSON.parse(readFileSync(inbox, "utf8")) as { state: { outcomes: unknown[] } }).state.outcomes,
+		[],
+		"the request that carried the receipt acknowledged it",
+	);
 
 	const again = await s.toolCall("delegation_close", { id });
 	assert.match(again.content[0].text, /already-closed/);

@@ -455,15 +455,14 @@ async function noResult(t: TestContext, state: NoResult, file: "readable" | "mis
 	return { s, id };
 }
 
-/** The no-result message the parent receives: the poll's gone message, or the explicit close's inbox outcome. */
+/** The no-result message the parent receives: the poll's gone message, or the close's durable inbox outcome. */
 async function noResultMessage(s: Session): Promise<string | undefined> {
 	const sent = s.sent.find((m) => /closed without a result/.test(String(m.message.content)));
 	if (sent) return String(sent.message.content);
-	for (const result of await s.fire("context", { messages: [] })) {
-		const messages = (result as { messages?: { content: unknown }[] } | undefined)?.messages ?? [];
-		const found = messages.find((message) => /canceled by explicit close/.test(String(message.content)));
-		if (found) return String(found.content);
-	}
+	const path = join(agentDir, "squire", "child-tasks", `${encodeURIComponent(s.parent)}.json`);
+	const state = JSON.parse(readFileSync(path, "utf8")) as { state?: { outcomes?: { content: string }[] } };
+	const queued = state.state?.outcomes?.find((outcome) => /canceled by explicit close/.test(outcome.content));
+	if (queued) return queued.content;
 	return undefined;
 }
 

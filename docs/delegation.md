@@ -406,8 +406,11 @@ ids and obsolete resumed records refuse without window effects.
 Confirmed shared closes are control/accounting facts, not fabricated worker
 results. The sole direct-parent owner imports them into its own durable
 child-task inbox as canceled/missing work, then processes them in a model run
-before finishing upstream. An offline coordinator does this on same-id reopen;
-the ancestor never writes its semantic state or emits raw grandchild reports.
+before finishing upstream. A close this tool reported is read from its saved
+tool result; Squire writes no second message for it, and one whose tool result
+Pi never saved is written once when the session reopens. An offline coordinator
+does this on same-id reopen; the ancestor never writes its semantic state or
+emits raw grandchild reports.
 A stopped root retains its previous replay hold on reopen. Fresh live close
 outcomes wake normally, like other new outcomes. Real replies arriving before,
 during or after close are retained and correlated normally, not replaced by a

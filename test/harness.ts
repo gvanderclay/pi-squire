@@ -171,8 +171,13 @@ type Command = {
 	handler: (args: string, ctx: unknown) => Promise<void>;
 };
 
-/** One tool result, the shape `execute` returns. */
-export type ToolResult = { content: { type: string; text: string }[]; details: unknown; structuredContent?: unknown };
+/** One tool result, the shape `execute` returns and Pi saves. */
+export type ToolResult = {
+	content: { type: string; text: string }[];
+	details: unknown;
+	structuredContent?: unknown;
+	isError?: boolean;
+};
 
 /** One registered tool, as much of it as the tests drive. */
 export type Tool = {
@@ -358,6 +363,8 @@ export type SessionOptions = {
 	agentEnv?: string;
 	/** Custom entries the session already holds, as on a resume. */
 	entries?: readonly Entry[];
+	/** Model-visible messages the session already holds, as after earlier runs. */
+	messages?: readonly Record<string, unknown>[];
 	/** Raw active ancestry, before custom entries appended by this fake runtime. */
 	branch?: import("../src/routing-provenance.ts").ProvenanceEntry[];
 	/** Answers `ctx.ui` gives, in order, one queue per dialog. An empty queue cancels. */
@@ -442,6 +449,8 @@ export function session(options: SessionOptions = {}) {
 	const commands: Record<string, Command> = {};
 	const handlers: Record<string, Handler[]> = {};
 	const sent: { message: { customType: string; content: unknown; display?: boolean }; options: unknown }[] = [];
+	/** Model-visible history: what earlier runs persisted, plus every custom message sent now. */
+	const transcript: Record<string, unknown>[] = [...(options.messages ?? [])];
 	/** Every `pi.sendUserMessage` call, with its options. */
 	const userMessages: { text: string; options: unknown }[] = [];
 	const entries: Entry[] = [...(options.entries ?? [])];
@@ -560,8 +569,13 @@ export function session(options: SessionOptions = {}) {
 		},
 		appendEntry: (customType: string, data: unknown) =>
 			entries.push({ customType, data: data as Record<string, unknown> }),
-		sendMessage: (message: { customType: string; content: unknown; display?: boolean }, opts: unknown) =>
-			sent.push({ message, options: opts }),
+		sendMessage: (
+			message: { customType: string; content: unknown; display?: boolean; details?: unknown },
+			opts: unknown,
+		) => {
+			sent.push({ message, options: opts });
+			transcript.push({ role: "custom", ...message, timestamp: Date.now() });
+		},
 		sendUserMessage: (text: string, opts: unknown) => {
 			userMessages.push({ text, options: opts });
 		},
@@ -605,16 +619,30 @@ export function session(options: SessionOptions = {}) {
 					parentId: index ? `entry-${index - 1}` : (options.branch?.at(-1)?.id ?? null),
 					...entry,
 				})),
+				...transcript.map((message, index) => ({
+					type: "message",
+					id: `message-${index}`,
+					parentId: null,
+					message,
+				})),
 			],
 			getHeader: () => ({ type: "session", id: parent, cwd: options.cwd ?? root, ...options.sessionHeader }),
-			getEntries: () =>
-				entries.map((entry, index) => ({
+			getEntries: () => [
+				...entries.map((entry, index) => ({
 					type: "custom",
 					id: `entry-${index}`,
 					parentId: null,
 					timestamp: "",
 					...entry,
 				})),
+				...transcript.map((message, index) => ({
+					type: "message",
+					id: `message-${index}`,
+					parentId: null,
+					timestamp: "",
+					message,
+				})),
+			],
 		},
 		ui: {
 			notify: (text: string, type?: string) =>
@@ -795,6 +823,45 @@ export function session(options: SessionOptions = {}) {
 		bound = true;
 		await fire("session_start", { reason: "startup" });
 	};
+	/**
+	 * Pi's `tool_result` hooks and the result it saves: every handler's patch chains
+	 * onto the one before, and replacing content drops the structured content it no
+	 * longer matches (extensions/runner.js `emitToolResult`, agent-session.js
+	 * `_afterToolCall`).
+	 */
+	const afterToolCall = async (
+		toolName: string,
+		toolCallId: string,
+		input: unknown,
+		result: ToolResult,
+		parentToolCallId?: string,
+	): Promise<ToolResult> => {
+		const event: Record<string, unknown> = {
+			type: "tool_result",
+			toolCallId,
+			toolName,
+			input,
+			content: result.content,
+			details: result.details,
+			isError: result.isError ?? false,
+			...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }),
+			...(parentToolCallId === undefined ? {} : { parentToolCallId }),
+		};
+		let modified = false;
+		for (const handler of handlers.tool_result ?? []) {
+			const patch = (await handler(event, ctx)) as Partial<ToolResult> | undefined;
+			if (patch === undefined) continue;
+			modified = true;
+			if (patch.content !== undefined) {
+				event.content = patch.content;
+				if (patch.structuredContent === undefined) delete event.structuredContent;
+			}
+			if (patch.details !== undefined) event.details = patch.details;
+			if (patch.structuredContent !== undefined) event.structuredContent = patch.structuredContent;
+			if (patch.isError !== undefined) event.isError = patch.isError;
+		}
+		return modified ? (event as unknown as ToolResult) : result;
+	};
 	const callTool = async (name: string, params: unknown, abort?: AbortSignal): Promise<ToolResult> => {
 		if (!bound) await ensureStarted();
 		const tool = tools[name];
@@ -820,12 +887,14 @@ export function session(options: SessionOptions = {}) {
 								)) as { block?: boolean; reason?: string } | undefined;
 								if (response?.block) return error(response.reason ?? "blocked");
 							}
-							return { isError: false, result: await child.execute(toolCallId, input as never, abort, undefined, ctx) };
+							const result = await child.execute(toolCallId, input as never, abort, undefined, ctx);
+							return { isError: false, result: await afterToolCall(name, toolCallId, input, result, callId) };
 						},
 					};
-		return tool.execute(callId, params as never, abort, undefined, toolContext).then((result) => {
-			checkStructured(tool, result);
-			return result;
+		return tool.execute(callId, params as never, abort, undefined, toolContext).then(async (result) => {
+			const saved = await afterToolCall(name, callId, params, result);
+			checkStructured(tool, saved);
+			return saved;
 		});
 	};
 	return {
@@ -836,6 +905,8 @@ export function session(options: SessionOptions = {}) {
 		events,
 		pi,
 		sent,
+		/** Model-visible history as Pi's projection would rebuild it for the next request. */
+		transcript: (): Record<string, unknown>[] => [...transcript],
 		userMessages,
 		entries,
 		statuses,
@@ -933,7 +1004,8 @@ export function session(options: SessionOptions = {}) {
 			signal = controller.signal;
 			const { response: _response, ...errorFields } = failure ?? {};
 			await fire("agent_start");
-			await fire("context", { messages: [] });
+			// Pi builds each request from the saved projection, not from a hook's copy.
+			await fire("context", { messages: [...transcript] });
 			if (end === "error")
 				for (const response of [failure?.response ?? []].flat()) await fire("after_provider_response", response);
 			if (end === "aborted" || end === "stopped") controller.abort();
@@ -954,6 +1026,10 @@ export function session(options: SessionOptions = {}) {
 			// A continuation means Pi runs again instead of settling; the next `run` is that run.
 			const settle = await fire("agent_before_settle", { entries: [], continue: false });
 			const more = settle.find((result) => (result as { continue?: boolean } | undefined)?.continue === true);
+			// Pi commits a boundary's drafts before it continues or settles.
+			for (const result of settle)
+				for (const entry of (result as { entries?: Record<string, unknown>[] } | undefined)?.entries ?? [])
+					transcript.push({ role: "custom", ...entry });
 			if (more !== undefined) {
 				continuations.push(more as (typeof continuations)[number]);
 				return;

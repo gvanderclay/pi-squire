@@ -11,7 +11,7 @@ import { TreeProcess } from "./tree-process-harness.ts";
 after(cleanup);
 beforeEach(resetRoot);
 type Snapshot = {
-	sent: { message: { content: string } }[];
+	sent: { message: { content: string; customType?: string }; options?: unknown }[];
 	prompts: { text: string }[];
 	entries: { data: { result?: unknown } }[];
 	errors: string[];
@@ -171,7 +171,11 @@ test("owner death after local save but before injection retains staged input and
 			if (recovered.sent.length) break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		assert.equal(recovered?.sent.length, 1);
+		// The lost display is written once, then one wake asks for its processing run.
+		assert.deepEqual(
+			recovered?.sent.map((item) => item.message.customType),
+			["delegate", "delegate-recovery"],
+		);
 		assert.equal(readdirSync(staged).length, 0);
 	} finally {
 		await Promise.all([owner.kill(), sender.kill(), replacement?.kill()]);

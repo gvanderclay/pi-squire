@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-25
+
 ### Changed
 
 - Slimmed the model-facing delegate result header (`resultText`) from ~11
@@ -2106,7 +2108,8 @@ author's dotfiles; the changes below are against that copy.
 
 - The published file list includes `child.ts`, which `index.ts` imports.
 
-[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.36.1...HEAD
+[Unreleased]: https://github.com/gvanderclay/pi-squire/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/gvanderclay/pi-squire/compare/v0.36.1...v0.37.0
 [0.36.1]: https://github.com/gvanderclay/pi-squire/compare/v0.36.0...v0.36.1
 [0.36.0]: https://github.com/gvanderclay/pi-squire/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/gvanderclay/pi-squire/compare/v0.34.0...v0.35.0

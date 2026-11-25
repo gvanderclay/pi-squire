@@ -16,7 +16,6 @@ import {
 	memorySession,
 	type RunFailure,
 	resetRoot,
-	root,
 	session,
 	writeAgent,
 } from "./harness.ts";
@@ -660,7 +659,9 @@ function reply(s: ReturnType<typeof parent>, status: string) {
 const firstId = (s: ReturnType<typeof parent>) => (s.entries[0].data as { id: string }).id;
 
 const resultOf = (s: ReturnType<typeof parent>) =>
-	String(s.sent.find((m) => /^\[delegate\] Result from/.test(String(m.message.content)))?.message.content);
+	String(
+		s.sent.find((m) => (m.message as { details?: { kind?: string } }).details?.kind === "result")?.message.content,
+	);
 
 test("a failed reply from a delegate that hit a usage limit carries the limit line after Status", async (t) => {
 	clock(t);
@@ -671,9 +672,9 @@ test("a failed reply from a delegate that hit a usage limit carries the limit li
 	p.scan.queue.push(reply(p, "failed"));
 	p.events.emit("message:scan", {});
 	const lines = resultOf(p).split("\n");
-	assert.equal(lines[1], "Status: failed");
+	assert.match(lines[0], / · failed$/);
 	assert.equal(
-		lines[2],
+		lines[1],
 		"Usage limit: the delegate hit a usage limit on provider opencode-go; it is marked until 2026-10-03T12:05:00.000Z and later delegations skip it.",
 	);
 });
@@ -687,9 +688,9 @@ test("a done reply from a delegate that hit a usage limit says it finished on a 
 	p.scan.queue.push(reply(p, "done"));
 	p.events.emit("message:scan", {});
 	const lines = resultOf(p).split("\n");
-	assert.equal(lines[1], "Status: done");
+	assert.match(lines[0], / · done$/);
 	assert.equal(
-		lines[2],
+		lines[1],
 		"Usage limit: the delegate hit a usage limit on provider opencode-go; it is marked until 2026-10-03T12:05:00.000Z and later delegations skip it. It finished on a fallback model; its session names which.",
 	);
 });
@@ -706,14 +707,8 @@ test("a failed reply with no matching mark has no limit line", async (t) => {
 	assert.equal(
 		resultOf(p),
 		[
-			`[delegate] Result from plain (alpha/fast-model), delegation ${firstId(p)}, request ${requestId}.`,
-			"Status: failed",
+			`[delegate] plain ${firstId(p)} · failed`,
 			`[delegate] The task ${requestId} has no copy in sent/; only its id is known.`,
-			`Working directory: ${root}`,
-			// The harness root is a temporary directory outside any Git checkout.
-			"Checkout when the result arrived: not a Git checkout",
-			"Envelope: /mail/cur/reply.json",
-			`Delegate session: ${firstId(p)}`,
 			"",
 			"the answer",
 		].join("\n"),
@@ -730,9 +725,9 @@ test("a failed reply after the mark expired says it was marked, not that it is",
 	p.scan.queue.push(reply(p, "failed"));
 	p.events.emit("message:scan", {});
 	const lines = resultOf(p).split("\n");
-	assert.equal(lines[1], "Status: failed");
+	assert.match(lines[0], / · failed$/);
 	assert.equal(
-		lines[2],
+		lines[1],
 		"Usage limit: the delegate hit a usage limit on provider opencode-go; it was marked until 2026-10-03T12:05:00.000Z.",
 	);
 });

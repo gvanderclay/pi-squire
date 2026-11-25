@@ -174,12 +174,12 @@ selected tool set, or remove a routing-required tool. A violation refuses the
 launch before mail or window side effects.
 
 Squire records physical assistant `provider/id` and effective thinking for each
-attempt, with explicit attempt boundaries. The result and `delegation_status`
-show actual served models/efforts and whether independent family history was
-verified. The result's `Independent review:` line carries its caller caveat
-only when the request asked for a review: `verified` and `unverified` results
-print it, and a `not-required` result (an explorer or implementer run with no
-review asked) prints the verdict and any reasons without it. Review evidence covers exactly the
+attempt, with explicit attempt boundaries. `delegation_status` and message details record routing policy/reason, actual
+served models/efforts, and independent family history. The model-facing result
+prints `Served:` only when an attempt served a different or multiple models,
+and prints `Independent review:` only when a review was requested (`verified`
+or `unverified`, with its caller caveat) or when `not-required` provenance had
+warnings. Review evidence covers exactly the
 attempt after its marker, so an intermediate out-of-route model substitution
 makes that attempt unverified; an unknown or incomplete history is also
 unverified. Author exclusions are conservative across each source's full active

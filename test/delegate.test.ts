@@ -672,13 +672,19 @@ test("a done reply to a recorded delegation becomes one handled result message",
 	assert.equal(message.display, true);
 	const content = String(message.content);
 	assert.match(content, /scout/);
-	assert.match(content, /alpha\/fast-model/);
 	assert.ok(content.includes(delegation.id), content);
 	assert.match(content, /done/);
-	assert.ok(content.includes(`Task: ${payload.requests[0].path}`));
+	assert.ok(!content.includes("alpha/fast-model"));
+	assert.ok(!content.includes("Task:"));
 	assert.ok(!content.includes("> find the answer"));
-	assert.ok(content.includes(payload.requests[0].path), content);
-	assert.ok(content.includes(payload.path), content);
+	assert.ok(!content.includes("Envelope:"));
+	assert.ok(!content.includes("Delegate session:"));
+	const { details } = message as unknown as {
+		details: { model: string; task: { path: string }; envelopePath: string };
+	};
+	assert.equal(details.model, "alpha/fast-model");
+	assert.equal(details.task.path, payload.requests[0].path);
+	assert.equal(details.envelopePath, payload.path);
 	assert.deepEqual(options, { triggerTurn: true, deliverAs: "steer" });
 });
 
@@ -765,7 +771,7 @@ test("task details keep a 2 KiB preview while model text keeps only its path and
 		`${task.slice(0, 2 * 1024)}\n[delegate] Task cut at 2 KiB; the full copy is ${payload.requests[0].path}`,
 	);
 	assert.equal(details.task.path, payload.requests[0].path);
-	assert.ok(content.includes(`Task: ${payload.requests[0].path}`));
+	assert.ok(!content.includes(`Task: ${payload.requests[0].path}`));
 	assert.ok(!content.includes(task.slice(0, 100)));
 	assert.ok(!content.includes("Task cut at 2 KiB"));
 	assert.ok(details.body.startsWith("HEAD-MARKER\n"), "the head is kept");
@@ -902,10 +908,13 @@ test("the delegate's session file is found by id, or the id is shown alone", asy
 	writeFileSync(file, "");
 	s.events.emit("message:inbound", inbound(s.parent, first, { replyId: "reply-1" }));
 	s.events.emit("message:inbound", inbound(s.parent, second, { replyId: "reply-2" }));
-	const [one, two] = s.sent.map((item) => String(item.message.content));
-	assert.ok(one.includes(file), one);
-	assert.match(two, new RegExp(`Delegate session: ${second.id}\\b`), "the id alone when the file is not found");
-	assert.ok(!two.includes(join(sessionDir, `20260929T000000_${second.id}.jsonl`)));
+	const [one, two] = s.sent.map(
+		(item) => item.message as unknown as { content: string; details: { sessionPath?: string } },
+	);
+	assert.equal(one.details.sessionPath, file);
+	assert.equal(two.details.sessionPath, undefined, "no sessionPath when the file is not found");
+	assert.ok(!one.content.includes("Delegate session:"), one.content);
+	assert.ok(!two.content.includes("Delegate session:"), two.content);
 });
 
 test("a stopped or failed status is shown in the header", async () => {
@@ -914,8 +923,8 @@ test("a stopped or failed status is shown in the header", async () => {
 	const [first, second] = s.entries.map((entry) => entry.data as Delegation);
 	s.events.emit("message:inbound", inbound(s.parent, first, { status: "stopped", replyId: "reply-1" }));
 	s.events.emit("message:inbound", inbound(s.parent, second, { status: "failed", replyId: "reply-2" }));
-	assert.match(String(s.sent[0].message.content), /Status: stopped/);
-	assert.match(String(s.sent[1].message.content), /Status: failed/);
+	assert.match(String(s.sent[0].message.content), /^\[delegate\] .* · stopped$/m);
+	assert.match(String(s.sent[1].message.content), /^\[delegate\] .* · failed$/m);
 });
 
 test("a reply to an unrecorded request, and a request, are left to the provider", async () => {

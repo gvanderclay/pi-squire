@@ -136,7 +136,9 @@ safety and refusal failures do not trigger that switch; this route fallback is
 not a repair or escalation policy, and it never falls through to an
 unrestricted legacy fallback or parent model.
 
-Resume and fork require fresh routing metadata for a bound role; a previous
+Resume and fork require fresh routing metadata for a bound role, in the same
+shape as `delegate`'s; their tool schemas declare only `category` and `data`
+and point at `delegate`'s for the other fields. A previous
 public-context attestation is never prefilled. They inspect the actual source
 session file, even when an older delegation id names a session that was later
 resumed. Any persisted routed history keeps the role's profile binding; removing

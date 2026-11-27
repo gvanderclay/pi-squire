@@ -9,7 +9,7 @@ import { sessionIdOf } from "./result-sessions.ts";
 import { deriveState, isStarted, type StartedRecorded } from "./results.ts";
 import type { ResumeDeps, Resumed } from "./resume.ts";
 import { contextNotice, sessionFor, sessionModel, settleModel } from "./resume-checks.ts";
-import { RoutingRequestSchema } from "./routing-schema.ts";
+import { RoutingFollowUpSchema } from "./routing-schema.ts";
 import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
 import { assertChildAuthority, recordedIdentity } from "./tree-view.ts";
@@ -126,7 +126,7 @@ function forkParameters(includeRouting: boolean): TObject {
 	return Type.Object({
 		id: Type.String({ description: "The direct child's delegation id whose context to copy." }),
 		task: Type.String(),
-		...(includeRouting ? { routing: Type.Optional(RoutingRequestSchema) } : {}),
+		...(includeRouting ? { routing: Type.Optional(RoutingFollowUpSchema) } : {}),
 		model: modelParameter,
 		thinking: Type.Optional(
 			Type.String({ description: `${THINKING_LEVELS.join(", ")}; defaults to the source's last level.` }),

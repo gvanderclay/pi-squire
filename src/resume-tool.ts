@@ -5,7 +5,7 @@ import { checkToolsReached } from "./delegate-check.ts";
 import { CheckCommandsSchema, parseChecks } from "./delegate-request.ts";
 import { openedIn } from "./location.ts";
 import type { Resumed, ResumeRequest } from "./resume.ts";
-import { RoutingRequestSchema } from "./routing-schema.ts";
+import { RoutingFollowUpSchema } from "./routing-schema.ts";
 import type { RoutingRequest } from "./routing-types.ts";
 import { type ToolDef, toolResult } from "./tracking.ts";
 
@@ -32,7 +32,7 @@ export function resumeTool(
 		reachesTools: checkToolsReached,
 		parameters: Type.Object({
 			id: Type.String({ description: "Newest delegation id of the child." }),
-			...(includeRouting ? { routing: Type.Optional(RoutingRequestSchema) } : {}),
+			...(includeRouting ? { routing: Type.Optional(RoutingFollowUpSchema) } : {}),
 			task: Type.String(),
 			model: Type.Optional(Type.String({ description: "provider/id; defaults to the model it finished on." })),
 			thinking: Type.Optional(

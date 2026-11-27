@@ -380,7 +380,6 @@ test("an empty tools field, tools: or tools: [], gives the delegate no tools at 
 	for (const { argv } of s.tmux.opened) {
 		assert.ok(argv.includes("--no-tools") && !argv.includes("--tools"), argv.join(" "));
 	}
-	assert.match(s.tool("delegate").description, /- bare — .*thinking low, no tools\)/);
 });
 
 test("a tools line of only -name entries is the parent's tools less those, then delegateTools", async () => {
@@ -411,7 +410,6 @@ test("a tools line of only -name entries is the parent's tools less those, then 
 	assert.ok(pair(less, "--tools")[1].split(",").includes("bash"), less.join(" "));
 	assert.ok(!pair(less, "--tools")[1].split(",").includes("edit"), less.join(" "));
 	assert.deepEqual(pair(nomcp, "--tools")[1].split(",").slice(0, 4), ["read", "bash", "edit", "reach_parent"]);
-	assert.match(s.tool("delegate").description, /- less — .*tools: this session's except bash\/edit\)/);
 });
 
 test("a tools line with a +name entry, or with names and -name entries mixed, disables the agent", async () => {
@@ -448,10 +446,6 @@ test("a $name tools entry stands for that toolBundles bundle's tools, in place a
 		"--tools",
 		"read,grep,find,ls,pstack_models,session_mail_*,mcp__",
 	]);
-	assert.match(
-		s.tool("delegate").description,
-		/- reader — .*tools: read\/grep\/find\/ls\/pstack_models\/session_mail_\*/,
-	);
 });
 
 test("an unknown bundle, a -$name entry or an invalid toolBundles setting disables only the agents that use bundles", () => {

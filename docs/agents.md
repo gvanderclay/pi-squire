@@ -24,7 +24,7 @@ optional, and the [first-use example](../README.md#first-use) is a complete agen
 
 | Field | Meaning |
 | --- | --- |
-| `description` | Shown in the roster and the `delegate` tool's description. Defaults to the name. |
+| `description` | Shown in the roster and the `delegate` tool's description. Defaults to the name. The roster does not list tools, so say what the agent can do: read-only, edits files, uses the web. |
 | `routing_profile` | Experimental, shipped opt-in to role/task routing: the value names a profile in `<agent dir>/squire/routing.json`. Without it, the agent keeps legacy model selection. A bound role requires valid routing policy and per-call routing metadata; see [Role/task routing](routing.md#role-task-routing). |
 | `display_name` | Shown instead of the name on the delegate card, in the compact widget and in the window title (`<display_name>-<label>`). The agent is still called by its name. It may hold only ASCII letters, digits, `-` and `_`; any other value (a space, `#`, `.`, a non-ASCII letter, or an empty value) makes the file invalid, so the agent is disabled. |
 | `model` | One model: `provider/id` or an alias such as `sonnet`, passed to the child's `--model` unchanged, so Pi resolves it to one model. A `*` pattern makes the file invalid. Absent means the parent session's current model for legacy agents; a bound role uses its routing policy. |

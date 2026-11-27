@@ -24,10 +24,9 @@ const BUDGET = 14_441 + CLEANUP_RESOURCE_METADATA + PASEO_PROGRESS_METADATA;
 // them from a script by name, so it starts with only the three that stay direct
 // declared. Activating a deferred one declares it.
 const DECLARED_BUDGET = 5_820;
-// The routing request is one schema embedded in `delegate`, `delegation_resume`
-// and `delegation_fork`. This case measures the three tools declared at the
-// start, so it counts two copies; a declared fork adds the third.
-const ROUTED_BUDGET = 8_600;
+// `delegate` embeds the full routing request schema; `delegation_resume` and
+// `delegation_fork` declare only its required fields and point at delegate's.
+const ROUTED_BUDGET = 7_700;
 // A coordinator under codemode declares the same three, plus its roster line in `delegate`.
 const COORDINATOR_BUDGET = 5_850;
 // The loadout Pi gives a parent with codemode: the deferred tools start inactive.

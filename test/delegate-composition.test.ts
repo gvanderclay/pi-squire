@@ -12,7 +12,6 @@ import {
 	toolDescription,
 	toolMatches,
 	toolSelection,
-	toolsDetail,
 	whereAgentsGo,
 } from "../src/delegate-composition.ts";
 import { testAgent } from "./delegate-fixtures.ts";
@@ -106,15 +105,10 @@ test("delegate guidance follows selection, and a hidden declaration still expose
 	assert.equal(delegateVisible({ selectedTools: [], hiddenTools: ["delegate"] }), false);
 });
 
-test("roster descriptions preserve defaults, display names, locks and tool details", () => {
+test("roster descriptions preserve defaults, display names and locks", () => {
 	// An agent that overrides nothing prints no parenthetical at all.
 	assert.equal(rosterLine(testAgent()), "- worker — Test worker");
 	assert.equal(rosterLine(testAgent({ thinking: "low" })), "- worker — Test worker (thinking low)");
-	assert.deepEqual(toolsDetail(testAgent()), []);
-	assert.deepEqual(toolsDetail(testAgent({ tools: [] })), ["no tools"]);
-	assert.deepEqual(toolsDetail(testAgent({ toolsExcept: ["write", "mcp__*"] })), [
-		"tools: this session's except write/mcp__*",
-	]);
 	assert.equal(
 		rosterLine(
 			testAgent({
@@ -123,11 +117,10 @@ test("roster descriptions preserve defaults, display names, locks and tool detai
 				fallback: ["beta/deep"],
 				thinking: "low",
 				autoExit: false,
-				tools: ["read", "bash"],
 				locked: ["model", "thinking"],
 			}),
 		),
-		'- worker "Helper" — Test worker (default alpha/fast, fallback beta/deep, thinking low, auto-exit off, tools: read/bash, locked: model/thinking)',
+		'- worker "Helper" — Test worker (default alpha/fast, fallback beta/deep, thinking low, auto-exit off, locked: model/thinking)',
 	);
 });
 

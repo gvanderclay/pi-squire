@@ -128,6 +128,7 @@ test("codemode leaves delegation_status deferred and undeclared; without it the 
 		for (const name of deferred) assert.equal(seen.exposures.get(name), "deferred", name);
 		for (const name of declared) assert.ok(seen.active.includes(name), `${name} stays declared: ${discovery}`);
 		// Only codemode can call a deferred tool by name without changing the declared tools.
-		assert.equal(seen.active.includes("delegation_status"), discovery === "tool_search", discovery);
+		for (const name of deferred)
+			assert.equal(seen.active.includes(name), discovery === "tool_search", `${name}: ${discovery}`);
 	}
 });

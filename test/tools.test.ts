@@ -1005,8 +1005,9 @@ const TOOL_ADDITION_MODELS: { provider: string; id: string; api: string; compat:
 	{ provider: "resend", id: "no-system", api: "anthropic-messages", compat: { supportsMidConvoToolChanges: true } },
 ];
 
-test("delegation_status stays declared unless codemode or a cache-keeping tool_search can reach it", async () => {
-	const declared = (s: ReturnType<typeof session>): boolean => s.pi.getActiveTools().includes("delegation_status");
+const DEFERRED = ["delegation_status", "delegation_fork", "delegation_cleanup"];
+
+test("deferred delegation tools stay declared unless codemode or a cache-keeping tool_search can reach them", async () => {
 	const parent = (reach: readonly string[], parentModel?: string) =>
 		session({
 			activeTools: ["read", "bash", ...reach, "delegate", "delegation_close", "delegation_resume"],
@@ -1024,22 +1025,27 @@ test("delegation_status stays declared unless codemode or a cache-keeping tool_s
 	] as const) {
 		const s = parent(reach, parentModel);
 		await s.start();
-		assert.equal(declared(s), active, `${reach.join("+") || "neither"} on ${parentModel ?? "the default model"}`);
+		for (const name of DEFERRED)
+			assert.equal(
+				s.pi.getActiveTools().includes(name),
+				active,
+				`${name}: ${reach.join("+") || "neither"} on ${parentModel ?? "the default model"}`,
+			);
 		// Called by name, as a codemode script or a tool_search load does, it answers either way.
 		assert.match((await s.toolCall("delegation_status", {})).content[0].text, /No delegations|delegation/);
 	}
 });
 
-test("switching to a model that resends tools declares delegation_status for tool_search", async () => {
+test("switching to a model that resends tools declares the deferred delegation tools for tool_search", async () => {
 	const s = session({
 		activeTools: ["read", "bash", "tool_search", "delegate", "delegation_close", "delegation_resume"],
 		extraModels: TOOL_ADDITION_MODELS,
 		parentModel: "inline/anthropic",
 	});
 	await s.start();
-	assert.ok(!s.pi.getActiveTools().includes("delegation_status"));
+	for (const name of DEFERRED) assert.ok(!s.pi.getActiveTools().includes(name), name);
 	await s.fire("model_select", { model: { provider: "alpha", id: "fast-model" }, source: "set" });
-	assert.ok(s.pi.getActiveTools().includes("delegation_status"));
+	for (const name of DEFERRED) assert.ok(s.pi.getActiveTools().includes(name), name);
 });
 
 test("structured results carry each delegation's state and subtree close members", async () => {

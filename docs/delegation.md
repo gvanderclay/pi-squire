@@ -306,17 +306,16 @@ opted-in coordinator below `maxDepth`; admission also checks every launch/resume
 `delegate`, `delegation_close` and `delegation_resume` are always declared. The
 other three are deferred, so a session with active `codemode` calls any of them
 from a script by name without paying for its declaration in every request.
-`delegation_cleanup` and `delegation_fork` also stay undeclared with only
-`tool_search` active, which can load them. Loading a tool changes the declared
-tools mid-session, which costs the prompt cache unless Pi adds tools to the
-model's conversation in place, so `delegation_status` stays undeclared with
-only `tool_search` just on such a model: one whose compat flags in Pi's
-catalog include `supportsMidConvoSystemMessages` and, for its API,
+`tool_search` can load them too, but loading a tool changes the declared tools
+mid-session, which costs the prompt cache unless Pi adds tools to the model's
+conversation in place. So with only `tool_search` the three stay undeclared
+just on such a model: one whose compat flags in Pi's catalog include
+`supportsMidConvoSystemMessages` and, for its API,
 `supportsMidConvoToolChanges` (Anthropic), `supportsAdditionalTools` or
 `supportsToolSearch` (OpenAI Responses) or `supportsMidConvoToolAdditions`
-(OpenAI completions). Switching to another model declares it; a model switch
-loses the cache anyway. Without either discovery tool all three are declared
-when the session starts.
+(OpenAI completions). On any other model, and without either discovery tool,
+all three are declared when the session starts. Switching to a model that
+resends its tools declares them; a model switch loses the cache anyway.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |

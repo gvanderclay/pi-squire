@@ -384,16 +384,16 @@ export default function delegate(
 	}
 
 	/**
-	 * Declare a deferred tool where nothing can find it, and `delegation_status`
-	 * wherever finding it would cost the prompt cache. A codemode script calls
-	 * one by name without changing the declared tools; `tool_search` loading one
-	 * changes them, which keeps the cache only on a model that adds tools in
-	 * place. The built-in extensions register both inactive, so a session with
-	 * neither active would never reach one. Activating a deferred tool declares
-	 * it, which is how `tool_search` loads one. This only ever adds tools, so a
-	 * later model switch can declare status but never withdraw it; the switch
-	 * already loses the cache. `exposeDelegation` still takes them back from a
-	 * plain delegate, which may not control descendants.
+	 * Declare the deferred delegation tools wherever finding one would cost the
+	 * prompt cache. A codemode script calls one by name without changing the
+	 * declared tools; `tool_search` loading one changes them, which keeps the
+	 * cache only on a model that adds tools in place. The built-in extensions
+	 * register both inactive, so a session with neither active would never
+	 * reach one. Activating a deferred tool declares it, which is how
+	 * `tool_search` loads one. This only ever adds tools, so a later model
+	 * switch can declare them but never withdraw them; the switch already loses
+	 * the cache. `exposeDelegation` still takes them back from a plain delegate,
+	 * which may not control descendants.
 	 */
 	function exposeDeferred(model: ExtensionContext["model"]): void {
 		let tools: ReturnType<typeof pi.getAllTools>;
@@ -405,12 +405,8 @@ export default function delegate(
 		const registered = new Set(tools.map((tool) => tool.name));
 		const active = new Set(pi.getActiveTools());
 		const reach = (name: string): boolean => registered.has(name) && active.has(name);
-		const codemode = reach("codemode");
-		const found = codemode || reach("tool_search");
-		const statusFound = codemode || (found && addsToolsInPlace(model));
-		const declare = DEFERRED_DELEGATION_TOOLS.filter(
-			(name) => registered.has(name) && !(name === "delegation_status" ? statusFound : found),
-		);
+		const found = reach("codemode") || (reach("tool_search") && addsToolsInPlace(model));
+		const declare = found ? [] : DEFERRED_DELEGATION_TOOLS.filter((name) => registered.has(name));
 		pi.setActiveTools([...new Set([...pi.getActiveTools(), ...declare])]);
 	}
 

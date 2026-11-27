@@ -494,10 +494,9 @@ test("delegation_fork is declared when neither tool_search nor codemode can reac
 	for (const reach of ["codemode", "tool_search"]) {
 		const s = session({ activeTools: ["read", "bash", reach, "delegation_resume"] });
 		await s.start();
-		assert.ok(!s.pi.getActiveTools().includes("delegation_fork"), reach);
-		assert.ok(!s.pi.getActiveTools().includes("delegation_cleanup"), reach);
-		// Status is declared unless codemode can call it by name; tool_search changes the declared tools.
-		assert.equal(s.pi.getActiveTools().includes("delegation_status"), reach === "tool_search", reach);
+		// On a model that resends every tool, a tool_search load would cost the prompt cache.
+		for (const name of ["delegation_fork", "delegation_cleanup", "delegation_status"])
+			assert.equal(s.pi.getActiveTools().includes(name), reach === "tool_search", `${name}: ${reach}`);
 	}
 });
 

@@ -303,6 +303,21 @@ The model gets six tools. They share the command's launch path and the
 session's delegation records. In a delegate they are active only for an
 opted-in coordinator below `maxDepth`; admission also checks every launch/resume.
 
+`delegate`, `delegation_close` and `delegation_resume` are always declared. The
+other three are deferred, so a session with active `codemode` calls any of them
+from a script by name without paying for its declaration in every request.
+`delegation_cleanup` and `delegation_fork` also stay undeclared with only
+`tool_search` active, which can load them. Loading a tool changes the declared
+tools mid-session, which costs the prompt cache unless Pi adds tools to the
+model's conversation in place, so `delegation_status` stays undeclared with
+only `tool_search` just on such a model: one whose compat flags in Pi's
+catalog include `supportsMidConvoSystemMessages` and, for its API,
+`supportsMidConvoToolChanges` (Anthropic), `supportsAdditionalTools` or
+`supportsToolSearch` (OpenAI Responses) or `supportsMidConvoToolAdditions`
+(OpenAI completions). Switching to another model declares it; a model switch
+loses the cache anyway. Without either discovery tool all three are declared
+when the session starts.
+
 | Tool | Parameters | What it does |
 | --- | --- | --- |
 | `delegate` | `agent`, `task`, optional `model`, `thinking`, `routing`, `label`, `cwd`, `worktree`, `worktree_source`, `worktree_base`, `auto_exit` (boolean) and `check` | Validates the call the way the command does, starts the delegation without opening a dialog (except an unresolved [trust question](workspaces.md#project-trust) for `cwd`), and returns the delegation id at once without waiting for a result. |

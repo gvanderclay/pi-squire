@@ -461,11 +461,11 @@ test("fork requires direct-parent authority, depth/grant admission and shared ca
 	assert.ok(!child.pi.getActiveTools().includes("delegation_fork"), "ordinary children cannot fork delegates");
 });
 
-test("delegation_fork is registered deferred, unrouted and routed, and the other four stay direct", async () => {
+test("the deferred delegation tools stay deferred, unrouted and routed, and the rest stay direct", async () => {
 	const plain = session();
-	assert.equal(plain.tool("delegation_fork").exposure, "deferred");
-	assert.equal(plain.tool("delegation_cleanup").exposure, "deferred");
-	for (const name of ["delegate", "delegation_status", "delegation_close", "delegation_resume"])
+	for (const name of ["delegation_status", "delegation_cleanup", "delegation_fork"])
+		assert.equal(plain.tool(name).exposure, "deferred", name);
+	for (const name of ["delegate", "delegation_close", "delegation_resume"])
 		assert.equal(plain.tool(name).exposure, undefined, name);
 	// A routing profile re-registers resume and fork with the routing parameter; the exposure must survive.
 	writeAgent("role", agentFile({ routing_profile: "worker", model: "alpha/fast-model" }));
@@ -475,9 +475,9 @@ test("delegation_fork is registered deferred, unrouted and routed, and the other
 		JSON.stringify(routed.tool("delegation_fork").parameters).includes('"routing"'),
 		"the routed registration is in place",
 	);
-	assert.equal(routed.tool("delegation_fork").exposure, "deferred");
-	assert.equal(routed.tool("delegation_cleanup").exposure, "deferred");
-	for (const name of ["delegate", "delegation_status", "delegation_close", "delegation_resume"])
+	for (const name of ["delegation_status", "delegation_cleanup", "delegation_fork"])
+		assert.equal(routed.tool(name).exposure, "deferred", name);
+	for (const name of ["delegate", "delegation_close", "delegation_resume"])
 		assert.equal(routed.tool(name).exposure, undefined, name);
 });
 
@@ -489,11 +489,15 @@ test("delegation_fork is declared when neither tool_search nor codemode can reac
 	assert.equal(bare.tool("delegation_fork").exposure, "deferred");
 	assert.ok(bare.pi.getActiveTools().includes("delegation_cleanup"));
 	assert.equal(bare.tool("delegation_cleanup").exposure, "deferred");
+	assert.ok(bare.pi.getActiveTools().includes("delegation_status"));
+	assert.equal(bare.tool("delegation_status").exposure, "deferred");
 	for (const reach of ["codemode", "tool_search"]) {
 		const s = session({ activeTools: ["read", "bash", reach, "delegation_resume"] });
 		await s.start();
 		assert.ok(!s.pi.getActiveTools().includes("delegation_fork"), reach);
 		assert.ok(!s.pi.getActiveTools().includes("delegation_cleanup"), reach);
+		// Status is declared unless codemode can call it by name; tool_search changes the declared tools.
+		assert.equal(s.pi.getActiveTools().includes("delegation_status"), reach === "tool_search", reach);
 	}
 });
 

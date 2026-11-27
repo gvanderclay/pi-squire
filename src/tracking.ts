@@ -347,11 +347,16 @@ function statusHeading(selection: Selection, views: StatusItem[]): string {
 	return `${count(selection.total)} (${running} running). ${omissionNotice(selection.omitted)}`;
 }
 
-/** The `delegation_status` tool. */
-function statusTool(results: Results, tmux: DelegateHost, readingErrors: () => ReadingError[]): ToolDef {
+/** The `delegation_status` tool, deferred so a parent that can reach it does not pay for its declaration. */
+function statusTool(
+	results: Results,
+	tmux: DelegateHost,
+	readingErrors: () => ReadingError[],
+): ToolDef & { exposure: "deferred" } {
 	return {
 		name: "delegation_status",
 		label: "Delegation status",
+		exposure: "deferred",
 		description:
 			"Report delegations: default running, unfinished attempts + 5 most recently settled (partial); all:true for an exhaustive inventory or cleanup; id gives one full block. Results arrive on their own; check only for stuck work or files. A gone or window-closed record can still turn done on a late reply.",
 		parameters: Type.Object({ id: Type.Optional(Type.String()), all: Type.Optional(Type.Boolean()) }),

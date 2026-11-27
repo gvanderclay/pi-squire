@@ -20,18 +20,18 @@ import { agentDir, agentFile, DELEGATION_TOOLS, session, writeAgent } from "./ha
 const PASEO_PROGRESS_METADATA = 58;
 const CLEANUP_RESOURCE_METADATA = 140;
 const BUDGET = 14_441 + CLEANUP_RESOURCE_METADATA + PASEO_PROGRESS_METADATA;
-// `delegation_fork` is deferred: a parent that can find it (codemode or
-// tool_search active) starts without it declared, so what such a parent pays in
-// every request is the other four. Activating it later declares it.
-const DECLARED_BUDGET = 10_757 + PASEO_PROGRESS_METADATA;
+// Status, cleanup and fork are deferred: a parent with codemode calls any of
+// them from a script by name, so it starts with only the three that stay direct
+// declared. Activating a deferred one declares it.
+const DECLARED_BUDGET = 5_820;
 // The routing request is one schema embedded in `delegate`, `delegation_resume`
-// and `delegation_fork`. This case measures the four tools declared at the
+// and `delegation_fork`. This case measures the three tools declared at the
 // start, so it counts two copies; a declared fork adds the third.
-const ROUTED_BUDGET = 13_537 + PASEO_PROGRESS_METADATA;
-// Coordinators explicitly activate both deferred tools (two-agent roster below).
-const COORDINATOR_BUDGET = 14_469 + CLEANUP_RESOURCE_METADATA + PASEO_PROGRESS_METADATA;
-// The loadout Pi gives a parent that can find a deferred tool: `delegation_fork` starts inactive.
-const DECLARED = ["delegate", "delegation_status", "delegation_close", "delegation_resume"];
+const ROUTED_BUDGET = 8_600;
+// A coordinator under codemode declares the same three, plus its roster line in `delegate`.
+const COORDINATOR_BUDGET = 5_850;
+// The loadout Pi gives a parent with codemode: the deferred tools start inactive.
+const DECLARED = ["delegate", "delegation_close", "delegation_resume"];
 
 function sizes(s: ReturnType<typeof session>, names: readonly string[]): Record<string, number> {
 	return Object.fromEntries(
@@ -93,7 +93,7 @@ test("a routed roster's declared tools stay within their budget", async (t) => {
 	);
 });
 
-test("a coordinator declares cleanup with its granted delegation tools within the measured budget", async (t) => {
+test("a coordinator under codemode declares only its always-active delegation tools", async (t) => {
 	mkdirSync(join(agentDir, "squire"), { recursive: true });
 	writeFileSync(join(agentDir, "squire", "settings.json"), JSON.stringify({ maxDepth: 2 }));
 	writeAgent("scout", agentFile({ description: "Looks things up" }));
@@ -105,7 +105,7 @@ test("a coordinator declares cleanup with its granted delegation tools within th
 	const child = session({ parent: id, activeTools: ["read", "bash", "codemode"] });
 	await child.start();
 	const declared = DELEGATION_TOOLS.filter((name) => child.pi.getActiveTools().includes(name));
-	assert.deepEqual(declared, DELEGATION_TOOLS);
+	assert.deepEqual(declared, DECLARED);
 	const measured = sizes(child, declared);
 	t.diagnostic(`coordinator declared metadata: ${total(measured)} characters; ${JSON.stringify(measured)}`);
 	assert.ok(total(measured) <= COORDINATOR_BUDGET, JSON.stringify(measured));

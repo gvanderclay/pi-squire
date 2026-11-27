@@ -158,8 +158,8 @@ Aliases of one worktree are checked once and each requested id gets an outcome.
 
 The tool is deferred, like `delegation_fork`: a parent with active
 `codemode` or `tool_search` can reach it without paying for its declaration
-until activation. Without either discovery tool it is declared at startup;
-opted-in coordinators get it with the other delegation tools.
+until activation. Without either discovery tool it is declared at startup,
+coordinators included.
 
 Cleanup requires the recorded repository, worktree registration and created
 branch still to match; a locked, prunable, detached or replaced checkout stays.

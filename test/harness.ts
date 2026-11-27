@@ -385,6 +385,7 @@ export type SessionOptions = {
 		id: string;
 		cost?: { input: number; output: number };
 		api?: string;
+		compat?: Record<string, boolean>;
 		reasoning?: boolean;
 		contextWindow?: number;
 		input?: ("text" | "image")[];
@@ -395,7 +396,10 @@ export type SessionOptions = {
 	oauth?: string[];
 	/** Base URLs the fake registry reports per provider; none unless set. */
 	providerBaseUrls?: Record<string, string>;
-	/** The parent's current model, `ctx.model`, as provider/id; default `alpha/fast-model`, `null` for none. */
+	/**
+	 * The parent's current model, `ctx.model`, as provider/id; default `alpha/fast-model`, `null` for none.
+	 * A model the registry knows is passed as the registry has it, with its `api` and `compat`.
+	 */
 	parentModel?: string | null;
 	/** The parent's thinking level, `pi.getThinkingLevel()`; default `medium`. */
 	parentThinking?: string;
@@ -589,10 +593,13 @@ export function session(options: SessionOptions = {}) {
 		model:
 			parentModel === null
 				? undefined
-				: {
+				: (registry.find(
+						parentModel.slice(0, parentModel.indexOf("/")),
+						parentModel.slice(parentModel.indexOf("/") + 1),
+					) ?? {
 						provider: parentModel.slice(0, parentModel.indexOf("/")),
 						id: parentModel.slice(parentModel.indexOf("/") + 1),
-					},
+					}),
 		cwd: options.cwd ?? root,
 		hasUI: options.hasUI ?? true,
 		mode: options.mode ?? "json",

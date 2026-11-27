@@ -14,6 +14,12 @@
 
 ## Statuses
 
+The tool is deferred: with active `codemode` it is not declared, and a script
+calls it by name as `tools.delegation_status({ id })` or with `all: true`.
+With only `tool_search` it is undeclared just on a model that keeps its prompt
+cache when tools are added ([which](delegation.md#tools)); otherwise it is
+declared.
+
 `delegation_status` reports one state per delegation. Without an `id` it lists
 every running delegation and unfinished workspace attempt, plus the 5 most
 recently settled records, so the default list is partial. Every call's

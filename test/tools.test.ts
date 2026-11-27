@@ -114,7 +114,7 @@ test("the delegate tool explains self-contained tasks, automatic results, and su
 	assert.match(description, /Forks copy history/);
 	assert.doesNotMatch(description, /background terminal|sees only the task and its agent prompt/);
 	assert.match(description, /result arrives later as a message that starts your next turn/);
-	assert.match(description, /do not poll delegation_status or mail it just to wait/);
+	assert.match(description, /do not poll delegation_status\(\{ id\?, all\? \}\) or mail it just to wait/);
 });
 
 test("run preparation puts the exact prompt document in the owned section and nothing else", async () => {
@@ -945,7 +945,7 @@ test("delegation_status shows no last-active text for a running delegate without
 	assert.ok(!("lastActiveAt" in (res.details as { delegations: object[] }).delegations[0]));
 });
 
-test("the tools declare all four annotations and stay direct", async () => {
+test("the tools declare all four annotations", async () => {
 	const s = session();
 	const hints = (name: string) => s.tool(name).annotations;
 	const closedWorld = { openWorldHint: false };
@@ -973,10 +973,73 @@ test("the tools declare all four annotations and stay direct", async () => {
 		idempotentHint: true,
 		openWorldHint: true,
 	});
-	assert.equal(s.tool("delegation_cleanup").exposure, "deferred");
-	for (const name of ["delegate", "delegation_status", "delegation_close"]) {
-		assert.equal((s.tool(name) as { exposure?: string }).exposure, undefined);
+	for (const name of ["delegation_status", "delegation_cleanup"]) {
+		assert.equal((s.tool(name) as { exposure?: string }).exposure, "deferred", name);
 	}
+	for (const name of ["delegate", "delegation_close", "delegation_resume"]) {
+		assert.equal((s.tool(name) as { exposure?: string }).exposure, undefined, name);
+	}
+});
+
+/** Models whose conversations Pi adds tools to in place, and one it resends every tool to. */
+const TOOL_ADDITION_MODELS: { provider: string; id: string; api: string; compat: Record<string, boolean> }[] = [
+	{
+		provider: "inline",
+		id: "anthropic",
+		api: "anthropic-messages",
+		compat: { supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true },
+	},
+	{
+		provider: "inline",
+		id: "responses",
+		api: "openai-responses",
+		compat: { supportsMidConvoSystemMessages: true, supportsAdditionalTools: true },
+	},
+	{
+		provider: "inline",
+		id: "kimi",
+		api: "openai-completions",
+		compat: { supportsMidConvoSystemMessages: true, supportsMidConvoToolAdditions: true },
+	},
+	// Tool changes alone do not help without system messages in place: the system prompt lists the tools.
+	{ provider: "resend", id: "no-system", api: "anthropic-messages", compat: { supportsMidConvoToolChanges: true } },
+];
+
+test("delegation_status stays declared unless codemode or a cache-keeping tool_search can reach it", async () => {
+	const declared = (s: ReturnType<typeof session>): boolean => s.pi.getActiveTools().includes("delegation_status");
+	const parent = (reach: readonly string[], parentModel?: string) =>
+		session({
+			activeTools: ["read", "bash", ...reach, "delegate", "delegation_close", "delegation_resume"],
+			extraModels: TOOL_ADDITION_MODELS,
+			parentModel,
+		});
+	for (const [reach, parentModel, active] of [
+		[["codemode"], undefined, false],
+		[["tool_search"], undefined, true],
+		[["tool_search"], "resend/no-system", true],
+		[["tool_search"], "inline/anthropic", false],
+		[["tool_search"], "inline/responses", false],
+		[["tool_search"], "inline/kimi", false],
+		[[], "inline/anthropic", true],
+	] as const) {
+		const s = parent(reach, parentModel);
+		await s.start();
+		assert.equal(declared(s), active, `${reach.join("+") || "neither"} on ${parentModel ?? "the default model"}`);
+		// Called by name, as a codemode script or a tool_search load does, it answers either way.
+		assert.match((await s.toolCall("delegation_status", {})).content[0].text, /No delegations|delegation/);
+	}
+});
+
+test("switching to a model that resends tools declares delegation_status for tool_search", async () => {
+	const s = session({
+		activeTools: ["read", "bash", "tool_search", "delegate", "delegation_close", "delegation_resume"],
+		extraModels: TOOL_ADDITION_MODELS,
+		parentModel: "inline/anthropic",
+	});
+	await s.start();
+	assert.ok(!s.pi.getActiveTools().includes("delegation_status"));
+	await s.fire("model_select", { model: { provider: "alpha", id: "fast-model" }, source: "set" });
+	assert.ok(s.pi.getActiveTools().includes("delegation_status"));
 });
 
 test("structured results carry each delegation's state and subtree close members", async () => {

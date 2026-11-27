@@ -329,17 +329,19 @@ resends its tools declares them; a model switch loses the cache anyway.
 The `delegate` tool's description lists the current roster, one line per agent:
 its name and any display name, description, then a parenthetical with what the
 agent explicitly sets: a default model and fallbacks, thinking, auto-exit when
-it is off, its tools (`no tools` for an empty `tools` field,
-`this session's except …` for `-name` entries) and the fields it locks. An
+it is off and the fields it locks. An
 agent that sets none of these prints no parenthetical, so the lines that do
 name a model stand out; the roster heading says once that a model or thinking
 level a line does not name is this session's.
 
 ```text
-- scout "Recon" — Read-only recon (default provider/model-id, thinking low, auto-exit off, tools: read/grep, locked: model)
+- scout "Recon" — Read-only recon (default provider/model-id, thinking low, auto-exit off, locked: model)
 ```
 
-The model picks an agent from these lines without reading files. For a
+The model picks an agent from these lines without reading files. The line
+leaves out the agent's tools, so its `description` says what it can do (for
+example read-only, edits files, or uses the web); Pi still gives the delegate
+only the tools its file selects. For a
 routed role, selection comes from its routing profile and request metadata,
 not the legacy model/fallback defaults. The description also tells the model
 to turn `auto_exit` off when it means to keep

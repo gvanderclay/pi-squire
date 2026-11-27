@@ -1,15 +1,17 @@
 import { Type } from "typebox";
 
 const Names = Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true });
+const Category = Type.Union([
+	Type.Literal("narrow"),
+	Type.Literal("bounded"),
+	Type.Literal("standard"),
+	Type.Literal("deep"),
+]);
+const Data = Type.Union([Type.Literal("private"), Type.Literal("public"), Type.Literal("unknown")]);
 export const RoutingRequestSchema = Type.Object(
 	{
-		category: Type.Union([
-			Type.Literal("narrow"),
-			Type.Literal("bounded"),
-			Type.Literal("standard"),
-			Type.Literal("deep"),
-		]),
-		data: Type.Union([Type.Literal("private"), Type.Literal("public"), Type.Literal("unknown")]),
+		category: Category,
+		data: Data,
 		safePublicContext: Type.Optional(
 			Type.Boolean({
 				description:
@@ -45,6 +47,15 @@ export const RoutingRequestSchema = Type.Object(
 		additionalProperties: false,
 		description: "Required for an agent with a routing profile; others reject routing metadata.",
 	},
+);
+/**
+ * The routing parameter of delegation_resume and delegation_fork, declared beside
+ * `delegate`: it types the required fields and points at delegate's full schema,
+ * which `parseRoutingRequest` still enforces, instead of repeating it.
+ */
+export const RoutingFollowUpSchema = Type.Object(
+	{ category: Category, data: Data },
+	{ additionalProperties: true, description: "Required for a routed agent; other fields as in delegate's routing." },
 );
 export const RoutingRecordSchema = Type.Record(Type.String(), Type.Unknown());
 

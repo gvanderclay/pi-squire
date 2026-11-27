@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `delegation_resume` and `delegation_fork` no longer repeat the full routing
+  request schema: their `routing` parameter declares only `category` and
+  `data` and points at `delegate`'s for the other fields, which are still
+  accepted and validated as before. A parent with a routed roster saves about
+  870 characters per request with resume declared. `ROUTED_BUDGET` in
+  `test/context-budget.test.ts` drops from 8,600 to 7,700.
+- Roster lines in the `delegate` description no longer list each agent's
+  tools (`tools: …`, `no tools`, `this session's except …`); the lists
+  misled about capabilities, and launch still applies the agent file's tool
+  selection. Agent descriptions should state what an agent can do; the docs
+  and README say so, and the starter scout's description now says read-only.
+  Roster-text assertions in `test/delegate-composition.test.ts` and
+  `test/agent-files.test.ts` were updated accordingly.
+
 ## [0.38.0] - 2026-11-27
 
 ### Changed

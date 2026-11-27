@@ -56,6 +56,9 @@ Already in tmux? Just start Pi there. Already in **Herdr/Rex/Paseo**? See [Hosts
    is not a successful result.
 
 The starter uses `read, grep, find, ls`; tool lists are not a security sandbox.
+The parent model picks an agent from its `description` and does not see its
+tool list, so a custom agent's description should state what it can do, such
+as read-only, edits files, or uses the web.
 Trusted projects can instead save a project-scoped scout that overrides a
 same-name user agent. See [agents](docs/agents.md) for custom agents and optional
 parent guidance. If a prerequisite is missing, run

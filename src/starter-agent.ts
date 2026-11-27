@@ -4,7 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { globalAgentsDir, projectAgentsDir } from "./agents.ts";
 
 export const STARTER_AGENT = `---
-description: Looks things up and answers in one message
+description: Read-only; looks things up and answers in one message
 tools: read, grep, find, ls
 ---
 

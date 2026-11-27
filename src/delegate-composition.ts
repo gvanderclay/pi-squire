@@ -117,7 +117,6 @@ export function rosterLine(agent: Agent): string {
 					...(agent.thinking === undefined ? [] : [`thinking ${agent.thinking}`]),
 				]),
 		...(agent.autoExit ? [] : ["auto-exit off"]),
-		...toolsDetail(agent),
 		...(agent.locked.length > 0 ? [`locked: ${agent.locked.join("/")}`] : []),
 	];
 	const shown = agent.displayName === undefined ? "" : ` "${agent.displayName}"`;
@@ -143,12 +142,6 @@ export function toolArgs(tools: readonly string[]): string[] {
 	if (tools.length === 0) return ["--no-tools"];
 	const filtered = tools.some((name) => name.startsWith(MCP_FILTER)) ? tools : [...tools, MCP_FILTER];
 	return ["--tools", filtered.join(",")];
-}
-
-/** The roster line's word on an agent's tools; nothing for the parent's tools unchanged. */
-export function toolsDetail(agent: Agent): string[] {
-	if (agent.tools !== undefined) return [agent.tools.length > 0 ? `tools: ${agent.tools.join("/")}` : "no tools"];
-	return agent.toolsExcept.length > 0 ? [`tools: this session's except ${agent.toolsExcept.join("/")}`] : [];
 }
 
 /** Whether tool `name` is `pattern`, where `*` matches any characters, as in Pi's tool lists. */

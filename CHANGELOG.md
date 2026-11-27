@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `delegation_status` is deferred where reaching it keeps the prompt cache,
+  saving about 720 tokens of description and schema in every request: with
+  active `codemode`, which calls it by name, or with `tool_search` on a model
+  Pi adds tools to in place (by its catalog's compat flags, as pi-web-access
+  decides). Otherwise it stays declared, and switching to a model that
+  resends its tools declares it. The `delegate` tool intro now names its
+  `id` and `all` arguments. An opted-in coordinator likewise declares only
+  `delegate`, `delegation_close` and `delegation_resume`.
+- `delegation_cleanup` and `delegation_fork` follow the same rule: with only
+  `tool_search`, a parent on a model that resends its tools now has them
+  declared from the start instead of losing the prompt cache when it loads one.
+  Updated the `tools`, `fork`, `context-budget`, `delegate-composition` and
+  `parent-guidance-codemode` expectations deliberately.
+
 ### Fixed
 
 - Paseo delegate roles now extend Pi's structured system addendum instead of

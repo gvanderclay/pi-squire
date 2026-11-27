@@ -72,6 +72,8 @@ import { commandOutput } from "./command-output.ts";
 import { registerCompletionHost } from "./completion-holds.ts";
 import { CHECK_TOOL_NAME, checkTool, checkToolsReached } from "./delegate-check.ts";
 import {
+	DECLARED_DELEGATION_TOOLS,
+	DEFERRED_DELEGATION_TOOLS,
 	DELEGATION_TOOLS,
 	delegateVisible,
 	parentTrust,
@@ -118,6 +120,7 @@ import type { RoutingRecord, RoutingRequest } from "./routing-types.ts";
 import { ownedAPI, SessionOwner } from "./session-owner.ts";
 import { bootstrapAgent } from "./starter-agent.ts";
 import { registerTaskReplies } from "./task-replies.ts";
+import { addsToolsInPlace } from "./tool-additions.ts";
 import { availableTools } from "./tool-names.ts";
 import { createTracking, toolResult } from "./tracking.ts";
 import { claimTree, finishTree, publishTreeRecords, type Reservation, readTree } from "./tree-registry.ts";
@@ -366,35 +369,45 @@ export default function delegate(
 		identity.admit(agent, roster);
 	}
 
+	/**
+	 * Declare a coordinator's delegation tools, and only those. A plain delegate
+	 * gets none, since it may not control descendants, and a deferred one keeps
+	 * whatever `exposeDeferred` had to declare.
+	 */
 	function exposeDelegation(roster: Roster): void {
 		if (!identity.current()) return;
 		const enabled = coordinates(roster);
-		const base = pi.getActiveTools().filter((name) => !DELEGATION_TOOLS.has(name));
-		pi.setActiveTools(enabled ? [...base, ...DELEGATION_TOOLS] : base);
+		const kept = pi
+			.getActiveTools()
+			.filter((name) => !(enabled ? DECLARED_DELEGATION_TOOLS.has(name) : DELEGATION_TOOLS.has(name)));
+		pi.setActiveTools(enabled ? [...new Set([...kept, ...DECLARED_DELEGATION_TOOLS])] : kept);
 	}
 
 	/**
-	 * Declare fork and cleanup where nothing can find a deferred tool.
-	 * `tool_search` loads one and a codemode script calls one by name, and
-	 * their built-in extensions register both inactive, so a session with
-	 * neither active would never reach either. Activating a deferred tool
-	 * declares it, which is how `tool_search` loads one. `exposeDelegation`
-	 * still takes it back from a plain delegate, which may not control descendants.
+	 * Declare the deferred delegation tools wherever finding one would cost the
+	 * prompt cache. A codemode script calls one by name without changing the
+	 * declared tools; `tool_search` loading one changes them, which keeps the
+	 * cache only on a model that adds tools in place. The built-in extensions
+	 * register both inactive, so a session with neither active would never
+	 * reach one. Activating a deferred tool declares it, which is how
+	 * `tool_search` loads one. This only ever adds tools, so a later model
+	 * switch can declare them but never withdraw them; the switch already loses
+	 * the cache. `exposeDelegation` still takes them back from a plain delegate,
+	 * which may not control descendants.
 	 */
-	function exposeDeferred(): void {
+	function exposeDeferred(model: ExtensionContext["model"]): void {
 		let tools: ReturnType<typeof pi.getAllTools>;
 		try {
 			tools = pi.getAllTools();
 		} catch {
 			return; // the runtime is not bound yet; session_start runs this again
 		}
+		const registered = new Set(tools.map((tool) => tool.name));
 		const active = new Set(pi.getActiveTools());
-		if (tools.some((tool) => (tool.name === "tool_search" || tool.name === "codemode") && active.has(tool.name)))
-			return;
-		const deferred = ["delegation_fork", "delegation_cleanup"].filter((name) =>
-			tools.some((tool) => tool.name === name),
-		);
-		pi.setActiveTools([...new Set([...pi.getActiveTools(), ...deferred])]);
+		const reach = (name: string): boolean => registered.has(name) && active.has(name);
+		const found = reach("codemode") || (reach("tool_search") && addsToolsInPlace(model));
+		const declare = found ? [] : DEFERRED_DELEGATION_TOOLS.filter((name) => registered.has(name));
+		pi.setActiveTools([...new Set([...pi.getActiveTools(), ...declare])]);
 	}
 
 	/** Read the roster now, warning about every file left out. */
@@ -1026,8 +1039,13 @@ export default function delegate(
 		announce(roster, ctx);
 		registerDelegate(toolDescription(roster.agents, getAgentDir()));
 		registerRoutingTools(roster);
-		exposeDeferred();
+		exposeDeferred(ctx.model);
 		exposeDelegation(roster);
+	});
+
+	pi.on("model_select", (event, ctx) => {
+		exposeDeferred(event.model);
+		exposeDelegation(currentRoster(ctx));
 	});
 
 	// One roster/prompt snapshot prepares this run: refresh the description only when

@@ -157,9 +157,10 @@ a grandchild's. Inherited and existing directories are never candidates.
 Aliases of one worktree are checked once and each requested id gets an outcome.
 
 The tool is deferred, like `delegation_fork`: a parent with active
-`codemode` or `tool_search` can reach it without paying for its declaration
-until activation. Without either discovery tool it is declared at startup;
-opted-in coordinators get it with the other delegation tools.
+`codemode`, or `tool_search` on a model that keeps its prompt cache when tools
+are added, reaches it without paying for its declaration
+([which models](delegation.md#tools)). Otherwise it is declared at startup,
+coordinators included.
 
 Cleanup requires the recorded repository, worktree registration and created
 branch still to match; a locked, prunable, detached or replaced checkout stays.

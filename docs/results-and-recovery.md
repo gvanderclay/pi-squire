@@ -14,6 +14,12 @@
 
 ## Statuses
 
+The tool is deferred: with active `codemode` it is not declared, and a script
+calls it by name as `tools.delegation_status({ id })` or with `all: true`.
+With only `tool_search` it is undeclared just on a model that keeps its prompt
+cache when tools are added ([which](delegation.md#tools)); otherwise it is
+declared.
+
 `delegation_status` reports one state per delegation. Without an `id` it lists
 every running delegation and unfinished workspace attempt, plus the 5 most
 recently settled records, so the default list is partial. Every call's
@@ -699,10 +705,11 @@ and it resumes as the command does.
 
 Call `delegation_fork({ id, task })` when new work needs a child's built context
 without continuing that child's session. The tool is deferred, so it is not in
-every request's tool list: find it with `tool_search`, or call it from a
-codemode script. When neither `tool_search` nor `codemode` is active,
-pi-squire declares the fork itself so it stays reachable; it decides that once,
-when the session starts, so turning both off later leaves the fork undeclared.
+every request's tool list: call it from a codemode script, or find it with
+`tool_search` on a model that keeps its prompt cache when tools are added
+([which](delegation.md#tools)). Otherwise pi-squire declares the fork itself
+when the session starts, or when the parent switches to such a model; turning
+codemode off later leaves the fork undeclared.
 `delegation_resume` stays declared either way. It runs
 `pi --fork <child session file> --session-id <new id>` in a new tmux window.
 The source may still be running; its window, task and session file are untouched.

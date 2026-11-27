@@ -102,7 +102,9 @@ setting's type, default, scope, read time and invalid-value behavior.
 | `delegation_resume` | Continue an exited direct child's existing session with a new task. |
 | `delegation_fork` | Start a new delegation from a copy of a direct child's context. |
 
-Fork and cleanup are deferred when a discovery tool is active. See the
+Status, fork and cleanup are deferred: with active `codemode` the model calls
+them from a script by name, and `tool_search` loads them on a model that keeps
+its prompt cache when tools are added. Otherwise they are declared. See the
 [full tool reference](docs/delegation.md#tools) and
 [launch syntax](docs/delegation.md#how-a-delegation-works). The `delegate`
 and `delegation_resume` tools accept [`check`](docs/delegation.md#delegate-checks):

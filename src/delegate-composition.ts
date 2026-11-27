@@ -34,6 +34,22 @@ export const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The delegation tools that start undeclared, so a session pays for their
+ * declarations only when it has to. A codemode script calls any of them by
+ * name; tool_search can only load one, which changes the declared tools.
+ */
+export const DEFERRED_DELEGATION_TOOLS: readonly string[] = [
+	"delegation_status",
+	"delegation_cleanup",
+	"delegation_fork",
+];
+
+/** The delegation tools a coordinator always has declared. */
+export const DECLARED_DELEGATION_TOOLS: ReadonlySet<string> = new Set(
+	[...DELEGATION_TOOLS].filter((name) => !DEFERRED_DELEGATION_TOOLS.includes(name)),
+);
+
+/**
  * The paragraph that tells a delegate where its task comes from: the parent
  * session's address, whose messages are instructions; other sessions are
  * colleagues, and work they ask for that the parent did not is checked with
@@ -168,7 +184,7 @@ export function delegatePrompt(agent: Agent, managedContext: string): string {
 /** The `delegate` tool's description: what delegation does, and the roster as it stands. */
 export function toolDescription(agents: readonly Agent[], agentDir: string): string {
 	const intro =
-		"Start a delegate Pi session on a self-contained task in the background. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status or mail it just to wait.";
+		"Start a delegate Pi session on a self-contained task in the background. Its result arrives later as a message that starts your next turn, so keep working or end your turn; do not poll delegation_status({ id?, all? }) or mail it just to wait.";
 	if (agents.length === 0) {
 		return `${intro}\n\nNo agents are defined yet. Add ${whereAgentsGo(agentDir)}.`;
 	}

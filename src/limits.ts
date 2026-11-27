@@ -91,10 +91,15 @@ export function activeMark(
 }
 
 const LIMIT_PATTERN =
-	/GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|insufficient_quota|quota exceeded|subscription_sharing_usage_limit_exceeded|usage_limit_reached|usage limit reached|reached (?:their|your) .{0,40}usage limit|rate_limit_error/i;
+	/GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|insufficient_quota|quota exceeded|Individual quota reached|QUOTA_EXHAUSTED|subscription_sharing_usage_limit_exceeded|usage_limit_reached|usage limit reached|reached (?:their|your) .{0,40}usage limit|rate_limit_error/i;
 
 /** The reset time an error text states: "try again in N units", "retry after", or a `resets_at` field. */
 function statedReset(message: string, now: number): number | undefined {
+	const resetDelay = /\bresets in\s+((?:\d+(?:\.\d+)?(?:ms|s|m|h))+)(?=\s|[.,;]|$)/i.exec(message)?.[1];
+	if (resetDelay !== undefined) {
+		const delay = duration(resetDelay.toLowerCase());
+		if (delay !== undefined) return now + delay;
+	}
 	const relative = /(?:try again in|retry after)\s+(\d+(?:\.\d+)?)\s*(second|minute|hour)s?/i.exec(message);
 	if (relative !== null) {
 		return (
@@ -157,6 +162,8 @@ export function headerReset(response: Response | undefined, now = Date.now()): n
  */
 export function classify(message: string, now = Date.now()): { resetAt?: number } | undefined {
 	if (/overloaded|unavailable/i.test(message) || /^\s*5\d\d\b/.test(message)) return undefined;
+	// Agy also uses RESOURCE_EXHAUSTED for failures with quota remaining.
+	if (/RESOURCE_EXHAUSTED/i.test(message) && !LIMIT_PATTERN.test(message)) return undefined;
 	if (!LIMIT_PATTERN.test(message) && !/^\s*429\b/.test(message)) return undefined;
 	const resetAt = statedReset(message, now);
 	return resetAt !== undefined && resetAt > now ? { resetAt } : {};

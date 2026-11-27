@@ -8,6 +8,8 @@ import { DELEGATION_TOOLS, toolMatches } from "./delegate-composition.ts";
 export const PASEO_TOOLS_ENV = "PI_DELEGATE_PASEO_TOOLS";
 /** The delegate's project-trust answer, "yes" or "no", as `--approve` would have passed it. */
 export const PASEO_TRUST_ENV = "PI_DELEGATE_PASEO_TRUST";
+/** Role instructions, applied as a structured addendum instead of a forced prompt. */
+export const PASEO_PROMPT_ENV = "PI_DELEGATE_PASEO_PROMPT";
 /** Internal startup command: no user/model message is added to Pi. */
 export const PASEO_TURN_COMMAND = "delegate-turn";
 const TURN_WAIT_MS = 10_000;
@@ -99,7 +101,14 @@ export function registerPaseoChild(pi: ExtensionAPI, trustApi: ExtensionAPI): vo
 		pi.setActiveTools([...new Set([...kept, ...granted])]);
 	};
 	pi.on("session_start", apply);
-	pi.on("before_agent_start", apply);
+	pi.on("before_agent_start", (event) => {
+		apply();
+		const prompt = process.env[PASEO_PROMPT_ENV];
+		if (!hosted() || toolList() === undefined || !prompt) return;
+		const current = event.systemPromptOptions.appendSystemPrompt;
+		if (current === prompt || current.endsWith(`\n\n${prompt}`)) return;
+		event.systemPromptOptions.appendSystemPrompt = current ? `${current}\n\n${prompt}` : prompt;
+	});
 	pi.on("tool_call", (event): { block: true; reason: string } | undefined => {
 		const patterns = toolList();
 		if (patterns === undefined || DELEGATION_TOOLS.has(event.toolName)) return undefined;

@@ -147,6 +147,9 @@ function fallbackReason(last: Message | undefined): Failure | undefined {
 	if (typeof error !== "string") return undefined;
 	const model = `${String(last?.provider)}/${String(last?.model)}`;
 	if (classify(error) !== undefined) return { model, reason: `${model} hit a usage limit`, raw: error };
+	if (last?.provider === "agy-acp" && /RESOURCE_EXHAUSTED\s*\(code 429\)/i.test(error)) {
+		return { model, reason: `${model} returned a resource-exhausted error (${error})`, raw: error };
+	}
 	// Pi has already retried an unavailable endpoint; it marks nothing, but this run moves on.
 	if (/unavailable/i.test(error)) return { model, reason: `${model} was unavailable (${error})`, raw: error };
 	return undefined;

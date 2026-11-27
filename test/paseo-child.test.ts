@@ -11,7 +11,13 @@ import {
 	readIdentity,
 	writeIdentity,
 } from "../src/identity.ts";
-import { PASEO_TOOLS_ENV, PASEO_TRUST_ENV, PASEO_TURN_COMMAND, registerPaseoChild } from "../src/paseo-child.ts";
+import {
+	PASEO_PROMPT_ENV,
+	PASEO_TOOLS_ENV,
+	PASEO_TRUST_ENV,
+	PASEO_TURN_COMMAND,
+	registerPaseoChild,
+} from "../src/paseo-child.ts";
 import { sessionIsOwned } from "../src/session-owner.ts";
 import { cleanup, memorySession, resetRoot } from "./harness.ts";
 
@@ -48,6 +54,7 @@ const SAVED = {
 	cwd: process.env.PASEO_AGENT_CWD,
 	tools: process.env[PASEO_TOOLS_ENV],
 	trust: process.env[PASEO_TRUST_ENV],
+	prompt: process.env[PASEO_PROMPT_ENV],
 };
 
 function put(name: string, value: string | undefined): void {
@@ -61,6 +68,7 @@ beforeEach(() => {
 	put("PASEO_AGENT_CWD", undefined);
 	put(PASEO_TOOLS_ENV, undefined);
 	put(PASEO_TRUST_ENV, undefined);
+	put(PASEO_PROMPT_ENV, undefined);
 });
 
 afterEach(() => {
@@ -68,6 +76,7 @@ afterEach(() => {
 	put("PASEO_AGENT_CWD", SAVED.cwd);
 	put(PASEO_TOOLS_ENV, SAVED.tools);
 	put(PASEO_TRUST_ENV, SAVED.trust);
+	put(PASEO_PROMPT_ENV, SAVED.prompt);
 });
 
 /** Throwaway folders the trust tests created, removed when this file finishes. */
@@ -336,6 +345,7 @@ test("a Paseo child answers the trust question from its environment", async () =
 	process.env[PASEO_TRUST_ENV] = "no";
 	assert.deepEqual(await ask(), { trusted: "no" });
 	put(PASEO_TRUST_ENV, undefined);
+	put(PASEO_PROMPT_ENV, undefined);
 	assert.deepEqual(await ask(), { trusted: "undecided" });
 	process.env[PASEO_TRUST_ENV] = "maybe";
 	assert.deepEqual(await ask(), { trusted: "undecided" });
@@ -464,4 +474,25 @@ test("the whole extension keeps its tool list and tool gate behind session owner
 		},
 	});
 	assert.deepEqual(s.pi.getActiveTools(), before);
+});
+
+test("Paseo delegate instructions extend the structured addendum without flattening or duplication", async () => {
+	process.env.PASEO_AGENT_ID = AGENT;
+	process.env[PASEO_TOOLS_ENV] = "read";
+	process.env[PASEO_PROMPT_ENV] = "Delegate role instructions.";
+	const s = child();
+	const options = { appendSystemPrompt: "Existing project addendum.", sections: { custom: "Keep this section." } };
+	assert.deepEqual(await s.fire("before_agent_start", { systemPromptOptions: options }), [undefined]);
+	assert.equal(options.appendSystemPrompt, "Existing project addendum.\n\nDelegate role instructions.");
+	await s.fire("before_agent_start", { systemPromptOptions: options });
+	assert.equal(options.appendSystemPrompt, "Existing project addendum.\n\nDelegate role instructions.");
+	assert.deepEqual(options.sections, { custom: "Keep this section." });
+	assert.equal("forceSystemPrompt" in options, false);
+});
+
+test("a non-delegate does not consume the Paseo role environment", async () => {
+	process.env[PASEO_PROMPT_ENV] = "Delegate role instructions.";
+	const options = { appendSystemPrompt: "Existing addendum." };
+	await child().fire("before_agent_start", { systemPromptOptions: options });
+	assert.equal(options.appendSystemPrompt, "Existing addendum.");
 });

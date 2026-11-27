@@ -281,6 +281,12 @@ unknown, not proof of exit.
 
 ## Paseo support
 
+New delegates receive their role through `PI_DELEGATE_PASEO_PROMPT`, which
+Squire adds to Pi's structured `appendSystemPrompt`. The launch omits Paseo's
+`systemPrompt` override so providers can distinguish role/project context
+from generated harness sections. Native resume retains the original launch
+configuration; recreate older delegates to adopt this behavior.
+
 Paseo can host the coordinator Pi, and then pi-squire starts each delegate as a
 **Paseo agent** instead of a tmux window or a Herdr tab. Tested with Paseo
 0.15.4. Squire currently selects this host only for a coordinator Pi that

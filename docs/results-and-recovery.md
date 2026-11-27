@@ -235,7 +235,12 @@ constrain their candidates.
 When a delegate's run ends on a usage-limit error, it records a mark in
 `pi-squire-limits.json` in Pi's agent directory, which every Pi session on the
 machine reads. Quota messages count, and so does a `429` that survived Pi's
-retries; overloaded and `5xx` errors do not. A mark covers the failing
+retries; overloaded and `5xx` errors do not. Antigravity's
+`Individual quota reached` or `QUOTA_EXHAUSTED` counts as quota exhaustion,
+with compound reset delays such as `Resets in 1h11m59s`. Bare
+`RESOURCE_EXHAUSTED` is not enough to create a quota mark; Agy's generic
+`RESOURCE_EXHAUSTED (code 429)` selects the next fallback without marking
+quota, provided the provider reports an error outcome. A mark covers the failing
 model's whole provider, except for a free model (an id ending in `-free`, or
 zero cost in Pi's registry), which is never covered by a provider mark and,
 when it is the one that failed, is marked alone.

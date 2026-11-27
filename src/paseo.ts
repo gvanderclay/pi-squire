@@ -14,6 +14,7 @@ import {
 } from "./host.ts";
 import { recordLocator } from "./locators.ts";
 import { createPaseoApi, type PaseoApi, type PaseoResumeInput } from "./paseo-api.ts";
+import { PASEO_PROMPT_ENV } from "./paseo-child.ts";
 import { paseoLaunch, paseoStartProblem } from "./paseo-launch.ts";
 import { type PaseoLocator, paseoLocator } from "./paseo-locator.ts";
 import {
@@ -110,8 +111,10 @@ class PaseoHost implements DelegateHost {
 					cwd: spec.cwd,
 					model: launch.model,
 					thinking: launch.thinking,
-					systemPrompt,
-					env: launch.env,
+					// Paseo's systemPrompt replaces Pi's structured prompt with a
+					// string. The child applies the role through Pi's addendum instead.
+					systemPrompt: "",
+					env: { ...launch.env, [PASEO_PROMPT_ENV]: systemPrompt },
 				},
 				(progress) =>
 					spec.onProgress?.({

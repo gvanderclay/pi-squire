@@ -6,6 +6,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Paseo delegate roles now extend Pi's structured system addendum instead of
+  flattening the entire prompt through Paseo's systemPrompt field. Providers
+  can distinguish project and role context from generated harness sections.
+  Recreate older Paseo delegates to use the new launch configuration.
+  Updated `paseo-launch` and `paseo-api` expectations deliberately; added
+  `paseo-child` coverage for preserving sections and avoiding duplicate roles.
+- Antigravity `Individual quota reached` / `QUOTA_EXHAUSTED` errors now record
+  usage limits, including `Resets in 1h11m59s` reset delays. Generic Agy
+  `RESOURCE_EXHAUSTED (code 429)` errors select the next fallback without a
+  quota mark. Added `usage-limits` regressions for both cases. This requires
+  the provider to surface failed turns as errors.
+
 ## [0.37.0] - 2026-11-25
 
 ### Changed

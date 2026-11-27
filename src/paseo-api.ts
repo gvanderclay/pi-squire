@@ -401,7 +401,7 @@ async function createAgent(
 		config: {
 			provider: `pi/${input.model}`,
 			thinkingOptionId: input.thinking,
-			systemPrompt: input.systemPrompt,
+			...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
 		},
 	});
 	progress?.({ paseo, agentId: handle.id });

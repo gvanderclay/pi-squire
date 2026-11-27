@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, beforeEach, type TestContext, test } from "node:test";
 
+import { classify } from "../src/limits.ts";
 import type { ClaudeReading } from "../src/usage.ts";
 import { FakeUsage, win } from "./fake-usage.ts";
 import {
@@ -1247,4 +1248,27 @@ test("a model-scoped Claude mark is cleared only by its scoped window resetting"
 	const result = await call(p, "opus");
 	assert.ok(result.content[0].text.includes("Cleared the usage-limit mark on anthropic/claude-opus-4:"));
 	assert.deepEqual(marks(), []);
+});
+
+test("Antigravity real quota errors retain their stated compound reset delay", () => {
+	assert.deepEqual(classify("⚠ RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 1h11m59s.", START), {
+		resetAt: START + 4_319_000,
+	});
+	assert.ok(classify('RESOURCE_EXHAUSTED: {"reason":"QUOTA_EXHAUSTED"}', START));
+	assert.equal(classify("429: RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).", START), undefined);
+});
+
+test("an Agy resource-exhausted error falls back without recording a quota mark", async (t) => {
+	clock(t);
+	const delegate = fallbackDelegate("beta/other-model");
+	await delegate.start();
+	await delegate.run("error", {
+		errorMessage: "⚠ RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).",
+		provider: "agy-acp",
+		model: "gemini-4-neon",
+	});
+	assert.deepEqual(delegate.modelSets, ["beta/other-model"]);
+	assert.match(String(delegate.continuations[0].entries?.[0].content), /returned a resource-exhausted error/);
+	assert.deepEqual(marks(), []);
+	assert.equal(delegate.shutdowns(), 0);
 });

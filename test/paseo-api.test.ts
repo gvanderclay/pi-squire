@@ -636,7 +636,6 @@ test("a startup command and native parent label are sent without a caller envelo
 				provider: "pi",
 				model: "p/m",
 				thinkingOptionId: "off",
-				systemPrompt: "",
 				cwd: worktree,
 				title: "t",
 			},

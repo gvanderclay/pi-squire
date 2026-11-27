@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { WindowOpenError, type WindowSpec } from "../src/host.ts";
 import { createPaseoHost } from "../src/paseo.ts";
-import { PASEO_TOOLS_ENV, PASEO_TRUST_ENV } from "../src/paseo-child.ts";
+import { PASEO_PROMPT_ENV, PASEO_TOOLS_ENV, PASEO_TRUST_ENV } from "../src/paseo-child.ts";
 import { paseoLaunch, paseoStartProblem } from "../src/paseo-launch.ts";
 import { paseoLocator } from "../src/paseo-locator.ts";
 import { FakePaseo } from "./paseo-fixture.ts";
@@ -227,11 +227,12 @@ test("openWindow creates the agent from the fields the launch asks for", async (
 			cwd: window.cwd,
 			model: "provider/model",
 			thinking: "low",
-			systemPrompt: "the delegate's instructions",
+			systemPrompt: "",
 			env: {
 				PI_CODING_AGENT_DIR: "/parent",
 				PI_CODING_AGENT_SESSION_DIR: DIR,
 				[PASEO_TOOLS_ENV]: "read",
+				[PASEO_PROMPT_ENV]: "the delegate's instructions",
 				[PASEO_TRUST_ENV]: "yes",
 			},
 		},
